@@ -462,6 +462,23 @@ func TestAuthorizeCallGatewayTokenExpiry(t *testing.T) {
 	}
 }
 
+func TestAuthorizeCallGatewayTokenExpiryWithoutJTI(t *testing.T) {
+	exp := fixedNow().Add(time.Minute)
+	token := jwtShaped(map[string]any{"alg": "ES256", "typ": "at+jwt"},
+		map[string]any{"iss": as2Issuer, "aud": as2Resource, "exp": exp.Unix()})
+	f := newPerCall(t)
+	f.as2.answer = func(int, identitybroker.Redemption) (identitybroker.GatewayTokenResult, error) {
+		return identitybroker.GatewayTokenResult{AccessToken: token}, nil
+	}
+	got, err := f.authorize(callRequest(f.s.ID, f.cred))
+	if err != nil {
+		t.Fatalf("AuthorizeCall: %v", err)
+	}
+	if !got.ExpiresAt.Equal(exp) {
+		t.Fatalf("ExpiresAt = %v, want the token's exp %v", got.ExpiresAt, exp)
+	}
+}
+
 func TestAuthorizeCallMapsAS2Refusals(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -571,6 +588,9 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 	lost := func(perCallFixture) (identitybroker.IDJAGResult, error) {
 		return identitybroker.IDJAGResult{}, identitybroker.ErrNoResponse
 	}
+	// newGrants maps an exchange answered by revokedWithNewer to the refresh
+	// token that replaced the session's grant; each subtest resets it.
+	var newGrants map[int]identitybroker.Token
 	// revokedWithNewer replaces the session's grant, as a reopen does, and
 	// answers that the grant the exchange presented is revoked.
 	revokedWithNewer := func(f perCallFixture) (identitybroker.IDJAGResult, error) {
@@ -579,6 +599,11 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 		}); err != nil {
 			return identitybroker.IDJAGResult{}, err
 		}
+		g, ok := identitybroker.SessionGrant(f.b, f.s.ID)
+		if !ok {
+			return identitybroker.IDJAGResult{}, errors.New("the reopened session holds no grant")
+		}
+		newGrants[len(f.issuer.requests())] = g.RefreshToken
 		return identitybroker.IDJAGResult{}, refusal(400, "invalid_grant", "revoked")
 	}
 	issue := func(perCallFixture) (identitybroker.IDJAGResult, error) {
@@ -610,6 +635,7 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 		{"a reasonless invalid_grant twice after a lost response", []func(perCallFixture) (identitybroker.IDJAGResult, error){lost, issue, issue}, []redemption{reasonless, reasonless}, identitybroker.CodeInternal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			newGrants = map[int]identitybroker.Token{}
 			f := newPerCall(t)
 			f.issuer.answer = func(n int, _ identitybroker.IDJAGRequest) (identitybroker.IDJAGResult, error) {
 				if n > len(tc.exchanges) {
@@ -640,6 +666,41 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 					t.Fatal("an ID-JAG was redeemed twice")
 				}
 				seen[a] = true
+			}
+			if tc.code != "" && !got.GatewayToken.IsZero() {
+				t.Fatal("a refused call returned a gateway token")
+			}
+			// One decision, matching what the call returned.
+			d := f.rec.Decisions()
+			if len(d) != 1 {
+				t.Fatalf("recorded %d decisions, want 1: %+v", len(d), d)
+			}
+			var e *identitybroker.Error
+			switch {
+			case tc.code == "":
+				if d[0].Outcome != identitybroker.OutcomeSuccess {
+					t.Errorf("decision = %+v, want a success", d[0])
+				}
+			case errors.As(err, &e):
+				if d[0].Outcome == identitybroker.OutcomeSuccess || d[0].Code != e.Code || d[0].Reason != e.Reason {
+					t.Errorf("decision %s %s %q, want a refusal %s %q", d[0].Outcome, d[0].Code, d[0].Reason, e.Code, e.Reason)
+				}
+			default:
+				t.Fatalf("error %v is not an *identitybroker.Error", err)
+			}
+			// One ID-JAG record per exchange that returned an ID-JAG.
+			if issued, recorded := len(f.issuer.tokens()), len(f.rec.IDJAGs()); recorded != issued {
+				t.Errorf("recorded %d ID-JAGs, want %d, one per ID-JAG AS-1 issued", recorded, issued)
+			}
+			// The try after a revoked grant presents the session's new grant.
+			reqs := f.issuer.requests()
+			for i, grant := range newGrants {
+				if i >= len(reqs) {
+					continue
+				}
+				if reqs[i].SubjectToken.Value() != grant.Value() {
+					t.Errorf("exchange %d presented %q, want the session's new grant", i+1, reqs[i].SubjectToken.Value())
+				}
 			}
 		})
 	}
@@ -1091,8 +1152,8 @@ func TestAuthorizeCallRecordsTheVerifiedOwner(t *testing.T) {
 	if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
-	if d := f.rec.Decisions(); len(d) != 1 || d[0].Owner != verified {
-		t.Fatalf("decisions = %+v, want one naming the verified owner %+v", d, verified)
+	if d := f.rec.Decisions(); len(d) != 1 || d[0].Owner != verified || !d[0].OwnerVerified {
+		t.Fatalf("decisions = %+v, want one naming the verified owner %+v, marked verified", d, verified)
 	}
 }
 
@@ -1103,17 +1164,49 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 		req.RejectedAttemptID = id
 		return req
 	}
-	// A report for another call consumes the attempt.
-	mismatchedCall, err := f.authorize(callRequest(f.s.ID, f.cred))
+	// A report for another call consumes the attempt. Every field an attempt
+	// is issued for is changed alone; a tools/list report also drops the
+	// tool and arguments hash its method does not allow.
+	main, err := f.b.RegisterAgent(context.Background(), testWorkload, mainAgent(f.s))
 	if err != nil {
-		t.Fatalf("AuthorizeCall: %v", err)
+		t.Fatalf("RegisterAgent main: %v", err)
 	}
-	mismatched := report(mismatchedCall.AttemptID)
-	mismatched.Tool = "github.issue_write"
-	_, err = f.authorize(mismatched)
-	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
-	_, err = f.authorize(report(mismatchedCall.AttemptID))
-	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
+	child, err := f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
+		SessionID: f.s.ID, HostSessionID: "hostS-child", Owner: testOwner,
+		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: identitybroker.DefinitionRef{Name: "child"},
+		Parent: main.Agent,
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent child: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*identitybroker.AuthorizeCallRequest)
+	}{
+		{"operation ID", func(r *identitybroker.AuthorizeCallRequest) { r.OperationID = "op-2" }},
+		{"method", func(r *identitybroker.AuthorizeCallRequest) {
+			r.Method, r.Tool, r.ArgumentsSHA256 = identitybroker.MethodToolsList, "", ""
+		}},
+		{"server", func(r *identitybroker.AuthorizeCallRequest) { r.Server = "calendar" }},
+		{"tool", func(r *identitybroker.AuthorizeCallRequest) { r.Tool = "github.issue_write" }},
+		{"arguments hash", func(r *identitybroker.AuthorizeCallRequest) { r.ArgumentsSHA256 = strings.Repeat("cd", 32) }},
+		{"agent", func(r *identitybroker.AuthorizeCallRequest) { r.Credential = child.Credential }},
+	} {
+		t.Run("a different "+tc.name, func(t *testing.T) {
+			issued, err := f.authorize(callRequest(f.s.ID, f.cred))
+			if err != nil {
+				t.Fatalf("AuthorizeCall: %v", err)
+			}
+			exchanges, redemptions := len(f.issuer.requests()), len(f.as2.redeemed())
+			mismatched := report(issued.AttemptID)
+			tc.change(&mismatched)
+			_, err = f.authorize(mismatched)
+			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred, child.Credential)
+			_, err = f.authorize(report(issued.AttemptID))
+			wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred, child.Credential)
+			f.wantCounts(t, exchanges, redemptions)
+		})
+	}
 
 	// A report with a credential that fails check 3 does not consume it.
 	forgedCall, err := f.authorize(callRequest(f.s.ID, f.cred))

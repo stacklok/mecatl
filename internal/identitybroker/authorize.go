@@ -214,6 +214,7 @@ func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err 
 	switch {
 	case lostResponse(ctx, err):
 		return retryLostResponse, NewError(CodeUnavailable, "", "no response from the gateway's authorization server"), nil
+	// Shortcut: AS-2's error_uri is dropped (ServerRefusal keeps only the status, code and reason), so no approval link reaches the user; removed by #2735 (the approval link, shown under step (8)'s rule, through an ErrorURI the AS-2 port sets).
 	case isRefusal && !r.transient() && r.Reason == string(ReasonConsentRequired):
 		return 0, nil, ReasonError(ReasonConsentRequired, "the gateway's authorization server requires the user's consent")
 	case isRefusal && !r.transient() && r.Code == "invalid_grant" && (r.Reason == "" || r.Reason == unknownCode):
@@ -326,8 +327,8 @@ func gatewayTokenExpiry(redeemedAt, idjagExp time.Time, v GatewayTokenResult) ti
 	if v.ExpiresIn > 0 {
 		exp = earliest(exp, redeemedAt.Add(v.ExpiresIn))
 	}
-	if ref, ok := readJWTRef(v.AccessToken); ok && !ref.exp.IsZero() {
-		exp = earliest(exp, ref.exp)
+	if tokenExp, ok := readJWTExp(v.AccessToken); ok {
+		exp = earliest(exp, tokenExp)
 	}
 	return exp
 }
@@ -426,10 +427,29 @@ func readJWTRef(token Token) (jwtRef, bool) {
 	typ, _ := parsed.Header["typ"].(string)
 	iss, _ := claims["iss"].(string)
 	out := jwtRef{typ: typ, ref: CredentialRef{Issuer: iss, ID: jti}}
-	if exp, err := claims.GetExpirationTime(); err == nil && exp != nil && exp.Unix() > 0 {
-		out.exp = exp.Time
+	if exp, ok := expClaim(claims); ok {
+		out.exp = exp
 	}
 	return out, true
+}
+
+// readJWTExp reads a compact JWT's exp without verifying it, whether or not
+// the JWT has a jti. It reports false when token is not a JWT or has no
+// numeric exp.
+func readJWTExp(token Token) (time.Time, bool) {
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(token.Value(), claims); err != nil {
+		return time.Time{}, false
+	}
+	return expClaim(claims)
+}
+
+func expClaim(claims jwt.MapClaims) (time.Time, bool) {
+	exp, err := claims.GetExpirationTime()
+	if err != nil || exp == nil || exp.Unix() <= 0 {
+		return time.Time{}, false
+	}
+	return exp.Time, true
 }
 
 // readIDJAG reads an ID-JAG without verifying it, as AS-2 verifies it next.
@@ -464,7 +484,7 @@ func decisionRecord(now time.Time, workload Workload, s *brokerSession, req Auth
 		owner = *s.verifiedOwner
 	}
 	return DecisionRecord{
-		At: now, SessionID: s.ID, Workload: workload, Owner: owner,
+		At: now, SessionID: s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
 		RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner,
 		OperationID: req.OperationID, RejectedAttemptID: req.RejectedAttemptID,
 		Method: req.Method, Server: req.Server, Tool: req.Tool, ArgumentsSHA256: req.ArgumentsSHA256,

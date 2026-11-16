@@ -371,8 +371,11 @@ type AuthorizeCallRequest struct {
 	// Tool is the exact tool name the call sends as params.name, such as
 	// "github.pull_request_read". Set for tools/call only.
 	Tool string
-	// ArgumentsSHA256 is the SHA-256 of the call's arguments, 64 lowercase
-	// hex characters. Set for tools/call only.
+	// ArgumentsSHA256 is the argument hash, 64 lowercase hex characters, as
+	// credentials-and-lifecycle.md step (8), "The argument hash", defines it:
+	// the SHA-256 of the RFC 8785 (JCS) serialization of params.arguments as
+	// sent, or of {} when there are none, not of the raw request bytes. Set
+	// for tools/call only.
 	ArgumentsSHA256 string
 	// RejectedAttemptID, when set, reports that the gateway rejected the token
 	// of that attempt, so the broker obtains a fresh one. A caller reports an
@@ -434,8 +437,9 @@ type Authorization struct {
 	// GatewayToken is the token the call is dispatched with, obtained for
 	// this call alone.
 	GatewayToken Token
-	// ExpiresAt is when GatewayToken expires; never later than the ID-JAG it
-	// was redeemed from.
+	// ExpiresAt is the broker's use-before deadline for GatewayToken: the
+	// earliest of the ID-JAG's exp, AS-2's expires_in, and the token's own
+	// exp. The authorization server may keep the token valid longer.
 	ExpiresAt time.Time
 	// AttemptID identifies this authorization, so a caller whose token the
 	// gateway rejects reports it in AuthorizeCallRequest.RejectedAttemptID.

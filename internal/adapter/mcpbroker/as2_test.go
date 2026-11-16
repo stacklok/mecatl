@@ -626,7 +626,10 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 }
 
 // newTrustingAS2 is AS-2 configured to trust the harness's AS-1, for Alice
-// and Bob, through the test-only seam, ToolHiveConfig.AS2Trust.
+// and Bob, through the test-only seam, ToolHiveConfig.AS2Trust. It is this
+// package's counterpart of mcpbrokertest.StartAS2, which these tests cannot
+// call: mcpbrokertest imports this package, and the tests here use its
+// unexported helpers. Both build the trust with as2trust.Trust.WithDefaults.
 func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *Process) {
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
@@ -636,9 +639,8 @@ func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *P
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: broker.config,
 		AS2Trust: NewAS2Trust(as2trust.Trust{
 			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
-			Subjects:        []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)},
-			MaxAssertionAge: 10 * time.Minute,
-		}),
+			Subjects: []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)},
+		}.WithDefaults()),
 	})
 	if err != nil {
 		t.Fatalf("NewToolHiveProcess: %v", err)

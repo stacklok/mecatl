@@ -66,15 +66,18 @@ type ToolHiveConfig struct {
 	// embedded server as it is.
 	BrokerClient *ToolHiveBrokerClient
 	// AS2Trust, with AS-2 set up, makes AS-2 trust an ID-JAG issuer; see
-	// AS2Trust.
+	// AS2Trust. The field is removed when #2533 makes AS-2 trust AS-1 in
+	// production from configuration (the shortcut is marked on
+	// app.Config.IdentityBrokerAS2Trust).
 	AS2Trust AS2Trust
 }
 
 // AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.
-// Its zero value trusts none, as production's does until #2533. Only
-// packages under this adapter can build the value it holds (package
-// as2trust is internal), so only mcpbrokertest, which production code never
-// imports, makes one that trusts an issuer.
+// Its zero value trusts none, as production's does until #2533. Building one
+// that trusts an issuer needs an as2trust.Trust. Go's internal-package rule
+// keeps that type inside this adapter, and a depguard rule lets only this
+// file and mcpbrokertest import it outside tests; depguard also keeps
+// production code from importing mcpbrokertest.
 type AS2Trust struct{ t *as2trust.Trust }
 
 // NewAS2Trust returns an AS2Trust trusting t.

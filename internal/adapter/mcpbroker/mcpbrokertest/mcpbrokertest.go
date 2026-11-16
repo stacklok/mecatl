@@ -5,9 +5,7 @@ package mcpbrokertest
 
 import (
 	"encoding/json"
-	"slices"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
@@ -30,11 +28,7 @@ type AS1Trust = as2trust.Trust
 // TrustAS1 returns the AS-2 trust in trust's issuer, for
 // mcpbroker.ToolHiveConfig.AS2Trust.
 func TrustAS1(trust AS1Trust) mcpbroker.AS2Trust {
-	if trust.MaxAssertionAge <= 0 {
-		trust.MaxAssertionAge = 10 * time.Minute
-	}
-	trust.Subjects = slices.Clone(trust.Subjects)
-	return mcpbroker.NewAS2Trust(trust)
+	return mcpbroker.NewAS2Trust(trust.WithDefaults())
 }
 
 // StartAS2 starts an MCP broker process with one static protected upstream

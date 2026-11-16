@@ -1042,6 +1042,19 @@ linters:
           deny:
             - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest
               desc: 'AS-2 trust test seam; production code never imports it (#2533 trusts AS-1 in production)'
+        # Only the file that applies AS-2's trust and the test seam may name
+        # the trust value, so no other production code in the adapter can
+        # build a trusting mcpbroker.AS2Trust.
+        internal-adapter-mcpbroker-as2trust-importers:
+          list-mode: lax
+          files:
+            - $all
+            - '!$test'
+            - '!**/internal/adapter/mcpbroker/toolhive_construction.go'
+            - '!**/internal/adapter/mcpbroker/mcpbrokertest/**.go'
+          deny:
+            - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust
+              desc: 'AS-2 trust is test-only until #2533; build it with mcpbrokertest.TrustAS1'
         # Composition and the command roots use the MCP broker contract
         # (internal/mcpbroker); one file constructs the adapter.
         internal-adapter-mcpbroker-importers:

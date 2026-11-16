@@ -3,6 +3,7 @@ package identitybroker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -50,14 +51,33 @@ func TestMemoryAttemptsMatchTheCall(t *testing.T) {
 	if m.knownLocked("bs_b", "att_1") || m.consumeLocked("bs_b", "att_1", testCall) {
 		t.Fatal("another session consumed the attempt")
 	}
-	other := testCall
-	other.tool = "github.create_pull_request"
-	if m.consumeLocked("bs_a", "att_1", other) {
-		t.Fatal("a report for another call consumed the attempt")
-	}
-	// The mismatched report used the attempt up.
-	if m.consumeLocked("bs_a", "att_1", testCall) {
-		t.Fatal("the attempt is consumed after a mismatched report used it up")
+	for _, tc := range []struct {
+		name   string
+		change func(*callKey)
+	}{
+		{"operation ID", func(c *callKey) { c.operationID = "op-2" }},
+		{"agent", func(c *callKey) { c.agent = "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incOther }},
+		{"method", func(c *callKey) { c.method = MethodToolsList }},
+		{"server", func(c *callKey) { c.server = "calendar" }},
+		{"tool", func(c *callKey) { c.tool = "github.create_pull_request" }},
+		{"arguments hash", func(c *callKey) { c.argumentsSHA256 = strings.Repeat("cd", 32) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newAttemptLedger()
+			m.issueLocked("bs_a", "att_1", testCall)
+			other := testCall
+			tc.change(&other)
+			if other == testCall {
+				t.Fatal("the change left the call as it was")
+			}
+			if m.consumeLocked("bs_a", "att_1", other) {
+				t.Fatal("a report for another call consumed the attempt")
+			}
+			// The mismatched report used the attempt up.
+			if m.consumeLocked("bs_a", "att_1", testCall) {
+				t.Fatal("the attempt is consumed after a mismatched report used it up")
+			}
+		})
 	}
 }
 
