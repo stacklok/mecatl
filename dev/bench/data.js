@@ -380232,6 +380232,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794839614593,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aee8cc866201baa599a8432ff19f3abfa6089442",
+          "message": "feat(executioncontroller): admit requested capabilities in EnsureTemplate (#2802)\n\n`EnsureTemplate` now admits the requested capabilities against the\ntemplate revision's declared set instead of refusing every non-empty\nrequest. An empty request admits the declared set; a capability the\ntemplate does not declare is refused with `PermissionDenied`; a file-only\nor command-only request is refused with `InvalidArgument` while file-only\nsessions are postponed. Admission refusals carry their reason in the gRPC\nstatus message; other provider errors stay generic.\n\nAdmission runs in `Store.ensurePending` before the capacity slot is\nreserved. The admitted set is recorded as an optional, immutable\n`spec.admittedCapabilities` on the `ExecutionEnvironment` and returned by\n`EnsureTemplate`, `AttachEnvironment`, and `ReserveSuccessor`. A retried\n`EnsureTemplate` whose admitted set differs from the recorded one is\nrefused with `Conflict`, including after a create race; nothing is merged.\nEnvironments created before the set was recorded report their template\nrevision's declared set.\n\nNo `.proto` change and no wire major bump. The CRD gains one optional\nfield; apply it before upgrading the provider.\n\nCloses #2706",
+          "timestamp": "2026-11-16T15:22:47+01:00",
+          "tree_id": "a0809472d8e46b83f90130416ccd95e19abcd354",
+          "url": "https://github.com/stacklok/mecatl/commit/aee8cc866201baa599a8432ff19f3abfa6089442"
+        },
+        "date": 1794840343512,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -548992,6 +549026,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794840340348,
+  "lastUpdate": 1794840344300,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
