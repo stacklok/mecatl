@@ -22,5 +22,5 @@
 // Scalar and presence reads never clone sibling payloads. Zero views are safe;
 // optional children and scalars report presence separately, preserving explicit
 // zero and empty values. Sequences are ordered, repeatable, and pinned to captured
-// backing and bounds. [RecordView.Format] exports a detached transport DTO.
+// backing and bounds. [RecordView.MutableClone] exports a detached transport DTO.
 package session

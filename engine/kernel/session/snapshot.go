@@ -69,7 +69,7 @@ func (v Snapshot) Records() iter.Seq[RecordView] {
 // O(records yielded), with no decoding, payload copying or backend I/O. The
 // repeatable, early-stoppable sequence and its borrowed, history-scoped views stay
 // pinned across later appends; they may retain backing beyond the selected range.
-// RecordView.Format explicitly detaches data; these views confer no append authority.
+// RecordView.MutableClone explicitly detaches data; these views confer no append authority.
 func (v Snapshot) RecordsBetween(after, through history.CommitRef) (iter.Seq[RecordView], error) {
 	if after != (history.CommitRef{}) && after.Validate() != nil {
 		return nil, codec.ErrInvalidData

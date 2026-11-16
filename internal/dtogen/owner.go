@@ -103,7 +103,7 @@ func ownerOverlays(ctx context.Context, targets []LoadConfig, excluded map[strin
 		owners[pkgPath] = declaration
 		overlay[filepath.Join(target.Dir, target.Output)] = stub
 	}
-	if err := bootstrapViewOverlays(ctx, targets, overlay); err != nil {
+	if err := bootstrapViewOverlays(ctx, targets, owners, overlay); err != nil {
 		return nil, nil, err
 	}
 	return owners, overlay, nil
@@ -161,7 +161,7 @@ func (v *%[1]s) ReadCBOR(r *dtogenCodec.Reader,depth,fieldMax int) error {panic(
 	return []byte(stub.String())
 }
 
-func bootstrapViewOverlays(ctx context.Context, targets []LoadConfig, overlay map[string][]byte) error {
+func bootstrapViewOverlays(ctx context.Context, targets []LoadConfig, owners map[string]*ownerDeclaration, overlay map[string][]byte) error {
 	// Views need typed DTO fields to infer signatures. A diagnostic-tolerant pass
 	// supplies those types while handwritten callers still lack generated methods.
 	// Only this load-only bootstrap tolerates errors; Load and renderTargets perform
@@ -180,7 +180,7 @@ func bootstrapViewOverlays(ctx context.Context, targets []LoadConfig, overlay ma
 		if err != nil || len(pkgs) != 1 {
 			return fmt.Errorf("load view bootstrap %s: %v", target.Dir, err)
 		}
-		loaded := &Loaded{Package: pkgs[0], Output: filepath.Join(target.Dir, target.Output)}
+		loaded := &Loaded{Package: pkgs[0], Output: filepath.Join(target.Dir, target.Output), Owners: owners}
 		e := &emitter{s: &schema{loaded: loaded}, imports: map[string]string{}}
 		if err := e.emitViews(target); err != nil {
 			return err

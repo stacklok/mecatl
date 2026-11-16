@@ -94,7 +94,7 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 				clear(data)
 			}
 			verify()
-			dto := record.Format()
+			dto := record.MutableClone()
 			clear(dto.Payload)
 			verify()
 			before := s.Snapshot()

@@ -54,12 +54,12 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if r.KindVersion() != version {
 			t.Fatal("version")
 		}
-		want := r.Format()
-		dto := r.Format()
+		want := r.MutableClone()
+		dto := r.MutableClone()
 		clear(dto.Payload)
 		dto.Kind = "changed"
 		dto.KindVersion = 9
-		if !v.RecordAt(i).Format().Equal(want) || v.RecordAt(i).KindVersion() != version {
+		if !v.RecordAt(i).MutableClone().Equal(want) || v.RecordAt(i).KindVersion() != version {
 			t.Fatal("raw export aliases")
 		}
 	}

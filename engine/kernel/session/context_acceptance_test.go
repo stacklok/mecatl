@@ -115,7 +115,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		clear(mv.Settings().Copy())
 		uv, _ := snapshot.RecordAt(2).UserInput()
 		mutateMediaBytes(t, uv.Parts().At(1))
-		clear(snapshot.RecordAt(6).Format().Payload)
+		clear(snapshot.RecordAt(6).MutableClone().Payload)
 	}
 	for i, snapshot := range snapshots {
 		iv, _ := snapshot.Instructions()

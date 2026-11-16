@@ -161,13 +161,13 @@ type rejectedRunFacts struct {
 func captureRejectedSnapshot(v Snapshot) rejectedSnapshotFacts {
 	facts := rejectedSnapshotFacts{historyID: v.HistoryID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
 	for i := 0; i < v.RecordCount(); i++ {
-		facts.records = append(facts.records, v.RecordAt(i).Format().Clone())
+		facts.records = append(facts.records, v.RecordAt(i).MutableClone())
 	}
 	for i := 0; i < v.RunCount(); i++ {
 		run := v.RunAt(i)
 		f := rejectedRunFacts{id: run.ID()}
 		for j := 0; j < run.RecordCount(); j++ {
-			f.records = append(f.records, run.RecordAt(j).Format().Clone())
+			f.records = append(f.records, run.RecordAt(j).MutableClone())
 			if input, ok := run.RecordAt(j).UserInput(); ok {
 				located, _ := v.UserInputByID(input.ID())
 				f.inputs = append(f.inputs, located.ID())
@@ -337,7 +337,7 @@ func TestSessionApplyOwnership(t *testing.T) {
 	*successor.Commit.Parent = contentid.CID{}
 	content := internalInputBytes(old)
 	clear(content)
-	raw := before.RecordAt(2).Format()
+	raw := before.RecordAt(2).MutableClone()
 	clear(raw.Payload)
 	if got := internalInputBytes(old); !reflect.DeepEqual(got, []byte{0xff, 0, 'x'}) || !userInputsMatch(before, old.ID().RunID(), 1) {
 		t.Fatal("accepted DTO/export aliases")

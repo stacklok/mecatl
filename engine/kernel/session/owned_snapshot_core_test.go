@@ -103,7 +103,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	}
 	got := inputBytes(oldInput)
 	got[0] = 0
-	raw := old.RecordAt(2).Format()
+	raw := old.RecordAt(2).MutableClone()
 	raw.Payload[0] = 0
 
 	var wg sync.WaitGroup
@@ -124,7 +124,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 					return
 				}
 				for i := 0; i < oldRun.RecordCount(); i++ {
-					if !oldRun.RecordAt(i).Format().Equal(old.RecordAt(i + 1).Format()) {
+					if !oldRun.RecordAt(i).MutableClone().Equal(old.RecordAt(i + 1).MutableClone()) {
 						t.Error("independent traversal changed")
 						return
 					}
@@ -172,7 +172,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 		t.Fatal("replay scalar mismatch")
 	}
 	for i := 0; i < v.RecordCount(); i++ {
-		if !v.RecordAt(i).Format().Equal(replay.RecordAt(i).Format()) {
+		if !v.RecordAt(i).MutableClone().Equal(replay.RecordAt(i).MutableClone()) {
 			t.Fatal("replay fact mismatch")
 		}
 	}
@@ -260,7 +260,7 @@ func TestOwnedCoreReserveRejectionAndScopedContracts(t *testing.T) {
 	}
 	submitBatch(t, authored, b)
 	r := authored.Snapshot().RecordAt(authored.Snapshot().RecordCount() - 1)
-	dto, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, p.PayloadLimits)
+	dto, err := codec.Decode[sessionformat.UserInput](r.MutableClone().Payload, p.PayloadLimits)
 	if err != nil || dto.RunID != 2 || dto.ID != 1 || dtoInputBytes(dto)[0] != 0xff {
 		t.Fatalf("scoped DTO: %v", err)
 	}

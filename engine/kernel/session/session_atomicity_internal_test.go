@@ -130,7 +130,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if !reflect.DeepEqual(before, detachedSessionState(oldState)) {
 		t.Fatal("rejected prefix corrupted an old snapshot")
 	}
-	if !internalUserInputsMatch(old, oldRun.ID(), 2) || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.Format().Equal(before.view.records[2].value) {
+	if !internalUserInputsMatch(old, oldRun.ID(), 2) || oldRun.RecordCount() != 3 || string(internalInputBytes(oldInput)) != "first" || !oldRecord.MutableClone().Equal(before.view.records[2].value) {
 		t.Fatal("rejection changed independent child handles")
 	}
 	if err := s.apply(history.Commit{Ref: good.ref, Commit: good.commit}); err != nil {

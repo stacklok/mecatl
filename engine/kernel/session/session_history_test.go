@@ -184,7 +184,7 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 			t.Fatal("semantic scalars depend on commits")
 		}
 		for i := 0; i < v.RecordCount(); i++ {
-			if !v.RecordAt(i).Format().Equal(base.RecordAt(i).Format()) {
+			if !v.RecordAt(i).MutableClone().Equal(base.RecordAt(i).MutableClone()) {
 				t.Fatal("chronology depends on commits")
 			}
 		}
@@ -194,7 +194,7 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 				t.Fatal("run bounds depend on commits")
 			}
 			for j := 0; j < run.RecordCount(); j++ {
-				if !run.RecordAt(j).Format().Equal(want.RecordAt(j).Format()) {
+				if !run.RecordAt(j).MutableClone().Equal(want.RecordAt(j).MutableClone()) {
 					t.Fatal("run chronology")
 				}
 				if input, ok := run.RecordAt(j).UserInput(); ok {

@@ -132,6 +132,10 @@ func (e *emitter) emitView(v typedView, views []typedView, pkg *packages.Package
 	if viewShapeNameable(v.fields, pkg.Types) {
 		e.line("var _ = (*%s)((%s)(nil))", e.viewType(v.fields), e.viewType(v.dto))
 	}
+	mutableClone, err := e.emitViewMutableClone(v)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < v.fields.NumFields(); i++ {
 		field := v.fields.Field(i)
 		tags, err := selectedTags(v.fields.Tag(i), "view")
@@ -141,6 +145,9 @@ func (e *emitter) emitView(v typedView, views []typedView, pkg *packages.Package
 		policy, present := tags["view"]
 		switch {
 		case !present:
+			if mutableClone && field.Name() == "MutableClone" {
+				return fmt.Errorf("%s.MutableClone: DTO field getter collides with generated MutableClone; tag the DTO field view:\"-\"", v.name)
+			}
 			if !field.Exported() && field.Pkg() != pkg.Types {
 				return fmt.Errorf("%s.%s: inaccessible DTO field", v.name, field.Name())
 			}
@@ -161,6 +168,31 @@ func (e *emitter) emitView(v typedView, views []typedView, pkg *packages.Package
 		}
 	}
 	return nil
+}
+
+// emitViewMutableClone delegates payload detachment only to an explicit clone
+// owner's selected named closure, including declared handwritten Clone overrides.
+// Method-name compatibility alone never grants this capability.
+func (e *emitter) emitViewMutableClone(v typedView) (bool, error) {
+	dto := types.Unalias(v.dto.Elem()).(*types.Named)
+	owner := e.s.loaded.Owners[dto.Obj().Pkg().Path()]
+	if owner == nil || !slices.Contains(owner.Names, dto.Obj().Name()) {
+		return false, nil
+	}
+	selected, err := parseEmit(owner.Config.Emit)
+	if err != nil || !selected.clone {
+		return false, err
+	}
+	obj, _, _ := types.LookupFieldOrMethod(v.named, true, e.s.loaded.Package.Types, "MutableClone")
+	if obj != nil && !e.generatedPosition(obj.Pos()) {
+		return false, fmt.Errorf("%s.MutableClone: handwritten method/field collides with generated MutableClone", v.name)
+	}
+	result := e.viewType(v.dto.Elem())
+	e.line("// MutableClone returns a deeply detached mutable copy of the backing DTO payload.")
+	e.line("// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.")
+	e.line("// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.")
+	e.line("func (v %s) MutableClone() %s { if v.value == nil { return %s{} }; return v.value.Clone() }", v.name, result, result)
+	return true, nil
 }
 
 // viewShapeNameable reports whether an anonymous structural assertion can spell

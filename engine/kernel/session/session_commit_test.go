@@ -119,7 +119,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	page, err := h.Read(context.Background(), testHistoryID(t), history.ReadRequest{Through: root, MaxCommits: 1})
 	mustBatch(t, err)
 	fact := page.Commits[0].Commit.Records[2]
-	if !fact.Equal(inputRecord(t, 1).Format()) {
+	if !fact.Equal(inputRecord(t, 1).MutableClone()) {
 		t.Fatal("stored input aliases caller")
 	}
 	clear(inputBytes(lookupInput(t, v, run, 1)))
@@ -471,7 +471,7 @@ func TestSessionCommitPayloadLimitRejectsBeforeAllocation(t *testing.T) {
 				t.Fatal("failed addition lost earlier provisional facts")
 			}
 			for i, record := range want {
-				if !view.RecordAt(i).Format().Equal(record.Format()) {
+				if !view.RecordAt(i).MutableClone().Equal(record.MutableClone()) {
 					t.Fatalf("surviving record %d changed after payload failure", i)
 				}
 			}
@@ -532,7 +532,7 @@ func TestSessionCommitFailedByteAdmissionIsAtomic(t *testing.T) {
 	p := sessionPolicy()
 	empty := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1})
 	largestEnding := encodeFixture(t, sessionformat.KindRunEnded, sessionformat.RunEnded{RunID: 1, Reason: sessionformat.RunEndedCaptureFailed, BulkToolCloseout: true})
-	p.MaxPayloadBytes = uint64(len(createdRecord(t).Format().Payload) + len(startRecord(t, 1).Format().Payload) + 2*len(empty.Format().Payload) + len(largestEnding.Format().Payload))
+	p.MaxPayloadBytes = uint64(len(createdRecord(t).MutableClone().Payload) + len(startRecord(t, 1).MutableClone().Payload) + 2*len(empty.MutableClone().Payload) + len(largestEnding.MutableClone().Payload))
 	p.SoftMaxPayloadBytes = p.MaxPayloadBytes
 	backend := &batchBackend{Backend: mem.New()}
 	s := boundSession(t, newLifecycleHistory(t, backend), p)

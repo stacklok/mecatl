@@ -146,7 +146,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 						}
 						// Independently inject the forbidden payload copy into each
 						// measured path. Keep it observable instead of discarding it.
-						payload := snapshot.RecordAt(check.parent).Format().Payload
+						payload := snapshot.RecordAt(check.parent).MutableClone().Payload
 						var copied []byte
 						if n := testing.AllocsPerRun(10, func() {
 							check.operation()
@@ -232,7 +232,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 							if axis.name == "sibling-large" {
 								// A wrong implementation can allocate exactly once while
 								// copying the enclosing payload, not just this field.
-								payload := v.RecordAt(field.parent).Format().Payload
+								payload := v.RecordAt(field.parent).MutableClone().Payload
 								var wrong []byte
 								control := func() { wrong = bytes.Clone(payload) }
 								if n := testing.AllocsPerRun(100, control); n != 1 {

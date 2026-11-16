@@ -121,7 +121,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 	want := s.Snapshot()
 	expected := make([]historyformat.Record, want.RecordCount())
 	for i := range expected {
-		expected[i] = want.RecordAt(i).Format()
+		expected[i] = want.RecordAt(i).MutableClone()
 	}
 	reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
 	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), scope, sessionPolicy())
@@ -154,10 +154,10 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 				for range 2 {
 					i := tc.start
 					for record := range seq {
-						if i >= tc.end || !record.Format().Equal(expected[i]) || record != snapshot.RecordAt(i) {
+						if i >= tc.end || !record.MutableClone().Equal(expected[i]) || record != snapshot.RecordAt(i) {
 							t.Fatalf("record %d: range changed order, multiplicity or backing", i)
 						}
-						raw := record.Format()
+						raw := record.MutableClone()
 						clear(raw.Payload)
 						switch i {
 						case 0:
@@ -223,7 +223,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 				}
 			}
 			for i, record := range expected {
-				if !snapshot.RecordAt(i).Format().Equal(record) {
+				if !snapshot.RecordAt(i).MutableClone().Equal(record) {
 					t.Fatalf("record %d changed after detached export mutation", i)
 				}
 			}

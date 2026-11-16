@@ -41,7 +41,7 @@ func newSession(t testing.TB, p session.Policy) *session.Session {
 // proposal or admission proof. Load must bind it through real History storage.
 type fixtureRecord struct{ value format.Record }
 
-func (r fixtureRecord) Format() format.Record { return r.value.Clone() }
+func (r fixtureRecord) MutableClone() format.Record { return r.value.Clone() }
 func encodeFixture(t testing.TB, kind string, v codec.Marshaler) fixtureRecord {
 	t.Helper()
 	wire, err := codec.Encode(v, testLimits())
@@ -89,7 +89,7 @@ func proposedCommit(t testing.TB, s *session.Session, records ...fixtureRecord) 
 		dto.Parent = new(v.Head().CID)
 	}
 	for _, r := range records {
-		dto.Records = append(dto.Records, r.Format())
+		dto.Records = append(dto.Records, r.MutableClone())
 	}
 	return identify(t, dto)
 }
@@ -192,12 +192,12 @@ type rejectedRunFacts struct {
 func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
 	facts := rejectedSnapshotFacts{historyID: v.HistoryID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
 	for r := range v.Records() {
-		facts.records = append(facts.records, r.Format())
+		facts.records = append(facts.records, r.MutableClone())
 	}
 	for run := range v.Runs() {
 		f := rejectedRunFacts{id: run.ID()}
 		for r := range run.Records() {
-			f.records = append(f.records, r.Format())
+			f.records = append(f.records, r.MutableClone())
 			if input, ok := r.UserInput(); ok {
 				located, _ := v.UserInputByID(input.ID())
 				f.inputs = append(f.inputs, located.ID())

@@ -32,7 +32,7 @@ func TestUserInput(t *testing.T) {
 		}
 		submitBatch(t, s, b)
 		r := s.Snapshot().RecordAt(2)
-		wire := r.Format().Payload
+		wire := r.MutableClone().Payload
 		decoded, err := codec.Decode[sessionformat.UserInput](wire, testLimits())
 		if err != nil || decoded.ID != 1 || !bytes.Equal(dtoInputBytes(decoded), content) {
 			t.Fatalf("round trip: %v", err)
@@ -41,7 +41,7 @@ func TestUserInput(t *testing.T) {
 			clear(v.Parts[0].Media.InlineData)
 		}
 		clear(wire)
-		got, err := codec.Decode[sessionformat.UserInput](r.Format().Payload, testLimits())
+		got, err := codec.Decode[sessionformat.UserInput](r.MutableClone().Payload, testLimits())
 		if err != nil || !got.Equal(sessionformat.UserInput{RunID: 1, ID: 1, Parts: formatByteParts(content)}) || !cloned.Equal(session.UserInput{Parts: byteParts(content)}) {
 			t.Fatalf("borrowed storage retained: %v", err)
 		}

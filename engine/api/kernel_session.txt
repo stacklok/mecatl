@@ -17,37 +17,49 @@
     method func (*SessionCommit).ReplaceToolCatalog(scope id.HistoryID, v ToolCatalog) error
     method func (*SessionCommit).StartRun() (RunID, error)
     method func (AttributedInputView).Actor() format.Actor
+    method func (AttributedInputView).MutableClone() format.AttributedInput
     method func (AttributedInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (AttributedInputView).Purpose() format.PromptPurpose
     method func (AttributedInputView).Source() ContentSourceView
     method func (CaptureFailureEvidenceView).Evidence() (ObservedEvidenceView, bool)
+    method func (CaptureFailureEvidenceView).MutableClone() format.CaptureFailureEvidence
     method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
     method func (CaptureFailureEvidenceView).Usage() (InvocationUsageView, bool)
     method func (ConstructionRecipeView).Algorithm() string
     method func (ConstructionRecipeView).Check() views.Bytes
+    method func (ConstructionRecipeView).MutableClone() format.ConstructionRecipe
     method func (ConstructionRecipeView).Parameters() views.Bytes
     method func (ConstructionRecipeView).Version() int64
     method func (ContentPartView).Media() (MediaView, bool)
+    method func (ContentPartView).MutableClone() format.ContentPart
     method func (ContentPartView).Text() (string, bool)
     method func (ContentSourceView).Description() string
+    method func (ContentSourceView).MutableClone() format.ContentSource
     method func (ContentSourceView).WorkspaceFile() (WorkspaceFileSourceView, bool)
     method func (CreatedView).HistoryID() id.HistoryID
+    method func (CreatedView).MutableClone() format.Created
     method func (EffectiveInputView).Inputs() views.SliceView[format.InputItem, InputItemView]
+    method func (EffectiveInputView).MutableClone() format.EffectiveInput
     method func (EffectiveInputView).RunID() RunID
     method func (InputItemView).Inline() (AttributedInputView, bool)
+    method func (InputItemView).MutableClone() format.InputItem
     method func (InputItemView).UserInputID() (UserInputID, bool)
+    method func (InstructionBlockView).MutableClone() format.InstructionBlock
     method func (InstructionBlockView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (InstructionBlockView).Source() ContentSourceView
     method func (InstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
     method func (InstructionsView).HistoryID() id.HistoryID
+    method func (InstructionsView).MutableClone() format.Instructions
     method func (InvocationFailureView).Class() format.InvocationFailureClass
     method func (InvocationFailureView).Evidence() (ObservedEvidenceView, bool)
     method func (InvocationFailureView).Explanation() (string, bool)
+    method func (InvocationFailureView).MutableClone() format.InvocationFailure
     method func (InvocationFailureView).RequestID() ModelRequestID
     method func (InvocationFailureView).Usage() (InvocationUsageView, bool)
     method func (InvocationUsageView).CacheRead() (int64, bool)
     method func (InvocationUsageView).CacheWrite() (int64, bool)
     method func (InvocationUsageView).Input() (int64, bool)
+    method func (InvocationUsageView).MutableClone() format.InvocationUsage
     method func (InvocationUsageView).Output() (int64, bool)
     method func (InvocationUsageView).Raw() (OpaqueProviderDataView, bool)
     method func (InvocationUsageView).Reasoning() (int64, bool)
@@ -56,6 +68,7 @@
     method func (MediaView).InlineData() views.Bytes
     method func (MediaView).Kind() format.MediaKind
     method func (MediaView).MIMEType() string
+    method func (MediaView).MutableClone() format.Media
     method func (MediaView).ProviderName() string
     method func (MediaView).ProviderReferenceID() string
     method func (MediaView).ProviderScope() string
@@ -65,6 +78,7 @@
     method func (ModelBindingView).API() string
     method func (ModelBindingView).HistoryID() id.HistoryID
     method func (ModelBindingView).Model() string
+    method func (ModelBindingView).MutableClone() format.ModelBinding
     method func (ModelBindingView).Route() string
     method func (ModelBindingView).Settings() views.Bytes
     method func (ModelRequestID).Equal(other ModelRequestID) bool
@@ -72,6 +86,7 @@
     method func (ModelRequestID).RunRelative() uint64
     method func (ModelRequestID).Validate() error
     method func (ModelRequestView).ID() ModelRequestID
+    method func (ModelRequestView).MutableClone() format.ModelRequest
     method func (ModelRequestView).Recipe() ConstructionRecipeView
     method func (ModelRequestView).RetryOf() (ModelRequestID, bool)
     method func (ModelRequestView).Source() SourceHeadView
@@ -80,6 +95,7 @@
     method func (ModelResponseView).Calls() iter.Seq[RequestedCallView]
     method func (ModelResponseView).Evidence() (ObservedEvidenceView, bool)
     method func (ModelResponseView).Items() views.SliceView[format.ResponseItem, ResponseItemView]
+    method func (ModelResponseView).MutableClone() format.ModelResponse
     method func (ModelResponseView).Private() (OpaqueProviderDataView, bool)
     method func (ModelResponseView).ProviderStopReason() (string, bool)
     method func (ModelResponseView).RequestID() ModelRequestID
@@ -87,14 +103,15 @@
     method func (ModelResponseView).Usage() (InvocationUsageView, bool)
     method func (ObservedEvidenceView).Correlation() (string, bool)
     method func (ObservedEvidenceView).Detail() (string, bool)
+    method func (ObservedEvidenceView).MutableClone() format.ObservedEvidence
     method func (OpaqueProviderDataView).Data() views.Bytes
     method func (OpaqueProviderDataView).Format() string
+    method func (OpaqueProviderDataView).MutableClone() format.OpaqueProviderData
     method func (OpaqueProviderDataView).Producer() string
     method func (OpaqueProviderDataView).Version() int64
     method func (Policy).Validate() error
     method func (RecordView).Created() (CreatedView, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
-    method func (RecordView).Format() format.Record
     method func (RecordView).Instructions() (InstructionsView, bool)
     method func (RecordView).InvocationFailure() (InvocationFailureView, bool)
     method func (RecordView).Kind() string
@@ -102,6 +119,7 @@
     method func (RecordView).ModelBinding() (ModelBindingView, bool)
     method func (RecordView).ModelRequest() (ModelRequestView, bool)
     method func (RecordView).ModelResponse() (ModelResponseView, bool)
+    method func (RecordView).MutableClone() format.Record
     method func (RecordView).RunEnded() (RunEndedView, bool)
     method func (RecordView).RunStarted() (RunStartedView, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
@@ -109,6 +127,7 @@
     method func (RecordView).ToolInvocation() (ToolInvocationView, bool)
     method func (RecordView).UserInput() (UserInputView, bool)
     method func (RequestedCallDataView).Arguments() views.Bytes
+    method func (RequestedCallDataView).MutableClone() format.RequestedCall
     method func (RequestedCallDataView).Name() string
     method func (RequestedCallID).Equal(other RequestedCallID) bool
     method func (RequestedCallID).RequestID() ModelRequestID
@@ -116,14 +135,18 @@
     method func (RequestedCallID).Validate() error
     method func (RequestedCallView).Arguments() views.Bytes
     method func (RequestedCallView).ID() RequestedCallID
+    method func (RequestedCallView).MutableClone() format.RequestedCall
     method func (RequestedCallView).Name() string
     method func (ResponseContentView).Kind() format.ResponseContentKind
+    method func (ResponseContentView).MutableClone() format.ResponseContent
     method func (ResponseContentView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (ResponseItemView).Call() (RequestedCallDataView, bool)
     method func (ResponseItemView).Content() (ResponseContentView, bool)
+    method func (ResponseItemView).MutableClone() format.ResponseItem
     method func (RunEndedView).BulkToolCloseout() bool
     method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
     method func (RunEndedView).Explanation() (string, bool)
+    method func (RunEndedView).MutableClone() format.RunEnded
     method func (RunEndedView).Reason() format.RunEndedReason
     method func (RunEndedView).RunID() RunID
     method func (RunID).Equal(other RunID) bool
@@ -131,6 +154,7 @@
     method func (RunID).HistoryRelative() uint64
     method func (RunID).Validate() error
     method func (RunStartedView).ID() RunID
+    method func (RunStartedView).MutableClone() format.RunStarted
     method func (RunView).ID() RunID
     method func (RunView).RecordAt(i int) RecordView
     method func (RunView).RecordCount() int
@@ -152,6 +176,7 @@
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
     method func (SourceHeadView).CID() contentid.CID
+    method func (SourceHeadView).MutableClone() format.SourceHead
     method func (SourceHeadView).Sequence() int64
     method func (ToolCallView).Disposition() (ToolDispositionView, bool)
     method func (ToolCallView).ID() RequestedCallID
@@ -163,35 +188,46 @@
     method func (ToolCallsView).ByID(id RequestedCallID) (ToolCallView, bool)
     method func (ToolCallsView).Len() int
     method func (ToolCatalogView).HistoryID() id.HistoryID
+    method func (ToolCatalogView).MutableClone() format.ToolCatalog
     method func (ToolCatalogView).Tools() views.SliceView[format.ToolDefinition, ToolDefinitionView]
     method func (ToolDefinitionView).ArgumentSchema() views.Bytes
     method func (ToolDefinitionView).Description() string
+    method func (ToolDefinitionView).MutableClone() format.ToolDefinition
     method func (ToolDefinitionView).Name() string
     method func (ToolDispositionView).CallID() RequestedCallID
     method func (ToolDispositionView).Diagnostic() (string, bool)
     method func (ToolDispositionView).Indeterminate() (ToolIndeterminateView, bool)
+    method func (ToolDispositionView).MutableClone() format.ToolDisposition
     method func (ToolDispositionView).NotInvoked() (ToolNotInvokedView, bool)
     method func (ToolDispositionView).Returned() (ToolReturnedView, bool)
     method func (ToolEmbeddedResourceView).Blob() (views.Bytes, bool)
+    method func (ToolEmbeddedResourceView).MutableClone() format.ToolEmbeddedResource
     method func (ToolEmbeddedResourceView).Resource() ToolResourceView
     method func (ToolEmbeddedResourceView).Text() (string, bool)
+    method func (ToolIndeterminateView).MutableClone() format.ToolIndeterminate
     method func (ToolIndeterminateView).Output() ToolOutputView
     method func (ToolIndeterminateView).Reason() format.ToolIndeterminateReason
     method func (ToolInvocationView).Arguments() value.MapView
     method func (ToolInvocationView).CallID() RequestedCallID
+    method func (ToolInvocationView).MutableClone() format.ToolInvocation
     method func (ToolInvocationView).Name() string
     method func (ToolInvocationView).Prerequisites() views.SliceView[uint64, RequestedCallID]
+    method func (ToolNotInvokedView).MutableClone() format.ToolNotInvoked
     method func (ToolNotInvokedView).Reason() format.ToolNotInvokedReason
     method func (ToolOutputPartView).Content() (ContentPartView, bool)
     method func (ToolOutputPartView).JSON() (views.Bytes, bool)
+    method func (ToolOutputPartView).MutableClone() format.ToolOutputPart
     method func (ToolOutputPartView).Resource() (ToolEmbeddedResourceView, bool)
     method func (ToolOutputPartView).ResourceLink() (ToolResourceView, bool)
     method func (ToolOutputView).Capture() format.ToolCaptureState
+    method func (ToolOutputView).MutableClone() format.ToolOutput
     method func (ToolOutputView).Parts() views.SliceView[format.ToolOutputPart, ToolOutputPartView]
     method func (ToolResourceView).MIMEType() (string, bool)
+    method func (ToolResourceView).MutableClone() format.ToolResource
     method func (ToolResourceView).Name() (string, bool)
     method func (ToolResourceView).Title() (string, bool)
     method func (ToolResourceView).URI() string
+    method func (ToolReturnedView).MutableClone() format.ToolReturned
     method func (ToolReturnedView).Output() ToolOutputView
     method func (ToolReturnedView).Status() format.ToolReturnStatus
     method func (ToolSettlement).BulkEnding() (RunEndedView, bool)
@@ -202,7 +238,9 @@
     method func (UserInputID).RunRelative() uint64
     method func (UserInputID).Validate() error
     method func (UserInputView).ID() UserInputID
+    method func (UserInputView).MutableClone() format.UserInput
     method func (UserInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+    method func (WorkspaceFileSourceView).MutableClone() format.WorkspaceFileSource
     method func (WorkspaceFileSourceView).Path() string
 const InvocationFailureLocal InvocationFailureClass = "local"
 const InvocationFailureOther InvocationFailureClass = "other"

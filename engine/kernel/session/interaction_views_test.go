@@ -127,7 +127,7 @@ func TestCompleteInteractionTraversal(t *testing.T) {
 					assertIteratorNoAllocation(t, func() { interactionTraversalSink = traverseCompleteInteraction(snap, false) })
 					// A deliberately retained whole-payload clone makes this allocation
 					// assertion sensitive to accidental aggregate exports in traversal.
-					payload := snap.RecordAt(6).Format().Payload
+					payload := snap.RecordAt(6).MutableClone().Payload
 					var copied []byte
 					if n := testing.AllocsPerRun(10, func() {
 						interactionTraversalSink = traverseCompleteInteraction(snap, false)
@@ -258,7 +258,7 @@ func TestInteractionByteExportsCopyOnlyRequestedField(t *testing.T) {
 								t.Fatal("export mutation changed backing or another export")
 							}
 							if axis.name != "small" && field.size == 32 {
-								payload := snap.RecordAt(field.parent).Format().Payload
+								payload := snap.RecordAt(field.parent).MutableClone().Payload
 								control := func() { copied = bytes.Clone(payload) }
 								if n := testing.AllocsPerRun(10, control); n != 1 {
 									t.Fatal("clone control")
