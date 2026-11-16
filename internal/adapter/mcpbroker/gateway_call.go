@@ -77,6 +77,7 @@ type gatewayCall struct {
 func (t *sessionTool) executeGateway(ctx context.Context, scope gatewayScope, call session.ToolCall) (session.ToolResult, error) {
 	g := &gatewayCall{t: t, r: t.attachment.runtime, call: call, scope: scope}
 	result, code, err := g.run(ctx)
+	// Shortcut: the MCP client reports dispatch and outcome to the broker only as a diagnostic, and a call cancelled after its tools/call was written returns the cancellation instead of an unknown-outcome report; removed by #2731 (dispatch and outcome reports).
 	g.log(ctx, code)
 	if err != nil {
 		return session.ToolResult{}, err
@@ -215,6 +216,7 @@ func (g *gatewayCall) releaseUnlessSent(ctx context.Context) {
 
 func (g *gatewayCall) send(ctx context.Context, auth identitybroker.Authorization) mcpadapter.GatewayAttempt {
 	gw := g.r.gateway
+	// Shortcut: the request carries no run ID in trace headers; removed by #2566 (audit records and delivery, which passes the run ID in trace headers).
 	a := g.r.sendGateway(ctx, mcpadapter.GatewayCallRequest{
 		Endpoint:        gw.Endpoint(),
 		HTTPClient:      gw.HTTPClient(),

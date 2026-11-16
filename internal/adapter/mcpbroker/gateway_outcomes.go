@@ -68,6 +68,8 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 	case errors.Is(err, errSendOnceFull):
 		return outcomeSendOnceFull
 	case errors.Is(err, agentcredential.ErrNoCredential), errors.Is(err, agentcredential.ErrDropped):
+		// Helper agents have no broker MCP tools until #2555 and #2556, so
+		// only a main agent's missing or dropped credential reaches this.
 		return outcomeIdentityUnavailable
 	case errors.Is(err, context.DeadlineExceeded):
 		return outcomeUnavailable
@@ -79,12 +81,14 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 		return outcomeNoGrant
 	case identitybroker.ReasonSessionClosed:
 		return outcomeSessionClosed
+	// Shortcut: owner_action_required is a tool error, not the mcp_owner_action_required outcome, and signed_out, upstream_revoked, and owner_action_required fail the call without stopping the run; removed by #2568 (sign-out and revocation outcomes; the run stops).
 	case identitybroker.ReasonSignedOut:
 		return outcomeSignedOut
 	case identitybroker.ReasonUpstreamRevoked:
 		return outcomeUpstreamRevoked
 	case identitybroker.ReasonOwnerActionRequired:
 		return outcomeOwnerAction
+	// Shortcut: consent_required carries no approval link; removed by #2735 (the approval link).
 	case identitybroker.ReasonConsentRequired:
 		return outcomeConsentRequired
 	case identitybroker.ReasonSVIDExpired:
