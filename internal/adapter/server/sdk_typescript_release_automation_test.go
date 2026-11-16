@@ -59,7 +59,7 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 		`:(exclude)sdk/typescript/CHANGELOG.md`, "no TypeScript SDK changes exist",
 		"sdk-changelog-entry.md", "www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/",
 		"SDK VERSION and package.json identity do not agree", "git diff --name-only | sort",
-		"vars.RELEASE_APP_CLIENT_ID", "secrets.RELEASE_APP_PRIVATE_KEY", "gh pr create",
+		"vars.RELEASE_APP_CLIENT_ID", "secrets.RELEASE_APP_PRIVATE_KEY", "release-app-guard.py write-sdk-pr --track sdk",
 	} {
 		if !strings.Contains(prSource, proof) {
 			t.Errorf("release PR workflow is missing %q", proof)
@@ -74,9 +74,10 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 		t.Fatalf("release PR App-token/push order = %d/%d", prTokenIndex, prPushIndex)
 	}
 	prPush := prJob.Steps[prPushIndex]
-	if prPush.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" ||
-		!strings.Contains(prPush.Run, `git push "https://x-access-token:${GH_TOKEN}`) {
-		t.Error("release PR branch and PR must be created with the release App token")
+	if prPush.Env["RELEASE_APP_WRITE_TOKEN"] != "${{ steps.app-token.outputs.token }}" ||
+		prPush.Env["GH_TOKEN"] != "${{ secrets.GITHUB_TOKEN }}" ||
+		prPush.Run != "python3 .github/scripts/release-app-guard.py write-sdk-pr --track sdk" {
+		t.Error("release PR must use the narrow API writer with separate read and App-write credentials")
 	}
 
 	if !reflect.DeepEqual(tagWorkflow.On.Push.Branches, []string{"main"}) ||
@@ -95,7 +96,7 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 	}
 	for _, proof := range []string{
 		"sdk/typescript/v${version}", "release/sdk-typescript/v${version}",
-		`.user.type == "Bot"`, "git diff --name-only", "sdk/typescript/CHANGELOG.md",
+		`release-app-guard.py tag --track sdk`, "git diff --name-only", "sdk/typescript/CHANGELOG.md",
 		"SDK changelog does not start with", "sdk/typescript/package.json",
 		"previous_tag", "git merge-base --is-ancestor", "should_tag=true",
 		"release-sdk-typescript.yml",
@@ -115,9 +116,10 @@ func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 			decideIndex, tagTokenIndex, tagPushIndex)
 	}
 	tagPush := tagJob.Steps[tagPushIndex]
-	if tagPush.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" ||
-		!strings.Contains(tagPush.Run, `git push "https://x-access-token:${GH_TOKEN}`) {
-		t.Error("SDK tag must be pushed with the release App token")
+	if tagPush.Env["RELEASE_APP_WRITE_TOKEN"] != "${{ steps.app-token.outputs.token }}" ||
+		tagPush.Env["GH_TOKEN"] != "${{ secrets.GITHUB_TOKEN }}" ||
+		tagPush.Run != "python3 .github/scripts/release-app-guard.py write-tag --track sdk" {
+		t.Error("SDK tag must use the narrow API writer with separate read and App-write credentials")
 	}
 
 	for name, source := range map[string]string{"release PR": prSource, "release tag": tagSource} {

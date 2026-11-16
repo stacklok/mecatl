@@ -169,40 +169,125 @@ green after the final root and integration pin updates in step 5. A workspace pa
 alone does not close this gap or waive required checks. Obtain an explicit maintainer
 decision on any intermediate merge that cannot satisfy the existing required checks.
 
-For each dependency module:
+### Preview the explicit release batch
 
-1. Verify the module against available declared dependencies. From its directory,
-   run `GOWORK=off go mod tidy -diff`, `GOWORK=off go build ./...`, and
-   `GOWORK=off go test -mod=readonly ./...`.
-2. Have a human merge the reviewed PR. Identify the actual merged commit reachable
-   from `main`; a squash merge does not preserve the PR-head SHA.
-3. Publish that module's independent tag through its owning release process, with
-   authorization. For example, the engine uses `engine/vX.Y.Z`, while adapters use
-   `adapters/vX.Y.Z`. A root release tag does not release nested modules.
-4. Update dependent modules to the real published version, tidy their manifests,
-   and repeat verification. Publish changed dependencies before their callers.
+Use the reviewed module-release workflows for nested Go tags. Application releases
+(`v*`) and SDK releases (`sdk/typescript/v*`, including npm staging and human 2FA)
+remain separate, with independent versions. A root release does not publish nested
+Go modules.
 
-After the engine release, set `ENGINE_VERSION` to its published version and update
-an affected provider, for example:
+The [publication policy](../.github/scripts/module-publication-policy.json)
+classifies every `go.work` member. The public engine, four providers, OIDC,
+generated driver, transitive `internal/adaptersupport`, and adapters are eligible
+for independent publication. Root is the application track; `environment/microvm`
+retains its runtime/artifact role, and `integration/microvm` is test-only. Neither
+microVM module gains an independent Go release through this procedure.
 
-```sh
-(cd provider/openai &&
-  GOWORK=off go get "github.com/stacklok/mecatl/engine@$ENGINE_VERSION" &&
-  GOWORK=off go mod tidy &&
-  GOWORK=off go mod tidy -diff &&
-  GOWORK=off go test -mod=readonly ./...)
+Use a full checkout with fetched `origin/main` and tags, Python 3, and the declared
+Go toolchain. Save the exact module-directory-to-version map in
+`.scratch/module-release-batch.json`. For example, replace both placeholders in:
+
+```json
+{"engine": "<EXACT_ENGINE_VERSION>", "provider/openai": "<EXACT_PROVIDER_VERSION>"}
 ```
 
-Review the manifest/sum diff before proceeding. Repeat for each affected module;
-`go get` can also update transitive requirements.
+Humans choose canonical `vX.Y.Z` versions (or canonical prereleases) under each
+module's compatibility policy. Automation does not choose versions, add modules,
+or accept a pseudo-version as a requested release. Run the local read-only checks:
 
-`GOWORK=off` disables `go.work`, but leaves local `replace` directives effective.
-Root, the microVM runtime, and microVM integration use local replacements. Their
-workspace-disabled tests are not proofs of public dependency resolution. A real
-external-consumer proof must resolve released modules without checkout replacements.
+```sh
+CANDIDATE='<FULL_MAIN_COMMIT_SHA>'
+BATCH=.scratch/module-release-batch.json
+python3 .github/scripts/module-release.py inventory --candidate "$CANDIDATE"
+python3 .github/scripts/module-release.py preview --candidate "$CANDIDATE" --batch "$BATCH"
+```
 
-Follow [adapter release verification](../adapters/COMPATIBILITY.md#release-verification)
-for the persistence modules:
+Preview archives the exact commit, ignoring uncommitted source changes. It shows
+dependency order, changes since each previous tag, compatibility/changelog paths,
+existing pins, and proposed selected-module pin updates. Review the source diffs
+and version choices; the reported policy paths are not an automated SemVer verdict.
+Fix unclassified modules, cycles, replacement leakage, tag conflicts, or missing
+prerequisites before requesting a release. An unchanged prerequisite can retain a
+suitable published pin; selection never expands automatically. Preview uses local
+Git/Go metadata, makes no GitHub/ref writes, and does not establish public download
+availability or human authorization.
+
+### Request and review publication
+
+Before dispatch, an administrator must complete the
+[release protection setup](#release-protection-setup). Entry points require the
+repository variable `MODULE_RELEASES_ENABLED=true`; leave it unset until deployment,
+settings verification, and a separately authorized enforcement rehearsal are done.
+The presence of these scripts or passing offline tests proves none of those live
+prerequisites.
+
+1. With explicit authorization for the exact mapping, dispatch
+   [`request-module-release.yml`](../.github/workflows/request-module-release.yml)
+   on `main`. Its required `batch` input is the JSON object above, not a local
+   filename. The workflow previews current main and opens a designated-App-authored
+   request PR under `.github/module-releases/`. Inspect that PR's actual candidate
+   and diff; main can have advanced since your local preview.
+2. Review the exact set, versions, dependency order, and compatibility evidence.
+   Have a human merge the request PR into `main`. The actual merge SHA, including a
+   squash merge, fixes the candidate; the PR-head SHA is not the released identity.
+   Changing the authorized set or versions requires a new reviewed request.
+3. Watch [`module-releases.yml`](../.github/workflows/module-releases.yml). It
+   discovers outstanding reviewed requests after request merges, main CI completion,
+   and manual dispatch, and queues continuation after successful stages. It verifies
+   designated-App authorship, same-repository provenance, exact reviewed bytes,
+   merge linkage, and a non-bot human merger. No PR auto-merges.
+4. For each generated preparation PR, review the selected module's dependency pins,
+   tidy diff, requested version, and any source changes since the original candidate.
+   A human merge reconfirms those contents and supplies the next exact candidate.
+   Closing it unmerged pauses the batch. Only selected Go modules receive preparation
+   PRs; root/integration adoption remains step 5.
+
+The workflow qualifies dependencies before their callers. Before each tag it
+requires successful ordinary main-push CI for that exact candidate, identified by
+repository, workflow, run, and attempt. A cancelled original CI run can be rerun at
+its original SHA, up to attempt 3 and within the tooling's 25-day evidence window.
+The main-push rerun concurrency group keeps recovery separate from newer main CI.
+Candidates predating that concurrency fix need a new reviewed request: reruns use
+the original workflow revision. Missing, failed, expired, or ineligible CI stops
+publication; newer-SHA CI cannot substitute for it.
+
+Qualification runs workspace-disabled tidy-diff, build, and tests against declared
+published dependencies, plus owning API/changelog checks. It supplies no checkout
+replacements. Advisory `gorelease` remains advisory; human diff review owns SemVer
+judgment. Candidate execution runs without App secrets or write credentials.
+Protected main-side jobs revalidate authority and settings before minting narrow,
+short-lived App tokens for the exact PR or tag write.
+
+After each tag, a fresh external module and caches resolve the exact version
+through `proxy.golang.org` and `sum.golang.org`, verify tag/commit/source identity,
+exercise the owned import fixture, and check standalone closure. The support
+fixture uses a legitimate same-repository-path import of Go `internal` packages.
+Only successful public proof permits downstream preparation and publication.
+
+### Run release-only diagnostics locally
+
+These commands do not write GitHub refs or replace reviewed-request/CI authority.
+They execute candidate or downloaded Go code: use an unprivileged environment
+without release credentials. They can download public dependencies and run full
+selected-module suites; keep them out of routine infrastructure checks.
+
+```sh
+python3 .github/scripts/module-release.py qualify --candidate "$CANDIDATE" --batch "$BATCH"
+MODULE=provider/openai
+VERSION='<EXACT_PUBLISHED_VERSION>'
+python3 .github/scripts/module-release.py prove --candidate "$CANDIDATE" --module "$MODULE" --version "$VERSION"
+```
+
+`qualify` cannot resolve unpublished batch versions through local replacements;
+qualify dependent modules after public prerequisites and reviewed pin preparation.
+For `prove`, set `CANDIDATE` to the exact tagged commit. Public checks override
+ambient workspace/private-proxy settings and use fresh module/build caches.
+The shell entrypoint `check-module-publication.sh` also forwards explicit
+subcommands to this CLI.
+
+`GOWORK=off` alone leaves local `replace` directives effective. Root and both
+microVM modules retain local replacements, so their workspace-disabled tests do
+not prove public dependency resolution. The existing persistence check remains:
 
 ```sh
 task test:module-publication
@@ -210,10 +295,84 @@ task test:module-publication
 task test:module-publication VERSION="$ADAPTERS_VERSION"
 ```
 
-This proof requires fetched `origin/main` history/tags and public proxy access.
-It checks the specified persistence-module pins and builds a published adapters
-version in a fresh external module/cache. It does not prove publication of every
-module in the repository.
+It retains persistence-module pin/main-ancestry checks, root/integration adapters
+pin agreement, and a fresh external build of the chosen adapters version. It
+requires public proxy access and does not prove every module's publication.
+
+### Resume or repair a stopped batch
+
+A failed stage stops the entire batch, including independent modules not yet
+published. Completed tags remain immutable. A failed post-tag proof is
+**published-but-unverified**, not a rollback or success; the workflow tries public
+proof at most three times before stopping. Inspect the failed run and fix the
+cause before a human dispatches `module-releases.yml` on `main` with
+`retry_request` set to the exact merged request PR number. Empty input only
+reconciles; unrelated events do not retry failures. Use a fresh workflow dispatch,
+not **Re-run jobs** on an older release run. Explicit retry can open a fresh
+preparation PR after an unmerged close, still requiring human merge.
+
+Retry reconstructs authority from reviewed commits, PRs, exact tags, and trusted
+run/attempt artifacts. Same-version/same-qualified-SHA work can resume; a different
+SHA is a hard conflict, and tag existence alone is insufficient evidence. Later
+main activity does not advance a fixed candidate silently. Missing or expired
+provenance requires a new reviewed request; use the request workflow's optional
+`supersedes` JSON list of earlier reviewed request PR numbers to retire them without
+reusing their proofs. Plan/result artifacts have 90-day retention; cancelled-CI
+recovery has the shorter window above. Successful CI evidence does not expire merely
+by age while its trusted run/attempt remains available. Preserve request/preparation
+PR, run/attempt, candidate, tag, and public-proof links when reporting completion.
+
+Never move, delete, or reuse a production tag as recovery. Invalid public versions
+need forward fixes because Go proxy/checksum history cannot be retracted. For an
+exceptional administrative repair, stop automation, inspect effective repository
+and inherited rules plus exact ref/provenance, obtain separate approval, and have
+an authorized administrator repair only that scope where organization policy
+allows. Restore protections and repeat configuration checks and the relevant
+separately authorized enforcement rehearsal before enabling releases again.
+
+### Release protection setup
+
+Deploy the module workflows and all shared-App application/SDK guards together
+before enabling module releases; root/SDK namespace and provenance hardening can
+be deployed first while the module feature remains disabled.
+Use the [settings reference](../.github/scripts/module-release-protection.md) for
+identity variables, credential metadata, effective rules, and read-only
+`diff`/`check`. `apply` is also a dry run unless `--confirm` is explicitly supplied;
+confirmed apply requires separate human authorization and an administrator's
+credential. The release App must not administer its own protections.
+
+The checker reuses the existing environment-scoped App key/client ID to sign a
+short-lived App JWT for identity and repository-installation **GETs before minting
+any installation write token**. Installed rights and repository membership are
+verified through the App-authenticated API; no human OAuth/user-token/refresh flow
+is required. Key/JWT bytes stay out of arguments, logs, artifacts and durable files,
+and candidate jobs never receive them. Local human metadata inspection can instead
+use an explicitly supplied short-lived `RELEASE_APP_JWT` with normal `gh` auth.
+
+Routine `check` verifies effective tag/environment protections and deployed workflow
+identities. Normal `GITHUB_TOKEN` read access is tried first; `RELEASE_SETTINGS_TOKEN`
+is only an optional human metadata override if the platform withholds required
+environment/ruleset details. Missing access is an actionable rollout blocker, not
+a request to broaden the App's permissions. The separate rollout-only `audit`
+checks key scope via secret-name metadata (or use an equivalent authorized admin
+audit); it never requires a reader secret of a particular name to exist. Complete
+this scope audit before module enablement, not on every release. The App itself
+needs Contents/write and Pull requests/write without Administration or Workflows;
+job `GITHUB_TOKEN` Actions/write handles CI recovery and continuation.
+
+With `MODULE_RELEASES_ENABLED` unset/false, existing root/SDK flows keep their
+main-only environment, verified existing-App identity, constrained namespaces and
+exact human-merge provenance without depending on module-wide settings or new
+numeric identity variables. The coordinated enabled rollout adds the full global
+settings preflight to every shared-App path before write-token minting.
+
+Verify App-only tag creation and separate no-bypass update/deletion restrictions
+for root, SDK, and every supported Go prefix. Keep stronger inherited rules. Before
+enabling entrypoints, obtain separate authorization for a denial rehearsal in an
+isolated repository or non-release namespace with equivalent protections, and map
+production prefixes to their effective rules and App installation. Record
+**live-enforced in the fixture** separately from **configuration-verified in
+production**. A successful configuration check is not live enforcement evidence.
 
 ## 5. Finish integration
 
@@ -247,6 +406,8 @@ in the PR rather than treating a workspace pass as release readiness.
 | `task test:module-candidate MODULE=provider/openai` | Per-module metadata check and Go tests with current sibling source, using temporary manifests; omit `MODULE` for all workspace members |
 | `task tidy:module-candidate MODULE=provider/openai` | Repair candidate metadata while preserving sibling versions and original replacements; review the diff |
 | `task test:module-metadata` | Non-mutating cleanliness check of committed Go metadata, excluding root `go.work.sum` |
+| `task test:module-release-tools` | Fast offline policy/state/settings API tests with test-owned fixtures; also runs in `test:workspace-infrastructure` |
+| `task test:module-release-integration` | Explicit comprehensive offline release tooling tests, including real temporary Go modules/file proxy and mocked GitHub/workflow callers; no live releases |
 | `task test:module-publication` | Public resolution/main-ancestry proof for the persistence release policy |
 
 ## Next steps

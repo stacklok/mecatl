@@ -26,8 +26,8 @@ Two consequences of the Homebrew half, before you start:
   SHA256 checksums for a specific tag. Deleting and re-pushing a `vX.Y.Z` that already produced
   a release and a tap commit leaves the tap pointing at checksums that no longer match, which
   breaks `brew install` for everyone. If a release goes wrong after the tap commit lands,
-  **fix forward with the next patch version.** Re-tagging is only an option when the run failed
-  before publishing anything.
+  **fix forward with the next patch version.** Published tags remain immutable; use
+  the documented administrative recovery procedure for exceptional repairs.
 - **Validate release-only inputs BEFORE tagging**, not by pushing a throwaway tag.
   The release-PR workflow checks execution-image digest pins before it opens the PR;
   CI checks the Brood Box build and microVM defaults handoff. A local
@@ -186,45 +186,18 @@ compatibility contract (`engine/COMPATIBILITY.md`).
   and root `vX.Y.Z` version lines are independent. Bumps follow `engine/COMPATIBILITY.md`
   (pre-v1: minor = additive or breaking, patch = fixes only).
 
-### Cutting an engine tag (mirrors the root flow)
+### Releasing Go modules
 
-Run from the repo root.
+Use the reviewed module-batch procedure in `docs/module-development.md`, including
+for an engine-only release. Humans select exact versions and merge request and
+preparation PRs; the release App qualifies fixed commits, tags dependencies first,
+and verifies public resolution before releasing consumers. Read that procedure
+before dispatching `request-module-release.yml` or retrying `module-releases.yml`.
 
-1. **Pick the engine version.** Increment the latest engine tag per `engine/COMPATIBILITY.md`
-   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag:
-   ```sh
-   git tag --sort=-v:refname --list 'engine/v*' | head -1
-   ```
-
-2. **Pre-flight.** Confirm `engine/CHANGELOG.md` has an `[Unreleased]` entry covering everything
-   since the last engine tag. Then run the advisory `gorelease` check:
-   ```sh
-   task api:release-check
-   ```
-   It never fails: it previews the SemVer classification against the previous engine tag, so
-   compare its verdict with the version you picked. The authoritative guard is the `api-compat` gate
-   (`task api:check`), which already guarantees the committed `engine/api/*.txt` snapshots match the
-   surface being tagged.
-
-3. **Create the annotated tag** with a concise summary:
-   ```sh
-   git tag -a engine/vX.Y.Z -m "engine/vX.Y.Z — <one-line summary>"
-   ```
-
-4. **Push the tag:**
-   ```sh
-   git push origin engine/vX.Y.Z
-   ```
-
-**This line is deliberately still manual.** An engine tag adds no commit to `main` and carries
-no pin bump, so it never needed the release-PR flow the root `vX.Y.Z` line uses — pushing the
-tag is the whole release.
-
-**IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew cask bump.** `release.yml` triggers on `v*` (the root tag
-glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
-cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
-`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers. There is no pin
-bump and no `release.yml` run to confirm — the push of the tag is the whole release.
+Module release automation remains disabled until its separately authorized
+protection rollout and live rehearsal are complete. Report an unmet prerequisite
+rather than falling back to manual tag creation. A module release does not publish
+application images, CLI archives, or the SDK npm package.
 
 ## Notes
 
@@ -241,9 +214,8 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
   at a commit whose release metadata the gate rejects. If `VERSION` is edited on `main` outside a
   release PR, `create-release-tag.yml` refuses to tag it rather than cutting a release from it.
   `release.yml`'s `guard` job additionally refuses to publish anything from a tag that is
-  not an ancestor of `main`, so a tag cut on a branch builds nothing. (This applies to the ROOT
-  `v*` line only — the `engine/v*` tags below are still cut by hand, deliberately: they carry
-  no pin bump and add no commit to `main`.)
+  not an ancestor of `main`, so a tag cut on a branch builds nothing. Independently
+  published Go modules use the reviewed batch workflow linked above.
 - **Annotated tags only** (`git tag -a`), matching prior releases — they carry a tagger + message.
   `create-release-tag.yml` does this; the tagger is `github-actions[bot]`.
 - **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
@@ -254,11 +226,10 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
   the bump before the PR can merge, and `create-release-tag.yml` tags only the merge commit. It
   means someone tagged by hand or the chart metadata drifted from `VERSION`. Fix forward with a
   patch.
-- **Rerunning is safe.** `create-release-tag.yml` makes one decision from the tag's state and
-  the commit's provenance, so it is quiet when there is nothing to do (the tag already points
-  here, or `VERSION` names an already-released tag this commit did not produce) and loud only
-  when a tag should have been created and something is wrong. `release.yml` re-signs
-  idempotently via its `workflow_dispatch` `tag` input.
+- **Rerunning preserves identity.** Tag creation revalidates the designated-App PR,
+  human merge and exact commit even when the tag already points there. An unrelated
+  commit is not a release retry. `release.yml` can re-sign existing artifacts via
+  its `workflow_dispatch` `tag` input without moving the tag.
 - **Setup, once.** Both workflows read the release GitHub App from a `release` GitHub
   Environment (`vars.RELEASE_APP_CLIENT_ID`, `secrets.RELEASE_APP_PRIVATE_KEY`), whose
   deployment-branch policy must be restricted to `main`. The App needs exactly two repository

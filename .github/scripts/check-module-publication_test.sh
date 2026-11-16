@@ -1,8 +1,23 @@
 #!/bin/sh
 set -eu
 
-root=$(git rev-parse --show-toplevel)
-repo="$root/.scratch/module-publication-fixture-$$"
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+if [ "$#" -eq 0 ]; then
+  temporary=$(mktemp -d)
+  trap 'rm -rf "$temporary"' EXIT
+  mkdir "$temporary/home" "$temporary/xdg" "$temporary/hooks" "$temporary/template"
+  env -i PATH="$PATH" HOME="$temporary/home" XDG_CONFIG_HOME="$temporary/xdg" TMPDIR="$temporary" \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=4 \
+    GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$temporary/hooks" \
+    GIT_CONFIG_KEY_1=init.templateDir GIT_CONFIG_VALUE_1="$temporary/template" \
+    GIT_CONFIG_KEY_2=commit.gpgSign GIT_CONFIG_VALUE_2=false \
+    GIT_CONFIG_KEY_3=tag.gpgSign GIT_CONFIG_VALUE_3=false \
+    GOENV=off GOWORK=off GOTOOLCHAIN=local \
+    sh "$root/.github/scripts/check-module-publication_test.sh" --isolated
+  exit
+fi
+[ "$#" -eq 1 ] && [ "$1" = --isolated ] || exit 2
+repo=$(mktemp -d)
 mkdir -p "$repo/internal/adaptersupport" "$repo/contracts/gen/go/mecatl/driver" "$repo/adapters"
 trap 'rm -rf "$repo"' EXIT
 

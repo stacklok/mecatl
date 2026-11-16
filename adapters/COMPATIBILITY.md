@@ -78,18 +78,15 @@ revision outside `main`. Proxy resolution of that revision is not a durable
 release dependency contract. Use `adapters/v0.1.1` or later for standalone
 installation; the existing `v0.1.0` tag is immutable.
 
-Release dependency-first from reviewed commits:
-
-1. For each dependency module, run `GOWORK=off go mod tidy -diff` and
-   `GOWORK=off go test ./...` before publishing its independent tag.
-2. In `adapters/`, run `GOWORK=off go mod tidy -diff` and
-   `GOWORK=off go test ./...` against the pinned public dependencies. Review
-   `go.sum` and the dependency tags. Run `task test:module-publication` to
-   check releaseable pins and the currently consumed adapters tag.
-3. A human publishes the adapters tag after review. Then run
-   `task test:module-publication VERSION=vX.Y.Z` to compile that exact tag
-   from the public Go proxy in an external module without workspace or replace
-   directives. Only pin it in root and integration manifests after this passes.
+Release through the [reviewed module-release procedure](../docs/module-development.md#4-merge-and-release-dependencies-first).
+Humans choose independent versions and merge the request/preparation PRs; the
+release App creates tags only after exact-candidate CI and standalone qualification.
+Public proof must pass before downstream preparation or root/integration adoption.
+For a separate check of persistence pins and the currently consumed adapters tag,
+run `task test:module-publication`; use
+`task test:module-publication VERSION=vX.Y.Z` to compile the chosen published
+adapters version in a fresh external module/cache. These checks retain the
+root/integration pin-agreement requirement.
 
 ## Module tests
 

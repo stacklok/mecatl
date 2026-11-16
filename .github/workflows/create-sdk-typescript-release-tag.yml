@@ -15,6 +15,11 @@ concurrency:
   group: create-sdk-typescript-release-tag-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+  RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+  RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+
 jobs:
   create-tag:
     name: Tag the TypeScript SDK release commit
@@ -37,7 +42,7 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < sdk/typescript/VERSION)"
+          version="$(python3 .github/scripts/release-app-guard.py version --track sdk)"
           if ! printf '%s' "$version" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
             echo "::error::SDK VERSION must hold stable bare semver, got '${version}'"
             exit 1
@@ -74,8 +79,10 @@ jobs:
       - name: Decide whether to tag
         id: decide
         env:
-          EXPECTED_BRANCH: ${{ steps.version.outputs.branch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -83,46 +90,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          state=absent
-          at=""
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            at="$(git rev-parse "refs/tags/${TAG}^{commit}")"
-            if [ "$at" = "$SHA" ]; then state=current; else state=elsewhere; fi
-          fi
-          echo "tag ${TAG}: state=${state}${at:+ (at ${at})}"
+          state="$(python3 .github/scripts/release-app-guard.py tag --track sdk)"
 
           if [ "$state" = current ]; then
             echo "should_tag=false" >> "$GITHUB_OUTPUT"
             echo "::notice::${TAG} already points at ${SHA}"
             exit 0
-          fi
-
-          associated_prs="$(gh api "/repos/${REPOSITORY}/commits/${SHA}/pulls")"
-          matching_prs="$(printf '%s' "$associated_prs" | jq --arg branch "$EXPECTED_BRANCH" \
-            '[.[] | select(.head.ref == $branch and .base.ref == "main" and
-              .merged_at != null and .user.type == "Bot")]')"
-          provenance=no
-          if [ "$(printf '%s' "$matching_prs" | jq 'length')" = "1" ]; then
-            provenance=ok
-          fi
-
-          # The workflow's own bootstrap PR introduces sdk/typescript/VERSION
-          # after v0.1.0 already exists elsewhere. Treat that one case as a
-          # quiet no-op; all future untagged edits outside the release flow fail.
-          if [ "$provenance" != ok ]; then
-            if [ "$state" = elsewhere ]; then
-              echo "should_tag=false" >> "$GITHUB_OUTPUT"
-              echo "::notice::${TAG} already exists and this is not its release PR"
-              exit 0
-            fi
-            echo "::error::${SHA} is not the merged App-authored PR from ${EXPECTED_BRANCH}"
-            echo "Cut SDK releases with the Create TypeScript SDK Release PR workflow."
-            exit 1
-          fi
-
-          if [ "$state" = elsewhere ]; then
-            echo "::error::${TAG} already exists at ${at}; refusing to move it"
-            exit 1
           fi
 
           changed="$(git diff --name-only "${SHA}^" "$SHA" | sort)"
@@ -161,22 +134,18 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
       - name: Create and push the SDK tag
         if: steps.decide.outputs.should_tag == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "$TAG"
-          echo "::notice::pushed ${TAG}; release-sdk-typescript.yml will stage it"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_APP_WRITE_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 .github/scripts/release-app-guard.py write-tag --track sdk
 
       - name: Summary
         env:

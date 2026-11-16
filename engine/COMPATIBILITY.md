@@ -119,9 +119,11 @@ regen is NOT an API change and need not be CHANGELOG-noted.
 ## Release-time advisory
 
 At release time, `task api:release-check` runs `gorelease` (and, transitively,
-`apidiff`) as an **advisory** sanity check. It is **not** the PR gate — it needs
-a base `engine/vX.Y.Z` tag, which does not exist yet. The `api-compat` text gate
-is the PR guard until the first tag is cut.
+`apidiff`) as an **advisory** sanity check against the previous engine tag. It is
+not a PR or publication gate; the `api-compat` text gate guards snapshot freshness.
+Use the [reviewed module-release procedure](../docs/module-development.md#4-merge-and-release-dependencies-first)
+for exact-version requests, human review, qualification, and App-created tags.
+Human diff review still owns the SemVer decision.
 
 ## Session reconstruction contract (event-sourced Load)
 

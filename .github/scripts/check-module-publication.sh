@@ -1,6 +1,13 @@
 #!/bin/sh
 set -eu
 
+# Explicit new subcommands share the Python policy/proof implementation. With no
+# arguments retain the existing adapters/root/integration publication contract.
+if [ "$#" -gt 0 ]; then
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  exec python3 "$script_dir/module-release.py" "$@"
+fi
+
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 command -v jq >/dev/null 2>&1 || { echo 'module publication check requires jq' >&2; exit 1; }

@@ -20,6 +20,11 @@ concurrency:
   group: create-sdk-typescript-release-pr
   cancel-in-progress: false
 
+env:
+  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+  RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+  RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+
 jobs:
   release-pr:
     name: Open TypeScript SDK release PR
@@ -251,12 +256,24 @@ jobs:
             cat "$RUNNER_TEMP/sdk-changelog-entry.md"
           } > "$RUNNER_TEMP/sdk-release-pr.md"
 
+      - name: Verify release request authority and protections
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
+          BUMP_TYPE: ${{ inputs.bump_type }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 .github/scripts/release-app-guard.py request --track sdk
+
       # Mint the App token only after every repo-controlled validation has run.
       - name: Mint the release app token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
@@ -264,24 +281,11 @@ jobs:
       - name: Push the version bump and open the PR
         id: pr
         env:
-          BRANCH: ${{ steps.version.outputs.branch }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_APP_WRITE_TOKEN: ${{ steps.app-token.outputs.token }}
+          BUMP_TYPE: ${{ inputs.bump_type }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git switch -c "$BRANCH"
-          git add sdk/typescript/CHANGELOG.md sdk/typescript/VERSION sdk/typescript/package.json
-          git commit -m "Release TypeScript SDK v${VERSION}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" \
-            "HEAD:refs/heads/${BRANCH}"
-          pr_url="$(gh pr create --repo "$REPOSITORY" --base main --head "$BRANCH" \
-            --title "Release TypeScript SDK v${VERSION}" \
-            --body-file "$RUNNER_TEMP/sdk-release-pr.md")"
-          echo "url=${pr_url}" >> "$GITHUB_OUTPUT"
-          echo "number=${pr_url##*/}" >> "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/release-app-guard.py write-sdk-pr --track sdk
 
       - name: Summary
         env:

@@ -38,8 +38,14 @@ concurrency:
   group: create-release-pr
   cancel-in-progress: false
 
+env:
+  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+  RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+  RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+
 jobs:
   preflight:
+    if: github.ref == 'refs/heads/main'
     name: Validate release base images
     runs-on: ubuntu-24.04
     permissions:
@@ -122,13 +128,22 @@ jobs:
           # this is the one destructive call in the flow and it must not eat a colleague's branch.
           gh api --paginate "/repos/${REPOSITORY}/git/matching-refs/heads/release/v" --jq '.[].ref' \
             | while read -r ref; do
-                case "${ref}" in
-                  refs/heads/release/v[0-9]*.[0-9]*.[0-9]*) ;;
-                  *) echo "skipping ${ref} (not a release/vX.Y.Z ref)"; continue ;;
-                esac
+                if ! printf '%s\n' "${ref}" | grep -qE '^refs/heads/release/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+                  echo "skipping ${ref} (not a release/vX.Y.Z ref)"
+                  continue
+                fi
                 gh api -X DELETE "/repos/${REPOSITORY}/git/refs/${ref#refs/}"
                 echo "deleted stale ${ref}"
               done
+
+      - name: Verify release request authority and protections
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
+          BUMP_TYPE: ${{ inputs.bump_type }}
+        run: python3 .github/scripts/release-app-guard.py request --track root
 
       # Minted only now: everything above runs repo-controlled scripts and gh calls that have no
       # business happening while a contents:write App credential is live in the job.
@@ -139,6 +154,8 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write

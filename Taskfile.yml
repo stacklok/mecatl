@@ -600,11 +600,28 @@ tasks:
       - python3 .github/scripts/module-candidate.py --fix{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
 
   test:workspace-infrastructure:
-    desc: Run offline workspace and module-metadata task regression tests
+    desc: Run offline workspace, module-metadata, and fast release-tool regression tests
     cmds:
       - python3 .github/scripts/module-metadata_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-candidate_test.py
+      - task: test:module-release-tools
+
+  test:module-release-tools:
+    desc: Run fast offline release policy, state, and API regressions (no module suites or public network)
+    cmds:
+      - python3 .github/scripts/module-release_test.py --quick
+      - python3 .github/scripts/module-release-github_test.py --quick
+      - python3 .github/scripts/module-release-protection_test.py --quick
+
+  test:module-release-integration:
+    desc: Run comprehensive offline release tooling integration (real temporary Go modules/proxy and mocked GitHub)
+    cmds:
+      - python3 .github/scripts/module-release_test.py
+      - python3 .github/scripts/module-release-github_test.py
+      - python3 .github/scripts/module-release-protection_test.py
+      - python3 .github/scripts/module-release-integration_test.py --synthetic
+      - sh .github/scripts/check-module-publication_test.sh
 
   test:module-publication:
     desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.

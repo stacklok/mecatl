@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "namespace": "github.com/stacklok/mecatl",
+  "modules": {
+    ".": {"role": "application"},
+    "environment/microvm": {"role": "runtime-artifact"},
+    "integration/microvm": {"role": "test"},
+    "engine": {"role": "public", "tag_prefix": "engine/", "policy": "engine/COMPATIBILITY.md", "changelog": "engine/CHANGELOG.md", "api": "engine/api", "smoke": "engine.go"},
+    "provider/ssefilter": {"role": "public", "tag_prefix": "provider/ssefilter/", "policy": "engine/COMPATIBILITY.md", "smoke": "ssefilter.go"},
+    "provider/anthropic": {"role": "public", "tag_prefix": "provider/anthropic/", "policy": "engine/COMPATIBILITY.md", "smoke": "anthropic.go"},
+    "provider/openai": {"role": "public", "tag_prefix": "provider/openai/", "policy": "engine/COMPATIBILITY.md", "smoke": "openai.go"},
+    "provider/openaichat": {"role": "public", "tag_prefix": "provider/openaichat/", "policy": "engine/COMPATIBILITY.md", "smoke": "openaichat.go"},
+    "authn/oidc": {"role": "public", "tag_prefix": "authn/oidc/", "policy": "engine/COMPATIBILITY.md", "smoke": "oidc.go"},
+    "contracts/gen/go/mecatl/driver": {"role": "generated", "tag_prefix": "contracts/gen/go/mecatl/driver/", "policy": "adapters/COMPATIBILITY.md", "smoke": "driver.go"},
+    "internal/adaptersupport": {"role": "support", "tag_prefix": "internal/adaptersupport/", "policy": "adapters/COMPATIBILITY.md", "smoke": "support.go"},
+    "adapters": {"role": "public", "tag_prefix": "adapters/", "policy": "adapters/COMPATIBILITY.md", "changelog": "adapters/CHANGELOG.md", "smoke": "adapters.go"}
+  }
+}

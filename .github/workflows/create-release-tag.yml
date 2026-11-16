@@ -37,9 +37,15 @@ concurrency:
   group: create-release-tag-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+  RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+  RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+
 jobs:
   create-tag:
     name: Tag the release commit
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # See create-release-pr.yml: the App key is environment-scoped, not a repo secret, so a
@@ -49,7 +55,6 @@ jobs:
       contents: read # checkout
       pull-requests: read # resolve the PR that produced this commit
     steps:
-      # fetch-depth: 0 so `git rev-parse <tag>` can see existing tags for the idempotency check.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -72,7 +77,7 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          VERSION="$(tr -d '[:space:]' < VERSION)"
+          VERSION="$(python3 .github/scripts/release-app-guard.py version --track root)"
           if ! printf '%s' "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::VERSION must hold bare semver (MAJOR.MINOR.PATCH), got '${VERSION}'"
             exit 1
@@ -80,29 +85,15 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-      # The path filter alone is not proof that this commit came from the release flow, and
-      # neither is the commit SUBJECT: matching /^Release vX.Y.Z/ only asserts a naming
-      # convention, and it silently couples the gate to the repo's squash-title setting (flip
-      # squash_merge_commit_title and every release wedges AFTER the bump is already on main).
-      # Ask GitHub what produced this commit instead, then check what it actually contains.
-      # ONE decision, because tag state and provenance are interdependent — see the table.
-      # Ordering matters: the tag-state check comes FIRST. The commit that INTRODUCES the
-      # VERSION file (this feature's own bootstrap merge) touches VERSION from a non-release
-      # branch, so a provenance-first order fails it and the new mechanism's very first run on
-      # main looks broken. It is harmless — no tag, no publish — but it should be quiet, and
-      # provenance only has to hold when a tag is actually about to be created.
-      #
-      #   tag state      provenance   outcome
-      #   ------------   ----------   ---------------------------------------------------
-      #   at this SHA    (not run)    nothing to do (idempotent re-run)
-      #   elsewhere      fails        nothing to do (bootstrap: VERSION names a released tag)
-      #   elsewhere      passes       ERROR: this release PR's version is already tagged
-      #   absent         fails        ERROR: VERSION edited outside the release flow
-      #   absent         passes       verify synchronized release metadata, then tag
+      # The designated App, same-repository PR, exact merge SHA and human merger
+      # are checked before tag state, including same-SHA retries.
       - name: Decide whether to tag
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
           REPOSITORY: ${{ github.repository }}
@@ -111,55 +102,12 @@ jobs:
           set -euo pipefail
 
           # --- tag state -------------------------------------------------------------
-          state=absent
-          at=""
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            # Peel the annotated tag to the commit it names.
-            at="$(git rev-parse "refs/tags/${TAG}^{commit}")"
-            if [ "${at}" = "${SHA}" ]; then state=current; else state=elsewhere; fi
-          fi
-          echo "tag ${TAG}: state=${state}${at:+ (at ${at})}"
+          state="$(python3 .github/scripts/release-app-guard.py tag --track root)"
 
           if [ "${state}" = "current" ]; then
             echo "should_tag=false" >> "$GITHUB_OUTPUT"
             echo "::notice::${TAG} already points at ${SHA} — nothing to do"
             exit 0
-          fi
-
-          # --- provenance, evaluated but not yet enforced ------------------------------
-          # Asking GitHub which PR produced the commit, rather than pattern-matching the
-          # commit subject: a subject regex only asserts a naming convention, fails outright
-          # on a rebase merge, and silently couples the gate to squash_merge_commit_title.
-          pr="$(gh api "/repos/${REPOSITORY}/commits/${SHA}/pulls" --jq '.[0] // {}')"
-          head_ref="$(printf '%s' "${pr}" | jq -r '.head.ref // ""')"
-          merged_at="$(printf '%s' "${pr}" | jq -r '.merged_at // ""')"
-          author_type="$(printf '%s' "${pr}" | jq -r '.user.type // ""')"
-          echo "PR head=${head_ref:-<none>} merged=${merged_at:-<no>} author_type=${author_type:-<none>}"
-
-          provenance=no
-          if [ "${head_ref}" = "release/v${VERSION}" ] && [ -n "${merged_at}" ] \
-            && [ "${author_type}" = "Bot" ]; then
-            provenance=ok
-          fi
-
-          # --- decision ----------------------------------------------------------------
-          if [ "${provenance}" != "ok" ]; then
-            if [ "${state}" = "elsewhere" ]; then
-              echo "should_tag=false" >> "$GITHUB_OUTPUT"
-              echo "::notice::${TAG} already exists (at ${at}) and this commit is not its release PR — nothing to do"
-              exit 0
-            fi
-            echo "::error::${SHA} is not a merged release PR for v${VERSION} — refusing to tag"
-            echo "  Expected a merged PR opened by the release App from branch release/v${VERSION}."
-            echo "  Cut releases with the Create Release PR workflow, never by editing VERSION."
-            exit 1
-          fi
-
-          if [ "${state}" = "elsewhere" ]; then
-            echo "::error::${TAG} already exists at ${at}, but this release PR expects to create it"
-            echo "  Refusing to move a published tag — its archives' checksums are recorded in"
-            echo "  the Homebrew formula. Fix forward with the next patch version."
-            exit 1
           fi
 
           # --- provenance holds and the tag is absent: check values, then tag ------------
@@ -195,24 +143,19 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      # Annotated, matching every prior mecatl release. The token rides in the push URL rather
-      # than a persisted credential, so it is never written to .git/config.
+      # Annotated Git Data API writes; never put a credential in a git URL.
       - name: Create and push the tag
         if: steps.decide.outputs.should_tag == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "${TAG}"
-          echo "::notice::pushed ${TAG} — release.yml will publish it"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_APP_WRITE_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 .github/scripts/release-app-guard.py write-tag --track root
 
       - name: Summary
         env:

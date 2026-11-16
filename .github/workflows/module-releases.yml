@@ -1,0 +1,213 @@
+name: Module releases
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/module-releases/**']
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      retry_request:
+        description: 'Explicit human retry: exact merged request PR number; leave empty to reconcile'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# A replaced pending event loses nothing: each survivor discovers ALL requests.
+# Never cancel a running decision/write pair, including across overlapping batches.
+concurrency:
+  group: module-releases
+  cancel-in-progress: false
+
+env:
+  MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
+  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+  RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+
+jobs:
+  plan:
+    name: Plan
+    if: vars.MODULE_RELEASES_ENABLED == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      request: ${{ steps.plan.outputs.request }}
+      failures: ${{ steps.plan.outputs.failures }}
+    steps:
+      # Always trusted main, never workflow_run.head_branch/head_sha.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Discover reviewed requests and durable run/attempt evidence
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETRY_REQUEST: ${{ inputs.retry_request }}
+        run: |
+          python3 .github/scripts/module-release-github.py plan --output plan.json
+          python3 -c 'import json,os; p=json.load(open("plan.json")); open(os.environ["GITHUB_OUTPUT"],"a").write("kind="+p["action"]["kind"]+"\nrequest="+str(p["action"].get("request", ""))+"\nfailures="+json.dumps([f["request"] for f in p.get("failures", [])])+"\n")'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: plan.json
+          retention-days: 90
+
+  execute:
+    name: Execute request-${{ needs.plan.outputs.request }} blocked-${{ needs.plan.outputs.failures }}
+    needs: plan
+    if: needs.plan.outputs.kind == 'prepare' || needs.plan.outputs.kind == 'release' || needs.plan.outputs.kind == 'prove' || needs.plan.outputs.kind == 'fail'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      # Candidate archives, Go tests, tidy and public consumer code only execute
+      # here: no environment, App secrets, cached dependencies, or write token.
+      - name: Exact-source qualification, selective tidy, or fresh public proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/module-release-github.py execute --input plan.json --output result.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: module-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: result.json
+          retention-days: 90
+
+  recover:
+    name: Recover CI request-${{ needs.plan.outputs.request }} blocked-${{ needs.plan.outputs.failures }}
+    needs: plan
+    if: needs.plan.outputs.kind == 'recover-ci'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Rerun only the eligible original main-push CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/module-release-github.py execute --input plan.json
+
+  write:
+    name: Write request-${{ needs.plan.outputs.request }} blocked-${{ needs.plan.outputs.failures }}
+    needs: [plan, execute]
+    if: needs.plan.outputs.kind == 'prepare' || needs.plan.outputs.kind == 'release'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: incoming
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: module-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: incoming
+      - name: Revalidate exact authority, result data, and effective protections
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: python3 .github/scripts/module-release-github.py validate-write --input incoming/plan.json --result incoming/result.json --output "$RUNNER_TEMP/module-write.json"
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      # Only trusted main Python + API data processing after this point.
+      - name: Apply only the locally validated PR or immutable exact tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODULE_RELEASE_WRITE_TOKEN: ${{ steps.app.outputs.token }}
+        run: python3 .github/scripts/module-release-github.py write --input "$RUNNER_TEMP/module-write.json"
+
+  continue:
+    name: Continue
+    needs: [plan, execute, write, recover]
+    if: >-
+      always() && vars.MODULE_RELEASES_ENABLED == 'true' &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.kind != 'wait' && needs.plan.outputs.kind != 'recover-ci' &&
+      (needs.execute.result == 'success' || needs.execute.result == 'skipped') &&
+      (needs.write.result == 'success' || needs.write.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      # GITHUB_TOKEN may dispatch another run, but cannot create PRs/tags. No
+      # self workflow_run chain (GitHub bounds nesting); no polling service.
+      - name: Queue the next discovery pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/module-release-github.py continue --input plan.json
