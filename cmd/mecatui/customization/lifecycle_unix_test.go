@@ -15,21 +15,16 @@ import (
 
 func TestStatusLine_Scenario4_ProcessLifecycleAndGenerationGuard(t *testing.T) {
 	dir := t.TempDir()
-	openFIFO := func(name string, flags int) *os.File {
+	makeFIFO := func(name string, flags int) *os.File {
 		t.Helper()
 		path := filepath.Join(dir, name)
 		if err := unix.Mkfifo(path, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		file, err := os.OpenFile(path, flags|unix.O_NONBLOCK, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = file.Close() })
-		return file
+		return openFIFO(t, path, flags)
 	}
-	child := openFIFO("child", os.O_RDONLY)
-	control := openFIFO("control", os.O_RDWR)
+	child := makeFIFO("child", os.O_RDONLY)
+	control := makeFIFO("control", os.O_RDWR)
 	// Keep the read end from seeing EOF before the descendant opens its writer.
 	keepalive, err := os.OpenFile(child.Name(), os.O_WRONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -58,11 +53,8 @@ func TestStatusLine_Scenario4_ProcessLifecycleAndGenerationGuard(t *testing.T) {
 	}
 
 	source.Submit(Input{Session: Session{Title: "first"}, Terminal: Terminal{FooterAvailCols: 80}})
-	if err := child.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
 	var ready [1]byte
-	if _, err := io.ReadFull(child, ready[:]); err != nil || ready[0] != 'x' {
+	if n, err := readFIFO(t, child, ready[:]); n != 1 || err != nil || ready[0] != 'x' {
 		t.Fatalf("descendant did not announce startup: byte=%q err=%v", ready, err)
 	}
 	if err := keepalive.Close(); err != nil {
@@ -85,10 +77,7 @@ func TestStatusLine_Scenario4_ProcessLifecycleAndGenerationGuard(t *testing.T) {
 	}
 	// Only the descendant owns the remaining writer. WaitDelay can release the
 	// command's stdout reader, but cannot close this independent pipe for it.
-	if err := child.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if n, err := child.Read(ready[:]); n != 0 || err != io.EOF {
+	if n, err := readFIFO(t, child, ready[:]); n != 0 || err != io.EOF {
 		t.Fatalf("descendant retained its pipe after cancellation: n=%d err=%v", n, err)
 	}
 }

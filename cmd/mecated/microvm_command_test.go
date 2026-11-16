@@ -164,16 +164,12 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	}
 	microVMReleaseDefaultsB64 = base64.StdEncoding.EncodeToString(defaults)
 
-	socketDir, err := os.Open(t.TempDir())
+	socketDir, err := os.MkdirTemp("", "mv")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = socketDir.Close() })
-	fdRoot := "/proc/self/fd"
-	if runtime.GOOS == "darwin" {
-		fdRoot = "/dev/fd"
-	}
-	listener, err := net.Listen("unix", filepath.Join(fdRoot, fmt.Sprint(socketDir.Fd()), "microvmd.sock"))
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	listener, err := net.Listen("unix", filepath.Join(socketDir, "microvmd.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -291,7 +291,10 @@ func TestQualificationEarlyFailureStopsBuildBeforeDiagnostics(t *testing.T) {
 	writeFixture(t, filepath.Join(root, "deploy/mecatl-execution-kind/collect-failure.sh"), "#!/bin/sh\nprintf 'collect\\n' >> \"$HOME/events\"\n", 0o700)
 	started := time.Now()
 	out, err := runStep(t, root, "set -eu\nkind() { printf 'delete\\n' >> \"$HOME/events\"; }\n"+cleanup+"\n"+build+`
-while [ ! -f "$HOME/events" ]; do sleep 0.01; done
+waited=0
+while [ ! -f "$HOME/events" ]; do
+	waited=$((waited + 1)); [ "$waited" -lt 300 ] || exit 99; sleep 0.01
+done
 exit 17
 `, "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"), "root="+root, "state="+filepath.Join(root, "state"), "cluster=owned", "kubeconfig="+filepath.Join(root, "state/kubeconfig"), "context=kind-owned", "MECATL_EXECUTION_DEV_TOOLBOX=", "MECATL_EXECUTION_QUAL_CI=1")
 	var exit *exec.ExitError

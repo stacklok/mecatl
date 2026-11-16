@@ -30,13 +30,13 @@ import (
 
 func TestCanonicalConfiguredDir_AllowsMissingDefaultParents(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, ".local", "share", "mecatui", "memory", "workspace")
-	got, err := canonicalConfiguredDir(path)
+	tail := filepath.Join(".local", "share", "mecatui", "memory", "workspace")
+	got, err := canonicalConfiguredDir(filepath.Join(root, tail))
 	if err != nil {
 		t.Fatalf("canonicalConfiguredDir(first-run path): %v", err)
 	}
-	if got != path {
-		t.Fatalf("canonical path = %q, want %q", got, path)
+	if want := filepath.Join(resolveRootForTest(t, root), tail); got != want {
+		t.Fatalf("canonical path = %q, want %q", got, want)
 	}
 }
 

@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -694,21 +696,24 @@ func TestConnectUsesSavedServerCAForLazyTLSRPC(t *testing.T) {
 	issuerCA := filepath.Join(root, "issuer-ca.pem")
 	issuer.writeCA(t, issuerCA)
 
-	caPublic, caPrivate, err := ed25519.GenerateKey(rand.Reader)
+	// The macOS platform verifier rejects Ed25519 before reporting an unknown authority.
+	caPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	caTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "server-root"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPublic, caPrivate)
+	caDER, err := x509.CreateCertificate(
+		rand.Reader, caTemplate, caTemplate, caPrivate.Public(), caPrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	leafPublic, leafPrivate, err := ed25519.GenerateKey(rand.Reader)
+	leafPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "mecated"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, leafPublic, caPrivate)
+	leafDER, err := x509.CreateCertificate(
+		rand.Reader, leafTemplate, caTemplate, leafPrivate.Public(), caPrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -818,8 +823,12 @@ func TestConnectUsesSavedServerCAForLazyTLSRPC(t *testing.T) {
 				}
 				return
 			}
-			if callErr == nil || !strings.Contains(callErr.Error(), "x509: certificate signed by unknown authority") {
-				t.Fatalf("CreateSession = %v, want unknown-authority certificate failure", callErr)
+			want := "x509: certificate signed by unknown authority"
+			if tc.savedCA == "" && runtime.GOOS == "darwin" {
+				want = "certificate is not trusted" // macOS platform verifier wording
+			}
+			if callErr == nil || !strings.Contains(callErr.Error(), want) {
+				t.Fatalf("CreateSession = %v, want %q certificate failure", callErr, want)
 			}
 		})
 	}

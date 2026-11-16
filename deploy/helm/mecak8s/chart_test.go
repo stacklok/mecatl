@@ -174,8 +174,13 @@ func helm(t *testing.T, args ...string) (string, error) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is required for chart render tests")
 	}
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(kubeconfig, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("helm", args...)
 	cmd.Dir = chartDir(t)
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig, "HELM_NAMESPACE=", "HELM_KUBECONTEXT=")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -276,7 +276,7 @@ func TestReadOnlyMemberRunsGitInWorktreeEndToEnd(t *testing.T) {
 	cfg := teamCfg(t)
 
 	// A real git repo with two commits whose subjects we assert the member can read.
-	repo := t.TempDir()
+	repo := resolveRootForTest(t, t.TempDir())
 	initGitRepoTest(t, repo)
 	writeRepoFile(t, repo, "alpha.txt", "alpha\n")
 	gitCommitTest(t, repo, "add alpha")

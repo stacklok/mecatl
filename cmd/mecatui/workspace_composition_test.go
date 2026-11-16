@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,8 +95,10 @@ func workspaceCompositionInspect(t *testing.T, m ui.Model, local bool, wants ...
 		updated, _ = updated.Update(batch[0]())
 	}
 	view := ansi.Strip(updated.View().Content)
+	// Long paths wrap inside the modal border.
+	unwrap := strings.NewReplacer(" ", "", "\n", "", "┃", "").Replace
 	for _, want := range append([]string{"Workspace snapshot"}, wants...) {
-		if !strings.Contains(view, want) {
+		if !strings.Contains(unwrap(view), unwrap(want)) {
 			t.Fatalf("workspace missing %q:\n%s", want, view)
 		}
 	}
@@ -148,7 +151,9 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 					return workspaceCompositionInspect(t, m, false, "Connection: remote", "Local inspection unavailable"), nil
 				}
 				workspaceTestWrite(t, workspace, "local-only-file", "untracked")
-				m = workspaceCompositionInspect(t, m, true, "Directory: ", filepath.Base(workspace)+`"`, "Git: composition-local", `?? "local-only-file"`)
+				directory := fmt.Sprintf("Directory: %q", workspaceTestCanonical(t, workspace))
+				m = workspaceCompositionInspect(
+					t, m, true, directory, "Git: composition-local", `?? "local-only-file"`)
 				targetID := m.ActiveSessionID()
 				sockets, err := filepath.Glob(filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "mecatui-*", "mecated.sock"))
 				if err != nil || len(sockets) != 1 {

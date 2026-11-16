@@ -369,7 +369,13 @@ func (f *Forker) childDir(label string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("forker: create child dir: %w", err)
 	}
-	return dir, nil
+	// forkWorktree requires a physical root, and macOS $TMPDIR is a symlink.
+	physical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		_ = os.Remove(dir)
+		return "", fmt.Errorf("forker: resolve child dir: %w", err)
+	}
+	return physical, nil
 }
 
 // forkWorktree adds a detached git worktree at childDir pointing at repoRoot's

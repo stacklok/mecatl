@@ -751,7 +751,8 @@ func executableIdentity(path string) (string, string, uint64, uint64, error) {
 	if err != nil {
 		return "", "", 0, 0, err
 	}
-	file, err := os.Open(resolved)
+	// #nosec G304 G703 -- caller supplies an admitted executable or its own os.Args[0].
+	file, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return "", "", 0, 0, err
 	}

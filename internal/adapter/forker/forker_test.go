@@ -375,6 +375,43 @@ func TestForkWorktreeSharesObjectDB(t *testing.T) {
 	}
 }
 
+func TestForkWorktreeUnderSymlinkedTempBase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	initGitRepo(t, base)
+	writeFile(t, filepath.Join(base, "tracked.txt"), "from base\n")
+	gitCommit(t, base)
+	baseWS, err := osfs.NewWorkspace(base)
+	if err != nil {
+		t.Fatalf("base workspace: %v", err)
+	}
+	tmp := t.TempDir()
+	realBase := filepath.Join(tmp, "real")
+	linkBase := filepath.Join(tmp, "link")
+	if err := os.Mkdir(realBase, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realBase, linkBase); err != nil {
+		t.Fatal(err)
+	}
+
+	f := forker.New(osfsWorkspace, forker.WithTempBase(linkBase))
+	child, cleanup, _, err := forkWorkspace(f, context.Background(), baseWS, "wt")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	gitInfo, err := os.Lstat(filepath.Join(child.Root(), ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitInfo.IsDir() {
+		t.Fatal("child .git is a directory; want a worktree gitlink file")
+	}
+}
+
 // TestNewNilConstructorPanics asserts the composition-root contract.
 func TestNewNilConstructorPanics(t *testing.T) {
 	defer func() {
