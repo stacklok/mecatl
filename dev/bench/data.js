@@ -420628,6 +420628,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794836041511,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "573e557c002568c5901647378d10926f582d8529",
+          "message": "refactor(mcpbroker): fence the AS-2 trust test seam and share its defaults (#2794)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-11-16T13:26:42Z",
+          "tree_id": "e218e6a230cc458aa62468d51820a891fb38a30b",
+          "url": "https://github.com/stacklok/mecatl/commit/573e557c002568c5901647378d10926f582d8529"
+        },
+        "date": 1794836751828,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13402,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12896,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -548004,6 +548043,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794836748457,
+  "lastUpdate": 1794836752541,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
