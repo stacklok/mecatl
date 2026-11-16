@@ -419834,6 +419834,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794833530387,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c3bba74f1e228630656510144bf02f2a12e04da",
+          "message": "feat(identitybroker): authorize gateway calls with a per-call ID-JAG and gateway token (#2783)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-11-16T13:00:15Z",
+          "tree_id": "1091a31e460f84af8d911fa230f620a026e0eedc",
+          "url": "https://github.com/stacklok/mecatl/commit/9c3bba74f1e228630656510144bf02f2a12e04da"
+        },
+        "date": 1794834789936,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13383,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12877.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -546982,6 +547021,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794834785895,
+  "lastUpdate": 1794834790844,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
