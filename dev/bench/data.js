@@ -417452,6 +417452,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794782521290,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89a9f42d79071e4f83eb6220e5e92536716968fa",
+          "message": "feat(dtogen): generate MutableClone for DTO-backed views (#2795)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-16T00:42:50Z",
+          "tree_id": "1590eb93c6761a9fa22d6d244c5263afaeed6106",
+          "url": "https://github.com/stacklok/mecatl/commit/89a9f42d79071e4f83eb6220e5e92536716968fa"
+        },
+        "date": 1794790568025,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13416.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -543916,6 +543955,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794790563717,
+  "lastUpdate": 1794790568801,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
