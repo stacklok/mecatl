@@ -421025,6 +421025,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794836751828,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "920c38e7129968ed014e00b62383c29df6643c1f",
+          "message": "fix: make the offline suites pass on macOS (#2803)\n\nThe race suites failed on macOS hosts without GNU coreutils, where\n`t.TempDir()` sits under the `/var` -> `/private/var` symlink.\n\nProduction fixes:\n- `forker`: resolve the child temp dir so forks use a git worktree\n  instead of falling back to a full copy of the workspace.\n- `server`: resolve the governance root before matching the ACP cwd, so\n  sessions on a symlinked workspace are no longer rejected.\n- `microvm`: open the executable with `O_NOFOLLOW`, as on Linux, and\n  mark the darwin-only G703 false positive.\n\nTest fixes:\n- `mecatl-execution-kind`: shim `timeout` and GNU `stat` only when the\n  host lacks them, resolve `TMPDIR`, bound the events wait, and kill\n  the whole process group in `runStep` so a hung step cannot orphan a\n  busy loop.\n- Compare against canonical paths where production resolves them.\n- Move the Linux-only command execution tests unchanged behind a\n  `linux` build tag.\n- Split the FIFO and embedded socket fixtures into per-OS helpers,\n  since Darwin cannot poll FIFOs and caps socket paths at 104 bytes.\n- Use ECDSA test keys, which the macOS platform verifier accepts.\n- Run `helm` with an empty kubeconfig so the operator's context\n  namespace cannot leak into chart tests.\n\n`Taskfile.yml`: `e2e:microvm` checks for `cosign` before preparing\nimages.\n\nFixes #2776",
+          "timestamp": "2026-11-16T15:21:03+01:00",
+          "tree_id": "47e6aa13ad70acdea807f33636eb54db1611abce",
+          "url": "https://github.com/stacklok/mecatl/commit/920c38e7129968ed014e00b62383c29df6643c1f"
+        },
+        "date": 1794839619394,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13402.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12897.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -548515,6 +548554,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794839615762,
+  "lastUpdate": 1794839620539,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
