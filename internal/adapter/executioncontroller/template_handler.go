@@ -18,7 +18,18 @@ import (
 type templateBackend interface {
 	CatalogTemplates() []*executionv1.TemplateCatalogItem
 	ValidateTemplate(context.Context, string, string) (Profile, error)
-	EnsurePendingOwnedRevision(context.Context, string, string, executionenv.Owner, string, string, string, string, string) (Allocation, error)
+	EnsurePendingOwnedRevision(
+		context.Context,
+		string,
+		string,
+		executionenv.Owner,
+		string,
+		string,
+		string,
+		string,
+		string,
+		[]string,
+	) (Allocation, error)
 }
 
 func templateAllowed(c authenticatedClient, id string) bool {
@@ -137,9 +148,6 @@ func (h *Handler) EnsureTemplate(ctx context.Context, q *executionv1.EnsureTempl
 	if !valid || !validBinding(q.GetBindingId()) || !validOperationID(q.GetOperationId()) {
 		return nil, wireError(executionenv.CodeInvalidArgument, false)
 	}
-	if len(q.GetCapabilities()) != 0 {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
 	backend, ok := h.backend.(templateBackend)
 	if !ok {
 		return nil, wireError(executionenv.CodeNotReady, false)
@@ -147,7 +155,18 @@ func (h *Handler) EnsureTemplate(ctx context.Context, q *executionv1.EnsureTempl
 	// Authorization and revision eligibility are checked again by Ensure's store
 	// immediately before allocation, not inferred from a previous catalog read.
 	fp := fingerprint(c.id, ownerHash(owner), q.BindingId, selector.Id, selector.Revision)
-	a, err := backend.EnsurePendingOwnedRevision(ctx, c.id, ownerHash(owner), owner, q.BindingId, selector.Id, selector.Revision, fp, q.OperationId)
+	a, err := backend.EnsurePendingOwnedRevision(
+		ctx,
+		c.id,
+		ownerHash(owner),
+		owner,
+		q.BindingId,
+		selector.Id,
+		selector.Revision,
+		fp,
+		q.OperationId,
+		q.GetCapabilities(),
+	)
 	if err != nil {
 		if h.cfg.Diagnostics != nil {
 			h.cfg.Diagnostics.Log(ctx, port.LevelWarn, "execution backend failure", "operation", "ensure_template", "reason", backendReasonClass(err))

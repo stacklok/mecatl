@@ -32,7 +32,18 @@ func TestEnsurePendingOwnedPersistsOwnerAttestation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	store := NewStore(client, "ns", testProfiles(), nil)
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
-	allocation, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "ensure-operation")
+	allocation, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		testProfiles().defaultRevision["go"],
+		"fingerprint",
+		"ensure-operation",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +61,18 @@ func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	store := NewStore(client, "ns", testProfiles(), nil)
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
-	allocation, err := store.EnsurePendingOwnedRevision(ctx, "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "create-operation")
+	allocation, err := store.EnsurePendingOwnedRevision(
+		ctx,
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		testProfiles().defaultRevision["go"],
+		"fingerprint",
+		"create-operation",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +91,18 @@ func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 	if err != nil || len(before.Items) != 1 {
 		t.Fatalf("allocation list: %v, err=%v", before, err)
 	}
-	_, err = store.EnsurePendingOwnedRevision(ctx, "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fingerprint", "qualification-reattach")
+	_, err = store.EnsurePendingOwnedRevision(
+		ctx,
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		testProfiles().defaultRevision["go"],
+		"fingerprint",
+		"qualification-reattach",
+		nil,
+	)
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeConflict {
 		t.Fatalf("changed Ensure operation used as lookup: err=%v", err)
@@ -249,7 +282,16 @@ func TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient(t *testing
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(client, "ns", testProfiles(), nil)
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
-	if err := store.ReserveSuccessor(t.Context(), ref, "client", ownerHash(owner), "source", "destination", "fork-op"); err != nil {
+	_, err := store.ReserveSuccessor(
+		t.Context(),
+		ref,
+		"client",
+		ownerHash(owner),
+		"source",
+		"destination",
+		"fork-op",
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	intents, err := store.ListReferenceIntentsForClient(t.Context(), "client", 64)
@@ -285,7 +327,15 @@ func TestReserveSuccessorReclaimsOnlyExpiredUnfencedRun(t *testing.T) {
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 			store := NewStore(client, "ns", testProfiles(), nil)
 			ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
-			err := store.ReserveSuccessor(t.Context(), ref, "client", "owner", "source", "successor", "reserve")
+			_, err := store.ReserveSuccessor(
+				t.Context(),
+				ref,
+				"client",
+				"owner",
+				"source",
+				"successor",
+				"reserve",
+			)
 			if (err == nil) != tc.wantSuccess {
 				t.Fatalf("reserve successor success=%t, want=%t: %v", err == nil, tc.wantSuccess, err)
 			}
@@ -312,10 +362,28 @@ func TestReferenceTransactionsRetainUnknownAndNeverChangeSource(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), lifecycleEnvironment(now))
 	store := NewStore(client, "ns", testProfiles(), nil)
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
-	if err := store.ReserveSuccessor(t.Context(), ref, "client", "owner", "source", "destination", "fork-op"); err != nil {
+	_, err := store.ReserveSuccessor(
+		t.Context(),
+		ref,
+		"client",
+		"owner",
+		"source",
+		"destination",
+		"fork-op",
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReserveSuccessor(t.Context(), ref, "client", "owner", "source", "destination", "fork-op"); err != nil {
+	_, err = store.ReserveSuccessor(
+		t.Context(),
+		ref,
+		"client",
+		"owner",
+		"source",
+		"destination",
+		"fork-op",
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	intents, err := store.ListReferenceIntents(t.Context(), "client", "owner", 64)

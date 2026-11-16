@@ -111,7 +111,19 @@ func TestDefinitiveEnvironmentCreateFailureReleasesProfileSlot(t *testing.T) {
 	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
+	_, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		testProfiles().defaultRevision["go"],
+		"fp",
+		"op",
+		nil,
+	)
+	if err == nil {
 		t.Fatal("definitive create rejection succeeded")
 	}
 	if slots := profileSlots(t, kube); len(slots) != 0 {
@@ -127,7 +139,19 @@ func TestAmbiguousEnvironmentCreateFailureRetainsProfileSlot(t *testing.T) {
 	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
+	_, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		testProfiles().defaultRevision["go"],
+		"fp",
+		"op",
+		nil,
+	)
+	if err == nil {
 		t.Fatal("ambiguous create failure succeeded")
 	}
 	if slots := profileSlots(t, kube); len(slots) != 1 {
@@ -153,7 +177,18 @@ func TestCompetingTemplateBindingReleasesLosingReservation(t *testing.T) {
 	store := NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	bind := func(binding, id string) error {
-		_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, binding, id, profiles.defaultRevision[id], "fp", "op")
+		_, err := store.EnsurePendingOwnedRevision(
+			t.Context(),
+			"client",
+			ownerHash(owner),
+			owner,
+			binding,
+			id,
+			profiles.defaultRevision[id],
+			"fp",
+			"op",
+			nil,
+		)
 		return err
 	}
 	if err := bind("shared", "go"); err != nil {
@@ -368,7 +403,18 @@ func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 			if i == 1 {
 				revision = "v1-other-revision"
 			}
-			_, err := stores[i].EnsurePendingOwnedRevision(context.Background(), "client", ownerHash(owner), owner, "binding-"+strconv.Itoa(i), "go", revision, "fp-"+strconv.Itoa(i), "op-"+strconv.Itoa(i))
+			_, err := stores[i].EnsurePendingOwnedRevision(
+				context.Background(),
+				"client",
+				ownerHash(owner),
+				owner,
+				"binding-"+strconv.Itoa(i),
+				"go",
+				revision,
+				"fp-"+strconv.Itoa(i),
+				"op-"+strconv.Itoa(i),
+				nil,
+			)
 			results <- err
 		}(i)
 	}

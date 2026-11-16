@@ -70,7 +70,18 @@ func TestProfileEnvironmentAdmissionLimit(t *testing.T) {
 	profiles.revisions["go"][profiles.defaultRevision["go"]] = profile
 	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kubernetesfake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}}))
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
-	_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "new-binding", "go", profiles.defaultRevision["go"], "new-fingerprint", "new-operation")
+	_, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"new-binding",
+		"go",
+		profiles.defaultRevision["go"],
+		"new-fingerprint",
+		"new-operation",
+		nil,
+	)
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeResourceExhausted {
 		t.Fatalf("limit error=%v", err)

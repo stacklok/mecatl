@@ -78,25 +78,67 @@ func (s *Store) WithSecurityManager(security *SecurityManager) *Store {
 	return s
 }
 
-// EnsurePendingOwnedRevision binds an exact eligible definition. Repeated requests
-// for the final binding ID must supply the same revision and fingerprint.
-func (s *Store) EnsurePendingOwnedRevision(ctx context.Context, client, expectedOwnerHash string, owner executionenv.Owner, binding, id, revision, fp, operationID string) (Allocation, error) {
+// EnsurePendingOwnedRevision binds an exact eligible definition and admits the
+// requested capabilities against it. Repeated requests for the final binding ID
+// must supply the same revision, fingerprint, and admitted capability set.
+func (s *Store) EnsurePendingOwnedRevision(
+	ctx context.Context,
+	client string,
+	expectedOwnerHash string,
+	owner executionenv.Owner,
+	binding string,
+	id string,
+	revision string,
+	fp string,
+	operationID string,
+	capabilities []string,
+) (Allocation, error) {
 	if owner.Issuer == "" || owner.Subject == "" || ownerHash(owner) != expectedOwnerHash {
 		return Allocation{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "owner attestation is invalid"}
 	}
-	return s.ensurePending(ctx, client, expectedOwnerHash, owner, binding, id, revision, fp, operationID)
+	return s.ensurePending(
+		ctx,
+		client,
+		expectedOwnerHash,
+		owner,
+		binding,
+		id,
+		revision,
+		fp,
+		operationID,
+		capabilities,
+	)
 }
 
 //nolint:gocyclo // The full admission transition is intentionally audited in one method.
-func (s *Store) ensurePending(ctx context.Context, client, owner string, attested executionenv.Owner, binding, profile, templateRevision, fp, operationID string) (Allocation, error) {
+func (s *Store) ensurePending(
+	ctx context.Context,
+	client string,
+	owner string,
+	attested executionenv.Owner,
+	binding string,
+	profile string,
+	templateRevision string,
+	fp string,
+	operationID string,
+	requested []string,
+) (Allocation, error) {
 	name := allocationName(client, owner, binding)
 	cur, err := s.resources.Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		if err := allocationIdentityMatches(cur, client, owner, binding, profile, templateRevision, fp); err != nil {
 			return Allocation{}, err
 		}
-		if s.profiles.isRevoked(cur) {
+		existing, ok := s.profiles.forEnvironment(cur)
+		if !ok {
 			return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
+		}
+		admitted, admitErr := admitCapabilities(requested, existing.Spec.Capabilities)
+		if admitErr != nil {
+			return Allocation{}, admitErr
+		}
+		if err := s.profiles.admittedCapabilitiesMatch(cur, admitted); err != nil {
+			return Allocation{}, err
 		}
 		if err := s.initializeStatus(ctx, cur, client, owner, binding, profile, templateRevision, fp, operationID); err != nil {
 			return Allocation{}, err
@@ -108,7 +150,7 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		if !referenceOperationMatches(cur, binding, operationID) {
 			return Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "reference operation conflicts with existing environment"}
 		}
-		return allocationFromRevision(cur, client, owner, binding, profile, templateRevision, fp)
+		return s.allocationFromRevision(cur, client, owner, binding, profile, templateRevision, fp)
 	}
 	if !apierrors.IsNotFound(err) {
 		return Allocation{}, fmt.Errorf("get execution environment: %w", err)
@@ -116,6 +158,10 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	p, ok := s.profiles.selectRevision(profile, templateRevision)
 	if !ok {
 		return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
+	}
+	admitted, err := admitCapabilities(requested, p.Spec.Capabilities)
+	if err != nil {
+		return Allocation{}, err
 	}
 	revision, err := randomID()
 	if err != nil {
@@ -128,6 +174,7 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		}
 	}
 	spec := map[string]any{"schemaVersion": currentSchemaVersion, "allocationID": name, "revision": revision, "ownerHash": owner, "clientHash": hashText(client), "bindingID": binding, "requestFingerprint": fp, "templateID": profile, "templateRevision": templateRevision, "templateDigest": p.Digest, "image": p.Spec.Image, "storageClass": p.Spec.StorageClass, "storageSize": p.Spec.StorageSize, "resources": map[string]any{"cpuRequest": p.Spec.CPURequest, "memoryRequest": p.Spec.MemoryRequest, "cpuLimit": p.Spec.CPULimit, "memoryLimit": p.Spec.MemoryLimit}, "desired": activeDesired}
+	spec[admittedCapabilitiesField] = toAnySlice(admitted)
 	if attested.Issuer != "" && attested.Subject != "" {
 		spec["ownerIssuer"] = attested.Issuer
 		spec["ownerSubject"] = attested.Subject
@@ -157,6 +204,9 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		}
 		return Allocation{}, err
 	}
+	if err := s.profiles.admittedCapabilitiesMatch(created, admitted); err != nil {
+		return Allocation{}, err
+	}
 	if err := s.initializeStatus(ctx, created, client, owner, binding, profile, templateRevision, fp, operationID); err != nil {
 		return Allocation{}, err
 	}
@@ -164,7 +214,7 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	if err != nil {
 		return Allocation{}, err
 	}
-	return allocationFromRevision(created, client, owner, binding, profile, templateRevision, fp)
+	return s.allocationFromRevision(created, client, owner, binding, profile, templateRevision, fp)
 }
 
 func definitiveCreateRejection(err error) bool {
@@ -340,11 +390,32 @@ func allocationIdentityMatches(o *unstructured.Unstructured, client, owner, bind
 	}
 	return nil
 }
-func allocationFromRevision(o *unstructured.Unstructured, client, owner, binding, profile, templateRevision, fp string) (Allocation, error) {
+func (s *Store) allocationFromRevision(
+	o *unstructured.Unstructured,
+	client string,
+	owner string,
+	binding string,
+	profile string,
+	templateRevision string,
+	fp string,
+) (Allocation, error) {
 	if err := allocationIdentityMatches(o, client, owner, binding, profile, templateRevision, fp); err != nil {
 		return Allocation{}, err
 	}
-	return exactAllocation(o, client, owner, binding)
+	return s.admittedAllocation(o, client, owner, binding)
+}
+func (s *Store) admittedAllocation(
+	o *unstructured.Unstructured,
+	client string,
+	owner string,
+	binding string,
+) (Allocation, error) {
+	a, err := exactAllocation(o, client, owner, binding)
+	if err != nil {
+		return Allocation{}, err
+	}
+	a.AdmittedCapabilities, err = s.profiles.admittedCapabilities(o)
+	return a, err
 }
 func exactAllocation(o *unstructured.Unstructured, client, owner, binding string) (Allocation, error) {
 	spec, _, _ := unstructured.NestedMap(o.Object, "spec")
@@ -377,7 +448,7 @@ func (s *Store) Attach(ctx context.Context, ref executionenv.EnvironmentRef, cli
 		if err := requireCurrentSchema(o); err != nil {
 			return err
 		}
-		a, err := exactAllocation(o, client, owner, binding)
+		a, err := s.admittedAllocation(o, client, owner, binding)
 		if err != nil {
 			return err
 		}

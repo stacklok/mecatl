@@ -64,7 +64,18 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	store := NewStore(dyn, "ns", initial, nil)
-	a, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", oldRev, "fp", "operation")
+	a, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		oldRev,
+		"fp",
+		"operation",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +95,34 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 		t.Fatal("deprecated revision remains selectable")
 	}
 	store = NewStore(dyn, "ns", updated, nil)
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "other", "go", oldRev, "fp", "operation"); err == nil {
+	_, err = store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"other",
+		"go",
+		oldRev,
+		"fp",
+		"operation",
+		nil,
+	)
+	if err == nil {
 		t.Fatal("deprecated revision allocated a new environment")
 	}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", newRev, "fp", "operation"); err == nil {
+	_, err = store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		newRev,
+		"fp",
+		"operation",
+		nil,
+	)
+	if err == nil {
 		t.Fatal("same binding adopted a different revision")
 	}
 	revoked, _ := templateFixture(t, map[string]TemplateRevision{oldRev: {Execution: oldSpec, Revoked: true}, newRev: newer}, newRev)
@@ -173,7 +208,18 @@ func TestExecutionTemplateRetainedOnlyLastRevisionReload(t *testing.T) {
 	initial, path := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec}}, revision)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	allocation, err := NewStore(dyn, "ns", initial, nil).EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", revision, "fp", "op")
+	allocation, err := NewStore(dyn, "ns", initial, nil).EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		revision,
+		"fp",
+		"op",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -48,7 +48,18 @@ func (*integrationBackend) ValidateTemplate(context.Context, string, string) (ex
 func (*integrationBackend) CatalogTemplates() []*executionv1.TemplateCatalogItem {
 	return []*executionv1.TemplateCatalogItem{{Template: &executionv1.TemplateSelector{Id: "coding", Revision: codingRevision}}}
 }
-func (b *integrationBackend) EnsurePendingOwnedRevision(ctx context.Context, client, owner string, _ executionenv.Owner, binding, id, revision, fp, operationID string) (executioncontroller.Allocation, error) {
+func (b *integrationBackend) EnsurePendingOwnedRevision(
+	ctx context.Context,
+	client string,
+	owner string,
+	_ executionenv.Owner,
+	binding string,
+	id string,
+	revision string,
+	fp string,
+	operationID string,
+	_ []string,
+) (executioncontroller.Allocation, error) {
 	if id != "coding" || revision != codingRevision {
 		return executioncontroller.Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
 	}
@@ -56,7 +67,15 @@ func (b *integrationBackend) EnsurePendingOwnedRevision(ctx context.Context, cli
 }
 func (b *integrationBackend) Ensure(_ context.Context, client, owner, binding, _, _ string) (executioncontroller.Allocation, error) {
 	b.ensureCalls++
-	b.allocation = executioncontroller.Allocation{Environment: executionenv.EnvironmentRef{ID: "env-real", Revision: "rev-1"}, Epoch: 1, OwnerHash: owner, BindingID: binding, Client: client, Ready: true}
+	b.allocation = executioncontroller.Allocation{
+		Environment:          executionenv.EnvironmentRef{ID: "env-real", Revision: "rev-1"},
+		Epoch:                1,
+		OwnerHash:            owner,
+		BindingID:            binding,
+		Client:               client,
+		Ready:                true,
+		AdmittedCapabilities: executionenv.TemplateCapabilities(),
+	}
 	return b.allocation, nil
 }
 func (b *integrationBackend) Attach(_ context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) (executioncontroller.Allocation, error) {
@@ -122,8 +141,16 @@ func (*integrationBackend) CommitReference(context.Context, executionenv.Environ
 func (*integrationBackend) AbortReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
 	return nil
 }
-func (*integrationBackend) ReserveSuccessor(context.Context, executionenv.EnvironmentRef, string, string, string, string, string) error {
-	return nil
+func (*integrationBackend) ReserveSuccessor(
+	context.Context,
+	executionenv.EnvironmentRef,
+	string,
+	string,
+	string,
+	string,
+	string,
+) ([]string, error) {
+	return executionenv.TemplateCapabilities(), nil
 }
 func (*integrationBackend) PrepareReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
 	return nil
@@ -248,7 +275,18 @@ func TestReloadTLSClosesStaleConnectionOnIncompleteProjectionAndRecovers(t *test
 
 type exhaustedStatusBackend struct{ integrationBackend }
 
-func (*exhaustedStatusBackend) EnsurePendingOwnedRevision(context.Context, string, string, executionenv.Owner, string, string, string, string, string) (executioncontroller.Allocation, error) {
+func (*exhaustedStatusBackend) EnsurePendingOwnedRevision(
+	context.Context,
+	string,
+	string,
+	executionenv.Owner,
+	string,
+	string,
+	string,
+	string,
+	string,
+	[]string,
+) (executioncontroller.Allocation, error) {
 	return executioncontroller.Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "PRIVATE-STATUS-CONFLICT"}
 }
 

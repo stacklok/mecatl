@@ -40,8 +40,30 @@ type selectedTemplateBackend struct {
 	publishCommit bool
 }
 
-func (b *selectedTemplateBackend) EnsurePendingOwnedRevision(ctx context.Context, client, hash string, owner executionenv.Owner, binding, id, revision, fp, operation string) (executioncontroller.Allocation, error) {
-	allocation, err := b.admission.Load().EnsurePendingOwnedRevision(ctx, client, hash, owner, binding, id, revision, fp, operation)
+func (b *selectedTemplateBackend) EnsurePendingOwnedRevision(
+	ctx context.Context,
+	client string,
+	hash string,
+	owner executionenv.Owner,
+	binding string,
+	id string,
+	revision string,
+	fp string,
+	operation string,
+	capabilities []string,
+) (executioncontroller.Allocation, error) {
+	allocation, err := b.admission.Load().EnsurePendingOwnedRevision(
+		ctx,
+		client,
+		hash,
+		owner,
+		binding,
+		id,
+		revision,
+		fp,
+		operation,
+		capabilities,
+	)
 	if err != nil {
 		return allocation, err
 	}
