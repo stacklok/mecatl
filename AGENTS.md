@@ -20,11 +20,13 @@ go run ./cmd/mecademo    # offline session smoke test
 - While iterating, run the smallest focused test that exercises the change and its
   direct integration boundary. Run `task test` once per integrated change set, not
   after every edit.
-- Before a PR is ready, `task lint && task test:race` must pass and the offline demo
-  must show tool call, permission ask/approval, and result. CI verifies the branch
-  independently; it does not replace these local gates. Give complete Go test suites
-  (`test`, `test:race`, `test:workspace`, and `test:workspace:race`) an outer timeout
-  of 1800 seconds (30 minutes). Give other full gates a 600-second timeout.
+- Before a PR is ready, `task lint && task test:race && task check:pr` must pass and
+  the offline demo must show tool call, permission ask/approval, and result. CI runs
+  more than this; `.github/workflows/ci.yml` lists the jobs for each surface. CI
+  verifies the branch independently; it does not replace these local gates. Give
+  complete Go test suites (`test`, `test:race`, `test:workspace`, and
+  `test:workspace:race`) an outer timeout of 1800 seconds (30 minutes). Give other
+  full gates a 600-second timeout.
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
