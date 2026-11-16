@@ -377368,6 +377368,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794825257635,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a988d62fa0d72fd5699e4be816897ffca036d8c",
+          "message": "feat(executor): serve the Commands gRPC service (#2775)\n\nAdd a `serve` mode to `cmd/mecatl-executor` running the executor\nCommandService; the one-shot Pod exec mode is unchanged until #2718.\n\nEach command runs under its own subreaper helper, so concurrent\ncommands keep their descendants apart and cleanup is confirmed per\ncommand; unconfirmed cleanup is reported as outcome unknown. The\nhelper's status pipe is close-on-exec and both helper and server are\nnon-dumpable, so a command cannot forge its result.\n\nA conformance suite in `internal/executorrpc/commandconformance` runs\nagainst a scripted runner and the real supervisor, ready for #2691.\n\nRefs #2695",
+          "timestamp": "2026-11-16T10:30:30Z",
+          "tree_id": "b36643d5495e6e42b41213348d6596fe723adf59",
+          "url": "https://github.com/stacklok/mecatl/commit/5a988d62fa0d72fd5699e4be816897ffca036d8c"
+        },
+        "date": 1794826077684,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -544904,6 +544938,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794826071068,
+  "lastUpdate": 1794826078924,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
