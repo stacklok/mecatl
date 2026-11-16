@@ -420231,6 +420231,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794834789936,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0583081446e3f4b886042c9e45ee8f04a767de5",
+          "message": "fix(server): keep the session's read ledger across remote runs (#2800)\n\nWith `SessionReadLedger` configured, `acquireExecution` rebinds the\nremote run environment to the session's durable ledger, so an `Edit`\ncan follow a `Read` from an earlier prompt on any replica. Evidence\nstays keyed by session, and files changed between runs are still\nrefused. Without it, remote runs keep the per-run ledger.\n\nCloses #2711",
+          "timestamp": "2026-11-16T14:21:32+01:00",
+          "tree_id": "df5da03e9091d7a3b6af82c401ea6f8969f77b70",
+          "url": "https://github.com/stacklok/mecatl/commit/d0583081446e3f4b886042c9e45ee8f04a767de5"
+        },
+        "date": 1794836041511,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13421,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12914,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -547493,6 +547532,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794836037798,
+  "lastUpdate": 1794836042335,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
