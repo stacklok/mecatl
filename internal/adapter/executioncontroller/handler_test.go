@@ -43,7 +43,18 @@ func (*fakeBackend) ValidateTemplate(context.Context, string, string) (Profile, 
 func (*fakeBackend) CatalogTemplates() []*executionv1.TemplateCatalogItem {
 	return []*executionv1.TemplateCatalogItem{{Template: &executionv1.TemplateSelector{Id: "go", Revision: testTemplateRevision}}}
 }
-func (f *fakeBackend) EnsurePendingOwnedRevision(ctx context.Context, client, owner string, _ executionenv.Owner, binding, id, revision, fp, _ string) (Allocation, error) {
+func (f *fakeBackend) EnsurePendingOwnedRevision(
+	ctx context.Context,
+	client string,
+	owner string,
+	_ executionenv.Owner,
+	binding string,
+	id string,
+	revision string,
+	fp string,
+	_ string,
+	_ []string,
+) (Allocation, error) {
 	if id != "go" || revision != testTemplateRevision {
 		return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
 	}
@@ -55,7 +66,15 @@ func (f *fakeBackend) Ensure(_ context.Context, client, owner, binding, _, fp st
 		return a, nil
 	}
 	f.created++
-	a := Allocation{Environment: executionenv.EnvironmentRef{ID: "env-1", Revision: "rev-1"}, Epoch: 1, OwnerHash: owner, BindingID: binding, Client: client, Ready: true}
+	a := Allocation{
+		Environment:          executionenv.EnvironmentRef{ID: "env-1", Revision: "rev-1"},
+		Epoch:                1,
+		OwnerHash:            owner,
+		BindingID:            binding,
+		Client:               client,
+		Ready:                true,
+		AdmittedCapabilities: executionenv.TemplateCapabilities(),
+	}
 	f.allocations[fp] = a
 	return a, nil
 }
@@ -108,8 +127,16 @@ func (*fakeBackend) CommitReference(context.Context, executionenv.EnvironmentRef
 func (*fakeBackend) AbortReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
 	return nil
 }
-func (*fakeBackend) ReserveSuccessor(context.Context, executionenv.EnvironmentRef, string, string, string, string, string) error {
-	return nil
+func (*fakeBackend) ReserveSuccessor(
+	context.Context,
+	executionenv.EnvironmentRef,
+	string,
+	string,
+	string,
+	string,
+	string,
+) ([]string, error) {
+	return executionenv.TemplateCapabilities(), nil
 }
 func (*fakeBackend) PrepareReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error {
 	return nil

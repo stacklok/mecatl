@@ -170,18 +170,52 @@ func TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift(t *testing.T) {
 	s := NewStore(client, "ns", profiles, nil)
 	ctx := context.Background()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
-	a, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "go", profiles.defaultRevision["go"], "fp1", "op")
+	a, err := s.EnsurePendingOwnedRevision(
+		ctx,
+		"spiffe://client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		profiles.defaultRevision["go"],
+		"fp1",
+		"op",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "go", profiles.defaultRevision["go"], "fp1", "op")
+	b, err := s.EnsurePendingOwnedRevision(
+		ctx,
+		"spiffe://client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		profiles.defaultRevision["go"],
+		"fp1",
+		"op",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.Environment != b.Environment || a.Epoch != b.Epoch {
 		t.Fatalf("identity changed: %+v %+v", a, b)
 	}
-	if _, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "other", otherRevision, "fp2", "op"); err == nil {
+	_, err = s.EnsurePendingOwnedRevision(
+		ctx,
+		"spiffe://client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"other",
+		otherRevision,
+		"fp2",
+		"op",
+		nil,
+	)
+	if err == nil {
 		t.Fatal("profile drift adopted existing allocation")
 	}
 }

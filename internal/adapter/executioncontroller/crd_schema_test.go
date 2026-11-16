@@ -9,9 +9,11 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	apiservervalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 )
 
@@ -68,6 +70,16 @@ func TestExecutionEnvironmentSchemaAdmission(t *testing.T) {
 		{"unknown-spec", func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = int64(3) }, false},
 		{"malformed-spec", func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = "2" }, false},
 		{"status-not-initialized", func(o map[string]any) { delete(o, "status") }, true},
+		{"admitted-capabilities", func(o map[string]any) {
+			admitted := []any{"filesystem", "foreground-command"}
+			o["spec"].(map[string]any)["admittedCapabilities"] = admitted
+		}, true},
+		{"unknown-admitted-capability", func(o map[string]any) {
+			o["spec"].(map[string]any)["admittedCapabilities"] = []any{"filesystem", "shell"}
+		}, false},
+		{"empty-admitted-capabilities", func(o map[string]any) {
+			o["spec"].(map[string]any)["admittedCapabilities"] = []any{}
+		}, false},
 		{"old-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(1) }, false},
 		{"unknown-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(3) }, false},
 		{"malformed-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = "2" }, false},
@@ -122,8 +134,10 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		"serverCertificate":  serverCertificateStatus("pod-uid"),
 		"conditions":         []any{map[string]any{"type": "Ready", "status": "True", "reason": "Reconciled", "message": "ready", "observedGeneration": int64(9), "lastTransitionTime": "2026-09-17T00:00:00Z"}},
 	}}
+	obj["spec"].(map[string]any)["admittedCapabilities"] = []any{"filesystem", "foreground-command"}
 	pruning.Prune(obj, structural, true)
 	for _, path := range [][]string{
+		{"spec", "admittedCapabilities"},
 		{"status", "schemaVersion"},
 		{"status", "observedGeneration"},
 		{"status", "epoch"},
@@ -154,4 +168,56 @@ func serverCertificateStatus(podUID string) map[string]any {
 		pin["podUID"] = podUID
 	}
 	return pin
+}
+
+func TestExecutionEnvironmentAdmittedCapabilitiesAreImmutable(t *testing.T) {
+	crd, _ := loadExecutionEnvironmentCRD(t)
+	var internal apiextensions.JSONSchemaProps
+	err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(
+		crd.Spec.Versions[0].Schema.OpenAPIV3Schema,
+		&internal,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	structural, err := schema.NewStructural(&internal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator := cel.NewValidator(structural, true, 1_000_000)
+	object := func(admitted ...any) map[string]any {
+		spec := map[string]any{"desired": "Active"}
+		if admitted != nil {
+			spec["admittedCapabilities"] = admitted
+		}
+		return map[string]any{"spec": spec}
+	}
+	both := []any{"filesystem", "foreground-command"}
+	cases := []struct {
+		name          string
+		before, after map[string]any
+		valid         bool
+	}{
+		{"unchanged", object(both...), object("foreground-command", "filesystem"), true},
+		{"absent stays absent", object(), object(), true},
+		{"narrowed", object(both...), object("filesystem"), false},
+		{"removed", object(both...), object(), false},
+		{"added later", object(), object(both...), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs, _ := validator.Validate(
+				t.Context(),
+				field.NewPath("root"),
+				structural,
+				tc.after,
+				tc.before,
+				10_000_000,
+			)
+			if (len(errs) == 0) != tc.valid {
+				t.Fatalf("valid=%t errors=%v", tc.valid, errs)
+			}
+		})
+	}
 }

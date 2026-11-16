@@ -56,6 +56,7 @@ type Allocation struct {
 	Epoch, GrantGeneration       uint64
 	OwnerHash, BindingID, Client string
 	Ready                        bool
+	AdmittedCapabilities         []string
 }
 
 // Backend implements provider-side authorization state and executor dispatch.
@@ -78,7 +79,15 @@ type lifecycleBackend interface {
 	ReleaseRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) error
 	CommitReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
 	AbortReference(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
-	ReserveSuccessor(context.Context, executionenv.EnvironmentRef, string, string, string, string, string) error
+	ReserveSuccessor(
+		context.Context,
+		executionenv.EnvironmentRef,
+		string,
+		string,
+		string,
+		string,
+		string,
+	) ([]string, error)
 	PrepareReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
 	ConfirmReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
 	CancelReferenceDelete(context.Context, executionenv.EnvironmentRef, string, string, string, string) error
@@ -333,12 +342,21 @@ func (h *Handler) ReserveSuccessor(ctx context.Context, q *executionv1.ReserveSu
 	if lifecycleErr != nil {
 		return nil, lifecycleErr
 	}
-	if err = lifecycle.ReserveSuccessor(ctx, ref, c.id, ownerHash(owner), q.SourceBindingId, q.DestinationBindingId, q.OperationId); err != nil {
+	admitted, err := lifecycle.ReserveSuccessor(
+		ctx,
+		ref,
+		c.id,
+		ownerHash(owner),
+		q.SourceBindingId,
+		q.DestinationBindingId,
+		q.OperationId,
+	)
+	if err != nil {
 		return nil, backendError(err)
 	}
 	return &executionv1.ReferenceReservationResponse{
 		Environment:          refToProto(ref),
-		AdmittedCapabilities: admittedCapabilities(),
+		AdmittedCapabilities: admitted,
 	}, nil
 }
 
@@ -649,18 +667,13 @@ func operationFromProto(op executionv1.FileOperation) (executionenv.Operation, b
 	return v, ok
 }
 
-// admittedCapabilities is every environment's admitted set: requests are
-// refused, so each environment admits its template's set, and a successor
-// shares its source environment.
-func admittedCapabilities() []string { return executionenv.TemplateCapabilities() }
-
 func ensureResponse(a Allocation) *executionv1.EnsureEnvironmentResponse {
 	return &executionv1.EnsureEnvironmentResponse{
 		Environment:          refToProto(a.Environment),
 		Epoch:                a.Epoch,
 		Ready:                a.Ready,
 		GrantGeneration:      a.GrantGeneration,
-		AdmittedCapabilities: admittedCapabilities(),
+		AdmittedCapabilities: a.AdmittedCapabilities,
 	}
 }
 func attachResponse(a Allocation) *executionv1.AttachEnvironmentResponse {
@@ -669,7 +682,7 @@ func attachResponse(a Allocation) *executionv1.AttachEnvironmentResponse {
 		Epoch:                a.Epoch,
 		Ready:                a.Ready,
 		GrantGeneration:      a.GrantGeneration,
-		AdmittedCapabilities: admittedCapabilities(),
+		AdmittedCapabilities: a.AdmittedCapabilities,
 	}
 }
 func fileResponse(v executionenv.FileResponse) *executionv1.FileResponse {
@@ -792,6 +805,10 @@ func backendReasonClass(err error) string {
 }
 
 func backendError(err error) error {
+	var refusal *admissionRefusal
+	if errors.As(err, &refusal) {
+		return wireErrorMessage(refusal.cause.Code, false, refusal.cause.Message)
+	}
 	var e *executionenv.Error
 	if errors.As(err, &e) && e.Code.Valid() {
 		return wireError(e.Code, e.Retryable)
@@ -799,6 +816,9 @@ func backendError(err error) error {
 	return wireError(executionenv.CodeInternal, false)
 }
 func wireError(code executionenv.ErrorCode, retry bool) error {
+	return wireErrorMessage(code, retry, "")
+}
+func wireErrorMessage(code executionenv.ErrorCode, retry bool, message string) error {
 	if !code.Valid() || (retry && code != executionenv.CodeNotReady && code != executionenv.CodeUnauthenticated) {
 		code, retry = executionenv.CodeInternal, false
 	}
@@ -823,7 +843,9 @@ func wireError(code executionenv.ErrorCode, retry bool) error {
 	case executionenv.CodeResourceExhausted:
 		grpcCode = codes.ResourceExhausted
 	}
-	message := "execution provider request failed"
+	if message == "" {
+		message = "execution provider request failed"
+	}
 	if code == executionenv.CodeFenceUnknown {
 		message = "execution provider request failed; verify termination independently or use external fencing"
 	}

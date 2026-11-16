@@ -285,23 +285,69 @@ func TestPendingEnsureAfterDeprecationAndRevocation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	store := NewStore(client, "ns", profiles, nil)
 	revision := profiles.defaultRevision["go"]
-	first, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", revision, "fingerprint", "operation")
+	first, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		revision,
+		"fingerprint",
+		"operation",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	profiles.eligibility["go"][revision] = TemplatePolicy{Deprecated: true}
-	again, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", revision, "fingerprint", "operation")
+	again, err := store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		revision,
+		"fingerprint",
+		"operation",
+		nil,
+	)
 	if err != nil || again.Environment != first.Environment {
 		t.Fatalf("deprecated retry: %+v %v", again, err)
 	}
 	if err := store.CommitReference(t.Context(), first.Environment, "client", ownerHash(owner), "binding", "operation"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "fresh", "go", revision, "fingerprint", "operation"); !codeIs(err, executionenv.CodeNotFound) {
+	_, err = store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"fresh",
+		"go",
+		revision,
+		"fingerprint",
+		"operation",
+		nil,
+	)
+	if !codeIs(err, executionenv.CodeNotFound) {
 		t.Fatalf("new allocation after deprecation: %v", err)
 	}
 	profiles.eligibility["go"][revision] = TemplatePolicy{Revoked: true}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", revision, "fingerprint", "operation"); !codeIs(err, executionenv.CodeNotFound) {
+	_, err = store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		revision,
+		"fingerprint",
+		"operation",
+		nil,
+	)
+	if !codeIs(err, executionenv.CodeNotFound) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -420,7 +466,19 @@ func TestInitializeStatusRechecksImmutableSelectorUnderCAS(t *testing.T) {
 	if err != nil || intNested(got.Object, "status", "epoch") != 0 {
 		t.Fatalf("loser wrote winner status: %v %v", got, err)
 	}
-	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", other, "winner-fp", "winner-op"); err != nil {
+	_, err = store.EnsurePendingOwnedRevision(
+		t.Context(),
+		"client",
+		ownerHash(owner),
+		owner,
+		"binding",
+		"go",
+		other,
+		"winner-fp",
+		"winner-op",
+		nil,
+	)
+	if err != nil {
 		t.Fatalf("winner cannot initialize: %v", err)
 	}
 	if err := store.CommitReference(t.Context(), executionenv.EnvironmentRef{ID: env.GetName(), Revision: "allocation-rev"}, "client", ownerHash(owner), "binding", "winner-op"); err != nil {
@@ -443,7 +501,18 @@ func TestCompetingPendingEnsureCannotInitializeWinnersReference(t *testing.T) {
 	for _, tc := range []struct{ rev, fp, op string }{{revision, "winner-fp", "winner-op"}, {other, "loser-fp", "loser-op"}} {
 		go func() {
 			<-barrier
-			_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", tc.rev, tc.fp, tc.op)
+			_, err := store.EnsurePendingOwnedRevision(
+				t.Context(),
+				"client",
+				ownerHash(owner),
+				owner,
+				"binding",
+				"go",
+				tc.rev,
+				tc.fp,
+				tc.op,
+				nil,
+			)
 			results <- err
 		}()
 	}

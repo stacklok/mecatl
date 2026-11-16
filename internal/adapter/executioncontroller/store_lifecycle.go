@@ -159,8 +159,18 @@ func (s *Store) CancelReferenceDelete(ctx context.Context, ref executionenv.Envi
 	return s.mutateReference(ctx, ref, client, owner, binding, operation, executionenv.ReferencePendingDelete, executionenv.ReferencePublished, false)
 }
 
-func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, source, destination, operation string) error {
-	return s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
+// ReserveSuccessor returns the shared environment's admitted capabilities.
+func (s *Store) ReserveSuccessor(
+	ctx context.Context,
+	ref executionenv.EnvironmentRef,
+	client string,
+	owner string,
+	source string,
+	destination string,
+	operation string,
+) ([]string, error) {
+	var admitted []string
+	err := s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
@@ -173,6 +183,9 @@ func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.Environme
 		}
 		if !publishedReference(refs, source) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: "source reference not found"}
+		}
+		if admitted, err = s.profiles.admittedCapabilities(o); err != nil {
+			return err
 		}
 		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
@@ -198,6 +211,10 @@ func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.Environme
 		refs = append(refs, referenceRecord{BindingID: destination, State: executionenv.ReferencePendingCreate, OperationID: operation, SourceBindingID: source, CreatedAt: time.Now().UTC()})
 		return setReferenceRecords(o, refs)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return admitted, nil
 }
 
 func (s *Store) FindReferenceIntent(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) (executionenv.ReferenceIntent, error) {
