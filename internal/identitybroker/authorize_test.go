@@ -571,6 +571,9 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 	lost := func(perCallFixture) (identitybroker.IDJAGResult, error) {
 		return identitybroker.IDJAGResult{}, identitybroker.ErrNoResponse
 	}
+	// newGrants maps an exchange answered by revokedWithNewer to the refresh
+	// token that replaced the session's grant; each subtest resets it.
+	var newGrants map[int]identitybroker.Token
 	// revokedWithNewer replaces the session's grant, as a reopen does, and
 	// answers that the grant the exchange presented is revoked.
 	revokedWithNewer := func(f perCallFixture) (identitybroker.IDJAGResult, error) {
@@ -579,6 +582,11 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 		}); err != nil {
 			return identitybroker.IDJAGResult{}, err
 		}
+		g, ok := identitybroker.SessionGrant(f.b, f.s.ID)
+		if !ok {
+			return identitybroker.IDJAGResult{}, errors.New("the reopened session holds no grant")
+		}
+		newGrants[len(f.issuer.requests())] = g.RefreshToken
 		return identitybroker.IDJAGResult{}, refusal(400, "invalid_grant", "revoked")
 	}
 	issue := func(perCallFixture) (identitybroker.IDJAGResult, error) {
@@ -610,6 +618,7 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 		{"a reasonless invalid_grant twice after a lost response", []func(perCallFixture) (identitybroker.IDJAGResult, error){lost, issue, issue}, []redemption{reasonless, reasonless}, identitybroker.CodeInternal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			newGrants = map[int]identitybroker.Token{}
 			f := newPerCall(t)
 			f.issuer.answer = func(n int, _ identitybroker.IDJAGRequest) (identitybroker.IDJAGResult, error) {
 				if n > len(tc.exchanges) {
@@ -640,6 +649,41 @@ func TestAuthorizeCallRetryAllowances(t *testing.T) {
 					t.Fatal("an ID-JAG was redeemed twice")
 				}
 				seen[a] = true
+			}
+			if tc.code != "" && !got.GatewayToken.IsZero() {
+				t.Fatal("a refused call returned a gateway token")
+			}
+			// One decision, matching what the call returned.
+			d := f.rec.Decisions()
+			if len(d) != 1 {
+				t.Fatalf("recorded %d decisions, want 1: %+v", len(d), d)
+			}
+			var e *identitybroker.Error
+			switch {
+			case tc.code == "":
+				if d[0].Outcome != identitybroker.OutcomeSuccess {
+					t.Errorf("decision = %+v, want a success", d[0])
+				}
+			case errors.As(err, &e):
+				if d[0].Outcome == identitybroker.OutcomeSuccess || d[0].Code != e.Code || d[0].Reason != e.Reason {
+					t.Errorf("decision %s %s %q, want a refusal %s %q", d[0].Outcome, d[0].Code, d[0].Reason, e.Code, e.Reason)
+				}
+			default:
+				t.Fatalf("error %v is not an *identitybroker.Error", err)
+			}
+			// One ID-JAG record per exchange that returned an ID-JAG.
+			if issued, recorded := len(f.issuer.tokens()), len(f.rec.IDJAGs()); recorded != issued {
+				t.Errorf("recorded %d ID-JAGs, want %d, one per ID-JAG AS-1 issued", recorded, issued)
+			}
+			// The try after a revoked grant presents the session's new grant.
+			reqs := f.issuer.requests()
+			for i, grant := range newGrants {
+				if i >= len(reqs) {
+					continue
+				}
+				if reqs[i].SubjectToken.Value() != grant.Value() {
+					t.Errorf("exchange %d presented %q, want the session's new grant", i+1, reqs[i].SubjectToken.Value())
+				}
 			}
 		})
 	}

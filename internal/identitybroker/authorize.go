@@ -214,6 +214,7 @@ func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err 
 	switch {
 	case lostResponse(ctx, err):
 		return retryLostResponse, NewError(CodeUnavailable, "", "no response from the gateway's authorization server"), nil
+	// Shortcut: AS-2's error_uri is dropped (ServerRefusal keeps only the status, code and reason), so no approval link reaches the user; removed by #2735 (the approval link, shown under step (8)'s rule, through an ErrorURI the AS-2 port sets).
 	case isRefusal && !r.transient() && r.Reason == string(ReasonConsentRequired):
 		return 0, nil, ReasonError(ReasonConsentRequired, "the gateway's authorization server requires the user's consent")
 	case isRefusal && !r.transient() && r.Code == "invalid_grant" && (r.Reason == "" || r.Reason == unknownCode):

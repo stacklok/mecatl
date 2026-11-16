@@ -205,9 +205,11 @@ func (b *Broker) FindSession(_ context.Context, workload Workload, req FindSessi
 	return t.viewLocked(s), true, nil
 }
 
-// CloseSession implements Core. Calls already in progress may finish. It
-// discards the session's refresh token; an open converting a token for the
-// session meanwhile discards the new one.
+// CloseSession implements Core. A call already in progress is refused with
+// the closing reason at its next session check and gets no gateway token,
+// even if AS-2 has already issued one. CloseSession discards the session's
+// refresh token; an open converting a token for the session meanwhile
+// discards the new one.
 func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSessionRequest) error {
 	if err := checkCall(workload, req); err != nil {
 		return err
