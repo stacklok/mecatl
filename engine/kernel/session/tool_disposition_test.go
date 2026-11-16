@@ -94,7 +94,7 @@ func TestToolDispositionMaterializationAndView(t *testing.T) {
 			if v.RunID != 0 || v.RequestID != 0 || v.CallID != 0 || !r.toolDisposition.Equal(want) {
 				t.Fatal("constructor mutated input identity or retained caller aliases")
 			}
-			decoded, err := decodeMaterialized(record.Format(), testLimits())
+			decoded, err := decodeMaterialized(record.MutableClone(), testLimits())
 			interactionCheck(t, err)
 			if !decoded.toolDisposition.Equal(want) {
 				t.Fatal("storage decode changed complete disposition")

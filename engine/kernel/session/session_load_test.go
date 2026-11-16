@@ -85,7 +85,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 			}
 			v := loaded.Snapshot()
 			clear(inputBytes(lookupInput(t, v, input.RunID(), 1)))
-			raw := v.RecordAt(2).Format()
+			raw := v.RecordAt(2).MutableClone()
 			clear(raw.Payload)
 			if !reflect.DeepEqual(loaded.Snapshot(), want) || !reflect.DeepEqual(s.Snapshot(), want) {
 				t.Fatal("loaded storage aliases exports")
@@ -221,14 +221,14 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 			policy := sessionPolicy()
 			reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
 			if tc.kind != "missing" {
-				root := format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: new(testHistoryID(t)), Records: []format.Record{createdRecord(t).Format()}}
+				root := format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: new(testHistoryID(t)), Records: []format.Record{createdRecord(t).MutableClone()}}
 				r, err := h.Append(context.Background(), testHistoryID(t), root)
 				mustBatch(t, err)
 				if r.Status != history.StatusAccepted {
 					t.Fatal("root")
 				}
 				rootRef := r.Proposal
-				record := startRecord(t, 1).Format()
+				record := startRecord(t, 1).MutableClone()
 				switch tc.kind {
 				case "corrupt":
 					reader.corrupt = true
@@ -239,7 +239,7 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 				case "payload":
 					record.Payload = []byte{0xff}
 				case "transition":
-					record = createdRecord(t).Format()
+					record = createdRecord(t).MutableClone()
 				case "retained":
 					policy.MaxRetainedRecords = 1
 					policy.SoftMaxRetainedRecords = 1
@@ -255,7 +255,7 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 				}
 				records := []format.Record{record}
 				if tc.kind == "commit-limit" {
-					records = append(records, inputRecord(t, 1).Format())
+					records = append(records, inputRecord(t, 1).MutableClone())
 				}
 				r, err = h.Append(context.Background(), testHistoryID(t), format.Commit{FormatVersion: 1, Sequence: 2, Parent: new(rootRef.CID), Records: records})
 				mustBatch(t, err)

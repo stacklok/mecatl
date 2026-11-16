@@ -23,7 +23,7 @@ func limitPolicy(t *testing.T, dimension string, softRecords, hardRecords []fixt
 	sum := func(records []fixtureRecord) uint64 {
 		var n uint64
 		for _, r := range records {
-			n += uint64(len(r.Format().Payload))
+			n += uint64(len(r.MutableClone().Payload))
 		}
 		return n
 	}

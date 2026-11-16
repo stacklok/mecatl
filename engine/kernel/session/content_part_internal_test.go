@@ -54,7 +54,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 					t.Fatalf("record/admission text = %q, %t; want %q", got, ok, text)
 				}
 			}
-			export, err := codec.Decode[sessionformat.EffectiveInput](view.RecordAt(4).Format().Payload, limits)
+			export, err := codec.Decode[sessionformat.EffectiveInput](view.RecordAt(4).MutableClone().Payload, limits)
 			if err != nil {
 				t.Fatal(err)
 			}

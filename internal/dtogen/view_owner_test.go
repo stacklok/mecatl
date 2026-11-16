@@ -12,6 +12,7 @@ import (
 
 func TestViewExternalOwnerClosureAndFreshness(t *testing.T) {
 	cfg := viewFixture(t, "view")
+	cfg.Types = append(cfg.Types, "ScopedChildView")
 	module := filepath.Dir(cfg.Dir)
 	root := filepath.Dir(module)
 	writeFixture(t, filepath.Join(module, "go.mod"), "module github.com/stacklok/mecatl/engine\n\ngo 1.27.3\n\nrequire (\nexample.invalid/payloads v0.0.0\ngithub.com/jcalabro/atmos v0.8.0\n)\nreplace example.invalid/payloads => ../payloads\n")
@@ -26,8 +27,15 @@ type Record struct {
  Child Child
  Maybe *Child
  Children []Child
+ OptionalBytes *[]byte
+ OptionalChildren *[]Child
+ Lookup map[string]*Child `+"`view:\"-\"`"+`
+ Matrix [][]byte `+"`view:\"-\"`"+`
+ Sibling []byte
 }
 type Child struct { Data []byte; Hidden struct { private []byte } `+"`view:\"-\"`"+` }
+func NewChild(b []byte) Child { c:=Child{Data:b}; c.Hidden.private=[]byte{0xff,0,0x80}; return c }
+func(c Child) HiddenBytes() []byte { return c.Hidden.private }
 var _ = Record{}.Clone().Equal(Record{})
 `)
 	writeFixture(t, filepath.Join(cfg.Dir, "owner.go"), `package owner
@@ -35,11 +43,16 @@ import "example.invalid/payloads/data"
 type RecordView struct { value *data.Record; scope string }
 type ChildView struct { value *data.Child }
 type ExtraView struct { value *data.Record; scope string }
+type ScopedChildView struct { value *data.Child; scope string }
+func(v RecordView) ScopedChild() ScopedChildView { if v.value==nil{return ScopedChildView{}};return ScopedChildView{value:&v.value.Child,scope:v.scope} }
+func(v ScopedChildView) Scope()string{return v.scope}
 func(v RecordView) Scope()string{return v.scope}
+var _ data.Record = RecordView{}.MutableClone()
+var _ data.Child = ScopedChildView{}.MutableClone()
 var _ = RecordView{}.Title()
 var _ = RecordView{}.Children().At
 `)
-	writeFixture(t, filepath.Join(cfg.Dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir engine/owner -emit view -types RecordView,ChildView -out "+cfg.Output+"\npackage owner\n")
+	writeFixture(t, filepath.Join(cfg.Dir, "registry.go"), "//go:generate go -C ../.. run "+generatorCommand+" -dir engine/owner -emit view -types RecordView,ChildView,ScopedChildView -out "+cfg.Output+"\npackage owner\n")
 	outputs := []string{filepath.Join(root, "payloads/data/zz_data_generated.go"), filepath.Join(cfg.Dir, cfg.Output)}
 	ctx := context.Background()
 	for _, prior := range []string{"", GeneratedMarker + "\nnot valid Go", GeneratedMarker + "\npackage data\nvar broken MissingType"} {
@@ -71,6 +84,7 @@ var _ = RecordView{}.Children().At
 import("testing";"example.invalid/payloads/data")
 func TestExternal(t *testing.T){x:=data.Record{Title:"external",Child:data.Child{Data:[]byte{1}},Maybe:&data.Child{},Children:[]data.Child{{Data:[]byte{2}}}};v:=RecordView{value:&x};if v.Title()!="external"||v.Child().Data().At(0)!=1||v.Children().At(0).Data().At(0)!=2{t.Fatal("projection")};if _,ok:=v.Maybe();!ok{t.Fatal("presence")};x=data.Record{};if v.Title()!=""{t.Fatal("view unexpectedly cloned")}}
 `)
+	writeFixture(t, filepath.Join(cfg.Dir, "mutable_clone_test.go"), viewMutableCloneBehaviorTest)
 	runOwner(t, cfg, "")
 	// Both ordinary freshness and the structural assertion notice a new field.
 	oldSource := readFixture(t, source)

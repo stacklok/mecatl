@@ -29,8 +29,10 @@ func (v RecordView) KindVersion() int64 {
 	return v.record.value.KindVersion
 }
 
-// Format exports a detached history record DTO, or zero for zero.
-func (v RecordView) Format() format.Record {
+// MutableClone returns a deeply detached mutable copy of the record DTO without
+// its enclosing history scope. A zero view returns a zero DTO. Mutating the result
+// cannot change accepted backing or other clones.
+func (v RecordView) MutableClone() format.Record {
 	if v.record == nil {
 		return format.Record{}
 	}

@@ -28,6 +28,16 @@ var _ = (*struct {
 	Source  dtogenType0.ContentSource "cbor:\"s\""
 })((*dtogenType0.AttributedInput)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v AttributedInputView) MutableClone() dtogenType0.AttributedInput {
+	if v.value == nil {
+		return dtogenType0.AttributedInput{}
+	}
+	return v.value.Clone()
+}
+
 // Parts reads Parts in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The collection borrows stable backing and adapts elements lazily; derived views retain it.
@@ -116,6 +126,16 @@ var _ = (*struct {
 	Usage     *dtogenType0.InvocationUsage  "cbor:\"u,omitempty\""
 })((*dtogenType0.CaptureFailureEvidence)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v CaptureFailureEvidenceView) MutableClone() dtogenType0.CaptureFailureEvidence {
+	if v.value == nil {
+		return dtogenType0.CaptureFailureEvidence{}
+	}
+	return v.value.Clone()
+}
+
 // Evidence reads Evidence in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
 // The returned child borrows backing, which must remain stable for every derived view's lifetime.
@@ -174,6 +194,16 @@ var _ = (*struct {
 	Parameters []byte "cbor:\"p\""
 	Check      []byte "cbor:\"c\""
 })((*dtogenType0.ConstructionRecipe)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ConstructionRecipeView) MutableClone() dtogenType0.ConstructionRecipe {
+	if v.value == nil {
+		return dtogenType0.ConstructionRecipe{}
+	}
+	return v.value.Clone()
+}
 
 // Algorithm reads Algorithm in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -270,6 +300,16 @@ var _ = (*struct {
 	Media *dtogenType0.Media "cbor:\"m,omitempty\""
 })((*dtogenType0.ContentPart)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ContentPartView) MutableClone() dtogenType0.ContentPart {
+	if v.value == nil {
+		return dtogenType0.ContentPart{}
+	}
+	return v.value.Clone()
+}
+
 // Text reads Text in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
 // The receiver retains stable backing for its lifetime.
@@ -320,6 +360,16 @@ var _ = (*struct {
 	WorkspaceFile *dtogenType0.WorkspaceFileSource "cbor:\"w,omitempty\""
 })((*dtogenType0.ContentSource)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ContentSourceView) MutableClone() dtogenType0.ContentSource {
+	if v.value == nil {
+		return dtogenType0.ContentSource{}
+	}
+	return v.value.Clone()
+}
+
 // Description reads Description in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -366,6 +416,16 @@ func (v ContentSourceView) WorkspaceFile() (WorkspaceFileSourceView, bool) {
 // history identity is carried only by the root history envelope.
 var _ = (*struct{})((*dtogenType0.Created)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v CreatedView) MutableClone() dtogenType0.Created {
+	if v.value == nil {
+		return dtogenType0.Created{}
+	}
+	return v.value.Clone()
+}
+
 // Backing contract for EffectiveInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -378,6 +438,16 @@ var _ = (*struct {
 	Inputs []dtogenType0.InputItem "cbor:\"i\" view:\"manual\""
 })((*dtogenType0.EffectiveInput)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v EffectiveInputView) MutableClone() dtogenType0.EffectiveInput {
+	if v.value == nil {
+		return dtogenType0.EffectiveInput{}
+	}
+	return v.value.Clone()
+}
+
 // Backing contract for InputItemView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -389,6 +459,16 @@ var _ = (*struct {
 	UserInputID *uint64                      "cbor:\"u,omitempty\" view:\"manual\""
 	Inline      *dtogenType0.AttributedInput "cbor:\"i,omitempty\""
 })((*dtogenType0.InputItem)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v InputItemView) MutableClone() dtogenType0.InputItem {
+	if v.value == nil {
+		return dtogenType0.InputItem{}
+	}
+	return v.value.Clone()
+}
 
 // Inline reads Inline in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
@@ -426,6 +506,16 @@ var _ = (*struct {
 	Parts  []dtogenType0.ContentPart "cbor:\"c\""
 	Source dtogenType0.ContentSource "cbor:\"s\""
 })((*dtogenType0.InstructionBlock)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v InstructionBlockView) MutableClone() dtogenType0.InstructionBlock {
+	if v.value == nil {
+		return dtogenType0.InstructionBlock{}
+	}
+	return v.value.Clone()
+}
 
 // Parts reads Parts in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -476,6 +566,16 @@ var _ = (*struct {
 	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
 })((*dtogenType0.Instructions)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v InstructionsView) MutableClone() dtogenType0.Instructions {
+	if v.value == nil {
+		return dtogenType0.Instructions{}
+	}
+	return v.value.Clone()
+}
+
 // Blocks reads Blocks in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The collection borrows stable backing and adapts elements lazily; derived views retain it.
@@ -514,6 +614,16 @@ var _ = (*struct {
 	Evidence    *dtogenType0.ObservedEvidence      "cbor:\"v,omitempty\""
 	Usage       *dtogenType0.InvocationUsage       "cbor:\"u,omitempty\""
 })((*dtogenType0.InvocationFailure)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v InvocationFailureView) MutableClone() dtogenType0.InvocationFailure {
+	if v.value == nil {
+		return dtogenType0.InvocationFailure{}
+	}
+	return v.value.Clone()
+}
 
 // Class reads Class in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -619,6 +729,16 @@ var _ = (*struct {
 	Reasoning  *int64                          "cbor:\"n,omitempty\""
 	Raw        *dtogenType0.OpaqueProviderData "cbor:\"x,omitempty\""
 })((*dtogenType0.InvocationUsage)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v InvocationUsageView) MutableClone() dtogenType0.InvocationUsage {
+	if v.value == nil {
+		return dtogenType0.InvocationUsage{}
+	}
+	return v.value.Clone()
+}
 
 // Input reads Input in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
@@ -763,6 +883,16 @@ var _ = (*struct {
 	Filename            string                      "cbor:\"n\""
 	Title               string                      "cbor:\"t\""
 })((*dtogenType0.Media)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v MediaView) MutableClone() dtogenType0.Media {
+	if v.value == nil {
+		return dtogenType0.Media{}
+	}
+	return v.value.Clone()
+}
 
 // Kind reads Kind in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -978,6 +1108,16 @@ var _ = (*struct {
 	Settings []byte "cbor:\"s\""
 })((*dtogenType0.ModelBinding)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ModelBindingView) MutableClone() dtogenType0.ModelBinding {
+	if v.value == nil {
+		return dtogenType0.ModelBinding{}
+	}
+	return v.value.Clone()
+}
+
 // Route reads Route in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -1080,6 +1220,16 @@ var _ = (*struct {
 	RetryOf *uint64                        "cbor:\"x,omitempty\" view:\"manual\""
 })((*dtogenType0.ModelRequest)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ModelRequestView) MutableClone() dtogenType0.ModelRequest {
+	if v.value == nil {
+		return dtogenType0.ModelRequest{}
+	}
+	return v.value.Clone()
+}
+
 // Source reads Source in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The returned child borrows backing, which must remain stable for every derived view's lifetime.
@@ -1141,6 +1291,16 @@ var _ = (*struct {
 	Usage              *dtogenType0.InvocationUsage      "cbor:\"u,omitempty\""
 	Private            *dtogenType0.OpaqueProviderData   "cbor:\"x,omitempty\""
 })((*dtogenType0.ModelResponse)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ModelResponseView) MutableClone() dtogenType0.ModelResponse {
+	if v.value == nil {
+		return dtogenType0.ModelResponse{}
+	}
+	return v.value.Clone()
+}
 
 // Terminal reads Terminal in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1294,6 +1454,16 @@ var _ = (*struct {
 	Correlation *string "cbor:\"c,omitempty\""
 })((*dtogenType0.ObservedEvidence)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ObservedEvidenceView) MutableClone() dtogenType0.ObservedEvidence {
+	if v.value == nil {
+		return dtogenType0.ObservedEvidence{}
+	}
+	return v.value.Clone()
+}
+
 // Detail reads Detail in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
 // The receiver retains stable backing for its lifetime.
@@ -1387,6 +1557,16 @@ var _ = (*struct {
 	Version  int64  "cbor:\"v\""
 	Data     []byte "cbor:\"d\""
 })((*dtogenType0.OpaqueProviderData)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v OpaqueProviderDataView) MutableClone() dtogenType0.OpaqueProviderData {
+	if v.value == nil {
+		return dtogenType0.OpaqueProviderData{}
+	}
+	return v.value.Clone()
+}
 
 // Producer reads Producer in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1513,6 +1693,16 @@ var _ = (*struct {
 	Arguments []byte "cbor:\"a\""
 })((*dtogenType0.RequestedCall)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v RequestedCallDataView) MutableClone() dtogenType0.RequestedCall {
+	if v.value == nil {
+		return dtogenType0.RequestedCall{}
+	}
+	return v.value.Clone()
+}
+
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -1563,6 +1753,16 @@ var _ = (*struct {
 	Name      string "cbor:\"n\""
 	Arguments []byte "cbor:\"a\""
 })((*dtogenType0.RequestedCall)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v RequestedCallView) MutableClone() dtogenType0.RequestedCall {
+	if v.value == nil {
+		return dtogenType0.RequestedCall{}
+	}
+	return v.value.Clone()
+}
 
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1620,6 +1820,16 @@ var _ = (*struct {
 	Parts []dtogenType0.ContentPart       "cbor:\"p\""
 })((*dtogenType0.ResponseContent)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ResponseContentView) MutableClone() dtogenType0.ResponseContent {
+	if v.value == nil {
+		return dtogenType0.ResponseContent{}
+	}
+	return v.value.Clone()
+}
+
 // Kind reads Kind in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -1674,6 +1884,16 @@ var _ = (*struct {
 	Call    *dtogenType0.RequestedCall   "cbor:\"a,omitempty\""
 })((*dtogenType0.ResponseItem)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ResponseItemView) MutableClone() dtogenType0.ResponseItem {
+	if v.value == nil {
+		return dtogenType0.ResponseItem{}
+	}
+	return v.value.Clone()
+}
+
 // Content reads Content in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
 // The returned child borrows backing, which must remain stable for every derived view's lifetime.
@@ -1725,6 +1945,16 @@ var _ = (*struct {
 	Explanation      *string                             "cbor:\"x,omitempty\""
 	Capture          *dtogenType0.CaptureFailureEvidence "cbor:\"c,omitempty\" view:\"manual\""
 })((*dtogenType0.RunEnded)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v RunEndedView) MutableClone() dtogenType0.RunEnded {
+	if v.value == nil {
+		return dtogenType0.RunEnded{}
+	}
+	return v.value.Clone()
+}
 
 // Reason reads Reason in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1803,6 +2033,16 @@ var _ = (*struct {
 	ID uint64 "cbor:\"r\" view:\"manual\""
 })((*dtogenType0.RunStarted)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v RunStartedView) MutableClone() dtogenType0.RunStarted {
+	if v.value == nil {
+		return dtogenType0.RunStarted{}
+	}
+	return v.value.Clone()
+}
+
 // Backing contract for SourceHeadView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -1818,6 +2058,16 @@ var _ = (*struct {
 	Sequence int64           "cbor:\"s\""
 	CID      dtogenType2.CID "cbor:\"c\" view:\"manual\""
 })((*dtogenType0.SourceHead)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v SourceHeadView) MutableClone() dtogenType0.SourceHead {
+	if v.value == nil {
+		return dtogenType0.SourceHead{}
+	}
+	return v.value.Clone()
+}
 
 // Sequence reads Sequence in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1848,6 +2098,16 @@ func (v SourceHeadView) Sequence() int64 {
 var _ = (*struct {
 	Tools []dtogenType0.ToolDefinition "cbor:\"t\""
 })((*dtogenType0.ToolCatalog)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolCatalogView) MutableClone() dtogenType0.ToolCatalog {
+	if v.value == nil {
+		return dtogenType0.ToolCatalog{}
+	}
+	return v.value.Clone()
+}
 
 // Tools reads Tools in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1886,6 +2146,16 @@ var _ = (*struct {
 	Description    string "cbor:\"d\""
 	ArgumentSchema []byte "cbor:\"s\""
 })((*dtogenType0.ToolDefinition)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolDefinitionView) MutableClone() dtogenType0.ToolDefinition {
+	if v.value == nil {
+		return dtogenType0.ToolDefinition{}
+	}
+	return v.value.Clone()
+}
 
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -1964,6 +2234,16 @@ var _ = (*struct {
 	Indeterminate *dtogenType0.ToolIndeterminate "cbor:\"i,omitempty\""
 	Diagnostic    *string                        "cbor:\"d,omitempty\" cborlimit:\"bytes=16384\""
 })((*dtogenType0.ToolDisposition)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolDispositionView) MutableClone() dtogenType0.ToolDisposition {
+	if v.value == nil {
+		return dtogenType0.ToolDisposition{}
+	}
+	return v.value.Clone()
+}
 
 // Returned reads Returned in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
@@ -2085,6 +2365,16 @@ var _ = (*struct {
 	Blob     *[]byte                  "cbor:\"b,omitempty\" cborlimit:\"bytes=4194304\""
 })((*dtogenType0.ToolEmbeddedResource)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolEmbeddedResourceView) MutableClone() dtogenType0.ToolEmbeddedResource {
+	if v.value == nil {
+		return dtogenType0.ToolEmbeddedResource{}
+	}
+	return v.value.Clone()
+}
+
 // Resource reads Resource in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The returned child borrows backing, which must remain stable for every derived view's lifetime.
@@ -2156,6 +2446,16 @@ var _ = (*struct {
 	Output dtogenType0.ToolOutput              "cbor:\"o\""
 })((*dtogenType0.ToolIndeterminate)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolIndeterminateView) MutableClone() dtogenType0.ToolIndeterminate {
+	if v.value == nil {
+		return dtogenType0.ToolIndeterminate{}
+	}
+	return v.value.Clone()
+}
+
 // Reason reads Reason in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -2213,6 +2513,16 @@ var _ = (*struct {
 	Arguments     dtogenType3.Map "cbor:\"a\" cborlimit:\"items=4096\""
 	Prerequisites []uint64        "cbor:\"p\" cborlimit:\"items=4096\" view:\"manual\""
 })((*dtogenType0.ToolInvocation)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolInvocationView) MutableClone() dtogenType0.ToolInvocation {
+	if v.value == nil {
+		return dtogenType0.ToolInvocation{}
+	}
+	return v.value.Clone()
+}
 
 // Name reads Name in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -2283,6 +2593,16 @@ var _ = (*struct {
 	Reason dtogenType0.ToolNotInvokedReason "cbor:\"r\" cborlimit:\"bytes=32\""
 })((*dtogenType0.ToolNotInvoked)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolNotInvokedView) MutableClone() dtogenType0.ToolNotInvoked {
+	if v.value == nil {
+		return dtogenType0.ToolNotInvoked{}
+	}
+	return v.value.Clone()
+}
+
 // Reason reads Reason in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -2318,6 +2638,16 @@ var _ = (*struct {
 	ResourceLink *dtogenType0.ToolResource         "cbor:\"l,omitempty\""
 	Resource     *dtogenType0.ToolEmbeddedResource "cbor:\"r,omitempty\""
 })((*dtogenType0.ToolOutputPart)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolOutputPartView) MutableClone() dtogenType0.ToolOutputPart {
+	if v.value == nil {
+		return dtogenType0.ToolOutputPart{}
+	}
+	return v.value.Clone()
+}
 
 // Content reads Content in O(1) without copying sibling payloads.
 // A zero view or nil field returns zero, false; present zero/empty values return true.
@@ -2415,6 +2745,16 @@ var _ = (*struct {
 	Parts   []dtogenType0.ToolOutputPart "cbor:\"p\" cborlimit:\"items=4096\""
 })((*dtogenType0.ToolOutput)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolOutputView) MutableClone() dtogenType0.ToolOutput {
+	if v.value == nil {
+		return dtogenType0.ToolOutput{}
+	}
+	return v.value.Clone()
+}
+
 // Capture reads Capture in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -2474,6 +2814,16 @@ var _ = (*struct {
 	Title    *string "cbor:\"t,omitempty\" cborlimit:\"bytes=1024\""
 	MIMEType *string "cbor:\"m,omitempty\" cborlimit:\"bytes=1024\""
 })((*dtogenType0.ToolResource)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolResourceView) MutableClone() dtogenType0.ToolResource {
+	if v.value == nil {
+		return dtogenType0.ToolResource{}
+	}
+	return v.value.Clone()
+}
 
 // URI reads URI in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -2563,6 +2913,16 @@ var _ = (*struct {
 	Output dtogenType0.ToolOutput       "cbor:\"o\""
 })((*dtogenType0.ToolReturned)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ToolReturnedView) MutableClone() dtogenType0.ToolReturned {
+	if v.value == nil {
+		return dtogenType0.ToolReturned{}
+	}
+	return v.value.Clone()
+}
+
 // Status reads Status in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -2610,6 +2970,16 @@ var _ = (*struct {
 	Parts []dtogenType0.ContentPart "cbor:\"p\""
 })((*dtogenType0.UserInput)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UserInputView) MutableClone() dtogenType0.UserInput {
+	if v.value == nil {
+		return dtogenType0.UserInput{}
+	}
+	return v.value.Clone()
+}
+
 // Parts reads Parts in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The collection borrows stable backing and adapts elements lazily; derived views retain it.
@@ -2643,6 +3013,16 @@ func dtogenViewWorkspaceFileSourceView(value *dtogenType0.WorkspaceFileSource) W
 var _ = (*struct {
 	Path string "cbor:\"p\""
 })((*dtogenType0.WorkspaceFileSource)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v WorkspaceFileSourceView) MutableClone() dtogenType0.WorkspaceFileSource {
+	if v.value == nil {
+		return dtogenType0.WorkspaceFileSource{}
+	}
+	return v.value.Clone()
+}
 
 // Path reads Path in O(1) without copying sibling payloads.
 // A zero view returns zero.

@@ -191,7 +191,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	mutateMediaBytes(t, inlineAt(t, ev, 1).Parts().At(1))
 	mutateMediaBytes(t, uv.Parts().At(1))
 	// Encoded transport remains an explicit independently owned export.
-	raw := old.RecordAt(7).Format()
+	raw := old.RecordAt(7).MutableClone()
 	clear(raw.Payload)
 	assertExactContent(old)
 	if !instructionsMatch(iv, wantI) || !catalogMatches(tv, wantT) || !bindingMatches(mv, wantM) || !effectiveMatches(ev, wantE) || !userInputMatches(uv, authored) {
@@ -513,11 +513,11 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 	} {
 		loaded, err := loadFixtureCommit(t, h, s, proposedCommit(t, s, r), sessionPolicy())
 		mustBatch(t, err)
-		got := loaded.Snapshot().RecordAt(2).Format()
-		if got.KindVersion != sessionformat.Version || !got.Equal(r.Format()) {
+		got := loaded.Snapshot().RecordAt(2).MutableClone()
+		if got.KindVersion != sessionformat.Version || !got.Equal(r.MutableClone()) {
 			t.Fatal("record roundtrip/version")
 		}
-		dto := r.Format()
+		dto := r.MutableClone()
 		dto.KindVersion++
 		assertRejected(t, h, s, proposedCommit(t, s, fixtureRecord{dto}), session.ErrUnsupportedRecord)
 	}

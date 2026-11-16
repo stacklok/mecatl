@@ -121,7 +121,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 		for i, value := range want {
 			wire, err := codec.Encode(value, p.PayloadLimits)
 			canonicalOK(t, err)
-			if !bytes.Equal(snapshot.RecordAt(i).Format().Payload, wire) {
+			if !bytes.Equal(snapshot.RecordAt(i).MutableClone().Payload, wire) {
 				t.Fatalf("record %d canonical bytes changed or borrowed caller storage", i)
 			}
 		}
@@ -246,12 +246,12 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 			wire, err := codec.Encode(expected.value, p.PayloadLimits)
 			canonicalOK(t, err)
 			record := snapshot.RecordAt(3 + i)
-			exported := record.Format()
+			exported := record.MutableClone()
 			if exported.Kind != expected.kind || exported.KindVersion != sessionformat.Version || !bytes.Equal(exported.Payload, wire) {
 				t.Fatalf("interaction record %d changed canonical bytes or borrowed caller storage", i)
 			}
 			clear(exported.Payload)
-			if !bytes.Equal(record.Format().Payload, wire) {
+			if !bytes.Equal(record.MutableClone().Payload, wire) {
 				t.Fatal("interaction record exposed retained payload bytes")
 			}
 		}
@@ -374,7 +374,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 		want.RunID = run.HistoryRelative()
 		wire, err := codec.Encode(want, p.PayloadLimits)
 		canonicalOK(t, err)
-		if !bytes.Equal(snapshot.RecordAt(8).Format().Payload, wire) {
+		if !bytes.Equal(snapshot.RecordAt(8).MutableClone().Payload, wire) {
 			t.Fatal("ending bytes changed")
 		}
 	}

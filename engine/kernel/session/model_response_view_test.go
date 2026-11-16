@@ -201,7 +201,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	clear(data)
 	data = private.Data().Copy()
 	clear(data)
-	dto := record.Format()
+	dto := record.MutableClone()
 	clear(dto.Payload)
 	callValue, _ := view.Items().At(3).Call()
 	clear(callValue.Arguments().Copy())

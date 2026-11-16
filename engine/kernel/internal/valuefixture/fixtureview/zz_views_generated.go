@@ -23,6 +23,16 @@ var _ = (*struct {
 	Children []dtogenType0.Leaf "cbor:\"c\""
 })((*dtogenType0.Child)(nil))
 
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v ChildView) MutableClone() dtogenType0.Child {
+	if v.value == nil {
+		return dtogenType0.Child{}
+	}
+	return v.value.Clone()
+}
+
 // Label reads Label in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The receiver retains stable backing for its lifetime.
@@ -93,6 +103,16 @@ var _ = (*struct {
 	Children map[string]*dtogenType0.Child "cbor:\"ch\""
 	Sibling  []byte                        "cbor:\"s\""
 })((*dtogenType0.Envelope)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v EnvelopeView) MutableClone() dtogenType0.Envelope {
+	if v.value == nil {
+		return dtogenType0.Envelope{}
+	}
+	return v.value.Clone()
+}
 
 // Value reads Value in O(1) without copying sibling payloads.
 // A zero view returns zero.
@@ -212,6 +232,16 @@ func dtogenViewLeafView(value *dtogenType0.Leaf) LeafView { return LeafView{valu
 var _ = (*struct {
 	Data []byte "cbor:\"d\""
 })((*dtogenType0.Leaf)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v LeafView) MutableClone() dtogenType0.Leaf {
+	if v.value == nil {
+		return dtogenType0.Leaf{}
+	}
+	return v.value.Clone()
+}
 
 // Data reads Data in O(1) without copying sibling payloads.
 // A zero view returns zero.

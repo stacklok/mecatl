@@ -98,7 +98,7 @@ never traverses directory symlinks.
 A destination owns one view-only declaration and artifact, independently of the
 DTO source owner. Mark each selected local view type with `//dtogen:include`;
 packages without markers can instead list handles with `-types`. The generator
-does not scan names ending in `View` or generate value operations on their backing:
+does not scan names ending in `View` or select value operations on their backing:
 
 ```go
 //go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
@@ -160,9 +160,29 @@ entries remain invalid for CBOR.
 
 Pointers to bytes/slices additionally return a presence bool. Zero views are safe;
 optional fields preserve present zero/empty values. Byte and collection navigation
-is O(1) and borrows backing without cloning siblings. Byte `Copy` alone detaches;
-see the [views contract](../../engine/kernel/views/doc.go) for borrowing and
-lifetime requirements.
+is O(1) and borrows backing without cloning siblings. Byte `Copy` detaches only
+the selected leaf; see the [views contract](../../engine/kernel/views/doc.go) for
+borrowing and lifetime requirements.
+
+A selected view also receives `MutableClone() DTO` when its backing DTO belongs
+to an explicit owner's named closure and that owner selects `clone`. The method
+calls the DTO's existing `Clone()`, including a declared handwritten override.
+A handwritten `Clone` method alone does not establish ownership. Views whose
+backing lacks this declared capability remain inspection-only.
+
+`MutableClone` returns the concrete DTO with deeply detached mutable storage.
+A zero view returns a zero DTO without calling `Clone`. Cloning preserves DTO
+payload data, including fields omitted from view accessors, optional presence,
+present-empty values, ordering, and exact bytes. Work and allocation cover only
+the selected DTO subtree. Mutating the result cannot affect retained backing or
+another clone; borrowed accessors and leaf `Copy` keep their existing behavior.
+
+Private enclosing scope or identity stored in the view is not part of the
+returned DTO. Identity fields in the DTO itself are preserved; existing scope
+and authoring validation still apply when submitting it. For example, cloning
+a context-bearing child exports its payload without exporting its parent's
+scope. Handwritten methods and untagged DTO getters named `MutableClone`
+collide with generation and fail; omit a conflicting DTO getter with `view:"-"`.
 
 A view containing only `value *DTO` is context-free and can be constructed by
 generated child getters. Selecting two context-free views for one DTO is
