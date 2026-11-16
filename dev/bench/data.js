@@ -377726,6 +377726,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794826077684,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fe6d2a471974684106ea0fd3e2df2211c7833ec8",
+          "message": "feat(identitybroker): fix the AuthorizeCall shape and run the checks before a grant (#2785)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-16T11:58:20Z",
+          "tree_id": "53a13eab5e9483f44647a808b4e7e542e1213650",
+          "url": "https://github.com/stacklok/mecatl/commit/fe6d2a471974684106ea0fd3e2df2211c7833ec8"
+        },
+        "date": 1794830996192,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -545415,6 +545449,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794830992732,
+  "lastUpdate": 1794830996890,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
