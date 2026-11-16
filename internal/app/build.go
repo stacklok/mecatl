@@ -1583,6 +1583,9 @@ type Built struct {
 	// identity broker's AS-2; nil when startup set none up. Close releases it
 	// with the MCP broker.
 	identityBrokerAS2 *identityBrokerAS2
+	// mcpBrokerGatewayServers are the servers whose calls the MCP broker
+	// sends through the identity broker's gateway, for tests; nil for none.
+	mcpBrokerGatewayServers []string
 	// GuardrailsAdvisory reports a configured checker demoted to advisory for
 	// sessions in the server's default mode (yolo); other modes keep it enforcing.
 	GuardrailsAdvisory bool
@@ -2358,6 +2361,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		case cfg.IdentityBrokerAS1 != nil:
 			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
 		}
+		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
+			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
+		}
 		if err == nil {
 			broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
 		}
@@ -3128,7 +3134,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

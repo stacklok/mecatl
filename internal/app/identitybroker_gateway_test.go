@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"slices"
@@ -442,5 +443,70 @@ func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 		if leaks(jwtSegmentText(t, a, 0)+jwtSegmentText(t, a, 1), secrets) {
 			t.Fatal("a client assertion carries a token")
 		}
+	}
+}
+
+// TestBuildInstallsGatewayCallsOnlyWithGatewayServers shows the MCP broker
+// sends calls through the identity broker's gateway only for the servers its
+// gateway entry routes, and only with the identity broker on.
+func TestBuildInstallsGatewayCallsOnlyWithGatewayServers(t *testing.T) {
+	t.Run("with gateway servers", func(t *testing.T) {
+		g := buildWithHarnessAS1(t, true, func(cfg *Config) { cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer} })
+		if got := g.built.mcpBrokerGatewayServers; !slices.Equal(got, []string{gatewayTestServer}) {
+			t.Fatalf("gateway servers = %v, want [%s]", got, gatewayTestServer)
+		}
+	})
+	t.Run("without gateway servers", func(t *testing.T) {
+		g := buildWithHarnessAS1(t, true, nil)
+		if g.built.identityBrokerAS2 == nil {
+			t.Fatal("startup set up no AS-2")
+		}
+		if got := g.built.mcpBrokerGatewayServers; got != nil {
+			t.Fatalf("gateway servers = %v, want none", got)
+		}
+	})
+	t.Run("without the identity broker", func(t *testing.T) {
+		built, err := buildIsolated(t, t.Context(), Config{
+			Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true,
+			MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: []string{gatewayTestServer},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(built.Close)
+		if built.MCPBroker == nil || built.IdentityBroker != nil {
+			t.Fatalf("broker=%v identity broker=%v, want only the MCP broker", built.MCPBroker != nil, built.IdentityBroker != nil)
+		}
+		if got := built.mcpBrokerGatewayServers; got != nil {
+			t.Fatalf("gateway servers = %v, want none", got)
+		}
+	})
+}
+
+// TestGatewayInProcessClientRefusesOtherURLs shows the gateway's in-process
+// client serves only the gateway endpoint.
+func TestGatewayInProcessClientRefusesOtherURLs(t *testing.T) {
+	const endpoint = as2TestIssuer + "/mcp"
+	served := 0
+	client, err := gatewayInProcessClient(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served++
+		w.WriteHeader(http.StatusNoContent)
+	}), endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, refused := range []string{as2TestIssuer + "/token", "http://broker.example/v1/mcp/broker/mcp", "https://other.example/v1/mcp/broker/mcp", "https://user@broker.example/v1/mcp/broker/mcp"} {
+		if resp, err := client.Get(refused); err == nil {
+			_ = resp.Body.Close()
+			t.Errorf("GET %s succeeded, want a refusal", refused)
+		}
+	}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		t.Fatalf("GET the endpoint: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || served != 1 {
+		t.Fatalf("endpoint status %d after %d handler calls; want 204 from the one call", resp.StatusCode, served)
 	}
 }
