@@ -64,11 +64,12 @@ are not loaded under remote execution, so the execution template cannot change t
 
 The agent loop still lacks the following:
 
-- **Read ledger scope.** The remote adapter builds a fresh [ledger][workspace-contract] after every `AcquireRun`, so the
-  ledger lasts one run: one user prompt and every turn until the agent answers. The agent must re-read every file before
-  editing it on each prompt. Locally the ledger lasts for the session binding (`internal/app/placement.go`). The ledger
-  only enforces read-before-edit; the executor's conditional replacement still rejects stale writes, so a session-scoped
-  ledger is safe.
+- **Read ledger scope.** The remote adapter builds a fresh [ledger][workspace-contract] after every `AcquireRun`, so
+  without the durable Redis ledger the ledger lasts one run: one user prompt and every turn until the agent answers.
+  With `SessionReadLedger` configured, the server's `acquireExecution` rebinds every run to the session's durable
+  ledger, as placement already does. Locally the ledger lasts for the session binding (`internal/app/placement.go`).
+  The ledger only enforces read-before-edit; the executor's conditional replacement still rejects stale writes, so a
+  session-scoped ledger is safe.
 - **Capabilities.** `ExecutionCapabilities` is filled in after binding from what the environment offers; it is never
   requested or admitted. `Shell` is always attached. File-only operation exists only as the deployment-wide
   `--no-shell` flag, which Helm values cannot express.
