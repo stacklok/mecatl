@@ -191,7 +191,7 @@ func TestRunEndingExactEscapePolicy(t *testing.T) {
 						case "empty detail":
 							ending.Explanation = new("")
 						case "mixed":
-							interactionCheck(t, b.ReplaceInstructions(run.historyID, Instructions{}))
+							interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
 						}
 						err = b.AddRunEnded(run, ending)
 						allowedBulk := reason == RunEndedLimit || reason == RunEndedCaptureFailed

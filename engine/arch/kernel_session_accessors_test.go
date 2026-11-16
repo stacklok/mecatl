@@ -20,7 +20,7 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 	}{
 		{"session.go", "Session", []string{"Snapshot"}},
 		{"record_view.go", "RecordView", []string{"ModelRequest", "ModelResponse", "InvocationFailure", "RunEnded"}},
-		{"snapshot.go", "Snapshot", []string{"Instructions", "ToolCatalog", "ModelBinding", "UserInputByID"}},
+		{"snapshot.go", "Snapshot", []string{"RootInstructions", "UserInstructions", "ToolCatalog", "ModelBinding", "UserInputByID"}},
 	} {
 		t.Run(owner.file, func(t *testing.T) {
 			path := filepath.Join("..", "kernel", "session", owner.file)
@@ -94,9 +94,9 @@ func TestKernelSessionConstantTimeAccessorGuardControls(t *testing.T) {
 		want                           int
 	}{
 		{"direct capture", "Session", "Snapshot", `func (s *Session) Snapshot() Snapshot { return s.state.view }`, 0},
-		{"conditional handle", "Snapshot", "Instructions", `func (v Snapshot) Instructions() (InstructionsView, bool) {
-			if v.instructions != nil { return InstructionsView{record: v.instructions, scope: v.historyID}, true }
-			return InstructionsView{}, false
+		{"conditional handle", "Snapshot", "RootInstructions", `func (v Snapshot) RootInstructions() (RootInstructionsView, bool) {
+			if v.instructions != nil { return RootInstructionsView{record: v.instructions, scope: v.historyID}, true }
+			return RootInstructionsView{}, false
 		}`, 0},
 		{"unrelated traversal", "Session", "Snapshot", `func (s *Session) Snapshot() Snapshot { return s.state.view }
 		func (s *Session) other() { scan(s.state.view.records) }`, 0},
@@ -104,11 +104,11 @@ func TestKernelSessionConstantTimeAccessorGuardControls(t *testing.T) {
 			for _, r := range s.state.view.records { _ = r }
 			return s.state.view
 		}`, 1},
-		{"nonallocating indexed scan", "Snapshot", "Instructions", `func (v Snapshot) Instructions() (InstructionsView, bool) {
+		{"nonallocating indexed scan", "Snapshot", "RootInstructions", `func (v Snapshot) RootInstructions() (RootInstructionsView, bool) {
 			for i := 0; i < 100; i++ { _ = v.records[i] }
-			return InstructionsView{record: v.instructions}, true
+			return RootInstructionsView{record: v.instructions}, true
 		}`, 1},
-		{"delegated traversal", "Snapshot", "Instructions", `func (v Snapshot) Instructions() (InstructionsView, bool) { return v.scanInstructions() }`, 1},
+		{"delegated traversal", "Snapshot", "RootInstructions", `func (v Snapshot) RootInstructions() (RootInstructionsView, bool) { return v.scanRootInstructions() }`, 1},
 		{"bounded identity lookup", "Snapshot", "UserInputByID", `func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
 			if id.ordinal == 0 || id.ordinal > uint64(len(v.inputs)) { return UserInputView{}, false }
 			return UserInputView{record: v.records[v.inputs[int(id.ordinal-1)]]}, true

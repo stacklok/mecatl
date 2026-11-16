@@ -742,7 +742,7 @@ func (h dtogen) clone5(v RequestV1) RequestV1 {
 	out.Model = h.clone3(v.Model)
 	out.Settings = h.clone6(v.Settings)
 	out.RootInstructions = h.clone7(v.RootInstructions)
-	out.UserContextPrefix = h.clone11(v.UserContextPrefix)
+	out.UserInstructions = h.clone11(v.UserInstructions)
 	out.Tools = h.clone12(v.Tools)
 	out.Conversation = h.clone14(v.Conversation)
 	return out
@@ -760,7 +760,7 @@ func (h dtogen) equal5(v, w RequestV1) bool {
 	if !h.equal7(v.RootInstructions, w.RootInstructions) {
 		return false
 	}
-	if !h.equal11(v.UserContextPrefix, w.UserContextPrefix) {
+	if !h.equal11(v.UserInstructions, w.UserInstructions) {
 		return false
 	}
 	if !h.equal12(v.Tools, w.Tools) {
@@ -799,12 +799,6 @@ func (h dtogen) check5(v RequestV1, b *dtogenCodec.Budget, d, cap int) (err erro
 	if err := h.check3(v.Model, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Model: %w", err)
 	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("UserContextPrefix: %w", err)
-	}
-	if err := h.check11(v.UserContextPrefix, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("UserContextPrefix: %w", err)
-	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("RootInstructions: %w", err)
 	}
@@ -823,6 +817,12 @@ func (h dtogen) check5(v RequestV1, b *dtogenCodec.Budget, d, cap int) (err erro
 	if err := h.check12(v.Tools, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Tools: %w", err)
 	}
+	if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("UserInstructions: %w", err)
+	}
+	if err := h.check11(v.UserInstructions, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("UserInstructions: %w", err)
+	}
 	return nil
 }
 func (h dtogen) append5(out []byte, v RequestV1) []byte {
@@ -834,14 +834,14 @@ func (h dtogen) append5(out []byte, v RequestV1) []byte {
 	out = h.append14(out, v.Conversation)
 	out = dtogenCBOR.AppendText(out, "m")
 	out = h.append3(out, v.Model)
-	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append11(out, v.UserContextPrefix)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append7(out, v.RootInstructions)
 	out = dtogenCBOR.AppendText(out, "s")
 	out = h.append6(out, v.Settings)
 	out = dtogenCBOR.AppendText(out, "t")
 	out = h.append12(out, v.Tools)
+	out = dtogenCBOR.AppendText(out, "u")
+	out = h.append11(out, v.UserInstructions)
 	return out
 }
 func (h dtogen) read5(r *dtogenCodec.Reader, d, cap int) (v RequestV1, err error) {
@@ -885,29 +885,29 @@ func (h dtogen) read5(r *dtogenCodec.Reader, d, cap int) (v RequestV1, err error
 			if err != nil {
 				return v, dtogenFmt.Errorf("Model: %w", err)
 			}
-		case "p":
-			seen[3] = true
-			v.UserContextPrefix, err = h.read11(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("UserContextPrefix: %w", err)
-			}
 		case "r":
-			seen[4] = true
+			seen[3] = true
 			v.RootInstructions, err = h.read7(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("RootInstructions: %w", err)
 			}
 		case "s":
-			seen[5] = true
+			seen[4] = true
 			v.Settings, err = h.read6(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Settings: %w", err)
 			}
 		case "t":
-			seen[6] = true
+			seen[5] = true
 			v.Tools, err = h.read12(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Tools: %w", err)
+			}
+		case "u":
+			seen[6] = true
+			v.UserInstructions, err = h.read11(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("UserInstructions: %w", err)
 			}
 		default:
 			return v, dtogenCodec.ErrInvalidData

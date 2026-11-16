@@ -19,15 +19,6 @@ type Request struct {
 // CID returns canonical request-byte identity, or unset for a zero Request.
 func (v Request) CID() contentid.CID { return v.cid }
 
-// Format returns a fully detached mutable DTO, or zero for an unset Request.
-// Work and allocation are proportional to the complete request, not a selected leaf.
-func (v Request) Format() format.RequestV1 {
-	if v.value == nil {
-		return format.RequestV1{}
-	}
-	return v.value.Clone()
-}
-
 // finalizeRequest admits stable trusted in-process DTO input under explicit
 // bounds before encoding or cloning. It retains no mutable caller storage.
 // Failure returns an unset request; successful bytes alone determine its CID.

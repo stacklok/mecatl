@@ -2,8 +2,9 @@ package format
 
 import sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 
-// ContentBlock preserves one prepared root/prefix or assistant content boundary.
-// It carries no provenance or additional authority. Zero is valid empty content.
+// ContentBlock preserves one prepared root/user instruction or assistant content
+// boundary. It carries no contribution key, provenance, or additional authority.
+// Zero is valid empty content.
 // Assignment shares parts and their storage; Clone detaches them.
 type ContentBlock struct {
 	// Parts preserves content order and duplicates. Nil and empty are equivalent.

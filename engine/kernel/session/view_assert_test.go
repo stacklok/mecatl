@@ -69,13 +69,13 @@ func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput)
 	return true
 }
 
-func instructionsMatch(v session.InstructionsView, want session.Instructions) bool {
+func instructionsMatch(v session.RootInstructionsView, want session.RootInstructions) bool {
 	if v.Blocks().Len() != len(want.Blocks) {
 		return false
 	}
 	for i, block := range want.Blocks {
 		got := v.Blocks().At(i)
-		if !sourceMatches(got.Source(), block.Source) || got.Parts().Len() != len(block.Parts) {
+		if got.Key() != block.Key || !sourceMatches(got.Source(), block.Source) || got.Parts().Len() != len(block.Parts) {
 			return false
 		}
 		for j, part := range block.Parts {

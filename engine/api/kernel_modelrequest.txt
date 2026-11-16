@@ -44,13 +44,12 @@
     method func (Request).API() string
     method func (Request).CID() contentid.CID
     method func (Request).Conversation() views.SliceView[format.ConversationItem, ConversationItemView]
-    method func (Request).Format() format.RequestV1
     method func (Request).Model() string
     method func (Request).MutableClone() format.RequestV1
     method func (Request).RootInstructions() views.SliceView[format.ContentBlock, ContentBlockView]
     method func (Request).Settings() ModelSettingsView
     method func (Request).Tools() views.SliceView[format.ToolDefinition, ToolDefinitionView]
-    method func (Request).UserContextPrefix() views.SliceView[format.ContentBlock, ContentBlockView]
+    method func (Request).UserInstructions() views.SliceView[format.ContentBlock, ContentBlockView]
     method func (ToolCallView).Arguments() views.Bytes
     method func (ToolCallView).MutableClone() format.ToolCall
     method func (ToolCallView).Name() string

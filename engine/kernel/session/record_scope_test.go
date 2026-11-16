@@ -80,8 +80,8 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 				interactionCheck(t, b.EndRun(RunEndedInterrupted))
 			}
 			for _, replace := range []func(historyid.HistoryID) error{
-				func(scope historyid.HistoryID) error { return b.ReplaceUserContextPrefix(scope, UserContextPrefix{}) },
-				func(scope historyid.HistoryID) error { return b.ReplaceInstructions(scope, Instructions{}) },
+				func(scope historyid.HistoryID) error { return b.ReplaceUserInstructions(scope, UserInstructions{}) },
+				func(scope historyid.HistoryID) error { return b.ReplaceRootInstructions(scope, RootInstructions{}) },
 				func(scope historyid.HistoryID) error { return b.ReplaceToolCatalog(scope, ToolCatalog{}) },
 				func(scope historyid.HistoryID) error {
 					return b.ReplaceModelBinding(scope, ModelBinding{Route: "r", API: "a", Model: "m"})
@@ -288,10 +288,10 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
 		"user context prefix": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceUserContextPrefix(scope, UserContextPrefix{})
+			return b.ReplaceUserInstructions(scope, UserInstructions{})
 		},
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(scope, Instructions{})
+			return b.ReplaceRootInstructions(scope, RootInstructions{})
 		},
 		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
 			return b.ReplaceToolCatalog(scope, ToolCatalog{})
@@ -352,10 +352,10 @@ func TestPublicOwnerCheckPrecedesPayloadValidation(t *testing.T) {
 	interactionCheck(t, err)
 	for name, add := range map[string]func(*SessionCommit, historyid.HistoryID) error{
 		"user context prefix": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceUserContextPrefix(scope, UserContextPrefix{Blocks: []InstructionBlock{{}}})
+			return b.ReplaceUserInstructions(scope, UserInstructions{Blocks: []InstructionBlock{{Key: "harness/core"}}})
 		},
 		"instructions": func(b *SessionCommit, scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(scope, Instructions{Blocks: []InstructionBlock{{}}})
+			return b.ReplaceRootInstructions(scope, RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core"}}})
 		},
 		"catalog": func(b *SessionCommit, scope historyid.HistoryID) error {
 			return b.ReplaceToolCatalog(scope, ToolCatalog{Tools: []ToolDefinition{{}}})

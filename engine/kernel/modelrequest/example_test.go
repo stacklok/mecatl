@@ -53,6 +53,13 @@ func ExampleConstruct_andReconstruct() {
 		fmt.Println(err)
 		return
 	}
+	if err := commit.ReplaceUserInstructions(historyID, session.UserInstructions{Blocks: []session.InstructionBlock{
+		{Key: "operator/persona", Parts: []session.ContentPart{{Text: new("original persona")}}, Source: session.ContentSource{Description: "prepared persona", WorkspaceFile: &session.WorkspaceFileSource{Path: "SOUL.md"}}},
+		{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("retained project guidance")}}, Source: session.ContentSource{Description: "adopted project guidance", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}},
+	}}); err != nil {
+		fmt.Println(err)
+		return
+	}
 	if err := commit.AddEffectiveInput(run, session.EffectiveInput{Inputs: []session.InputItem{{
 		Inline: &session.AttributedInput{
 			Actor:   "operator",
@@ -95,7 +102,88 @@ func ExampleConstruct_andReconstruct() {
 		return
 	}
 	fmt.Printf("accepted request reconstructs=%t\n", reconstructed.CID() == built.Request().CID())
+
+	// Finish the original run before resuming. This example records a synthetic
+	// response; neither construction nor reconstruction invokes a model.
+	finish, err := s.BeginCommit()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer finish.Discard()
+	if err := finish.AddModelResponse(requestID, session.ModelResponse{Terminal: session.ResponseTerminalNormal}); err != nil {
+		fmt.Println(err)
+		return
+	}
+	if err := finish.EndRun(session.RunEndedCompleted); err != nil {
+		fmt.Println(err)
+		return
+	}
+	if _, err := s.SubmitCommit(ctx, finish); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// Load restores retained facts. It does not reopen SOUL.md or AGENTS.md.
+	resumed, err := session.Load(ctx, h, historyID, policy)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	before := resumed.Snapshot()
+	standing, present := before.UserInstructions()
+	if !present {
+		fmt.Println("missing standing user instructions")
+		return
+	}
+	updated := standing.MutableClone()
+	found := false
+	for i := range updated.Blocks {
+		if updated.Blocks[i].Key == "operator/persona" {
+			// Harness policy supplies newly prepared bytes and provenance. The key
+			// survives a source change; unrelated contributions retain their order.
+			updated.Blocks[i] = session.InstructionBlock{
+				Key: "operator/persona", Parts: []session.ContentPart{{Text: new("refreshed persona")}},
+				Source: session.ContentSource{Description: "persona prepared by resume policy"},
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		fmt.Println("missing persona contribution")
+		return
+	}
+	refresh, err := resumed.BeginCommit()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer refresh.Discard()
+	if err := refresh.ReplaceUserInstructions(historyID, updated); err != nil {
+		fmt.Println(err)
+		return
+	}
+	if _, err := resumed.SubmitCommit(ctx, refresh); err != nil {
+		fmt.Println(err)
+		return
+	}
+	after, _ := resumed.Snapshot().UserInstructions()
+	oldPersona, _ := standing.Blocks().At(0).Parts().At(0).Text()
+	newPersona, _ := after.Blocks().At(0).Parts().At(0).Text()
+	project, _ := after.Blocks().At(1).Parts().At(0).Text()
+	fmt.Printf("persona: %s -> %s\n", oldPersona, newPersona)
+	fmt.Printf("project: %s\n", project)
+	historical, err := modelrequest.Reconstruct(resumed.Snapshot(), requestID, limits)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("historical request unchanged=%t\n", historical.CID() == built.Request().CID())
 	// Output:
 	// provisional request has run=true
 	// accepted request reconstructs=true
+	// persona: original persona -> refreshed persona
+	// project: retained project guidance
+	// historical request unchanged=true
 }

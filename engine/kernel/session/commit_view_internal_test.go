@@ -45,7 +45,7 @@ func TestModelRequestCaptureFreshness(t *testing.T) {
 				destination = &copied
 				want = ErrBatch
 			case "stale empty context":
-				interactionCheck(t, b.ReplaceInstructions(run.historyID, Instructions{}))
+				interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
 			case "stale input":
 				_, err := b.AddUserInput(run, UserInput{})
 				interactionCheck(t, err)
@@ -91,8 +91,8 @@ func TestModelRequestGenesisCaptureSubmitLoad(t *testing.T) {
 	run, err := b.StartRun()
 	interactionCheck(t, err)
 	interactionCheck(t, b.ReplaceModelBinding(run.historyID, ModelBinding{Route: "r", API: "a", Model: "m"}))
-	interactionCheck(t, b.ReplaceInstructions(run.historyID, Instructions{}))
-	interactionCheck(t, b.ReplaceUserContextPrefix(run.historyID, UserContextPrefix{}))
+	interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
+	interactionCheck(t, b.ReplaceUserInstructions(run.historyID, UserInstructions{}))
 	input, err := b.AddUserInput(run, UserInput{Parts: []ContentPart{{Text: new("hello")}}})
 	interactionCheck(t, err)
 	interactionCheck(t, b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.ordinal)}}}))

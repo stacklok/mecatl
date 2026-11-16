@@ -29,9 +29,9 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	nestedInput := identifiedInput{ID: input, UserInput: UserInput{Parts: []ContentPart{{Text: new(oversizeText)}}}}
 	nestedMedia := identifiedInput{ID: input, UserInput: UserInput{Parts: []ContentPart{{Media: &Media{Kind: MediaKind(oversizeText)}}}}}
 	nestedActor := EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: Actor(oversizeText)}}}}
-	nestedInstructions := Instructions{Blocks: []InstructionBlock{{Parts: []ContentPart{{Text: new(oversizeText)}}}}}
-	oversizePrefix := UserContextPrefix{Blocks: blocks}
-	nestedPrefix := UserContextPrefix(nestedInstructions)
+	nestedInstructions := RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: []ContentPart{{Text: new(oversizeText)}}}}}
+	oversizePrefix := UserInstructions{Blocks: blocks}
+	nestedPrefix := UserInstructions(nestedInstructions)
 	oversizeCallID := ModelResponse{Items: []ResponseItem{{Call: &RequestedCall{ProviderCallID: oversizeText}}}}
 	nestedCatalog := ToolCatalog{Tools: []ToolDefinition{{Name: "tool", ArgumentSchema: settings}}}
 	nestedEffective := EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Parts: parts}}}}
@@ -49,7 +49,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 			return makeInputRecord(identifiedInput{ID: input, UserInput: UserInput{Parts: parts}}, limits)
 		},
 		func() (*materializedRecord, error) {
-			return newInstructionsRecord(Instructions{Blocks: blocks}, limits)
+			return newRootInstructionsRecord(RootInstructions{Blocks: blocks}, limits)
 		},
 		func() (*materializedRecord, error) {
 			return newToolCatalogRecord(ToolCatalog{Tools: tools}, limits)
@@ -60,12 +60,12 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 		func() (*materializedRecord, error) {
 			return newModelBindingRecord(oversizeBinding, limits)
 		},
-		func() (*materializedRecord, error) { return newUserContextPrefixRecord(oversizePrefix, limits) },
-		func() (*materializedRecord, error) { return newUserContextPrefixRecord(nestedPrefix, limits) },
+		func() (*materializedRecord, error) { return newUserInstructionsRecord(oversizePrefix, limits) },
+		func() (*materializedRecord, error) { return newUserInstructionsRecord(nestedPrefix, limits) },
 		func() (*materializedRecord, error) { return newModelResponseRecord(oversizeCallID, requestID, limits) },
 		func() (*materializedRecord, error) { return makeInputRecord(nestedInput, limits) },
 		func() (*materializedRecord, error) { return makeInputRecord(nestedMedia, limits) },
-		func() (*materializedRecord, error) { return newInstructionsRecord(nestedInstructions, limits) },
+		func() (*materializedRecord, error) { return newRootInstructionsRecord(nestedInstructions, limits) },
 		func() (*materializedRecord, error) { return newToolCatalogRecord(nestedCatalog, limits) },
 		func() (*materializedRecord, error) {
 			return newEffectiveInputRecord(nestedEffective, input.runID, limits)
@@ -100,7 +100,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 	content := []ContentPart{{Text: new(" exact ")}, {Media: &Media{Kind: MediaKindDocument, MIMEType: "raw", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
 	authored := identifiedInput{ID: input, UserInput: UserInput{Parts: content}}
-	instructions := Instructions{Blocks: []InstructionBlock{{Parts: content, Source: source}}}
+	instructions := RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: content, Source: source}}}
 	catalog := ToolCatalog{Tools: []ToolDefinition{{Name: "read", ArgumentSchema: []byte(" true ")}}}
 	binding := ModelBinding{Route: "r", API: "a", Model: "m", Settings: ModelSettings{ReasoningEffort: new(" exact "), MaxOutputTokens: new(int64(42))}}
 	effective := EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.ordinal)}, {Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: []ContentPart{{Text: new("supplement")}}, Source: source}}}}
@@ -147,7 +147,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 		{"ending", func(l codec.Limits) (*materializedRecord, error) { return newRunEndedRecord(ending, input.runID, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(storedEnding, l) }},
 		{"input", func(l codec.Limits) (*materializedRecord, error) { return makeInputRecord(authored, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(storedInput, l) }},
 		{"instructions", func(l codec.Limits) (*materializedRecord, error) {
-			return newInstructionsRecord(instructions, l)
+			return newRootInstructionsRecord(instructions, l)
 		}, func(l codec.Limits) ([]byte, error) { return codec.Encode(instructions, l) }},
 		{"catalog", func(l codec.Limits) (*materializedRecord, error) { return newToolCatalogRecord(catalog, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(catalog, l) }},
 		{"binding", func(l codec.Limits) (*materializedRecord, error) { return newModelBindingRecord(binding, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(binding, l) }},
@@ -177,7 +177,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 			case "input":
 				want.input = storedInput
 			case "instructions":
-				want.instructions = instructions
+				want.rootInstructions = instructions
 			case "catalog":
 				want.catalog = catalog
 			case "binding":
@@ -279,8 +279,8 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	instructions := Instructions{Blocks: []InstructionBlock{{Source: ContentSource{Description: "root"}}}}
-	if err := b.ReplaceInstructions(scope, instructions); err != nil {
+	instructions := RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Source: ContentSource{Description: "root"}}}}
+	if err := b.ReplaceRootInstructions(scope, instructions); err != nil {
 		t.Fatal(err)
 	}
 	originalCatalog := ToolCatalog{Tools: []ToolDefinition{{Name: "original", ArgumentSchema: []byte("true")}}}
@@ -296,7 +296,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	}
 	before := detachedSessionState(s.state)
 	old := s.Snapshot()
-	replacement, err := newInstructionsRecord(Instructions{}, limits)
+	replacement, err := newRootInstructionsRecord(RootInstructions{}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 		t.Fatal("failed final source published selections/counters/storage")
 	}
-	iv, ok := old.Instructions()
+	iv, ok := old.RootInstructions()
 	if !ok || iv.HistoryID() != scope || iv.Blocks().Len() != 1 || iv.Blocks().At(0).Parts().Len() != 0 || iv.Blocks().At(0).Source().Description() != "root" {
 		t.Fatal("old selection changed")
 	}
@@ -352,7 +352,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 				case "malformed":
 					last.Payload = []byte{0xff}
 				case "oversize":
-					key := map[string]byte{sessionformat.KindInstructions: 'b', sessionformat.KindToolCatalog: 't', sessionformat.KindModelBinding: 's', sessionformat.KindEffectiveInput: 'i', sessionformat.KindUserInput: 'p'}[last.Kind]
+					key := map[string]byte{sessionformat.KindRootInstructions: 'b', sessionformat.KindToolCatalog: 't', sessionformat.KindModelBinding: 's', sessionformat.KindEffectiveInput: 'i', sessionformat.KindUserInput: 'p'}[last.Kind]
 					last.Payload = []byte{0xa1, 0x61, key, 0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 					if last.Kind == sessionformat.KindModelBinding {
 						last.Payload[3] = 0xbb // Declared settings map pair count.

@@ -99,7 +99,7 @@ func textParts(values ...string) []session.ContentPart {
 	return out
 }
 func instruction(text string) session.InstructionBlock {
-	return session.InstructionBlock{Parts: textParts(text), Source: session.ContentSource{Description: "private provenance"}}
+	return session.InstructionBlock{Key: "harness/core", Parts: textParts(text), Source: session.ContentSource{Description: "private provenance"}}
 }
 func inline(purpose session.PromptPurpose, values ...string) session.InputItem {
 	return session.InputItem{Inline: &session.AttributedInput{Actor: "not a role", Purpose: purpose, Source: session.ContentSource{Description: "private provenance"}, Parts: textParts(values...)}}
@@ -109,6 +109,56 @@ func assertConstructionFailure(t testing.TB, source Source, limits codec.Limits,
 	result, err := Construct(source, format.ParametersV1{}, limits)
 	if err == nil || (want != nil && !errors.Is(err, want)) || !reflect.DeepEqual(result, ConstructionResult{}) {
 		t.Fatalf("expected zero construction and %v; got error %v", want, err)
+	}
+}
+
+func TestInstructionKeysDoNotAffectLogicalRequest(t *testing.T) {
+	for _, collection := range []string{"root", "user"} {
+		t.Run(collection, func(t *testing.T) {
+			f := newConstructionFixture(t)
+			scope := f.run.HistoryID()
+			root := session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root contract")}}
+			user := session.UserInstructions{Blocks: []session.InstructionBlock{instruction("user guidance")}}
+			requireConstruction(t, f.b.ReplaceRootInstructions(scope, root))
+			requireConstruction(t, f.b.ReplaceUserInstructions(scope, user))
+			f.submit()
+			before := f.s.Snapshot()
+			original, err := Construct(before, format.ParametersV1{}, testLimits())
+			requireConstruction(t, err)
+			if collection == "root" {
+				root.Blocks[0].Key = "different/root-key"
+				requireConstruction(t, f.b.ReplaceRootInstructions(scope, root))
+			} else {
+				user.Blocks[0].Key = "different/user-key"
+				requireConstruction(t, f.b.ReplaceUserInstructions(scope, user))
+			}
+			f.submit()
+			loaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+			requireConstruction(t, err)
+			for _, after := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
+				gotRoot, _ := after.RootInstructions()
+				gotUser, _ := after.UserInstructions()
+				if after.Head() == before.Head() || !gotRoot.MutableClone().Equal(root) || !gotUser.MutableClone().Equal(user) {
+					t.Fatal("session did not retain the key-only change")
+				}
+				rebuilt, err := Construct(after, format.ParametersV1{}, testLimits())
+				requireConstruction(t, err)
+				if rebuilt.Request().CID() != original.Request().CID() || !rebuilt.Request().MutableClone().Equal(original.Request().MutableClone()) {
+					t.Fatal("bookkeeping key leaked into logical request content or CID")
+				}
+			}
+			// Positive control: this is not a constructor that ignores instructions.
+			if collection == "root" {
+				*root.Blocks[0].Parts[0].Text = "changed root contract"
+				requireConstruction(t, f.b.ReplaceRootInstructions(scope, root))
+			} else {
+				*user.Blocks[0].Parts[0].Text = "changed user guidance"
+				requireConstruction(t, f.b.ReplaceUserInstructions(scope, user))
+			}
+			if f.build(format.ParametersV1{}).Request().CID() == original.Request().CID() {
+				t.Fatal("changed instruction content did not change logical request CID")
+			}
+		})
 	}
 }
 
@@ -133,8 +183,8 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	}
 	f := newConstructionFixture(t)
 	id := f.run.HistoryID()
-	requireConstruction(t, f.b.ReplaceInstructions(id, session.Instructions{Blocks: []session.InstructionBlock{instruction("old root")}}))
-	requireConstruction(t, f.b.ReplaceUserContextPrefix(id, session.UserContextPrefix{Blocks: []session.InstructionBlock{instruction("prefix")}}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(id, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("old root")}}))
+	requireConstruction(t, f.b.ReplaceUserInstructions(id, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("prefix")}}))
 	requireConstruction(t, f.b.ReplaceToolCatalog(id, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", Description: "description", ArgumentSchema: []byte(" true ")}}}))
 	media := session.ContentPart{Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceInline, InlineData: []byte{1, 2, 3}, MIMEType: "image/png"}}
 	selected := append(textParts("", " \n", inputSentinel), media)
@@ -152,9 +202,9 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 		{User: &format.UserMessage{Parts: append(textParts(" \n", inputSentinel), media)}},
 		{User: &format.UserMessage{Parts: textParts("<supplemental-context>\n", " ", "\n</supplemental-context>")}},
 	}
-	initial := format.RequestV1{API: "api", Model: "model", RootInstructions: []format.ContentBlock{{Parts: textParts("old root")}}, UserContextPrefix: []format.ContentBlock{{Parts: textParts("prefix")}}, Tools: []session.ToolDefinition{{Name: "tool", Description: "description", ArgumentSchema: []byte(" true ")}}, Conversation: wantUsers}
-	if !first.Request().Format().Equal(initial) {
-		t.Fatalf("initial projection mismatch: %#v", first.Request().Format())
+	initial := format.RequestV1{API: "api", Model: "model", RootInstructions: []format.ContentBlock{{Parts: textParts("old root")}}, UserInstructions: []format.ContentBlock{{Parts: textParts("prefix")}}, Tools: []session.ToolDefinition{{Name: "tool", Description: "description", ArgumentSchema: []byte(" true ")}}, Conversation: wantUsers}
+	if !first.Request().MutableClone().Equal(initial) {
+		t.Fatalf("initial projection mismatch: %#v", first.Request().MutableClone())
 	}
 	f.submit()
 	origin := f.view()
@@ -181,8 +231,10 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	requireConstruction(t, f.b.AddToolDisposition(response.CallAt(1).ID(), session.ToolDisposition{NotInvoked: &session.ToolNotInvoked{Reason: session.ToolNotInvokedUserDenied}, Diagnostic: new(diagnosticSentinel)}))
 	requireConstruction(t, f.b.AddToolDisposition(response.CallAt(0).ID(), session.ToolDisposition{Returned: &session.ToolReturned{Status: session.ToolReturnError, Output: session.ToolOutput{Capture: session.ToolCaptureTruncated, Parts: []session.ToolOutputPart{{JSON: new([]byte(" {\"x\": 1} \n"))}}}}, Diagnostic: new(diagnosticSentinel)}))
 	requireConstruction(t, f.b.ReplaceModelBinding(id, session.ModelBinding{Route: "different route", API: "next API", Model: "next model", Settings: session.ModelSettings{ReasoningEffort: new("native effort"), MaxOutputTokens: new(int64(123))}}))
-	requireConstruction(t, f.b.ReplaceInstructions(id, session.Instructions{Blocks: []session.InstructionBlock{instruction(""), instruction(rootText)}}))
-	requireConstruction(t, f.b.ReplaceUserContextPrefix(id, session.UserContextPrefix{}))
+	emptyInstruction := instruction("")
+	emptyInstruction.Key = "harness/empty"
+	requireConstruction(t, f.b.ReplaceRootInstructions(id, session.RootInstructions{Blocks: []session.InstructionBlock{emptyInstruction, instruction(rootText)}}))
+	requireConstruction(t, f.b.ReplaceUserInstructions(id, session.UserInstructions{}))
 	parameters := format.ParametersV1{PrivateReplay: []format.PrivateReplaySelector{{SourceAPI: "api", SourceModel: "model", Producer: "producer", Format: "format", Version: 3}, {SourceAPI: "api", SourceModel: "model", Producer: "producer", Format: "format", Version: 3}}}
 	capture := f.view()
 	built, err := Construct(capture, parameters, testLimits())
@@ -191,7 +243,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	want.API, want.Model = "next API", "next model"
 	want.Settings = session.ModelSettings{ReasoningEffort: new("native effort"), MaxOutputTokens: new(int64(123))}
 	want.RootInstructions = []format.ContentBlock{{Parts: textParts(rootText)}}
-	want.UserContextPrefix = nil
+	want.UserInstructions = nil
 	want.Conversation = append(want.Conversation,
 		format.ConversationItem{Assistant: &format.AssistantMessage{Items: []format.AssistantItem{
 			{Output: &format.ContentBlock{Parts: textParts("output")}}, {Call: &format.ToolCall{ProviderCallID: "provider/一", Arguments: []byte{0xff, '{', 0}}}, {Refusal: &format.ContentBlock{Parts: textParts("refusal")}}, {Call: &format.ToolCall{ProviderCallID: "provider/two", Name: "unknown", Arguments: []byte("not JSON")}},
@@ -199,8 +251,8 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 		format.ConversationItem{ToolResult: &format.ToolResult{ProviderCallID: "provider/一", Outcome: format.ToolOutcomeReturnedError, Parts: textParts("Tool returned an error.", "Tool output is incomplete.", " {\"x\": 1} \n")}},
 		format.ConversationItem{ToolResult: &format.ToolResult{ProviderCallID: "provider/two", Outcome: format.ToolOutcomeNotInvoked, Parts: textParts("User denied tool execution")}},
 	)
-	if !built.Request().Format().Equal(want) {
-		t.Fatalf("complete projection mismatch: %#v", built.Request().Format())
+	if !built.Request().MutableClone().Equal(want) {
+		t.Fatalf("complete projection mismatch: %#v", built.Request().MutableClone())
 	}
 	wire, err := codec.Encode(want, testLimits())
 	requireConstruction(t, err)
@@ -210,7 +262,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	if built.Request().CID() != contentid.Sum(wire) || !bytes.Equal(built.Recipe().Check, check[:]) || !decoded.Equal(parameters) || built.Recipe().Algorithm != "chronological" || built.Recipe().Version != 1 {
 		t.Fatal("canonical recipe/CID")
 	}
-	actualWire, err := codec.Encode(built.Request().Format(), testLimits())
+	actualWire, err := codec.Encode(built.Request().MutableClone(), testLimits())
 	requireConstruction(t, err)
 	for _, sentinel := range []string{evidenceSentinel, diagnosticSentinel} {
 		if bytes.Contains(actualWire, []byte(sentinel)) {
@@ -219,7 +271,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	}
 	omitted, err := Construct(capture, format.ParametersV1{}, testLimits())
 	requireConstruction(t, err)
-	omittedWire, err := codec.Encode(omitted.Request().Format(), testLimits())
+	omittedWire, err := codec.Encode(omitted.Request().MutableClone(), testLimits())
 	requireConstruction(t, err)
 	if bytes.Contains(omittedWire, []byte(privateSentinel)) || !bytes.Contains(omittedWire, []byte(inputSentinel)) {
 		t.Fatal("private omission discarded input or disclosed an unselected envelope")
@@ -238,7 +290,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	f.submit()
 	capturedAgain, err := Construct(capture, parameters, testLimits())
 	requireConstruction(t, err)
-	if !capturedAgain.Request().Format().Equal(want) || capturedAgain.Request().CID() != contentid.Sum(wire) {
+	if !capturedAgain.Request().MutableClone().Equal(want) || capturedAgain.Request().CID() != contentid.Sum(wire) {
 		t.Fatal("submission changed the pinned source")
 	}
 	loaded, err := session.Load(t.Context(), f.h, id, f.policy)
@@ -246,9 +298,9 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 		got, err := Reconstruct(snapshot, target, testLimits())
 		requireConstruction(t, err)
-		gotWire, err := codec.Encode(got.Format(), testLimits())
+		gotWire, err := codec.Encode(got.MutableClone(), testLimits())
 		requireConstruction(t, err)
-		if !got.Format().Equal(want) || !bytes.Equal(gotWire, wire) || got.CID() != contentid.Sum(wire) {
+		if !got.MutableClone().Equal(want) || !bytes.Equal(gotWire, wire) || got.CID() != contentid.Sum(wire) {
 			t.Fatal("Submit/Load/Reconstruct changed independently expected request")
 		}
 		failedRequest, err := Reconstruct(snapshot, target, low)
@@ -274,14 +326,14 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	requireConstruction(t, err)
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(u.RunRelative())}, {UserInputID: new(u.RunRelative())}}}))
 	want.Conversation = append(want.Conversation, format.ConversationItem{User: &format.UserMessage{Parts: textParts("next run")}}, format.ConversationItem{User: &format.UserMessage{Parts: textParts("next run")}})
-	if got := f.build(parameters).Request().Format(); !got.Equal(want) {
+	if got := f.build(parameters).Request().MutableClone(); !got.Equal(want) {
 		t.Fatal("cross-run history was reset")
 	}
 	requireConstruction(t, f.b.Discard())
-	if !built.Request().Format().Equal(wantWithoutLastTwo(want)) {
+	if !built.Request().MutableClone().Equal(wantWithoutLastTwo(want)) {
 		t.Fatal("source closure mutated owned construction")
 	}
-	if !first.Request().Format().Equal(initial) {
+	if !first.Request().MutableClone().Equal(initial) {
 		t.Fatal("later preparation changed previous result")
 	}
 }
@@ -318,7 +370,7 @@ func TestConstructPrivateReplaySelectionAndEmptyMessages(t *testing.T) {
 			if field == "none" {
 				parameters.PrivateReplay = nil
 			}
-			got := f.build(parameters).Request().Format()
+			got := f.build(parameters).Request().MutableClone()
 			if field == "all" {
 				if len(got.Conversation) != 1 || got.Conversation[0].Assistant.Private == nil || len(got.Conversation[0].Assistant.Items) != 0 {
 					t.Fatal("private-only present-empty envelope dropped")
@@ -351,14 +403,14 @@ func TestConstructProviderIDValidationIndependentOfOpaqueArguments(t *testing.T)
 			if ids[0] == "" || ids[0] == ids[1] {
 				assertConstructionFailure(t, f.view(), testLimits(), nil)
 			} else {
-				got := f.build(format.ParametersV1{}).Request().Format()
+				got := f.build(format.ParametersV1{}).Request().MutableClone()
 				if !bytes.Equal(got.Conversation[0].Assistant.Items[0].Call.Arguments, []byte{0xff, '{'}) || got.Conversation[0].Assistant.Items[0].Call.Name != "" {
 					t.Fatal("opaque call was normalized")
 				}
 				f.submit()
 				response = f.response([]session.ResponseItem{{Call: &session.RequestedCall{ProviderCallID: ids[0]}}}, nil)
 				requireConstruction(t, f.b.AddToolDisposition(response.CallAt(0).ID(), session.ToolDisposition{NotInvoked: &session.ToolNotInvoked{Reason: session.ToolNotInvokedOther}}))
-				if len(f.build(format.ParametersV1{}).Request().Format().Conversation) != 5 {
+				if len(f.build(format.ParametersV1{}).Request().MutableClone().Conversation) != 5 {
 					t.Fatal("cross-response provider ID reuse rejected")
 				}
 			}
@@ -385,16 +437,16 @@ func TestConstructInactiveAndClosedCapture(t *testing.T) {
 
 func TestConstructUnconsumedContributionsAndLifecycleOmission(t *testing.T) {
 	f := newConstructionFixture(t)
-	requireConstruction(t, f.b.ReplaceInstructions(f.run.HistoryID(), session.Instructions{Blocks: []session.InstructionBlock{instruction("root")}}))
-	requireConstruction(t, f.b.ReplaceUserContextPrefix(f.run.HistoryID(), session.UserContextPrefix{Blocks: []session.InstructionBlock{instruction("prefix")}}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
+	requireConstruction(t, f.b.ReplaceUserInstructions(f.run.HistoryID(), session.UserInstructions{Blocks: []session.InstructionBlock{instruction("prefix")}}))
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "unconsumed")}}))
 	requireConstruction(t, f.b.EndRun(session.RunEndedInterrupted))
 	var err error
 	f.run, err = f.b.StartRun()
 	requireConstruction(t, err)
-	requireConstruction(t, f.b.ReplaceInstructions(f.run.HistoryID(), session.Instructions{}))
-	before := f.build(format.ParametersV1{}).Request().Format()
-	if len(before.Conversation) != 1 || len(before.RootInstructions) != 0 || len(before.UserContextPrefix) != 1 {
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{}))
+	before := f.build(format.ParametersV1{}).Request().MutableClone()
+	if len(before.Conversation) != 1 || len(before.RootInstructions) != 0 || len(before.UserInstructions) != 1 {
 		t.Fatal("run ending withdrew unconsumed input or coupled independent replacements")
 	}
 	view := f.view()
@@ -404,7 +456,7 @@ func TestConstructUnconsumedContributionsAndLifecycleOmission(t *testing.T) {
 	requireConstruction(t, err)
 	f.submit()
 	requireConstruction(t, f.b.AddInvocationFailure(request, session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new("private failure")}))
-	if !f.build(format.ParametersV1{}).Request().Format().Equal(before) {
+	if !f.build(format.ParametersV1{}).Request().MutableClone().Equal(before) {
 		t.Fatal("request commitment or infrastructure failure invented model prose")
 	}
 	f.submit()
@@ -415,7 +467,7 @@ func TestConstructUnconsumedContributionsAndLifecycleOmission(t *testing.T) {
 	requireConstruction(t, err)
 	f.submit()
 	requireConstruction(t, f.b.AddInvocationFailure(retry, session.InvocationFailure{Class: session.InvocationFailureTimeout}))
-	if !f.build(format.ParametersV1{}).Request().Format().Equal(before) {
+	if !f.build(format.ParametersV1{}).Request().MutableClone().Equal(before) {
 		t.Fatal("retry invented model prose")
 	}
 	requireConstruction(t, f.b.Discard())

@@ -57,8 +57,8 @@ func Construct(source Source, parameters format.ParametersV1, limits codec.Limit
 type chronologicalSelection struct {
 	source       Source
 	parameters   format.ParametersV1
-	root         session.InstructionsView
-	prefix       session.UserContextPrefixView
+	root         session.RootInstructionsView
+	user         session.UserInstructionsView
 	binding      session.ModelBindingView
 	catalog      session.ToolCatalogView
 	inputs       map[session.UserInputID]session.UserInputView
@@ -77,10 +77,10 @@ func selectChronological(source Source, parameters format.ParametersV1) (chronol
 	pending := make(map[session.ModelRequestID]bool)
 	for r := range source.Records() {
 		switch r.Kind() {
-		case sessionformat.KindInstructions:
-			s.root, _ = r.Instructions()
-		case sessionformat.KindUserContextPrefix:
-			s.prefix, _ = r.UserContextPrefix()
+		case sessionformat.KindRootInstructions:
+			s.root, _ = r.RootInstructions()
+		case sessionformat.KindUserInstructions:
+			s.user, _ = r.UserInstructions()
 		case sessionformat.KindModelBinding:
 			s.binding, _ = r.ModelBinding()
 		case sessionformat.KindToolCatalog:

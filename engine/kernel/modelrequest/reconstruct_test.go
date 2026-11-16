@@ -17,7 +17,7 @@ func assertReconstructed(t *testing.T, snapshot session.Snapshot, id session.Mod
 	t.Helper()
 	got, err := Reconstruct(snapshot, id, testLimits())
 	requireConstruction(t, err)
-	if got.CID() != want.CID() || !got.Format().Equal(want.Format()) {
+	if got.CID() != want.CID() || !got.MutableClone().Equal(want.MutableClone()) {
 		t.Fatal("reconstruction changed the original logical request")
 	}
 }
@@ -35,15 +35,15 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 		t.Run(position, func(t *testing.T) {
 			f := newConstructionFixture(t)
 			scope := f.run.HistoryID()
-			requireConstruction(t, f.b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{instruction("original root")}}))
-			requireConstruction(t, f.b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{Blocks: []session.InstructionBlock{instruction("original prefix")}}))
+			requireConstruction(t, f.b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("original root")}}))
+			requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("original prefix")}}))
 			requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "original input")}}))
 			if position != "genesis" {
 				f.submit()
 			}
 			if position == "middle" {
-				requireConstruction(t, f.b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{instruction("same-commit root")}}))
-				requireConstruction(t, f.b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{Blocks: []session.InstructionBlock{instruction("same-commit prefix")}}))
+				requireConstruction(t, f.b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("same-commit root")}}))
+				requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("same-commit prefix")}}))
 				requireConstruction(t, f.b.ReplaceModelBinding(scope, session.ModelBinding{Route: "original", API: "same-commit API", Model: "same-commit model"}))
 				requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "same-commit input")}}))
 			}
@@ -55,8 +55,8 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 			requireConstruction(t, err)
 			assertReconstructionFailure(t, before, id, testLimits(), session.ErrIdentity)
 			// Later facts in this very commit must not enter the original prefix.
-			requireConstruction(t, f.b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{instruction("later root")}}))
-			requireConstruction(t, f.b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{}))
+			requireConstruction(t, f.b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("later root")}}))
+			requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{}))
 			requireConstruction(t, f.b.ReplaceModelBinding(scope, session.ModelBinding{Route: "later", API: "later API", Model: "later model"}))
 			f.submit()
 			accepted := f.s.Snapshot()
@@ -78,8 +78,8 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 			requireConstruction(t, f.b.EndRun(session.RunEndedInterrupted))
 			f.run, err = f.b.StartRun()
 			requireConstruction(t, err)
-			requireConstruction(t, f.b.ReplaceInstructions(scope, session.Instructions{}))
-			requireConstruction(t, f.b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{Blocks: []session.InstructionBlock{instruction("next run prefix")}}))
+			requireConstruction(t, f.b.ReplaceRootInstructions(scope, session.RootInstructions{}))
+			requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("next run prefix")}}))
 			requireConstruction(t, f.b.ReplaceModelBinding(scope, session.ModelBinding{Route: "next run", API: "next API", Model: "next model"}))
 			requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "next run input")}}))
 			f.submit()
@@ -99,6 +99,89 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResumeUserInstructionsSelectiveRefresh(t *testing.T) {
+	f := newConstructionFixture(t)
+	scope := f.run.HistoryID()
+	root := session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root contract")}}
+	project := session.InstructionBlock{
+		Key: "workspace/root-guidance", Parts: append(textParts("retained project guidance"), session.ContentPart{Media: &session.Media{
+			Kind: session.MediaKindDocument, Source: session.MediaSourceInline, MIMEType: "application/octet-stream", InlineData: []byte{0xff, 0, 3},
+		}}),
+		Source: session.ContentSource{Description: "same provenance is not identity", WorkspaceFile: &session.WorkspaceFileSource{Path: "unavailable-on-resume/AGENTS.md"}},
+	}
+	persona := session.InstructionBlock{
+		Key: "operator/persona", Parts: textParts("original persona"),
+		Source: session.ContentSource{Description: project.Source.Description, WorkspaceFile: &session.WorkspaceFileSource{Path: "unavailable-on-resume/SOUL.md"}},
+	}
+	original := session.UserInstructions{Blocks: []session.InstructionBlock{project, persona, {
+		Key: "operator/preferences", Source: session.ContentSource{Description: "explicitly empty contribution"},
+	}}}
+	requireConstruction(t, f.b.ReplaceRootInstructions(scope, root))
+	// The latest accepted replacement, not the first occurrence, is the resume baseline.
+	requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{}))
+	requireConstruction(t, f.b.ReplaceUserInstructions(scope, original))
+	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "initial input")}}))
+	capture := f.view()
+	built, err := Construct(capture, format.ParametersV1{}, testLimits())
+	requireConstruction(t, err)
+	requestID, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: built.Recipe()})
+	requireConstruction(t, err)
+	f.submit()
+	requireConstruction(t, f.b.AddModelResponse(requestID, session.ModelResponse{Terminal: session.ResponseTerminalNormal}))
+	requireConstruction(t, f.b.EndRun(session.RunEndedCompleted))
+	f.submit()
+	requireConstruction(t, f.b.Discard())
+
+	// Neither source file exists in this fixture. Load has only retained History,
+	// not a filesystem resolver, and must preserve both provenance labels exactly.
+	loaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+	requireConstruction(t, err)
+	oldSnapshot := loaded.Snapshot()
+	standing, present := oldSnapshot.UserInstructions()
+	if !present || !standing.MutableClone().Equal(original) {
+		t.Fatal("Load did not select the latest retained instructions")
+	}
+	updated := standing.MutableClone()
+	found := false
+	for i := range updated.Blocks {
+		if updated.Blocks[i].Key == "operator/persona" {
+			updated.Blocks[i].Parts = textParts("refreshed persona")
+			updated.Blocks[i].Source = session.ContentSource{Description: "prepared from a non-file source on resume"}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("missing persona contribution")
+	}
+	want := updated.Clone()
+	b, err := loaded.BeginCommit()
+	requireConstruction(t, err)
+	requireConstruction(t, b.ReplaceUserInstructions(scope, updated))
+	// Authoring owns a detached replacement, including unchanged siblings.
+	updated.Blocks[0].Key = "caller-mutated"
+	updated.Blocks[0].Parts[1].Media.InlineData[0] = 7
+	updated.Blocks[0].Source.WorkspaceFile.Path = "CLAUDE.md"
+	*updated.Blocks[1].Parts[0].Text = "caller-mutated"
+	_, err = loaded.SubmitCommit(t.Context(), b)
+	requireConstruction(t, err)
+	reloaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+	requireConstruction(t, err)
+	for _, snapshot := range []session.Snapshot{loaded.Snapshot(), reloaded.Snapshot()} {
+		got, ok := snapshot.UserInstructions()
+		gotRoot, rootPresent := snapshot.RootInstructions()
+		if !ok || !got.MutableClone().Equal(want) || !rootPresent || !gotRoot.MutableClone().Equal(root) {
+			t.Fatal("refresh changed order, unrelated contributions, root contract, or new persona")
+		}
+		assertReconstructed(t, snapshot, requestID, built.Request())
+	}
+	old, _ := oldSnapshot.UserInstructions()
+	if !standing.MutableClone().Equal(original) || !old.MutableClone().Equal(original) {
+		t.Fatal("refresh or clone mutation changed old snapshot backing")
+	}
+	assertReconstructed(t, oldSnapshot, requestID, built.Request())
 }
 
 func TestReconstructSameCommitOutcomeAndPrivateReplay(t *testing.T) {
@@ -258,9 +341,9 @@ func TestReconstructCIDIgnoresHistoryRouteAndIrrelevantSelectors(t *testing.T) {
 		requests = append(requests, got)
 		recipes = append(recipes, recipe)
 	}
-	one, err := codec.Encode(requests[0].Format(), testLimits())
+	one, err := codec.Encode(requests[0].MutableClone(), testLimits())
 	requireConstruction(t, err)
-	two, err := codec.Encode(requests[1].Format(), testLimits())
+	two, err := codec.Encode(requests[1].MutableClone(), testLimits())
 	requireConstruction(t, err)
 	if !bytes.Equal(one, two) || requests[0].CID() != requests[1].CID() || bytes.Equal(recipes[0].Parameters, recipes[1].Parameters) {
 		t.Fatal("history, route or irrelevant selectors contaminated request identity")

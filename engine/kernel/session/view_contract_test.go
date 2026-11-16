@@ -11,7 +11,7 @@ import (
 func TestRecursiveViewsZero(t *testing.T) {
 	var user session.UserInputView
 	var effective session.EffectiveInputView
-	var instructions session.InstructionsView
+	var instructions session.RootInstructionsView
 	var catalog session.ToolCatalogView
 	var binding session.ModelBindingView
 	if user.ID() != (session.UserInputID{}) || user.Parts().Len() != 0 || effective.RunID() != (session.RunID{}) || effective.Inputs().Len() != 0 || instructions.Blocks().Len() != 0 || catalog.Tools().Len() != 0 || !bindingMatches(binding, session.ModelBinding{}) {
@@ -26,7 +26,7 @@ func TestRecursiveViewsZero(t *testing.T) {
 	}
 	var inline session.AttributedInputView
 	var block session.InstructionBlockView
-	if inline.Actor() != "" || inline.Purpose() != "" || inline.Parts().Len() != 0 || inline.Source() != (session.ContentSourceView{}) || block.Parts().Len() != 0 || block.Source() != (session.ContentSourceView{}) {
+	if inline.Actor() != "" || inline.Purpose() != "" || inline.Parts().Len() != 0 || inline.Source() != (session.ContentSourceView{}) || block.Key() != "" || block.Parts().Len() != 0 || block.Source() != (session.ContentSourceView{}) {
 		t.Fatal("zero required children")
 	}
 	var part session.ContentPartView
@@ -76,9 +76,9 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	run := batchRun(t, b)
 	id, err := b.AddUserInput(run, session.UserInput{Parts: richContent()})
 	mustBatch(t, err)
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{
-		{Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},
-		{Source: session.ContentSource{Description: "empty block"}},
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{
+		{Key: "harness/empty-text", Parts: []session.ContentPart{{Text: new("")}}, Source: session.ContentSource{Description: "empty text"}},
+		{Key: "harness/empty", Source: session.ContentSource{Description: "empty block"}},
 	}}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte(" false ")}}}))
 	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: session.ModelSettings{ReasoningEffort: new(" exact ")}}))
@@ -90,7 +90,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	submitBatch(t, s, b)
 	v := s.Snapshot()
 	user := lookupInput(t, v, run, 1)
-	instructions, _ := v.Instructions()
+	instructions, _ := v.RootInstructions()
 	catalog, _ := v.ToolCatalog()
 	binding, _ := v.ModelBinding()
 	effective, _ := v.RecordAt(6).EffectiveInput()
@@ -179,7 +179,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	}{
 		{"zero user", 0, func(i int) { (session.UserInputView{}).Parts().At(i) }},
 		{"zero effective", 0, func(i int) { (session.EffectiveInputView{}).Inputs().At(i) }},
-		{"zero instructions", 0, func(i int) { (session.InstructionsView{}).Blocks().At(i) }},
+		{"zero instructions", 0, func(i int) { (session.RootInstructionsView{}).Blocks().At(i) }},
 		{"zero catalog", 0, func(i int) { (session.ToolCatalogView{}).Tools().At(i) }},
 		{"zero inline", 0, func(i int) { (session.AttributedInputView{}).Parts().At(i) }},
 		{"zero block", 0, func(i int) { (session.InstructionBlockView{}).Parts().At(i) }},

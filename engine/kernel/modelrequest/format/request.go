@@ -24,8 +24,9 @@ type RequestV1 struct {
 	Settings sessionformat.ModelSettings `cbor:"s"`
 	// RootInstructions preserves prepared root block order and boundaries.
 	RootInstructions []ContentBlock `cbor:"r"`
-	// UserContextPrefix preserves independently prepared prefix blocks in order.
-	UserContextPrefix []ContentBlock `cbor:"p"`
+	// UserInstructions preserves independently prepared standing user-guidance blocks
+	// in order.
+	UserInstructions []ContentBlock `cbor:"u"`
 	// Tools preserves advertised order and requires unique exact names.
 	Tools []sessionformat.ToolDefinition `cbor:"t"`
 	// Conversation preserves chronological effective messages. Every call requires
@@ -44,7 +45,7 @@ func (v RequestV1) Validate() error {
 			return err
 		}
 	}
-	for _, b := range v.UserContextPrefix {
+	for _, b := range v.UserInstructions {
 		if err := b.Validate(); err != nil {
 			return err
 		}

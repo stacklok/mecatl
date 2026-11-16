@@ -14,13 +14,13 @@ import (
 // payloadViewWant retains authored values and allocated identities independently
 // of either inspected snapshot. Collections and unrelated leaves are nonempty.
 type payloadViewWant struct {
-	run          session.RunID
-	input        session.UserInputID
-	parts        []session.ContentPart
-	instructions session.Instructions
-	catalog      session.ToolCatalog
-	binding      session.ModelBinding
-	effective    session.EffectiveInput
+	run              session.RunID
+	input            session.UserInputID
+	parts            []session.ContentPart
+	rootInstructions session.RootInstructions
+	catalog          session.ToolCatalog
+	binding          session.ModelBinding
+	effective        session.EffectiveInput
 }
 
 func completePayloadViewFixture(t *testing.T, count, field, sibling int) (map[string]*session.Session, payloadViewWant) {
@@ -37,16 +37,16 @@ func completePayloadViewFixture(t *testing.T, count, field, sibling int) (map[st
 	mustBatch(t, err)
 	source := session.ContentSource{Description: strings.Repeat("d", sibling), WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}
 	for i := range count {
-		want.instructions.Blocks = append(want.instructions.Blocks, session.InstructionBlock{Parts: want.parts, Source: source})
+		want.rootInstructions.Blocks = append(want.rootInstructions.Blocks, session.InstructionBlock{Key: "harness/block-" + strconv.Itoa(i), Parts: want.parts, Source: source})
 		want.catalog.Tools = append(want.catalog.Tools, session.ToolDefinition{Name: "tool" + strconv.Itoa(i), Description: strings.Repeat("t", sibling), ArgumentSchema: []byte(`"` + strings.Repeat("s", field-2) + `"`)})
 		want.effective.Inputs = append(want.effective.Inputs, session.InputItem{UserInputID: new(want.input.RunRelative())},
 			session.InputItem{Inline: &session.AttributedInput{Parts: want.parts, Actor: "extension/example", Purpose: session.PromptContext, Source: source}})
 	}
 	// Include present-empty children alongside the nonempty collection siblings.
-	want.instructions.Blocks = append(want.instructions.Blocks, session.InstructionBlock{Source: session.ContentSource{Description: "empty"}})
+	want.rootInstructions.Blocks = append(want.rootInstructions.Blocks, session.InstructionBlock{Key: "harness/empty", Source: session.ContentSource{Description: "empty"}})
 	want.effective.Inputs = append(want.effective.Inputs, session.InputItem{Inline: &session.AttributedInput{Actor: "empty", Purpose: session.PromptInstructions, Source: session.ContentSource{Description: "empty"}}})
 	want.binding = session.ModelBinding{Route: strings.Repeat("r", sibling), API: "api", Model: "model", Settings: session.ModelSettings{ReasoningEffort: new(strings.Repeat("v", field))}}
-	mustBatch(t, b.ReplaceInstructions(want.run.HistoryID(), want.instructions))
+	mustBatch(t, b.ReplaceRootInstructions(want.run.HistoryID(), want.rootInstructions))
 	mustBatch(t, b.ReplaceToolCatalog(want.run.HistoryID(), want.catalog))
 	mustBatch(t, b.ReplaceModelBinding(want.run.HistoryID(), want.binding))
 	mustBatch(t, b.AddEffectiveInput(want.run, want.effective))
@@ -117,7 +117,7 @@ func traverseCompletePayloadViews(snap session.Snapshot, inputs views.SliceView[
 	created, createdOK := snap.RecordAt(0).Created()
 	started, startedOK := snap.RecordAt(1).RunStarted()
 	input, inputOK := snap.RecordAt(2).UserInput()
-	instructions, instructionsOK := snap.RecordAt(3).Instructions()
+	instructions, instructionsOK := snap.RecordAt(3).RootInstructions()
 	catalog, catalogOK := snap.RecordAt(4).ToolCatalog()
 	binding, bindingOK := snap.RecordAt(5).ModelBinding()
 	effective, effectiveOK := snap.RecordAt(6).EffectiveInput()
@@ -126,15 +126,15 @@ func traverseCompletePayloadViews(snap session.Snapshot, inputs views.SliceView[
 		panic("root scope/presence")
 	}
 	leafBytes := inspectPayloadParts(input.Parts(), want.parts)
-	if instructions.Blocks().Len() != len(want.instructions.Blocks) || catalog.Tools().Len() != len(want.catalog.Tools) || inputs.Len() != len(want.effective.Inputs) {
+	if instructions.Blocks().Len() != len(want.rootInstructions.Blocks) || catalog.Tools().Len() != len(want.catalog.Tools) || inputs.Len() != len(want.effective.Inputs) {
 		panic("collection count")
 	}
 	for i, block := range instructions.Blocks().All() {
-		if block != instructions.Blocks().At(i) {
+		if block.Key() != want.rootInstructions.Blocks[i].Key || block != instructions.Blocks().At(i) {
 			panic("block backing")
 		}
-		inspectPayloadSource(block.Source(), want.instructions.Blocks[i].Source)
-		leafBytes += inspectPayloadParts(block.Parts(), want.instructions.Blocks[i].Parts)
+		inspectPayloadSource(block.Source(), want.rootInstructions.Blocks[i].Source)
+		leafBytes += inspectPayloadParts(block.Parts(), want.rootInstructions.Blocks[i].Parts)
 	}
 	for i, tool := range catalog.Tools().All() {
 		w := want.catalog.Tools[i]

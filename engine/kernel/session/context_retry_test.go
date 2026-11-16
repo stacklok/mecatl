@@ -28,7 +28,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	run := batchRun(t, b)
 	input, err := b.AddUserInput(run, session.UserInput{Parts: []session.ContentPart{{Text: new("/skill example\n")}}})
 	mustBatch(t, err)
-	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: session.ModelSettings{ReasoningEffort: new("exact")}}
 	effective := session.EffectiveInput{Inputs: []session.InputItem{
@@ -36,7 +36,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 		{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: richContent(), Source: session.ContentSource{Description: "prepared reference", WorkspaceFile: &session.WorkspaceFileSource{Path: "docs/design.md"}}}},
 	}}
 	expected := effective.Clone()
-	mustBatch(t, b.ReplaceInstructions(scope, instructions))
+	mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
 	mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
 	mustBatch(t, b.ReplaceModelBinding(scope, binding))
 	mustBatch(t, b.AddEffectiveInput(run, effective))
@@ -52,7 +52,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	*effective.Inputs[1].Inline.Parts[0].Text = "changed"
 	*instructions.Blocks[0].Parts[0].Text = "changed"
 	effective.Inputs[1].Inline.Source.WorkspaceFile.Path = "changed"
-	if err := b.ReplaceInstructions(scope, instructions); !errors.Is(err, session.ErrBatch) {
+	if err := b.ReplaceRootInstructions(scope, instructions); !errors.Is(err, session.ErrBatch) {
 		t.Fatalf("frozen write: %v", err)
 	}
 	submitBatch(t, s, b)
@@ -60,14 +60,14 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 		t.Fatal("retry changed exact proposal")
 	}
 	old := s.Snapshot()
-	iv, _ := old.Instructions()
+	iv, _ := old.RootInstructions()
 	tv, _ := old.ToolCatalog()
 	mv, _ := old.ModelBinding()
 	ev, _ := old.RecordAt(6).EffectiveInput()
 	if !effectiveMatches(ev, expected) {
 		t.Fatal("frozen retry retained caller mutations")
 	}
-	wantI := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	wantI := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "adopted", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	wantT := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	wantM := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: session.ModelSettings{ReasoningEffort: new("exact")}}
 	wantE := expected
@@ -96,7 +96,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	}
 	for range 32 {
 		b := beginBatch(t, s)
-		mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+		mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 		mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{}))
 		mustBatch(t, b.ReplaceModelBinding(scope, wantM))
 		mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{}))
@@ -117,7 +117,7 @@ func TestContextSoftAdmissionAndActualBulkReserve(t *testing.T) {
 		batchRun(t, b)
 		submitBatch(t, s, b)
 		b = beginBatch(t, s)
-		mustBatch(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), session.Instructions{}))
+		mustBatch(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), session.RootInstructions{}))
 		if mixedCloseout {
 			// A mixed context+bulk ending is ordinary resource admission, not cleanup.
 			mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))

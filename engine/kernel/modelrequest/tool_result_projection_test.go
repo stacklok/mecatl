@@ -30,7 +30,7 @@ func TestConstructToolNotInvokedNotices(t *testing.T) {
 			f := newConstructionFixture(t)
 			response := f.response([]session.ResponseItem{{Call: &session.RequestedCall{ProviderCallID: "provider"}}}, nil)
 			requireConstruction(t, f.b.AddToolDisposition(response.CallAt(0).ID(), session.ToolDisposition{NotInvoked: &session.ToolNotInvoked{Reason: tc.reason}, Diagnostic: new("private MUST NOT RENDER")}))
-			result := f.build(format.ParametersV1{}).Request().Format().Conversation[1].ToolResult
+			result := f.build(format.ParametersV1{}).Request().MutableClone().Conversation[1].ToolResult
 			if result.Outcome != format.ToolOutcomeNotInvoked || len(result.Parts) != 1 || *result.Parts[0].Text != tc.notice {
 				t.Fatal("not-invoked notice or invented capture")
 			}
@@ -96,7 +96,7 @@ func TestConstructToolOutcomeCaptureNotices(t *testing.T) {
 						want = append(want, textParts(text)...)
 					}
 					requireConstruction(t, f.b.AddToolDisposition(call, disposition))
-					got := f.build(format.ParametersV1{}).Request().Format().Conversation[1].ToolResult
+					got := f.build(format.ParametersV1{}).Request().MutableClone().Conversation[1].ToolResult
 					if got.Outcome != wantOutcome || !(format.ContentBlock{Parts: got.Parts}).Equal(format.ContentBlock{Parts: want}) {
 						t.Fatalf("outcome/capture rendering: %#v", got)
 					}
@@ -132,7 +132,7 @@ func TestConstructToolResourcesAndTypedMedia(t *testing.T) {
 	want = append(want, media)
 	want = append(want, textParts(metadata, metadata, "exact body\n\u2028", metadata, "Binary body not included in this request.", "Resource URI: \"urn:empty\"", "Binary body not included in this request.", "Resource URI: \"urn:empty-text\"")...)
 	built := f.build(format.ParametersV1{})
-	result := built.Request().Format().Conversation[1].ToolResult
+	result := built.Request().MutableClone().Conversation[1].ToolResult
 	if result.Outcome != format.ToolOutcomeReturnedSuccess || !(format.ContentBlock{Parts: result.Parts}).Equal(format.ContentBlock{Parts: want}) {
 		t.Fatalf("resource projection mismatch: %#v", result)
 	}
@@ -156,7 +156,7 @@ func TestConstructBulkCloseoutExplicitDispositionWins(t *testing.T) {
 	var err error
 	f.run, err = f.b.StartRun()
 	requireConstruction(t, err)
-	got := f.build(format.ParametersV1{}).Request().Format().Conversation
+	got := f.build(format.ParametersV1{}).Request().MutableClone().Conversation
 	for i, want := range []struct {
 		outcome format.ToolOutcome
 		notice  string
@@ -193,7 +193,7 @@ func TestConstructBoundsExcludeUnrelatedHistory(t *testing.T) {
 	limits.MaxByteStringBytes = 128
 	built, err := Construct(f.view(), format.ParametersV1{}, limits)
 	requireConstruction(t, err)
-	if len(built.Request().Format().Conversation) != 1 {
+	if len(built.Request().MutableClone().Conversation) != 1 {
 		t.Fatal("unrelated history rendered")
 	}
 	requireConstruction(t, f.b.Discard())
@@ -252,7 +252,7 @@ func TestConstructBoundsAmplificationBeforePayloadCopies(t *testing.T) {
 
 func TestConstructLimitsAgreeWithGeneratedOutputBudget(t *testing.T) {
 	f := newConstructionFixture(t)
-	requireConstruction(t, f.b.ReplaceInstructions(f.run.HistoryID(), session.Instructions{Blocks: []session.InstructionBlock{instruction("root")}}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptInstructions, "selected")}}))
 	response := f.response([]session.ResponseItem{{Call: &session.RequestedCall{ProviderCallID: "original", Arguments: []byte{0xff, 0, '{'}}}}, &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 1, Data: []byte{1, 2}})
 	requireConstruction(t, f.b.AddToolInvocation(response.CallAt(0).ID(), session.ToolInvocation{Name: "effective"}))
@@ -287,7 +287,7 @@ func TestConstructLimitsAgreeWithGeneratedOutputBudget(t *testing.T) {
 				case "declarations":
 					limits.MaxCollectionElements = bound
 				}
-				wantErr := codec.Check(full.Request().Format(), limits)
+				wantErr := codec.Check(full.Request().MutableClone(), limits)
 				if err := codec.Check(parameters, limits); err != nil {
 					wantErr = err
 				}

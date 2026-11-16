@@ -12,10 +12,10 @@
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
     method func (*SessionCommit).EndRun(reason RunEndedReason) error
-    method func (*SessionCommit).ReplaceInstructions(scope id.HistoryID, v Instructions) error
     method func (*SessionCommit).ReplaceModelBinding(scope id.HistoryID, v ModelBinding) error
+    method func (*SessionCommit).ReplaceRootInstructions(scope id.HistoryID, v RootInstructions) error
     method func (*SessionCommit).ReplaceToolCatalog(scope id.HistoryID, v ToolCatalog) error
-    method func (*SessionCommit).ReplaceUserContextPrefix(scope id.HistoryID, v UserContextPrefix) error
+    method func (*SessionCommit).ReplaceUserInstructions(scope id.HistoryID, v UserInstructions) error
     method func (*SessionCommit).StartRun() (RunID, error)
     method func (*SessionCommit).View() (CommitView, error)
     method func (AttributedInputView).Actor() format.Actor
@@ -51,12 +51,10 @@
     method func (InputItemView).Inline() (AttributedInputView, bool)
     method func (InputItemView).MutableClone() format.InputItem
     method func (InputItemView).UserInputID() (UserInputID, bool)
+    method func (InstructionBlockView).Key() string
     method func (InstructionBlockView).MutableClone() format.InstructionBlock
     method func (InstructionBlockView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (InstructionBlockView).Source() ContentSourceView
-    method func (InstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
-    method func (InstructionsView).HistoryID() id.HistoryID
-    method func (InstructionsView).MutableClone() format.Instructions
     method func (InvocationFailureView).Class() format.InvocationFailureClass
     method func (InvocationFailureView).Evidence() (ObservedEvidenceView, bool)
     method func (InvocationFailureView).Explanation() (string, bool)
@@ -122,7 +120,6 @@
     method func (Policy).Validate() error
     method func (RecordView).Created() (CreatedView, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
-    method func (RecordView).Instructions() (InstructionsView, bool)
     method func (RecordView).InvocationFailure() (InvocationFailureView, bool)
     method func (RecordView).Kind() string
     method func (RecordView).KindVersion() int64
@@ -130,13 +127,14 @@
     method func (RecordView).ModelRequest() (ModelRequestView, bool)
     method func (RecordView).ModelResponse() (ModelResponseView, bool)
     method func (RecordView).MutableClone() format.Record
+    method func (RecordView).RootInstructions() (RootInstructionsView, bool)
     method func (RecordView).RunEnded() (RunEndedView, bool)
     method func (RecordView).RunStarted() (RunStartedView, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).ToolDisposition() (ToolDispositionView, bool)
     method func (RecordView).ToolInvocation() (ToolInvocationView, bool)
-    method func (RecordView).UserContextPrefix() (UserContextPrefixView, bool)
     method func (RecordView).UserInput() (UserInputView, bool)
+    method func (RecordView).UserInstructions() (UserInstructionsView, bool)
     method func (RequestedCallDataView).Arguments() views.Bytes
     method func (RequestedCallDataView).MutableClone() format.RequestedCall
     method func (RequestedCallDataView).Name() string
@@ -156,6 +154,9 @@
     method func (ResponseItemView).Call() (RequestedCallDataView, bool)
     method func (ResponseItemView).Content() (ResponseContentView, bool)
     method func (ResponseItemView).MutableClone() format.ResponseItem
+    method func (RootInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
+    method func (RootInstructionsView).HistoryID() id.HistoryID
+    method func (RootInstructionsView).MutableClone() format.RootInstructions
     method func (RunEndedView).BulkToolCloseout() bool
     method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
     method func (RunEndedView).Explanation() (string, bool)
@@ -177,18 +178,18 @@
     method func (Snapshot).Created() bool
     method func (Snapshot).Head() history.CommitRef
     method func (Snapshot).HistoryID() id.HistoryID
-    method func (Snapshot).Instructions() (InstructionsView, bool)
     method func (Snapshot).ModelBinding() (ModelBindingView, bool)
     method func (Snapshot).RecordAt(i int) RecordView
     method func (Snapshot).RecordCount() int
     method func (Snapshot).Records() iter.Seq[RecordView]
     method func (Snapshot).RecordsBetween(after history.CommitRef, through history.CommitRef) (iter.Seq[RecordView], error)
+    method func (Snapshot).RootInstructions() (RootInstructionsView, bool)
     method func (Snapshot).RunAt(i int) RunView
     method func (Snapshot).RunCount() int
     method func (Snapshot).Runs() iter.Seq[RunView]
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
-    method func (Snapshot).UserContextPrefix() (UserContextPrefixView, bool)
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
+    method func (Snapshot).UserInstructions() (UserInstructionsView, bool)
     method func (SourceHeadView).CID() contentid.CID
     method func (SourceHeadView).MutableClone() format.SourceHead
     method func (SourceHeadView).Sequence() int64
@@ -247,9 +248,6 @@
     method func (ToolSettlement).BulkEnding() (RunEndedView, bool)
     method func (ToolSettlement).Category() ToolSettlementCategory
     method func (ToolSettlement).ExplicitDisposition() (ToolDispositionView, bool)
-    method func (UserContextPrefixView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
-    method func (UserContextPrefixView).HistoryID() id.HistoryID
-    method func (UserContextPrefixView).MutableClone() format.UserContextPrefix
     method func (UserInputID).Equal(other UserInputID) bool
     method func (UserInputID).RunID() RunID
     method func (UserInputID).RunRelative() uint64
@@ -257,6 +255,9 @@
     method func (UserInputView).ID() UserInputID
     method func (UserInputView).MutableClone() format.UserInput
     method func (UserInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+    method func (UserInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
+    method func (UserInstructionsView).HistoryID() id.HistoryID
+    method func (UserInstructionsView).MutableClone() format.UserInstructions
     method func (WorkspaceFileSourceView).MutableClone() format.WorkspaceFileSource
     method func (WorkspaceFileSourceView).Path() string
 const InvocationFailureLocal InvocationFailureClass = "local"
@@ -331,8 +332,6 @@ type InputItem = format.InputItem
 type InputItemView struct{}
 type InstructionBlock = format.InstructionBlock
 type InstructionBlockView struct{}
-type Instructions = format.Instructions
-type InstructionsView struct{}
 type InvocationFailure = format.InvocationFailure
 type InvocationFailureClass = format.InvocationFailureClass
 type InvocationFailureView struct{}
@@ -368,6 +367,8 @@ type ResponseContentView struct{}
 type ResponseItem = format.ResponseItem
 type ResponseItemView struct{}
 type ResponseTerminalClass = format.ResponseTerminalClass
+type RootInstructions = format.RootInstructions
+type RootInstructionsView struct{}
 type RunEnded = format.RunEnded
 type RunEndedReason = format.RunEndedReason
 type RunEndedView struct{}
@@ -410,11 +411,11 @@ type ToolReturned = format.ToolReturned
 type ToolReturnedView struct{}
 type ToolSettlement struct{}
 type ToolSettlementCategory uint8
-type UserContextPrefix = format.UserContextPrefix
-type UserContextPrefixView struct{}
 type UserInput = format.UserInput
 type UserInputID struct{}
 type UserInputView struct{}
+type UserInstructions = format.UserInstructions
+type UserInstructionsView struct{}
 type WorkspaceFileSource = format.WorkspaceFileSource
 type WorkspaceFileSourceView struct{}
 var ErrAcceptanceUnknown error

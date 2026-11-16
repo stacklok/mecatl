@@ -50,7 +50,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 	tools := make([]session.ToolDefinition, count)
 	items := make([]session.InputItem, count)
 	for i := range count {
-		blocks[i] = session.InstructionBlock{Parts: parts, Source: source}
+		blocks[i] = session.InstructionBlock{Key: "harness/block-" + strconv.Itoa(i), Parts: parts, Source: source}
 		size := siblingBytes
 		if i == 0 {
 			size = fieldBytes
@@ -59,7 +59,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 		items[i] = session.InputItem{Inline: &session.AttributedInput{Actor: "extension/example", Purpose: session.PromptContext, Parts: parts, Source: source}}
 	}
 	items[0] = session.InputItem{UserInputID: new(input.RunRelative())}
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: blocks}))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: blocks}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: tools}))
 	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: strings.Repeat("r", siblingBytes), API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(strings.Repeat("v", fieldBytes))}}))
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: items}))
@@ -83,7 +83,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 					var run session.RunView
 					var input session.UserInputView
 					var effective session.EffectiveInputView
-					var instructions session.InstructionsView
+					var instructions session.RootInstructionsView
 					var catalog session.ToolCatalogView
 					var binding session.ModelBindingView
 					var inline session.AttributedInputView
@@ -99,10 +99,10 @@ func TestViewNavigationAllocations(t *testing.T) {
 						run = snapshot.RunAt(snapshot.RunCount() - 1)
 						record = run.RecordAt(run.RecordCount() - 1)
 						effective, ok = record.EffectiveInput()
-						instructions, _ = snapshot.Instructions()
+						instructions, _ = snapshot.RootInstructions()
 						catalog, _ = snapshot.ToolCatalog()
 						binding, _ = snapshot.ModelBinding()
-						fromRecordI, _ := snapshot.RecordAt(3).Instructions()
+						fromRecordI, _ := snapshot.RecordAt(3).RootInstructions()
 						fromRecordT, _ := snapshot.RecordAt(4).ToolCatalog()
 						fromRecordM, _ := snapshot.RecordAt(5).ModelBinding()
 						if !ok || fromRecordI != instructions || fromRecordT != catalog || fromRecordM != binding {
@@ -197,7 +197,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					effective, _ := v.RecordAt(6).EffectiveInput()
 					inline, _ := effective.Inputs().At(1).Inline()
 					inlineMedia, _ := inline.Parts().At(0).Media()
-					instructions, _ := v.Instructions()
+					instructions, _ := v.RootInstructions()
 					instructionMedia, _ := instructions.Blocks().At(0).Parts().At(0).Media()
 					data := func(m session.MediaView) func() []byte {
 						return func() []byte { return m.InlineData().Copy() }
@@ -279,7 +279,7 @@ func TestViewPinnedReferenceChildrenAcrossReplacement(t *testing.T) {
 		b := beginBatch(t, s)
 		_, err := b.AddUserInput(old.ActiveRun(), session.UserInput{Parts: byteParts([]byte("later"))})
 		mustBatch(t, err)
-		mustBatch(t, b.ReplaceInstructions(old.HistoryID(), session.Instructions{}))
+		mustBatch(t, b.ReplaceRootInstructions(old.HistoryID(), session.RootInstructions{}))
 		mustBatch(t, b.ReplaceToolCatalog(old.HistoryID(), session.ToolCatalog{}))
 		mustBatch(t, b.ReplaceModelBinding(old.HistoryID(), session.ModelBinding{Route: "replacement", API: "a", Model: "m"}))
 		mustBatch(t, b.AddEffectiveInput(old.ActiveRun(), session.EffectiveInput{}))

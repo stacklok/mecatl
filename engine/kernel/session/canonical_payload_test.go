@@ -74,11 +74,11 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	authored := sessionformat.UserInput{Parts: parts}
 	input, err := b.AddUserInput(run, authored)
 	canonicalOK(t, err)
-	instructions := sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{Parts: parts, Source: sessionformat.ContentSource{Description: "source", WorkspaceFile: &sessionformat.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core", Parts: parts, Source: sessionformat.ContentSource{Description: "source", WorkspaceFile: &sessionformat.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := sessionformat.ToolCatalog{Tools: []sessionformat.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
 	binding := sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}
 	effective := sessionformat.EffectiveInput{Inputs: []sessionformat.InputItem{{UserInputID: new(input.RunRelative())}, {Inline: &sessionformat.AttributedInput{Actor: "open/future-actor", Purpose: sessionformat.PromptContext, Parts: parts, Source: sessionformat.ContentSource{Description: "inline"}}}}}
-	canonicalOK(t, b.ReplaceInstructions(scope, instructions))
+	canonicalOK(t, b.ReplaceRootInstructions(scope, instructions))
 	canonicalOK(t, b.ReplaceToolCatalog(scope, catalog))
 	canonicalOK(t, b.ReplaceModelBinding(scope, binding))
 	canonicalOK(t, b.AddEffectiveInput(run, effective))
@@ -481,7 +481,7 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 	}
 	for _, add := range []func(historyid.HistoryID) error{
 		func(scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(scope, sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{}}})
+			return b.ReplaceRootInstructions(scope, sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core"}}})
 		},
 		func(scope historyid.HistoryID) error {
 			return b.ReplaceToolCatalog(scope, sessionformat.ToolCatalog{Tools: []sessionformat.ToolDefinition{{ArgumentSchema: oversized}}})

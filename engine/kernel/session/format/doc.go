@@ -28,10 +28,10 @@ const (
 	KindUserInput = "session.user_input"
 	// KindEffectiveInput identifies an ordered incremental input contribution.
 	KindEffectiveInput = "session.effective_input"
-	// KindInstructions identifies a session-scoped instruction replacement.
-	KindInstructions = "session.instructions"
-	// KindUserContextPrefix identifies a session-scoped user-context prefix replacement.
-	KindUserContextPrefix = "session.user_context_prefix"
+	// KindRootInstructions identifies a session-scoped harness root-contract replacement.
+	KindRootInstructions = "session.root_instructions"
+	// KindUserInstructions identifies a session-scoped prepared user-guidance replacement.
+	KindUserInstructions = "session.user_instructions"
 	// KindToolCatalog identifies a session-scoped advertised catalog replacement.
 	KindToolCatalog = "session.tool_catalog"
 	// KindModelBinding identifies a session-scoped declared model binding.

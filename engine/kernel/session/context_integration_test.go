@@ -28,7 +28,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	mustBatch(t, err)
 	s := boundSession(t, h, p)
 	scope := s.Snapshot().HistoryID()
-	if _, ok := s.Snapshot().Instructions(); ok {
+	if _, ok := s.Snapshot().RootInstructions(); ok {
 		t.Fatal("absent instructions present")
 	}
 	if _, ok := s.Snapshot().ToolCatalog(); ok {
@@ -38,7 +38,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatal("absent binding present")
 	}
 	source := session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}
-	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root\n")}}, Source: source}}}
+	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("root\n")}}, Source: source}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "read", Description: "read file", ArgumentSchema: []byte(" {\"type\": \"object\"} ")}, {Name: "noop", ArgumentSchema: []byte("true")}}}
 	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(" exact "), MaxOutputTokens: new(int64(42))}}
 	wantI, wantT, wantM := instructions.Clone(), catalog.Clone(), binding.Clone()
@@ -46,7 +46,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatal("valid context values")
 	}
 	b := beginBatch(t, s)
-	if err := b.ReplaceInstructions(scope, instructions); !errors.Is(err, session.ErrTransition) {
+	if err := b.ReplaceRootInstructions(scope, instructions); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("before creation: %v", err)
 	}
 	mustBatch(t, b.Create())
@@ -58,7 +58,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	mustBatch(t, err)
 	authoredID := input
 	authored := session.UserInput{Parts: parts}.Clone()
-	mustBatch(t, b.ReplaceInstructions(scope, instructions))
+	mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
 	mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
 	mustBatch(t, b.ReplaceModelBinding(scope, binding))
 	effective := session.EffectiveInput{Inputs: []session.InputItem{
@@ -95,7 +95,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	effective.Inputs[4].Inline.Actor = "changed"
 	submitBatch(t, s, b)
 	old := s.Snapshot()
-	iv, ok := old.Instructions()
+	iv, ok := old.RootInstructions()
 	if !ok || iv.HistoryID() != scope || !instructionsMatch(iv, wantI) {
 		t.Fatal("instructions view")
 	}
@@ -198,13 +198,13 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		t.Fatal("view export aliases")
 	}
 	b = beginBatch(t, s)
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{}))
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	batchRun(t, b)
 	submitBatch(t, s, b)
 	next := s.Snapshot()
-	selected, present := next.Instructions()
+	selected, present := next.RootInstructions()
 	if !present || selected.Blocks().Len() != 0 || !instructionsMatch(iv, wantI) {
 		t.Fatal("explicit empty or old selection lost")
 	}
@@ -216,7 +216,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	if old.RunAt(0).RecordCount() != 7 || next.RunAt(0).RecordCount() != 10 {
 		t.Fatal("run chronology filtered context")
 	}
-	if _, ok := old.RecordAt(2).Instructions(); ok {
+	if _, ok := old.RecordAt(2).RootInstructions(); ok {
 		t.Fatal("wrong-kind instructions")
 	}
 	if _, ok := old.RecordAt(4).EffectiveInput(); ok {
@@ -251,7 +251,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	run := batchRun(t, b)
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
-	if err := b.ReplaceInstructions(foreign, session.Instructions{}); !errors.Is(err, session.ErrIdentity) {
+	if err := b.ReplaceRootInstructions(foreign, session.RootInstructions{}); !errors.Is(err, session.ErrIdentity) {
 		t.Fatalf("foreign context: %v", err)
 	}
 	forward := allocatedInput(t, run, 1)
@@ -444,16 +444,16 @@ func TestContextForwardReferenceExternalLoad(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceInstructions(run.HistoryID(), session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
+			mustBatch(t, b.ReplaceRootInstructions(run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
 			submitBatch(t, s, b)
 			old := s.Snapshot()
 			before := captureRejectedSnapshot(old)
-			selected, ok := old.Instructions()
+			selected, ok := old.RootInstructions()
 			if !ok {
 				t.Fatal("missing initial instructions")
 			}
 
-			prefix := encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{})
+			prefix := encodeFixture(t, sessionformat.KindRootInstructions, sessionformat.RootInstructions{})
 			input := allocatedInput(t, run, 1)
 			effective := effectiveReferenceRecord(t, 1, 1)
 			user := encodeFixture(t, sessionformat.KindUserInput, sessionformat.UserInput{RunID: 1, ID: 1, Parts: []sessionformat.ContentPart{{Text: new("later source")}}})
@@ -493,7 +493,7 @@ func TestContextForwardReferenceExternalLoad(t *testing.T) {
 				}
 				assertHistoryHead(t, h, c.Ref)
 			}
-			current, ok := s.Snapshot().Instructions()
+			current, ok := s.Snapshot().RootInstructions()
 			if !ok || current != selected || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) || !reflect.DeepEqual(before, captureRejectedSnapshot(old)) {
 				t.Fatal("forward reference published a prefix or changed accepted/pinned state")
 			}
@@ -505,7 +505,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 	h := newSessionHistory(t)
 	s := loadRecords(t, h, boundSession(t, h, sessionPolicy()), createdRecord(t), startRecord(t, 1))
 	for _, r := range []fixtureRecord{
-		encodeFixture(t, sessionformat.KindInstructions, sessionformat.Instructions{}),
+		encodeFixture(t, sessionformat.KindRootInstructions, sessionformat.RootInstructions{}),
 		encodeFixture(t, sessionformat.KindToolCatalog, sessionformat.ToolCatalog{}),
 		encodeFixture(t, sessionformat.KindModelBinding, sessionformat.ModelBinding{Route: "r", API: "a", Model: "m"}),
 		effectiveReferenceRecord(t, 1),
@@ -522,7 +522,7 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 		assertRejected(t, h, s, proposedCommit(t, s, fixtureRecord{dto}), session.ErrUnsupportedRecord)
 	}
 	var r session.RecordView
-	if v, ok := r.Instructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
+	if v, ok := r.RootInstructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
 		t.Fatal("zero instructions")
 	}
 	if v, ok := r.ToolCatalog(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Tools().Len() != 0 {

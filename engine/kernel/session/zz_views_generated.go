@@ -9,7 +9,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: e3534a8e3bc8b249a29460c1ed755b9a25339a4c8ce1d2ca5a620115f9d0050b.
+// Selected view layouts, source policy and documentation fingerprint: 10aa61bfe39d630303e90f35d588489d155fb995f99651d102a6683a71944c7b.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -348,7 +348,8 @@ func (v ContentPartView) Media() (MediaView, bool) {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ContentSource retains a nonempty explanation and optional contributing file
-// label. It does not certify trust or exact copying. Assignment shares the file
+// label. Description is not identity. Upstream owns trust and framing; this
+// value does not certify trust or exact copying. Assignment shares the file
 // pointer; Clone detaches it. Zero is invalid.
 // dtogenViewContentSourceView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewContentSourceView(value *dtogenType0.ContentSource) ContentSourceView {
@@ -377,11 +378,13 @@ func (v ContentSourceView) MutableClone() dtogenType0.ContentSource {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ContentSource retains a nonempty explanation and optional contributing file
-// label. It does not certify trust or exact copying. Assignment shares the file
+// label. Description is not identity. Upstream owns trust and framing; this
+// value does not certify trust or exact copying. Assignment shares the file
 // pointer; Clone detaches it. Zero is invalid.
 //
-// Description is a required nonempty exact UTF-8 explanation of provenance,
-// checked locally by Validate; it is not a trust or exact-copy assertion.
+// Description is a required nonempty exact UTF-8 provenance explanation,
+// checked locally by Validate. It is not identity, a trust assertion, or an
+// exact-copy assertion.
 func (v ContentSourceView) Description() string {
 	if v.value == nil {
 		return *new(string)
@@ -396,12 +399,13 @@ func (v ContentSourceView) Description() string {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // ContentSource retains a nonempty explanation and optional contributing file
-// label. It does not certify trust or exact copying. Assignment shares the file
+// label. Description is not identity. Upstream owns trust and framing; this
+// value does not certify trust or exact copying. Assignment shares the file
 // pointer; Clone detaches it. Zero is invalid.
 //
-// WorkspaceFile optionally names a contributing file in its originating
-// workspace. Nil means no file label; codec traversal validates a present child.
-// It grants no file access and loading never resolves it.
+// WorkspaceFile optionally names a contributing workspace-relative file. Nil
+// means no file label; codec traversal validates a present child. It grants no
+// file access and Load never re-reads it.
 func (v ContentSourceView) WorkspaceFile() (WorkspaceFileSourceView, bool) {
 	if v.value == nil || v.value.WorkspaceFile == nil {
 		return WorkspaceFileSourceView{}, false
@@ -495,15 +499,17 @@ func (v InputItemView) Inline() (AttributedInputView, bool) {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // InstructionBlock retains one ordered prepared contribution and its declared
-// origin. Its containing Instructions or UserContextPrefix determines its role;
-// a prefix block is not root/system authority. Content meaning is not inferred
-// from a file. Assignment shares nested storage; Clone detaches it.
+// provenance. Its containing RootInstructions or UserInstructions determines
+// the intended instruction layer; neither the key nor provenance grants authority.
+// Content meaning is not inferred from a file. Assignment shares nested storage;
+// Clone detaches it. Zero is invalid.
 // dtogenViewInstructionBlockView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewInstructionBlockView(value *dtogenType0.InstructionBlock) InstructionBlockView {
 	return InstructionBlockView{value: value}
 }
 
 var _ = (*struct {
+	Key    string                    "cbor:\"k\" cborlimit:\"bytes=256\""
 	Parts  []dtogenType0.ContentPart "cbor:\"c\""
 	Source dtogenType0.ContentSource "cbor:\"s\""
 })((*dtogenType0.InstructionBlock)(nil))
@@ -518,6 +524,34 @@ func (v InstructionBlockView) MutableClone() dtogenType0.InstructionBlock {
 	return v.value.Clone()
 }
 
+// Key reads Key in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// InstructionBlock retains one ordered prepared contribution and its declared
+// provenance. Its containing RootInstructions or UserInstructions determines
+// the intended instruction layer; neither the key nor provenance grants authority.
+// Content meaning is not inferred from a file. Assignment shares nested storage;
+// Clone detaches it. Zero is invalid.
+//
+// Key is required even for empty contributions: 1..256 UTF-8 bytes, valid
+// UTF-8, with no unicode.IsSpace or unicode.IsControl rune. Exact bytes are
+// preserved without trimming, normalization, or case folding. The vocabulary
+// is open, with no reserved prefixes; examples include harness/core,
+// operator/persona, and workspace/root-guidance. Producers conventionally keep
+// keys stable across source or text changes. Keys are bookkeeping only: they
+// confer no trust, authority, precedence, or refresh behavior and are omitted
+// from logical request content and its CID. The enclosing whole replacement
+// checks uniqueness; there is no cross-collection, history, or lifetime registry.
+func (v InstructionBlockView) Key() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Key
+}
+
 // Parts reads Parts in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The collection borrows stable backing and adapts elements lazily; derived views retain it.
@@ -525,9 +559,10 @@ func (v InstructionBlockView) MutableClone() dtogenType0.InstructionBlock {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // InstructionBlock retains one ordered prepared contribution and its declared
-// origin. Its containing Instructions or UserContextPrefix determines its role;
-// a prefix block is not root/system authority. Content meaning is not inferred
-// from a file. Assignment shares nested storage; Clone detaches it.
+// provenance. Its containing RootInstructions or UserInstructions determines
+// the intended instruction layer; neither the key nor provenance grants authority.
+// Content meaning is not inferred from a file. Assignment shares nested storage;
+// Clone detaches it. Zero is invalid.
 //
 // Parts preserves exact instruction order, including duplicates. Nil and empty
 // are equivalent valid empty contributions; codec traversal validates children.
@@ -545,9 +580,10 @@ func (v InstructionBlockView) Parts() dtogenViews.SliceView[dtogenType0.ContentP
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // InstructionBlock retains one ordered prepared contribution and its declared
-// origin. Its containing Instructions or UserContextPrefix determines its role;
-// a prefix block is not root/system authority. Content meaning is not inferred
-// from a file. Assignment shares nested storage; Clone detaches it.
+// provenance. Its containing RootInstructions or UserInstructions determines
+// the intended instruction layer; neither the key nor provenance grants authority.
+// Content meaning is not inferred from a file. Assignment shares nested storage;
+// Clone detaches it. Zero is invalid.
 //
 // Source is required provenance even for an empty block; it does not confer
 // authority. Codec traversal validates the source and its children.
@@ -556,49 +592,6 @@ func (v InstructionBlockView) Source() ContentSourceView {
 		return ContentSourceView{}
 	}
 	return dtogenViewContentSourceView(&v.value.Source)
-}
-
-// Backing contract for InstructionsView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Instructions is a complete session-scoped ordered root-instruction replacement.
-// Nil and empty Blocks are equivalent explicit empty replacements; a single empty
-// block is distinct and still needs provenance. Assignment shares Blocks and
-// children; Clone detaches them. History scope comes from the enclosing envelope.
-var _ = (*struct {
-	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
-})((*dtogenType0.Instructions)(nil))
-
-// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
-// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
-// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
-func (v InstructionsView) MutableClone() dtogenType0.Instructions {
-	if v.value == nil {
-		return dtogenType0.Instructions{}
-	}
-	return v.value.Clone()
-}
-
-// Blocks reads Blocks in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The collection borrows stable backing and adapts elements lazily; derived views retain it.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// Instructions is a complete session-scoped ordered root-instruction replacement.
-// Nil and empty Blocks are equivalent explicit empty replacements; a single empty
-// block is distinct and still needs provenance. Assignment shares Blocks and
-// children; Clone detaches them. History scope comes from the enclosing envelope.
-//
-// Blocks preserves instruction contribution order and boundaries, including
-// duplicates and empty blocks. Nil and empty explicitly clear root instructions.
-// Codec traversal validates children; history identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
-func (v InstructionsView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
-	if v.value == nil {
-		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
-	}
-	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
 }
 
 // Backing contract for InvocationFailureView.
@@ -2066,6 +2059,55 @@ func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
 	return dtogenViewRequestedCallDataView(v.value.Call), true
 }
 
+// Backing contract for RootInstructionsView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RootInstructions is the complete session-scoped replacement for the harness
+// root operating contract. It is selected by intended placement and authority,
+// not a producer, file, or provider message role. Nil and empty Blocks are
+// equivalent explicit empty replacements; a single empty block is distinct and
+// still needs a key and provenance. Assignment shares Blocks and children;
+// Clone detaches them. History scope comes from the enclosing envelope.
+var _ = (*struct {
+	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
+})((*dtogenType0.RootInstructions)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v RootInstructionsView) MutableClone() dtogenType0.RootInstructions {
+	if v.value == nil {
+		return dtogenType0.RootInstructions{}
+	}
+	return v.value.Clone()
+}
+
+// Blocks reads Blocks in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// RootInstructions is the complete session-scoped replacement for the harness
+// root operating contract. It is selected by intended placement and authority,
+// not a producer, file, or provider message role. Nil and empty Blocks are
+// equivalent explicit empty replacements; a single empty block is distinct and
+// still needs a key and provenance. Assignment shares Blocks and children;
+// Clone detaches them. History scope comes from the enclosing envelope.
+//
+// Blocks preserves instruction contribution order and boundaries, including
+// duplicate contents and empty blocks, but never duplicate keys within this
+// whole replacement. Slice order, not keys, determines order; this is not a
+// patch API. Nil and empty explicitly clear root instructions.
+// Codec traversal validates children; history identity is omitted here and
+// restored from the enclosing envelope at the domain conversion boundary.
+func (v RootInstructionsView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
+}
+
 // Backing contract for RunEndedView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -3095,48 +3137,6 @@ func (v ToolReturnedView) Output() ToolOutputView {
 	return dtogenViewToolOutputView(&v.value.Output)
 }
 
-// Backing contract for UserContextPrefixView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// UserContextPrefix is a complete session-scoped ordered prepared user-context
-// prefix replacement, independent of root Instructions. Latest replacement wins
-// across runs; nil and empty Blocks explicitly clear it. Assignment shares Blocks
-// and children; Clone detaches them. History scope comes from the envelope.
-var _ = (*struct {
-	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
-})((*dtogenType0.UserContextPrefix)(nil))
-
-// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
-// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
-// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
-func (v UserContextPrefixView) MutableClone() dtogenType0.UserContextPrefix {
-	if v.value == nil {
-		return dtogenType0.UserContextPrefix{}
-	}
-	return v.value.Clone()
-}
-
-// Blocks reads Blocks in O(1) without copying sibling payloads.
-// A zero view returns zero.
-// The collection borrows stable backing and adapts elements lazily; derived views retain it.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// UserContextPrefix is a complete session-scoped ordered prepared user-context
-// prefix replacement, independent of root Instructions. Latest replacement wins
-// across runs; nil and empty Blocks explicitly clear it. Assignment shares Blocks
-// and children; Clone detaches them. History scope comes from the envelope.
-//
-// Blocks preserves prepared contribution order and boundaries, including
-// duplicates and empty blocks. Nil and empty explicitly clear the prefix.
-// Child provenance is required even for an empty block and grants no authority.
-func (v UserContextPrefixView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
-	if v.value == nil {
-		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
-	}
-	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
-}
-
 // Backing contract for UserInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -3180,11 +3180,66 @@ func (v UserInputView) Parts() dtogenViews.SliceView[dtogenType0.ContentPart, Co
 	return dtogenViews.BorrowSliceView(v.value.Parts, dtogenViewContentPartView)
 }
 
+// Backing contract for UserInstructionsView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserInstructions is the complete session-scoped replacement for prepared
+// user-level model-input standing guidance, including prepared SOUL.md/persona and
+// applicable AGENTS.md or CLAUDE.md guidance. It is selected by intended
+// placement and authority, not a producer, file, or provider message role.
+// Dynamically triggered guidance enters chronological EffectiveInput with
+// attribution rather than retroactively replacing this standing value. Latest
+// replacement wins across runs; nil and empty Blocks explicitly clear it.
+// Assignment shares Blocks and children; Clone detaches them. History scope
+// comes from the envelope.
+var _ = (*struct {
+	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
+})((*dtogenType0.UserInstructions)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UserInstructionsView) MutableClone() dtogenType0.UserInstructions {
+	if v.value == nil {
+		return dtogenType0.UserInstructions{}
+	}
+	return v.value.Clone()
+}
+
+// Blocks reads Blocks in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UserInstructions is the complete session-scoped replacement for prepared
+// user-level model-input standing guidance, including prepared SOUL.md/persona and
+// applicable AGENTS.md or CLAUDE.md guidance. It is selected by intended
+// placement and authority, not a producer, file, or provider message role.
+// Dynamically triggered guidance enters chronological EffectiveInput with
+// attribution rather than retroactively replacing this standing value. Latest
+// replacement wins across runs; nil and empty Blocks explicitly clear it.
+// Assignment shares Blocks and children; Clone detaches them. History scope
+// comes from the envelope.
+//
+// Blocks preserves prepared contribution order and boundaries, including
+// duplicate contents and empty blocks, but never duplicate keys within this
+// whole replacement. Slice order, not keys, determines order; this is not a
+// patch API. Nil and empty explicitly clear the instructions.
+// Child keys and provenance are required even for empty blocks and grant no
+// authority.
+func (v UserInstructionsView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Blocks, dtogenViewInstructionBlockView)
+}
+
 // Backing contract for WorkspaceFileSourceView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// WorkspaceFileSource is a slash-separated file label relative to its originating
-// workspace, not a global locator or permission to read. Loading never resolves it.
+// WorkspaceFileSource is a slash-separated workspace-relative file label, not a
+// global locator or permission to read. Load never re-reads it.
 // dtogenViewWorkspaceFileSourceView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewWorkspaceFileSourceView(value *dtogenType0.WorkspaceFileSource) WorkspaceFileSourceView {
 	return WorkspaceFileSourceView{value: value}
@@ -3210,8 +3265,8 @@ func (v WorkspaceFileSourceView) MutableClone() dtogenType0.WorkspaceFileSource 
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// WorkspaceFileSource is a slash-separated file label relative to its originating
-// workspace, not a global locator or permission to read. Loading never resolves it.
+// WorkspaceFileSource is a slash-separated workspace-relative file label, not a
+// global locator or permission to read. Load never re-reads it.
 //
 // Path is a required slash-separated file label relative to the originating
 // workspace, with no empty or dot components. Validate checks path syntax only,

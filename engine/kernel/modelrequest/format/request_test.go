@@ -37,13 +37,13 @@ func TestRequestCanonical(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Seven required short keys; there is no version, envelope or embedded identity.
-	const want = "a761616161616380616d616d6170806172806173a0617480"
+	const want = "a761616161616380616d616d6172806173a0617480617580"
 	if hex.EncodeToString(wire) != want {
 		t.Fatalf("canonical request = %x", wire)
 	}
 	empty := v.Clone()
 	empty.RootInstructions = []format.ContentBlock{}
-	empty.UserContextPrefix = []format.ContentBlock{}
+	empty.UserInstructions = []format.ContentBlock{}
 	empty.Tools = []sessionformat.ToolDefinition{}
 	empty.Conversation = []format.ConversationItem{}
 	other, err := codec.Encode(empty, limits())
@@ -78,12 +78,12 @@ func TestRequestCanonical(t *testing.T) {
 func TestRequestNestedEmptyCollections(t *testing.T) {
 	v := request()
 	v.RootInstructions = []format.ContentBlock{{}}
-	v.UserContextPrefix = []format.ContentBlock{{}}
+	v.UserInstructions = []format.ContentBlock{{}}
 	v.Conversation = []format.ConversationItem{{User: &format.UserMessage{}}, {Assistant: &format.AssistantMessage{}}, callResponse("id"), result("id")}
 	v.Conversation[2].Assistant.Items[0].Call.Arguments = nil
 	empty := v.Clone()
 	empty.RootInstructions[0].Parts = []sessionformat.ContentPart{}
-	empty.UserContextPrefix[0].Parts = []sessionformat.ContentPart{}
+	empty.UserInstructions[0].Parts = []sessionformat.ContentPart{}
 	empty.Conversation[0].User.Parts = []sessionformat.ContentPart{}
 	empty.Conversation[1].Assistant.Items = []format.AssistantItem{}
 	empty.Conversation[2].Assistant.Items[0].Call.Arguments = []byte{}

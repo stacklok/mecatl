@@ -74,7 +74,7 @@ type ContentBlock struct{Parts []format.ContentPart "cbor:\"p\""}
 type ConversationItem struct{User *UserMessage "cbor:\"u,omitempty\""; Assistant *AssistantMessage "cbor:\"a,omitempty\""; ToolResult *ToolResult "cbor:\"t,omitempty\""}
 type ParametersV1 struct{PrivateReplay []PrivateReplaySelector "cbor:\"p\""}
 type PrivateReplaySelector struct{SourceAPI string "cbor:\"a\""; SourceModel string "cbor:\"m\""; Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""}
-type RequestV1 struct{API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings format.ModelSettings "cbor:\"s\""; RootInstructions []ContentBlock "cbor:\"r\""; UserContextPrefix []ContentBlock "cbor:\"p\""; Tools []format.ToolDefinition "cbor:\"t\""; Conversation []ConversationItem "cbor:\"c\""}
+type RequestV1 struct{API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings format.ModelSettings "cbor:\"s\""; RootInstructions []ContentBlock "cbor:\"r\""; UserInstructions []ContentBlock "cbor:\"u\""; Tools []format.ToolDefinition "cbor:\"t\""; Conversation []ConversationItem "cbor:\"c\""}
 type ToolCall struct{ProviderCallID string "cbor:\"i\""; Name string "cbor:\"n\""; Arguments []byte "cbor:\"a\""}
 type ToolOutcome string
 type ToolResult struct{ProviderCallID string "cbor:\"i\""; Outcome ToolOutcome "cbor:\"o\""; Parts []format.ContentPart "cbor:\"p\""}

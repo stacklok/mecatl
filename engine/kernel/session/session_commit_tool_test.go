@@ -20,7 +20,7 @@ func TestSessionCommitToolFactAuthoringPrecedence(t *testing.T) {
 			b, err := s.BeginCommit()
 			interactionCheck(t, err)
 			defer b.Discard() //nolint:errcheck // Deliberately unsubmitted batch.
-			interactionCheck(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), Instructions{}))
+			interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
 			before, records := b.admission, append([]*materializedRecord(nil), b.records...)
 			oversized := strings.Repeat("x", s.policy.PayloadLimits.MaxStringBytes+1)
 			add := func(b *SessionCommit, call RequestedCallID, ids [3]uint64) error {

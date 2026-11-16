@@ -77,7 +77,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 		return s.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
 		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
-	case sessionformat.KindInstructions, sessionformat.KindUserContextPrefix, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+	case sessionformat.KindRootInstructions, sessionformat.KindUserInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
 		if !s.created {
 			return ErrTransition
 		}

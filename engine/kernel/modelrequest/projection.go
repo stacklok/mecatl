@@ -253,7 +253,7 @@ func (s *chronologicalSelection) projectOutput(limits codec.Limits, materialize 
 		return format.RequestV1{}, err
 	}
 	p := requestProjection{budget: budget, limits: limits, materialize: materialize}
-	p.fields(0, "a", "m", "s", "r", "p", "t", "c")
+	p.fields(0, "a", "m", "s", "r", "u", "t", "c")
 	out := format.RequestV1{API: s.binding.API(), Model: s.binding.Model()}
 	p.text(out.API, 1)
 	p.text(out.Model, 1)
@@ -267,7 +267,7 @@ func (s *chronologicalSelection) projectOutput(limits codec.Limits, materialize 
 		p.err = out.Settings.CheckCBOR(&p.budget, 1, limits.MaxMapPairs)
 	}
 	out.RootInstructions = p.blocks(s.root.Blocks(), 1)
-	out.UserContextPrefix = p.blocks(s.prefix.Blocks(), 1)
+	out.UserInstructions = p.blocks(s.user.Blocks(), 1)
 	if p.array(s.catalog.Tools().Len(), 1) {
 		if p.materialize {
 			out.Tools = make([]sessionformat.ToolDefinition, 0, s.catalog.Tools().Len())

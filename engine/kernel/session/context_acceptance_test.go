@@ -31,7 +31,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		mustBatch(t, err)
 		prepared[i] = string(data)
 	}
-	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
+	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new(prepared[1])}}, Source: session.ContentSource{Description: "caller adopted root", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[1]}}}}}
 	catalog := session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "second", ArgumentSchema: []byte(" {\"z\":1.00, \"a\":true} ")}, {Name: "first", ArgumentSchema: []byte("false")}}}
 	binding := session.ModelBinding{Route: "route", API: "dialect/v1", Model: "alias", Settings: session.ModelSettings{ReasoningEffort: new(prepared[2])}}
 	b := beginBatch(t, s)
@@ -40,13 +40,13 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	input, err := b.AddUserInput(run, session.UserInput{Parts: richContent()})
 	mustBatch(t, err)
 	effective := session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(input.RunRelative())}, {Inline: &session.AttributedInput{Actor: "skill/example", Purpose: session.PromptInstructions, Parts: []session.ContentPart{{Text: new(prepared[0])}}, Source: session.ContentSource{Description: "caller expanded skill", WorkspaceFile: &session.WorkspaceFileSource{Path: paths[0]}}}}}}
-	mustBatch(t, b.ReplaceInstructions(scope, instructions))
+	mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
 	mustBatch(t, b.ReplaceToolCatalog(scope, catalog))
 	mustBatch(t, b.ReplaceModelBinding(scope, binding))
 	mustBatch(t, b.AddEffectiveInput(run, effective))
 	submitBatch(t, s, b)
 	snapshots := []session.Snapshot{s.Snapshot()}
-	wantI := []session.Instructions{instructions.Clone()}
+	wantI := []session.RootInstructions{instructions.Clone()}
 	wantT := []session.ToolCatalog{catalog.Clone()}
 	wantM := []session.ModelBinding{binding.Clone()}
 	authored := snapshots[0].RecordAt(2)
@@ -55,15 +55,15 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	// retain chronology while the last fact selects the current component.
 	for component := range 3 {
 		previous := s.Snapshot()
-		iv, _ := previous.Instructions()
+		iv, _ := previous.RootInstructions()
 		tv, _ := previous.ToolCatalog()
 		mv, _ := previous.ModelBinding()
 		b = beginBatch(t, s)
 		switch component {
 		case 0:
-			mustBatch(t, b.ReplaceInstructions(scope, instructions))
-			instructions = session.Instructions{}
-			mustBatch(t, b.ReplaceInstructions(scope, instructions))
+			mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
+			instructions = session.RootInstructions{}
+			mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
 			// Two increments preserve their separate boundaries, including
 			// one inline item with empty parts versus zero items.
 			emptyPrompt := session.EffectiveInput{Inputs: []session.InputItem{{Inline: &session.AttributedInput{Actor: "harness", Purpose: session.PromptContext, Source: session.ContentSource{Description: "explicit empty context"}}}}}
@@ -80,7 +80,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		}
 		submitBatch(t, s, b)
 		next := s.Snapshot()
-		ni, _ := next.Instructions()
+		ni, _ := next.RootInstructions()
 		nt, _ := next.ToolCatalog()
 		nm, _ := next.ModelBinding()
 		if (component != 0 && ni != iv) || (component != 1 && nt != tv) || (component != 2 && nm != mv) || next.RecordAt(2) != authored {
@@ -117,7 +117,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		clear(snapshot.RecordAt(6).MutableClone().Payload)
 	}
 	for i, snapshot := range snapshots {
-		iv, _ := snapshot.Instructions()
+		iv, _ := snapshot.RootInstructions()
 		tv, _ := snapshot.ToolCatalog()
 		mv, _ := snapshot.ModelBinding()
 		uv, _ := snapshot.RecordAt(2).UserInput()
@@ -162,8 +162,8 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	mustBatch(t, err)
 	before := captureRejectedSnapshot(other.Snapshot())
 	winner := beginBatch(t, s)
-	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Source: session.ContentSource{Description: "winning replacement"}}}}
-	mustBatch(t, winner.ReplaceInstructions(scope, instructions))
+	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "harness/core", Source: session.ContentSource{Description: "winning replacement"}}}}
+	mustBatch(t, winner.ReplaceRootInstructions(scope, instructions))
 	loser := beginBatch(t, other)
 	mustBatch(t, loser.ReplaceToolCatalog(scope, session.ToolCatalog{}))
 	head := submitBatch(t, s, winner)
@@ -178,7 +178,7 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	}
 	loaded, err := session.Load(context.Background(), h, scope, sessionPolicy())
 	mustBatch(t, err)
-	iv, ok := loaded.Snapshot().Instructions()
+	iv, ok := loaded.Snapshot().RootInstructions()
 	if !ok || !instructionsMatch(iv, instructions) || loaded.Snapshot().Head() != head {
 		t.Fatal("fresh load lost the winning independent component")
 	}

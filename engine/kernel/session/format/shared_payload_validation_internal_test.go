@@ -79,7 +79,7 @@ func TestCanonicalPayloadValidationLayers(t *testing.T) {
 			}
 		})
 	}
-	if (InstructionBlock{}).Validate() == nil || (Instructions{Blocks: []InstructionBlock{{}}}).Validate() == nil {
+	if (InstructionBlock{Key: "harness/core"}).Validate() == nil || (RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core"}}}).Validate() == nil {
 		t.Fatal("instruction validation omitted provenance")
 	}
 }

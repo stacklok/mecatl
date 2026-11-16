@@ -14,17 +14,17 @@ import (
 // appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
 // GC owns their lifetime. Indexed methods panic outside [0, count).
 type Snapshot struct {
-	historyID         historyid.HistoryID
-	head              history.CommitRef
-	lifecycle         lifecycleState
-	records           []*materializedRecord
-	runs              []runEntry
-	inputs            []int
-	commits           []commitEntry
-	userContextPrefix *materializedRecord
-	instructions      *materializedRecord
-	catalog           *materializedRecord
-	binding           *materializedRecord
+	historyID        historyid.HistoryID
+	head             history.CommitRef
+	lifecycle        lifecycleState
+	records          []*materializedRecord
+	runs             []runEntry
+	inputs           []int
+	commits          []commitEntry
+	userInstructions *materializedRecord
+	rootInstructions *materializedRecord
+	catalog          *materializedRecord
+	binding          *materializedRecord
 }
 
 // HistoryID returns the scope, including before creation.
@@ -160,23 +160,24 @@ func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
 	return UserInputView{scope: v.historyID, value: &record.input}, true
 }
 
-// UserContextPrefix returns the latest accepted prefix replacement in O(1),
-// including explicit emptiness. No replacement returns zero, false. Run starts
-// and root-instruction replacements do not reset it.
-func (v Snapshot) UserContextPrefix() (UserContextPrefixView, bool) {
-	if v.userContextPrefix == nil {
-		return UserContextPrefixView{}, false
+// UserInstructions returns the latest accepted prepared user-guidance replacement
+// in O(1), including explicit emptiness. No replacement returns zero, false. Run
+// starts and root-instruction replacements do not reset it.
+func (v Snapshot) UserInstructions() (UserInstructionsView, bool) {
+	if v.userInstructions == nil {
+		return UserInstructionsView{}, false
 	}
-	return UserContextPrefixView{scope: v.historyID, value: &v.userContextPrefix.userContextPrefix}, true
+	return UserInstructionsView{scope: v.historyID, value: &v.userInstructions.userInstructions}, true
 }
 
-// Instructions returns the latest accepted replacement at this head, including
-// explicit emptiness. Before any replacement it returns zero, false in O(1).
-func (v Snapshot) Instructions() (InstructionsView, bool) {
-	if v.instructions == nil {
-		return InstructionsView{}, false
+// RootInstructions returns the latest accepted harness root-contract replacement
+// at this head, including explicit emptiness. Before any replacement it returns
+// zero, false in O(1).
+func (v Snapshot) RootInstructions() (RootInstructionsView, bool) {
+	if v.rootInstructions == nil {
+		return RootInstructionsView{}, false
 	}
-	return InstructionsView{scope: v.historyID, value: &v.instructions.instructions}, true
+	return RootInstructionsView{scope: v.historyID, value: &v.rootInstructions.rootInstructions}, true
 }
 
 // ToolCatalog returns the latest accepted replacement at this head in O(1).

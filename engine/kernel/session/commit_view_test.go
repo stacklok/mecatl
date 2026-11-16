@@ -64,7 +64,7 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 			for i := range before {
 				before[i] = v.RecordAt(i).MutableClone().Payload
 			}
-			mustBatch(t, b.ReplaceInstructions(run.HistoryID(), session.Instructions{}))
+			mustBatch(t, b.ReplaceRootInstructions(run.HistoryID(), session.RootInstructions{}))
 			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			if captureCommit(t, b).ActiveRun() != (session.RunID{}) || v.ActiveRun() != run {
 				t.Fatal("active run not pinned")

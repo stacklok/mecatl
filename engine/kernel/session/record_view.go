@@ -113,20 +113,22 @@ func (v RecordView) InvocationFailure() (InvocationFailureView, bool) {
 	return InvocationFailureView{scope: v.scope, value: &v.record.failure}, true
 }
 
-// UserContextPrefix returns a replacement handle only for the prefix kind.
-func (v RecordView) UserContextPrefix() (UserContextPrefixView, bool) {
-	if v.Kind() != sessionformat.KindUserContextPrefix {
-		return UserContextPrefixView{}, false
+// UserInstructions returns a prepared user-guidance replacement handle only for
+// the user-instructions kind.
+func (v RecordView) UserInstructions() (UserInstructionsView, bool) {
+	if v.Kind() != sessionformat.KindUserInstructions {
+		return UserInstructionsView{}, false
 	}
-	return UserContextPrefixView{scope: v.scope, value: &v.record.userContextPrefix}, true
+	return UserInstructionsView{scope: v.scope, value: &v.record.userInstructions}, true
 }
 
-// Instructions returns a replacement handle only for the instructions kind.
-func (v RecordView) Instructions() (InstructionsView, bool) {
-	if v.Kind() != sessionformat.KindInstructions {
-		return InstructionsView{}, false
+// RootInstructions returns a harness root-contract replacement handle only for
+// the root-instructions kind.
+func (v RecordView) RootInstructions() (RootInstructionsView, bool) {
+	if v.Kind() != sessionformat.KindRootInstructions {
+		return RootInstructionsView{}, false
 	}
-	return InstructionsView{scope: v.scope, value: &v.record.instructions}, true
+	return RootInstructionsView{scope: v.scope, value: &v.record.rootInstructions}, true
 }
 
 // ToolCatalog returns a replacement handle only for the catalog kind.

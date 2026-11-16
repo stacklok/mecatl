@@ -8,7 +8,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: d61b1ee6f5d067dc5c052acf9aa4d7b50f355294a78f4e2c7dd900227b8f1943.
+// Selected view layouts, source policy and documentation fingerprint: c5ddc9f40a4b9a93ba6353a09cda5e53b65934537b4ed80a0ffa98956e67eecb.
 // Backing contract for AssistantItemView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -152,8 +152,9 @@ func (v AssistantMessageView) Private() (OpaqueProviderDataView, bool) {
 // Backing contract for ContentBlockView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// ContentBlock preserves one prepared root/prefix or assistant content boundary.
-// It carries no provenance or additional authority. Zero is valid empty content.
+// ContentBlock preserves one prepared root/user instruction or assistant content
+// boundary. It carries no contribution key, provenance, or additional authority.
+// Zero is valid empty content.
 // Assignment shares parts and their storage; Clone detaches them.
 // dtogenViewContentBlockView borrows stable backing; it neither freezes nor synchronizes access.
 func dtogenViewContentBlockView(value *dtogenType0.ContentBlock) ContentBlockView {
@@ -180,8 +181,9 @@ func (v ContentBlockView) MutableClone() dtogenType0.ContentBlock {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// ContentBlock preserves one prepared root/prefix or assistant content boundary.
-// It carries no provenance or additional authority. Zero is valid empty content.
+// ContentBlock preserves one prepared root/user instruction or assistant content
+// boundary. It carries no contribution key, provenance, or additional authority.
+// Zero is valid empty content.
 // Assignment shares parts and their storage; Clone detaches them.
 //
 // Parts preserves content order and duplicates. Nil and empty are equivalent.
@@ -791,13 +793,13 @@ func (v OpaqueProviderDataView) Data() dtogenViews.Bytes {
 // empty collections are equivalent; optional present-empty leaves remain distinct.
 // Assignment shares mutable storage; Clone detaches the complete value.
 var _ = (*struct {
-	API               string                         "cbor:\"a\""
-	Model             string                         "cbor:\"m\""
-	Settings          dtogenType1.ModelSettings      "cbor:\"s\""
-	RootInstructions  []dtogenType0.ContentBlock     "cbor:\"r\""
-	UserContextPrefix []dtogenType0.ContentBlock     "cbor:\"p\""
-	Tools             []dtogenType1.ToolDefinition   "cbor:\"t\""
-	Conversation      []dtogenType0.ConversationItem "cbor:\"c\""
+	API              string                         "cbor:\"a\""
+	Model            string                         "cbor:\"m\""
+	Settings         dtogenType1.ModelSettings      "cbor:\"s\""
+	RootInstructions []dtogenType0.ContentBlock     "cbor:\"r\""
+	UserInstructions []dtogenType0.ContentBlock     "cbor:\"u\""
+	Tools            []dtogenType1.ToolDefinition   "cbor:\"t\""
+	Conversation     []dtogenType0.ConversationItem "cbor:\"c\""
 })((*dtogenType0.RequestV1)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -887,7 +889,7 @@ func (v Request) RootInstructions() dtogenViews.SliceView[dtogenType0.ContentBlo
 	return dtogenViews.BorrowSliceView(v.value.RootInstructions, dtogenViewContentBlockView)
 }
 
-// UserContextPrefix reads UserContextPrefix in O(1) without copying sibling payloads.
+// UserInstructions reads UserInstructions in O(1) without copying sibling payloads.
 // A zero view returns zero.
 // The collection borrows stable backing and adapts elements lazily; derived views retain it.
 // Access neither freezes nor synchronizes backing.
@@ -898,12 +900,13 @@ func (v Request) RootInstructions() dtogenViews.SliceView[dtogenType0.ContentBlo
 // empty collections are equivalent; optional present-empty leaves remain distinct.
 // Assignment shares mutable storage; Clone detaches the complete value.
 //
-// UserContextPrefix preserves independently prepared prefix blocks in order.
-func (v Request) UserContextPrefix() dtogenViews.SliceView[dtogenType0.ContentBlock, ContentBlockView] {
+// UserInstructions preserves independently prepared standing user-guidance blocks
+// in order.
+func (v Request) UserInstructions() dtogenViews.SliceView[dtogenType0.ContentBlock, ContentBlockView] {
 	if v.value == nil {
 		return dtogenViews.SliceView[dtogenType0.ContentBlock, ContentBlockView]{}
 	}
-	return dtogenViews.BorrowSliceView(v.value.UserContextPrefix, dtogenViewContentBlockView)
+	return dtogenViews.BorrowSliceView(v.value.UserInstructions, dtogenViewContentBlockView)
 }
 
 // Tools reads Tools in O(1) without copying sibling payloads.

@@ -13,42 +13,42 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-func TestUserContextPrefixSubmitLoadReplacementAndOwnership(t *testing.T) {
+func TestUserInstructionsSubmitLoadReplacementAndOwnership(t *testing.T) {
 	h, s, p := newIteratorSession(t)
 	scope := s.Snapshot().HistoryID()
-	if v, ok := s.Snapshot().UserContextPrefix(); ok || v != (session.UserContextPrefixView{}) {
+	if v, ok := s.Snapshot().UserInstructions(); ok || v != (session.UserInstructionsView{}) {
 		t.Fatal("absent prefix present")
 	}
 	b := beginBatch(t, s)
-	prefix := session.UserContextPrefix{Blocks: []session.InstructionBlock{
-		{Parts: richContent(), Source: session.ContentSource{Description: "prepared prefix", WorkspaceFile: &session.WorkspaceFileSource{Path: "context.md"}}},
-		{Source: session.ContentSource{Description: "empty block"}},
+	prefix := session.UserInstructions{Blocks: []session.InstructionBlock{
+		{Key: "operator/persona", Parts: richContent(), Source: session.ContentSource{Description: "prepared prefix", WorkspaceFile: &session.WorkspaceFileSource{Path: "context.md"}}},
+		{Key: "operator/empty", Source: session.ContentSource{Description: "empty block"}},
 	}}
 	want := prefix.Clone()
-	if err := b.ReplaceUserContextPrefix(scope, prefix); !errors.Is(err, session.ErrTransition) {
+	if err := b.ReplaceUserInstructions(scope, prefix); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("prefix before creation: %v", err)
 	}
 	mustBatch(t, b.Create())
 	// Prefix replacement needs no active run and remains independent of root instructions.
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "root"}}}}))
-	mustBatch(t, b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{}))
-	mustBatch(t, b.ReplaceUserContextPrefix(scope, prefix))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona", Parts: []session.ContentPart{{Text: new("root")}}, Source: session.ContentSource{Description: "root"}}}}))
+	mustBatch(t, b.ReplaceUserInstructions(scope, session.UserInstructions{}))
+	mustBatch(t, b.ReplaceUserInstructions(scope, prefix))
 	*prefix.Blocks[0].Parts[0].Text = "changed"
 	prefix.Blocks[0].Parts[1].Media.InlineData[0] = 0
 	prefix.Blocks[0].Source.WorkspaceFile.Path = "changed"
 	submitBatch(t, s, b)
 	old := s.Snapshot()
-	oldPrefix, _ := old.UserContextPrefix()
-	root, _ := old.Instructions()
-	check := func(snapshot session.Snapshot, want session.UserContextPrefix) {
+	oldPrefix, _ := old.UserInstructions()
+	root, _ := old.RootInstructions()
+	check := func(snapshot session.Snapshot, want session.UserInstructions) {
 		t.Helper()
-		v, ok := snapshot.UserContextPrefix()
+		v, ok := snapshot.UserInstructions()
 		if !ok || v.HistoryID() != scope || v.Blocks().Len() != len(want.Blocks) {
 			t.Fatal("prefix presence/scope/blocks")
 		}
 		for i, block := range v.Blocks().All() {
 			w := want.Blocks[i]
-			if block != v.Blocks().At(i) || !sourceMatches(block.Source(), w.Source) || block.Parts().Len() != len(w.Parts) {
+			if block.Key() != w.Key || block != v.Blocks().At(i) || !sourceMatches(block.Source(), w.Source) || block.Parts().Len() != len(w.Parts) {
 				t.Fatal("block navigation/provenance")
 			}
 			for j, part := range block.Parts().All() {
@@ -62,9 +62,9 @@ func TestUserContextPrefixSubmitLoadReplacementAndOwnership(t *testing.T) {
 		t.Run(seam, func(t *testing.T) {
 			snapshot := candidate.Snapshot()
 			check(snapshot, want)
-			fromRecord, ok := snapshot.RecordAt(3).UserContextPrefix()
-			selected, _ := snapshot.UserContextPrefix()
-			if !ok || fromRecord != selected || snapshot.RecordAt(3).Kind() != sessionformat.KindUserContextPrefix {
+			fromRecord, ok := snapshot.RecordAt(3).UserInstructions()
+			selected, _ := snapshot.UserInstructions()
+			if !ok || fromRecord != selected || snapshot.RecordAt(3).Kind() != sessionformat.KindUserInstructions {
 				t.Fatal("record inspection disagrees")
 			}
 			wire, err := codec.Encode(want, p.PayloadLimits)
@@ -76,7 +76,7 @@ func TestUserContextPrefixSubmitLoadReplacementAndOwnership(t *testing.T) {
 			clear(snapshot.RecordAt(3).MutableClone().Payload)
 			check(snapshot, want)
 			if n := testing.AllocsPerRun(100, func() {
-				v, _ := snapshot.UserContextPrefix()
+				v, _ := snapshot.UserInstructions()
 				if v.Blocks().At(0).Source().Description() != "prepared prefix" {
 					panic("prefix scalar")
 				}
@@ -92,27 +92,27 @@ func TestUserContextPrefixSubmitLoadReplacementAndOwnership(t *testing.T) {
 	if nextRun == run {
 		t.Fatal("run negative control")
 	}
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 	submitBatch(t, s, b)
 	check(s.Snapshot(), want)
-	if selected, _ := s.Snapshot().UserContextPrefix(); selected != oldPrefix {
+	if selected, _ := s.Snapshot().UserInstructions(); selected != oldPrefix {
 		t.Fatal("run/root replacement reset prefix")
 	}
 	b = beginBatch(t, s)
-	newRoot := session.Instructions{Blocks: []session.InstructionBlock{{Parts: []session.ContentPart{{Text: new("new root")}}, Source: session.ContentSource{Description: "replacement root"}}}}
-	mustBatch(t, b.ReplaceInstructions(scope, newRoot))
-	mustBatch(t, b.ReplaceUserContextPrefix(scope, want))
-	mustBatch(t, b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{}))
+	newRoot := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona", Parts: []session.ContentPart{{Text: new("new root")}}, Source: session.ContentSource{Description: "replacement root"}}}}
+	mustBatch(t, b.ReplaceRootInstructions(scope, newRoot))
+	mustBatch(t, b.ReplaceUserInstructions(scope, want))
+	mustBatch(t, b.ReplaceUserInstructions(scope, session.UserInstructions{}))
 	submitBatch(t, s, b)
 	loaded, err := session.Load(context.Background(), h, scope, p)
 	mustBatch(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
-		check(snapshot, session.UserContextPrefix{})
-		instructions, ok := snapshot.Instructions()
+		check(snapshot, session.UserInstructions{})
+		instructions, ok := snapshot.RootInstructions()
 		if !ok || !instructionsMatch(instructions, newRoot) {
 			t.Fatal("prefix replacement/clear changed root instructions")
 		}
-		selected, ok := snapshot.RecordAt(snapshot.RecordCount() - 1).UserContextPrefix()
+		selected, ok := snapshot.RecordAt(snapshot.RecordCount() - 1).UserInstructions()
 		if !ok || selected.HistoryID() != scope || selected.Blocks().Len() != 0 {
 			t.Fatal("explicit empty replacement lost")
 		}
@@ -123,7 +123,7 @@ func TestUserContextPrefixSubmitLoadReplacementAndOwnership(t *testing.T) {
 	}
 }
 
-func TestUserContextPrefixScopeValidationAndZero(t *testing.T) {
+func TestUserInstructionsScopeValidationAndZero(t *testing.T) {
 	h := newLifecycleHistory(t, mem.New())
 	s := boundSession(t, h, sessionPolicy())
 	b := beginBatch(t, s)
@@ -133,31 +133,31 @@ func TestUserContextPrefixScopeValidationAndZero(t *testing.T) {
 	mustBatch(t, err)
 	for _, tc := range []struct {
 		scope historyid.HistoryID
-		value session.UserContextPrefix
+		value session.UserInstructions
 		want  error
 	}{
-		{foreign, session.UserContextPrefix{Blocks: []session.InstructionBlock{{}}}, session.ErrIdentity},
-		{historyid.HistoryID{}, session.UserContextPrefix{}, codec.ErrInvalidData},
-		{scope, session.UserContextPrefix{Blocks: []session.InstructionBlock{{}}}, codec.ErrInvalidData},
+		{foreign, session.UserInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona"}}}, session.ErrIdentity},
+		{historyid.HistoryID{}, session.UserInstructions{}, codec.ErrInvalidData},
+		{scope, session.UserInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona"}}}, codec.ErrInvalidData},
 	} {
-		if err := b.ReplaceUserContextPrefix(tc.scope, tc.value); !errors.Is(err, tc.want) {
+		if err := b.ReplaceUserInstructions(tc.scope, tc.value); !errors.Is(err, tc.want) {
 			t.Fatalf("prefix scope/provenance: %v; want %v", err, tc.want)
 		}
 	}
-	mustBatch(t, b.ReplaceUserContextPrefix(scope, session.UserContextPrefix{Blocks: []session.InstructionBlock{{Source: session.ContentSource{Description: "valid empty block"}}}}))
+	mustBatch(t, b.ReplaceUserInstructions(scope, session.UserInstructions{Blocks: []session.InstructionBlock{{Key: "operator/empty", Source: session.ContentSource{Description: "valid empty block"}}}}))
 	submitBatch(t, s, b)
 	if s.Snapshot().RecordCount() != 2 {
 		t.Fatal("failed additions consumed record slots")
 	}
 	for _, record := range []session.RecordView{{}, s.Snapshot().RecordAt(0)} {
-		if v, ok := record.UserContextPrefix(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
+		if v, ok := record.UserInstructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
 			t.Fatal("zero/wrong-kind prefix")
 		}
 	}
-	if v, ok := (session.Snapshot{}).UserContextPrefix(); ok || v != (session.UserContextPrefixView{}) {
+	if v, ok := (session.Snapshot{}).UserInstructions(); ok || v != (session.UserInstructionsView{}) {
 		t.Fatal("zero snapshot prefix")
 	}
-	fixture := encodeFixture(t, sessionformat.KindUserContextPrefix, sessionformat.UserContextPrefix{})
+	fixture := encodeFixture(t, sessionformat.KindUserInstructions, sessionformat.UserInstructions{})
 	dto := fixture.MutableClone()
 	dto.KindVersion++
 	assertRejected(t, h, s, proposedCommit(t, s, fixtureRecord{dto}), session.ErrUnsupportedRecord)

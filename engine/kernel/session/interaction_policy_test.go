@@ -178,7 +178,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			for s.Snapshot().Head().Sequence < next-1 {
 				interactionSubmit(t, s, func(b *SessionCommit) {
-					interactionCheck(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), Instructions{}))
+					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
 				})
 			}
 			for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {

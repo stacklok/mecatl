@@ -23,7 +23,7 @@ func requestFixture() format.RequestV1 {
 	block := format.ContentBlock{Parts: []sessionformat.ContentPart{text, media}}
 	return format.RequestV1{
 		API: "api", Model: "model", Settings: sessionformat.ModelSettings{ReasoningEffort: new(" target effort "), MaxOutputTokens: new(int64(17))},
-		RootInstructions: []format.ContentBlock{block.Clone()}, UserContextPrefix: []format.ContentBlock{block.Clone()},
+		RootInstructions: []format.ContentBlock{block.Clone()}, UserInstructions: []format.ContentBlock{block.Clone()},
 		Tools: []sessionformat.ToolDefinition{{Name: "tool", Description: "desc", ArgumentSchema: []byte("true")}},
 		Conversation: []format.ConversationItem{
 			{User: &format.UserMessage{Parts: block.Clone().Parts}},
@@ -66,7 +66,7 @@ func TestFinalizationOwnershipAndIdentity(t *testing.T) {
 	*input.Settings.MaxOutputTokens = 1
 	*input.RootInstructions[0].Parts[0].Text = "changed"
 	input.RootInstructions[0].Parts[1].Media.InlineData[0] = 0
-	input.UserContextPrefix[0].Parts = nil
+	input.UserInstructions[0].Parts = nil
 	input.Tools[0].ArgumentSchema[0] = '!'
 	input.Conversation[0].User.Parts = nil
 	input.Conversation[1].Assistant.Items[0].Output.Parts = nil
@@ -76,15 +76,15 @@ func TestFinalizationOwnershipAndIdentity(t *testing.T) {
 	parameters.PrivateReplay[0].SourceAPI = "changed"
 	clear(recipe.Check)
 	clear(recipe.Parameters)
-	if !request.Format().Equal(before) {
+	if !request.MutableClone().Equal(before) {
 		t.Fatal("finalizer retained mutable caller storage")
 	}
-	detached := request.Format()
+	detached := request.MutableClone()
 	detached.Conversation[1].Assistant.Private.Data[0] = 0
 	detached.Tools[0].ArgumentSchema[0] = '!'
 	*detached.Settings.MaxOutputTokens = 1
-	if !built.Request().Format().Equal(before) {
-		t.Fatal("Format exposes mutable backing")
+	if !built.Request().MutableClone().Equal(before) {
+		t.Fatal("MutableClone exposes mutable backing")
 	}
 	if again := built.Recipe(); len(again.Check) != 36 || bytes.Equal(again.Check, recipe.Check) || bytes.Equal(again.Parameters, recipe.Parameters) {
 		t.Fatal("Recipe exposes mutable backing")
@@ -123,7 +123,7 @@ func TestRequestNestedViews(t *testing.T) {
 			t.Fatal("parts length")
 		}
 	}
-	for _, blocks := range []struct{ block ContentBlockView }{{request.RootInstructions().At(0)}, {request.UserContextPrefix().At(0)}} {
+	for _, blocks := range []struct{ block ContentBlockView }{{request.RootInstructions().At(0)}, {request.UserInstructions().At(0)}} {
 		checkParts(blocks.block.Parts())
 		if text, ok := blocks.block.Parts().At(0).Text(); !ok || text != "" {
 			t.Fatal("present empty text")
@@ -199,17 +199,17 @@ func TestRequestNestedViews(t *testing.T) {
 	if count != 3 {
 		t.Fatal("iteration")
 	}
-	if !request.Format().Equal(input) {
+	if !request.MutableClone().Equal(input) {
 		t.Fatal("nested traversal mutated backing")
 	}
 }
 
 func TestRequestZeroViews(t *testing.T) {
 	var request Request
-	if request.CID() != (contentid.CID{}) || request.API() != "" || request.Model() != "" || !reflect.DeepEqual(request.Format(), format.RequestV1{}) {
+	if request.CID() != (contentid.CID{}) || request.API() != "" || request.Model() != "" || !reflect.DeepEqual(request.MutableClone(), format.RequestV1{}) {
 		t.Fatal("zero request")
 	}
-	if request.RootInstructions().Len() != 0 || request.UserContextPrefix().Len() != 0 || request.Tools().Len() != 0 || request.Conversation().Len() != 0 {
+	if request.RootInstructions().Len() != 0 || request.UserInstructions().Len() != 0 || request.Tools().Len() != 0 || request.Conversation().Len() != 0 {
 		t.Fatal("zero collections")
 	}
 	if _, ok := request.Settings().ReasoningEffort(); ok {

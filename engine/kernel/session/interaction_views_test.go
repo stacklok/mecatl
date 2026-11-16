@@ -586,7 +586,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	// All reusable context is legal in create/idle batches, not just active runs.
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{}))
 	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model"}))
 	submitBatch(t, s, b)
@@ -716,7 +716,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	// Idle context is a chronological part of the preceding span, not run ownership.
 	b = beginBatch(t, s)
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 	submitBatch(t, s, b)
 	var wg sync.WaitGroup
 	wg.Go(func() {

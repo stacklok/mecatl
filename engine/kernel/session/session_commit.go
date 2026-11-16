@@ -173,11 +173,11 @@ func (b *SessionCommit) AddEffectiveInput(run RunID, v EffectiveInput) error {
 	return b.add(newEffectiveInputRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceUserContextPrefix adds a complete history-scoped prepared prefix
+// ReplaceUserInstructions adds a complete history-scoped prepared user-guidance
 // replacement after creation, including while idle. It survives run boundaries
-// independently of Instructions; empty Blocks explicitly clear it.
-// Failure changes nothing.
-func (b *SessionCommit) ReplaceUserContextPrefix(scope historyid.HistoryID, v UserContextPrefix) error {
+// independently of RootInstructions; empty Blocks explicitly clear it. Failure
+// changes nothing.
+func (b *SessionCommit) ReplaceUserInstructions(scope historyid.HistoryID, v UserInstructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
@@ -187,12 +187,13 @@ func (b *SessionCommit) ReplaceUserContextPrefix(scope historyid.HistoryID, v Us
 	if scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newUserContextPrefixRecord(v, b.owner.policy.PayloadLimits))
+	return b.add(newUserInstructionsRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceInstructions adds a complete history-scoped replacement after creation,
-// including while idle. Applicability survives runs; failure changes nothing.
-func (b *SessionCommit) ReplaceInstructions(scope historyid.HistoryID, v Instructions) error {
+// ReplaceRootInstructions adds a complete history-scoped harness root-contract
+// replacement after creation, including while idle. Applicability survives runs;
+// failure changes nothing.
+func (b *SessionCommit) ReplaceRootInstructions(scope historyid.HistoryID, v RootInstructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
@@ -202,7 +203,7 @@ func (b *SessionCommit) ReplaceInstructions(scope historyid.HistoryID, v Instruc
 	if scope != b.owner.state.view.historyID {
 		return ErrIdentity
 	}
-	return b.add(newInstructionsRecord(v, b.owner.policy.PayloadLimits))
+	return b.add(newRootInstructionsRecord(v, b.owner.policy.PayloadLimits))
 }
 
 // ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
