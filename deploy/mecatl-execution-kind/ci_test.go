@@ -1,14 +1,57 @@
 package executionkind_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
+
+// TestMain canonicalizes TMPDIR and shims GNU timeout and stat -c, as the scripts target Linux CI.
+func TestMain(m *testing.M) {
+	tmp, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Setenv("TMPDIR", tmp)
+	shims, err := os.MkdirTemp("", "executionkind-shims-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if _, err := exec.LookPath("timeout"); err != nil {
+		writeShim(shims, "timeout", "#!/bin/sh\n"+
+			"while [ \"$#\" -gt 0 ]; do case \"$1\" in -*) shift ;; *) break ;; esac; done\n"+
+			"shift\nexec \"$@\"\n")
+	}
+	if exec.Command("stat", "-c", "%a", ".").Run() != nil {
+		if stat, err := exec.LookPath("stat"); err == nil {
+			writeShim(shims, "stat", "#!/bin/sh\n"+
+				"[ \"$1\" = -c ] || exec "+stat+" \"$@\"\n"+
+				"format=$(printf '%s' \"$2\" | sed 's/%a/%Lp/g; s/%s/%z/g')\n"+
+				"shift 2\nexec "+stat+" -f \"$format\" \"$@\"\n")
+		}
+	}
+	os.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
+	code := m.Run()
+	os.RemoveAll(shims)
+	os.Exit(code)
+}
+
+func writeShim(dir, name, body string) {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
 type workflowStep struct {
 	ID      string            `yaml:"id"`
@@ -101,7 +144,13 @@ func runStep(t *testing.T, root, script string, env ...string) ([]byte, error) {
 	cmd := exec.CommandContext(t.Context(), "bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script)
 	cmd.Dir = root
 	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + root}, env...)
-	return cmd.CombinedOutput()
+	procgroup.Configure(cmd)
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.CombinedOutput()
+	if cmd.Process != nil {
+		_ = procgroup.Kill(cmd.Process.Pid)
+	}
+	return out, err
 }
 
 func TestNativeHandoffSelectorsAndCleanEnvironment(t *testing.T) {

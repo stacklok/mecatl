@@ -18,8 +18,9 @@ func TestYoloRelativeEscapeAuthorityUsesPhysicalTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyPath := filepath.Join(t.TempDir(), "authority.cedar")
-	policy := `permit(principal, action, resource);
-forbid(principal, action, resource) when { resource.path like "` + filepath.ToSlash(f.target) + `" };`
+	target := filepath.ToSlash(resolveRootForTest(t, f.target))
+	policy := "permit(principal, action, resource);\nforbid(principal, action, resource) " +
+		`when { resource.path like "` + target + `" };`
 	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
 		t.Fatal(err)
 	}

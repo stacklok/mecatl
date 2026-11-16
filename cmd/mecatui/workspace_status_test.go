@@ -66,6 +66,16 @@ func workspaceTestCommit(t *testing.T, dir string) {
 
 func workspaceTestTrusted(context.Context, string, string) bool { return true }
 
+// workspaceTestCanonical matches Git's resolved root on hosts where TMPDIR is a symlink.
+func workspaceTestCanonical(t *testing.T, path string) string {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
 func workspaceSnapshotForConfig(cfg config, getter client.LocalSessionContextGetter, sessions client.SessionGetter) ui.WorkspaceSnapshotFunc {
 	snapshotter := workspaceSnapshotterForConfig(cfg, getter, sessions)
 	if snapshotter == nil {
@@ -127,7 +137,8 @@ func TestWorkspaceSnapshotRepositoryStates(t *testing.T) {
 		}
 		workspaceTestWrite(t, root, "outside-nested", "untracked")
 		g := workspaceTestSnapshot(t, nested).Git
-		if g.Root != root || g.Branch != "linked" || len(g.Files) != 1 || g.Files[0].Path != "outside-nested" {
+		if g.Root != workspaceTestCanonical(t, root) || g.Branch != "linked" ||
+			len(g.Files) != 1 || g.Files[0].Path != "outside-nested" {
 			t.Fatalf("worktree: %+v", g)
 		}
 	})
@@ -158,7 +169,11 @@ func TestWorkspaceSnapshotFilesAndLocalDivergence(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "deleted")); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"untracked/a", "untracked/b", "--strange\n\t\x1b[31m\xff"} {
+	strange := "--strange\n\t\x1b[31m\xff"
+	if runtime.GOOS == "darwin" {
+		strange = strings.TrimSuffix(strange, "\xff") // APFS rejects non-UTF-8 names.
+	}
+	for _, path := range []string{"untracked/a", "untracked/b", strange} {
 		workspaceTestWrite(t, dir, path, "new")
 	}
 	g := workspaceTestSnapshot(t, dir).Git
@@ -178,7 +193,7 @@ func TestWorkspaceSnapshotFilesAndLocalDivergence(t *testing.T) {
 	if f := files[name]; f.OriginalPath != "source name" || f.Index != 'R' {
 		t.Fatalf("rename: %+v", f)
 	}
-	if f := files["--strange\n\t\x1b[31m\xff"]; !f.Untracked {
+	if f := files[strange]; !f.Untracked {
 		t.Fatalf("raw name: %+v", f)
 	}
 }
@@ -454,7 +469,7 @@ func TestWorkspaceSnapshotActualEnvironmentAndArgv(t *testing.T) {
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "HTTPS_PROXY", "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_TRACE", "AWS_SECRET_ACCESS_KEY", "LD_PRELOAD"} {
 		t.Setenv(key, "hostile-sentinel")
 	}
-	dir := t.TempDir()
+	dir := canonicalTempDir(t)
 	s := workspaceSnapshotter{
 		getter: workspaceRootGetter(func(context.Context, string) (string, error) { return dir, nil }), trusted: workspaceTestTrusted,
 		command: workspaceHelperCommand("environment"),
@@ -606,7 +621,8 @@ func TestWorkspaceSnapshotProductionTrust(t *testing.T) {
 	if err := app.RememberTrust(app.Config{Workspace: linked}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := fn(t.Context(), "captured"); err != nil || got.Git == nil || got.Git.Root != linked {
+	if got, err := fn(t.Context(), "captured"); err != nil || got.Git == nil ||
+		got.Git.Root != workspaceTestCanonical(t, linked) {
 		t.Fatalf("remembered linked root: %+v %v", got, err)
 	}
 	declared := workspaceTestRepo(t)
@@ -640,7 +656,7 @@ func TestWorkspaceSnapshotEmbeddedConfirmedTrust(t *testing.T) {
 	}
 	cfg := config{transportMode: modeLocal, workspace: dir}
 	got, err := workspaceSnapshotForConfig(cfg, cl, cl)(t.Context(), id)
-	if err != nil || got.Git == nil || got.Git.Root != dir {
+	if err != nil || got.Git == nil || got.Git.Root != workspaceTestCanonical(t, dir) {
 		t.Fatalf("embedded confirmed trust: %+v %v", got, err)
 	}
 	other := workspaceTestRepo(t)

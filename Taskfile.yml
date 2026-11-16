@@ -443,6 +443,9 @@ tasks:
 
   e2e:microvm:
     desc: Run the deterministic mock-provider Linux amd64 KVM or Darwin arm64 HVF production-composed journey (artifact network required; no live LLM; never part of task test).
+    preconditions:
+      - sh: '[ "${MECATL_MICROVM_E2E_PREPARED:-}" = "1" ] || command -v cosign >/dev/null 2>&1'
+        msg: "cosign is not installed (https://docs.sigstore.dev/cosign/)"
     cmds:
       - cmd: |
           set -eu

@@ -25,7 +25,10 @@ func TestYoloRelativeEscapeTools(t *testing.T) {
 		scenario3Call("list", "ListDir", map[string]string{"path": "../outside"}),
 		scenario3Call("write", "Write", map[string]string{"path": created, "content": "new"}),
 		scenario3Call("edit", "Edit", map[string]string{"path": rel, "old_string": f.content, "new_string": "edited"}),
-		scenario3Call("alias-edit", "Edit", map[string]string{"path": f.target, "old_string": "edited", "new_string": "edited-again"}),
+		scenario3Call("alias-edit", "Edit", map[string]string{
+			"path":       resolveRootForTest(t, f.target),
+			"old_string": "edited", "new_string": "edited-again",
+		}),
 	}
 	turns := make([]mockllm.Turn, 0, len(calls)+1)
 	for _, call := range calls {

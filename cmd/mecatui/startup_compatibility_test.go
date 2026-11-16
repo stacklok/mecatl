@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -493,22 +492,6 @@ func TestStartupCompatibilityRejectedBeforeAutomaticOrAuthRecoveryResume(t *test
 			}
 		})
 	}
-}
-
-func shortEmbeddedRuntimeDir(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "linux" {
-		t.Chdir(t.TempDir())
-		t.Setenv("XDG_RUNTIME_DIR", "/proc/self/cwd")
-		return
-	}
-
-	dir, err := os.MkdirTemp("", "mecatui-runtime-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("XDG_RUNTIME_DIR", dir)
 }
 
 func TestStartupCompatibilityEmbeddedRejected(t *testing.T) {

@@ -183,6 +183,34 @@ func TestACPUsesHostGovernanceRootAndClosesRejectedBinding(t *testing.T) {
 	}
 }
 
+func TestACPCWDMatchesSymlinkedGovernanceRoot(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "real")
+	link := filepath.Join(base, "link")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	provider := &placementLifecycleSpy{governanceRoot: link}
+	svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	for _, cwd := range []string{link, target} {
+		if _, err := svc.CreateACPSession(
+			t.Context(), cwd, session.ModeDefault, session.Limits{}, nil, nil); err != nil {
+			t.Errorf("cwd %q: %v", cwd, err)
+		}
+	}
+	if _, err := svc.CreateACPSession(
+		t.Context(), base, session.ModeDefault, session.Limits{}, nil, nil); err == nil {
+		t.Error("ACP accepted the symlink's parent as the governance root")
+	}
+}
+
 type acpBindingOwnershipSpy struct {
 	*placementLifecycleSpy
 	reattachCloses atomic.Int32
