@@ -67,8 +67,10 @@ type gatewayCall struct {
 	args   json.RawMessage
 	hash   string
 	claim  bool
-	// authErr is the identity broker's refusal that ended the call, if any.
+	// authErr is the identity broker's refusal that ended the call, if any;
+	// cause names any other failure before a send.
 	authErr *identitybroker.Error
+	cause   string
 	// attempts are the attempts sent so far, oldest first.
 	attempts []mcpadapter.GatewayAttempt
 }
@@ -96,7 +98,9 @@ func (t *sessionTool) executeGateway(ctx context.Context, scope gatewayScope, ca
 func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, error) {
 	fail := func(o gatewayOutcome) (session.ToolResult, string, error) { return o.result(g.call.ID), o.code, nil }
 	refused := func(err error) gatewayOutcome {
-		errors.As(err, &g.authErr)
+		if !errors.As(err, &g.authErr) {
+			g.cause = failureCause(err)
+		}
 		return outcomeForAuthorization(err)
 	}
 	if !g.scope.ok {
@@ -106,6 +110,7 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 	g.op = operationID(g.scope.root, g.scope.acting, g.call.ID)
 	var err error
 	if g.server, g.tool, err = g.r.gateway.Route(g.t.route.backend, g.call.Name); err != nil {
+		g.cause = "route: " + err.Error()
 		return fail(outcomeInternal)
 	}
 	// The argument hash is checked before anything is authorized.
@@ -249,24 +254,45 @@ func (g *gatewayCall) send(ctx context.Context, auth identitybroker.Authorizatio
 	return a
 }
 
+// failureCause names a failure before a send that is not the identity
+// broker's refusal, from fixed text only: an error from the arguments could
+// quote them.
+func failureCause(err error) string {
+	for _, known := range []error{
+		agentcredential.ErrNoCredential, agentcredential.ErrDropped,
+		agentcredential.ErrOtherAgent, agentcredential.ErrExpired,
+		ErrAlreadySent, errSendOnceFull, errNotIJSON,
+		context.DeadlineExceeded, context.Canceled,
+	} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
+	}
+	return "unclassified"
+}
+
 // log records the call's outcome; it never carries a token or arguments. A
 // refusal by the identity broker adds its code, reason, and detail, which
 // never holds credentials and names refusals, such as AS-1's issuance
-// reasons, that the outcome reports only as internal.
+// reasons, that the outcome reports only as internal; any other failure
+// before a send adds its cause, and the last attempt its HTTP status.
 func (g *gatewayCall) log(ctx context.Context, code string) {
 	ids := make([]string, len(g.attempts))
-	outcome := ""
+	outcome, status := "", 0
 	for i, a := range g.attempts {
 		ids[i] = a.AttemptID
-		outcome = string(a.Outcome)
+		outcome, status = string(a.Outcome), a.HTTPStatus
 	}
 	level := port.LevelInfo
 	if code != diagnosticCodeCompleted {
 		level = port.LevelWarn
 	}
 	args := []any{"event", diagnosticEventGatewayCall, "code", code, "operation", g.op,
-		"attempts", strings.Join(ids, ","), "outcome", outcome,
+		"attempts", strings.Join(ids, ","), "outcome", outcome, "http_status", status,
 		"session", string(g.t.attachment.logical.ref.SessionID())}
+	if g.cause != "" {
+		args = append(args, "cause", g.cause)
+	}
 	if g.authErr != nil {
 		args = append(args, "broker_code", string(g.authErr.Code), "broker_reason", string(g.authErr.Reason), "broker_detail", g.authErr.Detail)
 	}

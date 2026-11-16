@@ -21,11 +21,10 @@ type SendOnceRecord interface {
 	// Claim claims the call, or returns ErrAlreadySent while it is in flight
 	// or once it was sent.
 	Claim(ctx context.Context, rootSessionID, operationID, argumentsSHA256 string) error
-	// Complete marks a claimed call as completed: the gateway answered it, so
-	// its result is in the transcript. The record may then drop the claim to
-	// make room for a new one; the engine never runs a call with a result
-	// again under the same call ID, so the same operation ID is not claimed
-	// again.
+	// Complete marks a claimed call as completed: the gateway answered it.
+	// The record may then drop the claim to make room for a new one; the
+	// engine never runs a call with a result again under the same call ID, so
+	// the same operation ID is not claimed again.
 	Complete(ctx context.Context, rootSessionID, operationID, argumentsSHA256 string) error
 	// Release gives the claim up; callers release only a call no attempt of
 	// which may have run.

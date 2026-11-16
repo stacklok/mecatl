@@ -321,6 +321,22 @@ func TestGatewayCallLogsTheBrokerRefusal(t *testing.T) {
 	if got := f.diag.String(); !strings.Contains(got, "broker_codeINTERNAL") || !strings.Contains(got, "broker_detail"+detail) {
 		t.Fatalf("diagnostics = %s, want the broker's code and detail", got)
 	}
+
+	// A failure that is not the broker's names its cause.
+	f = newGatewayFixture(t, gatewayFixtureOptions{})
+	res, err = f.execute(runContext(t.Context(), "other-root", "other-root"), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeIdentityUnavailable)
+	if got := f.diag.String(); !strings.Contains(got, "cause"+agentcredential.ErrNoCredential.Error()) {
+		t.Fatalf("diagnostics = %s, want the cause", got)
+	}
+
+	// A sent call records its HTTP status.
+	f = newGatewayFixture(t, gatewayFixtureOptions{})
+	res, err = f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantResult(t, res, err, gatewayTestResult)
+	if got := f.diag.String(); !strings.Contains(got, "http_status200") {
+		t.Fatalf("diagnostics = %s, want the HTTP status", got)
+	}
 }
 
 func TestGatewayCallWithoutAgentCredentialIsRefused(t *testing.T) {
@@ -456,7 +472,38 @@ func TestGatewayCallRetriesOneRejectedToken(t *testing.T) {
 			if !slices.Equal(answered, []string{"att_2"}) {
 				t.Fatalf("answered tools/call attempts = %v, want [att_2]", answered)
 			}
+			// Each attempt's messages carry that attempt's own token.
+			seen := map[string]int{}
+			for _, r := range f.wire.requests() {
+				for n, attempt := range []string{"att_1", "att_2"} {
+					if !bytes.Contains(r.body, []byte(`"`+attempt+`"`)) {
+						continue
+					}
+					seen[attempt]++
+					if want := "Bearer gateway-token-" + strconv.Itoa(n+1); r.header.Get("Authorization") != want {
+						t.Fatalf("%s sent with %q, want %q", attempt, r.header.Get("Authorization"), want)
+					}
+				}
+			}
+			if seen["att_1"] == 0 || seen["att_2"] == 0 {
+				t.Fatalf("messages per attempt = %v, want both attempts", seen)
+			}
 		})
+	}
+}
+
+func TestGatewayCallRefusedOnTheRetryReleasesTheClaim(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.wire.setOnToolsCall(f.g.RejectNextToken)
+	f.auth.script = []error{nil, identitybroker.ReasonError(identitybroker.ReasonDenied, "")}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeDenied)
+	if reqs := f.auth.calls(); len(reqs) != 2 || reqs[1].RejectedAttemptID != "att_1" {
+		t.Fatalf("AuthorizeCall requests = %+v, want a retry reporting att_1", reqs)
+	}
+	// The only attempt was refused before running, so the claim is released.
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("claim after a refused retry: %v", err)
 	}
 }
 
@@ -1021,6 +1068,10 @@ func TestGatewayTokenNeverLeaks(t *testing.T) {
 		"unknown":         func(f *gatewayFixture) { f.g.DropAfterRequest("github") },
 		"url elicitation": func(f *gatewayFixture) { f.g.MissingConnection("github", "https://gateway.example/connect") },
 		"elicit during":   func(f *gatewayFixture) { f.g.ElicitDuringCall("github") },
+		"refused on retry": func(f *gatewayFixture) {
+			f.wire.setOnToolsCall(f.g.RejectNextToken)
+			f.auth.script = []error{nil, identitybroker.NewError(identitybroker.CodeInternal, "", "refused")}
+		},
 	}
 	for name, setup := range paths {
 		t.Run(name, func(t *testing.T) {

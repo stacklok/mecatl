@@ -372,6 +372,24 @@ func TestARegistrationFinishingAfterCloseStoresNothing(t *testing.T) {
 	}
 }
 
+func TestARegistrationDroppedInFlightIsUnavailable(t *testing.T) {
+	diag := &attemptRecordingDiagnostics{}
+	broker := &hookedBroker{}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag }, withHookedBroker(broker))
+	// The session's credentials are dropped while the broker call is in
+	// flight, with no lease loss or Close, as a delete in flight would.
+	broker.beforeRegister = func() { svc.cfg.IdentityAgents.Drop(string(sess.ID)) }
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); !errors.Is(err, ErrIdentityBrokerUnavailable) {
+		t.Fatalf("registration dropped in flight = %v, want ErrIdentityBrokerUnavailable", err)
+	}
+	if _, held := heldIdentityAgent(svc, sess.ID); held {
+		t.Fatal("a registration dropped in flight stored its credential")
+	}
+	if !slices.Contains(diag.entries, "agent credential dropped during registration") {
+		t.Fatalf("the drop was not logged: %q", diag.entries)
+	}
+}
+
 func TestTeamRootRegistrationIsBounded(t *testing.T) {
 	prev := engineCloseTimeout
 	engineCloseTimeout = 50 * time.Millisecond

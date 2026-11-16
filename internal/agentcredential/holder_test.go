@@ -152,12 +152,19 @@ func TestHolderRenewsOnSVIDExpired(t *testing.T) {
 		t.Fatalf("Credential with renew = %q, %v; want the renewed credential-2", got.Token.Value(), err)
 	}
 
-	// A failed renewal returns the held credential while it has not expired...
+	// A failed renewal after the broker refused the held credential returns
+	// the renewal's error, not the refused credential...
 	refused := identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "closed")
 	b.setRegister(func(context.Context, identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
 		return identitybroker.Registration{}, refused
 	})
-	got, err = h.Credential(t.Context(), key, true)
+	if _, err := h.Credential(t.Context(), key, true); !errors.Is(err, refused) {
+		t.Fatalf("Credential with renew and a failed renewal = %v, want the broker's error", err)
+	}
+	// ...a failed renewal past half-life returns the held credential while
+	// it has not expired...
+	c.Advance(6 * time.Minute)
+	got, err = h.Credential(t.Context(), key, false)
 	if err != nil || got.Token.Value() != "credential-2" {
 		t.Fatalf("Credential with a failed renewal = %q, %v; want the held credential-2", got.Token.Value(), err)
 	}
@@ -316,10 +323,15 @@ func TestHolderRefusesOtherAgentAndExpired(t *testing.T) {
 	if err := h.Ensure(t.Context(), key, request("bs_2"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
 		t.Fatalf("Ensure returning another agent than the held one = %v, want ErrOtherAgent", err)
 	}
-	// Renewal applies the same checks and keeps the held credential.
-	got, err := h.Credential(t.Context(), key, true)
+	// Renewal applies the same checks and keeps the held credential: a lookup
+	// with renew gets the refusal, one past half-life the held credential.
+	if _, err := h.Credential(t.Context(), key, true); !errors.Is(err, agentcredential.ErrOtherAgent) {
+		t.Fatalf("Credential with renew when renewal returned another agent = %v, want ErrOtherAgent", err)
+	}
+	c.Advance(6 * time.Minute)
+	got, err := h.Credential(t.Context(), key, false)
 	if err != nil || got != held {
-		t.Fatalf("Credential when renewal returned another agent = %+v, %v; want the held one", got, err)
+		t.Fatalf("Credential past half-life when renewal returned another agent = %+v, %v; want the held one", got, err)
 	}
 	if now, _ := h.Held(key); now != held {
 		t.Fatalf("held after refused registrations = %+v, want %+v", now, held)

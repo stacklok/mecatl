@@ -92,11 +92,13 @@ func TestStreamingClientSendsAReplyWhenTheHandlerReturns(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if _, err := io.ReadAll(resp.Body); err != nil {
-		t.Fatal(err)
-	}
+	// Checked before the body is read: reading to EOF waits for the handler
+	// anyway.
 	if !stored || resp.Header.Get("Mcp-Session-Id") != "s1" {
 		t.Fatalf("stored=%v session %q; want the handler finished before the reply arrived", stored, resp.Header.Get("Mcp-Session-Id"))
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatal(err)
 	}
 	big := strings.Repeat("x", streamingBufferSize)
 	release := make(chan struct{})

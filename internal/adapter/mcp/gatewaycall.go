@@ -181,7 +181,11 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 	}
 
 	// Shortcut: each gateway call uses its own vMCP session, and a 404 for the session fails the call; removed by #2564 (vMCP session reuse and a new session on 404).
-	cs, err := client.Connect(ctx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
+	// The handshake must finish while the token can still be sent; the SDK
+	// detaches the session from this context once connected.
+	connectCtx, cancelConnect := context.WithDeadline(ctx, req.SendBy)
+	cs, err := client.Connect(connectCtx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
+	cancelConnect()
 	var res *mcpsdk.CallToolResult
 	var callErr error
 	if err == nil {
@@ -464,7 +468,7 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 		// holds even when the reply was too large to observe.
 		// Shortcut: a tool error result counts as completed, though the vMCP also returns backend failures after it sent the call (timeout, dropped connection) as tool errors; removed by #2822 (the gateway says whether it sent the call to the backend).
 		a.Outcome, a.result = GatewayAttemptCompleted, res
-	default: // a result arrived but did not reach the caller
+	default: // no reply reached the caller (dropped, timed out, an HTTP error, or cancelled): it may have run
 		a.Outcome = GatewayAttemptUnknown
 	}
 	return a
@@ -672,8 +676,15 @@ func (r *replyWatcher) Read(p []byte) (int, error) {
 			r.overflow, r.buf, r.data = true, nil, nil
 		}
 	}
-	if err == io.EOF && !r.stream && !r.overflow {
-		r.wire.observeReply(r.buf)
+	if err == io.EOF && !r.overflow {
+		if r.stream {
+			// As the SDK does, a last line and event left unterminated at EOF
+			// still count.
+			r.buf = append(r.buf, '\n', '\n')
+			r.scanEvents()
+		} else {
+			r.wire.observeReply(r.buf)
+		}
 	}
 	return n, err
 }

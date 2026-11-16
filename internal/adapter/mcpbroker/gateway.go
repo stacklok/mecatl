@@ -60,7 +60,8 @@ type AgentCredentials interface {
 type GatewayCalls struct {
 	Authorizer  CallAuthorizer
 	Credentials AgentCredentials
-	// Servers are the backends whose calls take the gateway path.
+	// Servers are the backends whose calls take the gateway path, by backend
+	// name; the embedded gateway routes each backend under its own name.
 	Servers []string
 	// SendOnce records claimed calls; nil means NewMemorySendOnceRecord.
 	SendOnce SendOnceRecord

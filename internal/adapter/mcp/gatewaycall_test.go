@@ -351,6 +351,29 @@ func TestSendGatewayCallDropAfterWriteIsUnknown(t *testing.T) {
 	}
 }
 
+// hangingTransport never answers a request until its context ends.
+type hangingTransport struct{}
+
+func (hangingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.HTTPClient = &http.Client{Transport: hangingTransport{}}
+	req.SendBy = time.Now().Add(50 * time.Millisecond)
+	done := make(chan GatewayAttempt, 1)
+	go func() { done <- SendGatewayCall(t.Context(), req) }()
+	select {
+	case got := <-done:
+		wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hung handshake outlived the authorization's send deadline")
+	}
+}
+
 func TestSendGatewayCallLargeResultIsCompleted(t *testing.T) {
 	f := newGatewayFixture(t)
 	f.g.PadResults("github", maxObservedReplyBytes+1)
@@ -493,6 +516,44 @@ func TestSendGatewayCallCancelSendsCancelled(t *testing.T) {
 	}
 	if len(f.calls("att_1", "notifications/cancelled")) != 1 {
 		t.Fatal("the gateway did not receive the cancellation with the attempt's _meta")
+	}
+}
+
+func TestReplyWatcherFindsTheReplyInAnEventStream(t *testing.T) {
+	const reply = `{"jsonrpc":"2.0","id":7,"error":{"code":-32042,"message":"connect"}}`
+	for name, stream := range map[string]string{
+		"one event":                "data: " + reply + "\n\n",
+		"CRLF lines":               "event: message\r\ndata: " + reply + "\r\n\r\n",
+		"data over several lines":  "data: {\"jsonrpc\":\"2.0\",\"id\":7,\ndata: \"error\":{\"code\":-32042,\"message\":\"connect\"}}\n\n",
+		"after a request and ping": "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n\n: comment\ndata: " + reply + "\n\n",
+		"no blank line at EOF":     "data: " + reply + "\n",
+		"no newline at EOF":        "data: " + reply,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := &gatewayWire{callID: json.RawMessage(`7`)}
+			r := &replyWatcher{body: io.NopCloser(strings.NewReader(stream)), wire: w, stream: true}
+			if _, err := io.Copy(io.Discard, r); err != nil {
+				t.Fatal(err)
+			}
+			if w.reply == nil || w.reply.err == nil || w.reply.err.Code != -32042 {
+				t.Fatalf("reply = %+v, want the -32042 error", w.reply)
+			}
+		})
+	}
+	for name, stream := range map[string]string{
+		"another event name": "event: other\ndata: " + reply + "\n\n",
+		"another ID":         "data: " + strings.Replace(reply, `"id":7`, `"id":8`, 1) + "\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := &gatewayWire{callID: json.RawMessage(`7`)}
+			r := &replyWatcher{body: io.NopCloser(strings.NewReader(stream)), wire: w, stream: true}
+			if _, err := io.Copy(io.Discard, r); err != nil {
+				t.Fatal(err)
+			}
+			if w.reply != nil {
+				t.Fatalf("reply = %+v, want none", w.reply)
+			}
+		})
 	}
 }
 

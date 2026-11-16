@@ -186,8 +186,9 @@ func newEntry(req identitybroker.RegisterAgentRequest, reg identitybroker.Regist
 // single-flight per key: concurrent lookups wait for the one in flight, or
 // for their context. A renewal is stored only if key's root was not dropped
 // and the holder not closed since it started (ErrDropped otherwise). If it
-// fails otherwise and the held credential has not expired, the held one is
-// returned.
+// fails otherwise, a lookup past half-life gets the held credential while it
+// has not expired; a lookup with renew, made after the broker refused the held
+// credential, gets the renewal's error.
 func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credential, error) {
 	h.mu.Lock()
 	r := h.roots[key.RootSessionID]
@@ -207,7 +208,7 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 		h.mu.Unlock()
 		select {
 		case <-f.done:
-			return f.cred, f.err
+			return f.result(renew)
 		case <-ctx.Done():
 			return Credential{}, ctx.Err()
 		}
@@ -221,11 +222,21 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 	delete(h.renewals, key)
 	h.mu.Unlock()
 	close(f.done)
-	return f.cred, f.err
+	return f.result(renew)
+}
+
+// result is a renewal's answer to a lookup: on a failure with an unexpired
+// held credential, the held one, unless the lookup asked to renew.
+func (f *renewal) result(renew bool) (Credential, error) {
+	if f.err == nil || (!renew && !f.cred.ExpiresAt.IsZero()) {
+		return f.cred, nil
+	}
+	return Credential{}, f.err
 }
 
 // renew registers e's agent again and stores the result in r, if r is still
-// key's root and e its entry.
+// key's root and e its entry. A failure returns its error, and the held
+// credential too while it has not expired.
 func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credential, error) {
 	now := h.now()
 	// Shortcut: a credential is renewed by registering again in the held broker session; removed by #2562 (a renew call).
@@ -244,7 +255,7 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credent
 	}
 	if err != nil {
 		if e.reg.ExpiresAt.After(h.now()) {
-			return e.credential(), nil
+			return e.credential(), err
 		}
 		return Credential{}, err
 	}
