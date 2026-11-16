@@ -377010,6 +377010,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794790562940,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff7a9abe38de68952bddfcebdfd44c6763a0f2ae",
+          "message": "feat(api): report execution capabilities as lists and bump the API to major 2 (#2777)\n\nSession and template APIs report capability lists (`filesystem`,\n`foreground-command`) instead of booleans. Requested capabilities are\nrefused until #2712, and the execution provider returns a mandatory\nadmitted set that successors inherit.\n\nBreaking change: the public API major is now 2. Upgrade the server, the\nTypeScript SDK and mecatui together.\n\nCloses #2693",
+          "timestamp": "2026-11-16T11:22:16+01:00",
+          "tree_id": "935f010a9aad9f7c510a0a1c8c104895b4d47ea9",
+          "url": "https://github.com/stacklok/mecatl/commit/ff7a9abe38de68952bddfcebdfd44c6763a0f2ae"
+        },
+        "date": 1794825257635,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -544393,6 +544427,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794825254380,
+  "lastUpdate": 1794825258403,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
