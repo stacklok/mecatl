@@ -332,6 +332,20 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create vMCP handler: %w", err))
 	}
+	if as2 && config.GatewayCalls != nil {
+		if config.GatewayCalls.HTTPClient == nil {
+			return rollback(fmt.Errorf("%w: gateway calls need an HTTP client for the vMCP", ErrInvalidCatalogue))
+		}
+		endpoint := as2Resource(issuer)
+		client, err := config.GatewayCalls.HTTPClient(vmcpHandler, endpoint)
+		if err != nil {
+			return rollback(fmt.Errorf("mcpbroker: create gateway client: %w", err))
+		}
+		runtime.setGateway(embeddedGateway{endpoint: endpoint, resource: resource, client: client}, *config.GatewayCalls)
+		if err := runtime.checkGateway(); err != nil {
+			return rollback(err)
+		}
+	}
 	if incoming != nil {
 		// The vMCP endpoint is published only when the OIDC middleware exists to
 		// protect it. With zero protected upstreams there is no incoming-auth

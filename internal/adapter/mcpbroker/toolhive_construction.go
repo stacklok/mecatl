@@ -70,6 +70,11 @@ type ToolHiveConfig struct {
 	// production from configuration (the shortcut is marked on
 	// app.Config.IdentityBrokerAS2Trust).
 	AS2Trust AS2Trust
+	// GatewayCalls, with AS-2 set up, sends tools/call on GatewayCalls.Servers'
+	// broker routes to the embedded vMCP as a gateway, authorized by the
+	// identity broker. Its HTTPClient is required. Nil keeps every route on
+	// the MCP broker's OAuth grant.
+	GatewayCalls *GatewayCalls
 }
 
 // AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.

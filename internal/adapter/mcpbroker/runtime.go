@@ -263,6 +263,11 @@ type Runtime struct {
 	enrollment  *enrollmentConfig
 	discovery   authenticatedDiscoverer
 	publication publicationGate
+	// The gateway path; nil gateway sends no call through a gateway.
+	gateway        Gateway
+	gatewayCalls   GatewayCalls
+	gatewayServers map[string]bool
+	sendGateway    func(context.Context, mcpadapter.GatewayCallRequest) mcpadapter.GatewayAttempt
 }
 
 var _ contract.Service = (*Runtime)(nil)
@@ -294,6 +299,9 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 			return nil, fmt.Errorf("%w: nil runtime option", ErrInvalidCatalogue)
 		}
 		option(runtime)
+	}
+	if err := runtime.checkGateway(); err != nil {
+		return nil, err
 	}
 	if (catalogue.protected() || runtime.oauth.forcedTokenEndpoint != "") && runtime.authorizedCaller == nil {
 		return nil, fmt.Errorf("%w: protected routes require an authorized caller", ErrInvalidCatalogue)
@@ -628,6 +636,9 @@ func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
 
 // Execute (sessionTool.Execute) invokes the attachment-bound native tool route.
 func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	// opCtx derives from the logical session, not ctx, so it loses the run's
+	// identity: read it first.
+	scope := gatewayScopeFrom(ctx)
 	opCtx, done, err := t.attachment.beginOperation(ctx)
 	if err != nil {
 		return session.ToolResult{}, err
@@ -645,6 +656,9 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		return session.ToolResult{}, err
 	}
 	call.Args = append(json.RawMessage(nil), call.Args...)
+	if t.gatewayRoute() {
+		return t.executeGateway(opCtx, scope, call)
+	}
 	if t.route.broker {
 		return t.executeBroker(opCtx, call)
 	}
