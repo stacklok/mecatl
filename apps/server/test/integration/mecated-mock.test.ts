@@ -90,7 +90,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     const runtime = await json("/api/v1/runtime");
     expect(runtime.status).toBe(200);
     expect(runtime.body).toMatchObject({
-      apiMajor: 1,
+      apiMajor: 2,
       connection: "online",
       mock: true,
       source: "local",

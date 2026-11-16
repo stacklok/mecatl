@@ -128,14 +128,17 @@ ID, or worktree selector. Omitted `execution` binds the deployment default;
 `execution.none` selects a file-less session and `execution.template` selects
 an operator-owned `{id,revision}`. Invalid selections never fall back to the
 default. The response and `GetSession` expose bounded `PlacementMetadata` and
-effective `session_capabilities.execution_files` and `built_in_shell`. The exact
+the effective `session_capabilities.execution` list (`filesystem`,
+`foreground-command`); clients ignore unknown names. A non-empty
+`execution.template.capabilities` returns `INVALID_ARGUMENT`; leave it empty to
+use the template's capabilities narrowed by deployment configuration. The exact
 `EnvironmentRef{Kind, ID, Revision}` stays private and is reattached at run entry.
 
 `ListExecutionTemplates` is an authenticated, optional catalog. Check both
 `features` contains `execution_templates` and
 `capabilities.execution_templates` before listing. It returns at most 64 eligible
 inert display rows (`template`, `name`, `description`, `display_token`,
-`extensions`) plus a revision of the caller-filtered inventory. An empty list
+`extensions`, and the declared `capabilities`) plus a revision of the caller-filtered inventory. An empty list
 means enabled but nothing eligible; disabled returns `UNIMPLEMENTED`, unavailable
 returns `UNAVAILABLE`. A list is not a reservation. The host checks the verified
 owner principal under its operator policy; the private mTLS provider separately

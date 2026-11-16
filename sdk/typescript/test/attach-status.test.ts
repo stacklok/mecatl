@@ -53,7 +53,7 @@ async function sessionFor(
     sessionId: string;
   }) => AsyncIterable<WatchSessionEventsResponse>,
   compatibility: () => { apiMajor: number; features?: string[] } = () => ({
-    apiMajor: 1,
+    apiMajor: 2,
     capabilities: {},
     features: [WATCH_FEATURE],
   }),
@@ -175,7 +175,7 @@ describe("attachment connection status", () => {
 
   it("status resolves by fixed precedence rather than last writer", async () => {
     vi.useFakeTimers();
-    let apiMajor = 1;
+    let apiMajor = 2;
     const reconnectDrop = deferred();
     const authDrop = deferred();
     const laterReconnectDrop = deferred();
@@ -222,14 +222,14 @@ describe("attachment connection status", () => {
     await Promise.resolve();
     expect(client.status.getSnapshot()).toBe("unauthorized");
 
-    apiMajor = 2;
+    apiMajor = 3;
     incompatibleDrop.resolve();
     await vi.advanceTimersByTimeAsync(100);
     expect(await incompatibleNext).toMatchObject({ code: "incompatible_server" });
     expect(client.status.getSnapshot()).toBe("incompatible");
 
     await Promise.allSettled([reconnectingNext, unauthorizedNext, laterReconnectNext]);
-    apiMajor = 1;
+    apiMajor = 2;
     await client.sessions.get("successful-unary");
     expect(client.status.getSnapshot()).toBe("online");
 
@@ -251,7 +251,7 @@ describe("attachment connection status", () => {
       },
       () => {
         compatibilityCalls += 1;
-        return { apiMajor: 1, capabilities: {}, features: [WATCH_FEATURE] };
+        return { apiMajor: 2, capabilities: {}, features: [WATCH_FEATURE] };
       },
     );
     const iterator = (await session.attach("run-heartbeat"))[Symbol.asyncIterator]();
@@ -296,7 +296,7 @@ describe("attachment connection status", () => {
       },
       () => {
         compatibilityCalls += 1;
-        return { apiMajor: 1, capabilities: {}, features: [WATCH_FEATURE] };
+        return { apiMajor: 2, capabilities: {}, features: [WATCH_FEATURE] };
       },
     );
     const unsubscribe = client.status.subscribe(() => undefined);

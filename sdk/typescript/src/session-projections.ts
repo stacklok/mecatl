@@ -54,8 +54,8 @@ export interface SessionResolvedModel {
 export interface SessionCapabilities {
   readonly image: boolean;
   readonly audio: boolean;
-  readonly executionFiles: boolean;
-  readonly builtInShell: boolean;
+  /** Effective execution capabilities. */
+  readonly execution: readonly string[];
 }
 
 /** Bounded display metadata for a session placement. @public */
@@ -440,8 +440,7 @@ export function projectSessionSnapshot(
           sessionCapabilities: {
             audio: value.sessionCapabilities.audio,
             image: value.sessionCapabilities.image,
-            executionFiles: value.sessionCapabilities.executionFiles,
-            builtInShell: value.sessionCapabilities.builtInShell,
+            execution: [...value.sessionCapabilities.execution],
           },
         }),
     ...(value.latestContextOccupancy === undefined

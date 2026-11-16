@@ -87,10 +87,11 @@ type RequestContext struct {
 
 // EnsureEnvironmentResponse returns allocation identity and readiness.
 type EnsureEnvironmentResponse struct {
-	Environment     EnvironmentRef `json:"environment"`
-	Epoch           uint64         `json:"epoch"`
-	Ready           bool           `json:"ready"`
-	GrantGeneration uint64         `json:"grant_generation"`
+	Environment          EnvironmentRef `json:"environment"`
+	Epoch                uint64         `json:"epoch"`
+	Ready                bool           `json:"ready"`
+	GrantGeneration      uint64         `json:"grant_generation"`
+	AdmittedCapabilities []string       `json:"admitted_capabilities"`
 }
 
 // AttachEnvironmentRequest requests exact reattachment to an existing environment.
@@ -104,10 +105,11 @@ const PurposeSession = "session"
 
 // AttachEnvironmentResponse returns exact attachment state.
 type AttachEnvironmentResponse struct {
-	Environment     EnvironmentRef `json:"environment"`
-	Epoch           uint64         `json:"epoch"`
-	Ready           bool           `json:"ready"`
-	GrantGeneration uint64         `json:"grant_generation"`
+	Environment          EnvironmentRef `json:"environment"`
+	Epoch                uint64         `json:"epoch"`
+	Ready                bool           `json:"ready"`
+	GrantGeneration      uint64         `json:"grant_generation"`
+	AdmittedCapabilities []string       `json:"admitted_capabilities"`
 }
 
 const (

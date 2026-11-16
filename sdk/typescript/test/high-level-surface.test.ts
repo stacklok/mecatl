@@ -506,7 +506,7 @@ describe("SDK high-level RPC surface", () => {
       router.service(HarnessService, {
         getCompatibilityInfo: () => {
           calls += 1;
-          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+          return { apiMajor: 2, capabilities: {}, features: ["server_info"] };
         },
       });
     });
@@ -530,7 +530,7 @@ describe("SDK high-level RPC surface", () => {
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         getCompatibilityInfo: () => ({
-          apiMajor: 1,
+          apiMajor: 2,
           capabilities: {},
           features: ["watch_session_events"],
         }),

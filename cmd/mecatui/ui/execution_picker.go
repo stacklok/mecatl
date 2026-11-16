@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -154,7 +153,8 @@ func (m Model) updateExecutionMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m = m.resetSession()
 		mm, cmd, _ := m.applySessionReady(result.ready)
 		m = mm.(Model)
-		m.statusMsg = fmt.Sprintf("execution ready — files: %t, built-in Shell: %t", result.ready.Capabilities.ExecutionFiles, result.ready.Capabilities.BuiltInShell)
+		ready := result.ready.Capabilities.Execution
+		m.statusMsg = "execution ready — " + executionCapabilityList(ready)
 		m.refreshView()
 		return m, tea.Batch(cmd, m.closeSessionCmd(result.oldID), m.prompt.Focus()), true
 	}
@@ -172,7 +172,9 @@ func (m Model) renderExecutionPicker() string {
 		if label == "" {
 			label = item.ID
 		}
-		rows = append(rows, terminaltext.Sanitize(label)+" ("+terminaltext.Sanitize(item.ID)+" / "+terminaltext.Sanitize(item.Revision)+")"+fmt.Sprintf(" — declared files: %t, built-in Shell: %t", item.DeclaredExecutionFiles, item.DeclaredBuiltInShell))
+		selector := terminaltext.Sanitize(item.ID) + " / " + terminaltext.Sanitize(item.Revision)
+		rows = append(rows, terminaltext.Sanitize(label)+" ("+selector+") — declares "+
+			executionCapabilityList(item.Capabilities))
 	}
 	for i, row := range rows {
 		prefix := "  "
@@ -183,4 +185,16 @@ func (m Model) renderExecutionPicker() string {
 	}
 	b.WriteString("\n" + st.status + "\n↑/↓: select · enter: create · esc: cancel")
 	return b.String()
+}
+
+// executionCapabilityList renders server-supplied capability names for display.
+func executionCapabilityList(names []string) string {
+	if len(names) == 0 {
+		return "no execution capabilities"
+	}
+	safe := make([]string, 0, len(names))
+	for _, name := range names {
+		safe = append(safe, terminaltext.Sanitize(name))
+	}
+	return strings.Join(safe, ", ")
 }

@@ -578,7 +578,7 @@ func TestEffortForkReturnsCapsFromSnapshot(t *testing.T) {
 	m = feedCmd(t, m, cmd)
 	// The fork succeeded — m.caps should now be the adopted value (applied
 	// by applySessionReady when it processes SessionReadyMsg).
-	if m.caps != wantCaps {
+	if !reflect.DeepEqual(m.caps, wantCaps) {
 		t.Fatalf("after fork: caps = %+v, want %+v (adopted from the GetSession snapshot)", m.caps, wantCaps)
 	}
 }

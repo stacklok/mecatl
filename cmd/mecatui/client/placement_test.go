@@ -20,7 +20,7 @@ func (f *fakePlacementClient) ClearSession(_ context.Context, req *mecatlv1.Clea
 }
 
 func (*fakePlacementClient) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest, ...grpc.CallOption) (*mecatlv1.GetCompatibilityInfoResponse, error) {
-	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1}, nil
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 2}, nil
 }
 
 func (*fakePlacementClient) GetSession(context.Context, *mecatlv1.GetSessionRequest, ...grpc.CallOption) (*mecatlv1.GetSessionResponse, error) {

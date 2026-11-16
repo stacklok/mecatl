@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -13,13 +14,17 @@ import (
 type executionCatalogClient struct{ *fakeModelsClient }
 
 func (*executionCatalogClient) ListExecutionTemplates(context.Context, *mecatlv1.ListExecutionTemplatesRequest, ...grpc.CallOption) (*mecatlv1.ListExecutionTemplatesResponse, error) {
-	return &mecatlv1.ListExecutionTemplatesResponse{Items: []*mecatlv1.ExecutionTemplateInfo{{Template: &mecatlv1.ExecutionTemplate{Id: "files-only", Revision: "revision"}, DeclaredExecutionFiles: true, DeclaredBuiltInShell: false}}}, nil
+	return &mecatlv1.ListExecutionTemplatesResponse{Items: []*mecatlv1.ExecutionTemplateInfo{{
+		Template:     &mecatlv1.ExecutionTemplate{Id: "files-only", Revision: "revision"},
+		Capabilities: []string{"filesystem"},
+	}}}, nil
 }
 
 func TestExecutionCatalogDeclaredAffordances(t *testing.T) {
 	fake := &executionCatalogClient{&fakeModelsClient{caps: &mecatlv1.ServerCapabilities{ExecutionTemplates: true}, features: []string{"execution_templates"}}}
 	inventory, err := newFakeClient(fake).ListExecutionTemplates(t.Context())
-	if err != nil || len(inventory.Items) != 1 || !inventory.Items[0].DeclaredExecutionFiles || inventory.Items[0].DeclaredBuiltInShell {
+	if err != nil || len(inventory.Items) != 1 ||
+		!slices.Equal(inventory.Items[0].Capabilities, []string{"filesystem"}) {
 		t.Fatalf("catalog projection=%+v, %v", inventory, err)
 	}
 	if fake.lastCreate != nil {

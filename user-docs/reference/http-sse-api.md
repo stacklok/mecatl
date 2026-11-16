@@ -359,8 +359,13 @@ The same `execution` union exists on gRPC `CreateSessionRequest`. The server enf
   returns `501`, and a temporarily unavailable catalog returns `503`. `features`
   must include `execution_templates` and `capabilities.execution_templates` must
   be true to offer a picker.
-- `session_capabilities.execution_files` and `built_in_shell` on create and get
-  report effective registered tools, separately from image/audio media input.
+- `template.capabilities` must be absent or empty, which selects the template's
+  capabilities narrowed by deployment configuration. A non-empty list returns
+  `400` with code `invalid_argument`.
+- `session_capabilities.execution` on create and get lists the effective
+  execution capabilities (`filesystem`, `foreground-command`), separately from
+  image/audio media input. Catalog rows list the template's declared
+  `capabilities`.
 - The no-FS session excludes
   Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus,
   Parallel, and SkillDraft. It keeps MCP tools (server-global + resource

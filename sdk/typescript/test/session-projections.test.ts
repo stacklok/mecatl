@@ -40,7 +40,7 @@ function session() {
       providerId: "provider",
       reasoningEffort: "high",
     },
-    sessionCapabilities: { audio: true, image: false, executionFiles: false, builtInShell: false },
+    sessionCapabilities: { audio: true, image: false, execution: ["filesystem"] },
     latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
     sessionId: "session",
     state: "future-state",
@@ -101,8 +101,7 @@ describe("session projections", () => {
       sessionCapabilities: {
         audio: true,
         image: false,
-        executionFiles: false,
-        builtInShell: false,
+        execution: ["filesystem"],
       },
       latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
       sessionId: "session",
@@ -235,7 +234,7 @@ describe("session projections", () => {
         router.service(HarnessService, {
           createSession: () => ({ sessionId: "session" }),
           getCompatibilityInfo: () => ({
-            apiMajor: 1,
+            apiMajor: 2,
             capabilities: {},
             features: ["server_info"],
           }),
@@ -329,9 +328,7 @@ describe("session projections", () => {
         "worktrees",
       ].sort(),
     );
-    expect(fields(SessionCapabilitiesSchema)).toEqual(
-      ["audio", "image", "executionFiles", "builtInShell"].sort(),
-    );
+    expect(fields(SessionCapabilitiesSchema)).toEqual(["audio", "image", "execution"].sort());
     expect(fields(ManualDreamCapabilitiesSchema)).toEqual(["projectMemory", "userModel"]);
     expect(fields(DreamTargetCapabilitySchema)).toEqual([
       "decide",

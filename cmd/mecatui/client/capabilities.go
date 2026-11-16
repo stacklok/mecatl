@@ -27,10 +27,9 @@ type Capabilities struct {
 	Shell bool
 	// ExecutionTemplates advertises the enabled authenticated catalog.
 	ExecutionTemplates bool
-	// ExecutionFiles and BuiltInShell describe this bound session, not server-wide
-	// availability and not model media capability.
-	ExecutionFiles bool
-	BuiltInShell   bool
+	// Execution lists this bound session's effective execution capabilities, not
+	// server-wide availability and not model media capability.
+	Execution []string
 	// Soul / UserModel report whether the server has a soul source / user-model store
 	// wired. They gate the /soul and /usermodel read-only inspection panels.
 	Soul      bool
@@ -113,8 +112,7 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 	if sessionCaps != nil {
 		caps.Image = sessionCaps.GetImage()
 		caps.Audio = sessionCaps.GetAudio()
-		caps.ExecutionFiles = sessionCaps.GetExecutionFiles()
-		caps.BuiltInShell = sessionCaps.GetBuiltInShell()
+		caps.Execution = slices.Clone(sessionCaps.GetExecution())
 		caps.SessionMediaPresent = true
 	}
 	return caps

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -402,11 +403,12 @@ func TestKindExecutionTUIClientMockJourney(t *testing.T) {
 			selected = item
 		}
 	}
-	if selected.ID == "" || !selected.DeclaredExecutionFiles || !selected.DeclaredBuiltInShell {
+	bothCapabilities := []string{"filesystem", "foreground-command"}
+	if selected.ID == "" || !slices.Equal(selected.Capabilities, bothCapabilities) {
 		t.Fatal("TUI catalog omitted the exact eligible filesystem and Shell template")
 	}
 	sessionID, caps, _, err := wire.CreateSessionWithExecution(ctx, 0, tuiClient.ModelSelection{}, tuiClient.ExecutionChoice{TemplateID: selected.ID, Revision: selected.Revision})
-	if err != nil || sessionID == "" || !caps.ExecutionFiles || !caps.BuiltInShell {
+	if err != nil || sessionID == "" || !slices.Equal(caps.Execution, bothCapabilities) {
 		t.Fatal("TUI client did not bind exact execution with files and Shell:", err)
 	}
 	ref := environmentForBinding(t, ctx, kubeconfig, sessionID)
@@ -429,7 +431,8 @@ func TestKindExecutionTUIClientMockJourney(t *testing.T) {
 		t.Fatal("reconnect TUI transport:", err)
 	}
 	defer wire.Close()
-	if snapshot, err := wire.GetSession(ctx, sessionID); err != nil || !snapshot.Capabilities.ExecutionFiles || !snapshot.Capabilities.BuiltInShell {
+	snapshot, err := wire.GetSession(ctx, sessionID)
+	if err != nil || !slices.Equal(snapshot.Capabilities.Execution, bothCapabilities) {
 		t.Fatal("TUI reconnect lost bound capabilities:", err)
 	}
 	if got := environmentForBinding(t, ctx, kubeconfig, sessionID); got != ref || readExecutionStatus(t, ctx, kubeconfig, ref.ID).PVCUID != pvcUID || pvcUID == "" {

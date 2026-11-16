@@ -88,7 +88,7 @@ function readyDocument(socketPath: string, overrides: Record<string, unknown> = 
     transport: "unix",
     grpc_address: socketPath,
     socket_path: socketPath,
-    api_major: 1,
+    api_major: 2,
     features: ["mcp_servers_on_create"],
     ...overrides,
   };
@@ -99,7 +99,7 @@ function routerTransport(fails = false): Transport {
     router.service(HarnessService, {
       getCompatibilityInfo: () => {
         if (fails) throw new Error("first dial refused");
-        return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+        return { apiMajor: 2, capabilities: {}, features: ["server_info"] };
       },
     });
   });

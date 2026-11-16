@@ -80,7 +80,7 @@ capability is not version skew, and advertisement does not replace authorization
 `resolved_agent_definition_name` and the effective `resolved_model`. It is a build
 fact even with no configured definitions. Clients must require the feature and
 verify the binding echo before relying on it: an older gRPC server can silently
-ignore the request field. These optional fields keep API major 1 and ordinary
+ignore the request field. These optional fields need no major bump, and ordinary
 creation unchanged; required-authority restore checks enforce the bound-session
 contract rather than adding requirements to ordinary legacy records.
 

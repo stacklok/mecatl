@@ -137,6 +137,9 @@ func (h *Handler) EnsureTemplate(ctx context.Context, q *executionv1.EnsureTempl
 	if !valid || !validBinding(q.GetBindingId()) || !validOperationID(q.GetOperationId()) {
 		return nil, wireError(executionenv.CodeInvalidArgument, false)
 	}
+	if len(q.GetCapabilities()) != 0 {
+		return nil, wireError(executionenv.CodeInvalidArgument, false)
+	}
 	backend, ok := h.backend.(templateBackend)
 	if !ok {
 		return nil, wireError(executionenv.CodeNotReady, false)
