@@ -91,6 +91,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -2329,6 +2330,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			ib.release()
 		}
 	}()
+	// The server registers agents into the holder and closes it; the MCP
+	// broker will present its credentials on gateway calls. The clock is the
+	// server's default, as composition threads none.
+	var agentCredentials *agentcredential.Holder
+	if ib.service != nil {
+		agentCredentials = agentcredential.New(ib.service, time.Now)
+	}
 
 	var broker mcpBrokerParts
 	if brokerSelected && (len(brokerDeclaration.Routes) != 0 || cfg.selectsConfiguredMCPBroker()) {
@@ -3006,6 +3014,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
 	svcCfg.IdentityBroker = ib.service
+	svcCfg.IdentityAgents = agentCredentials
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
 	// live discovery primitive and never satisfies the enrollment boundary.

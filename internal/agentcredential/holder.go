@@ -1,0 +1,285 @@
+// Package agentcredential holds the identity broker credentials of registered
+// agents, in memory only, for the server, which registers them at run entry,
+// and the MCP broker, which presents them on gateway calls. A credential is
+// never persisted and never given to the engine or the model.
+package agentcredential
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/stacklok/mecatl/internal/identitybroker"
+)
+
+// Key names a held credential. For a session's main agent both IDs are the
+// root host session.
+type Key struct{ RootSessionID, AgentSessionID string }
+
+// Credential is a held agent credential and what it was registered with.
+type Credential struct {
+	// BrokerSessionID is the broker session the agent was registered to; the
+	// credential verifies only there.
+	BrokerSessionID string
+	Agent           identitybroker.AgentRef
+	// Owner is the owner the agent was registered with: the run owner under
+	// the #2557 shortcut.
+	Owner     identitybroker.Owner
+	Token     identitybroker.Token
+	ExpiresAt time.Time
+}
+
+var (
+	// ErrNoCredential is a lookup's error when nothing is held for the key; a
+	// lookup never registers.
+	ErrNoCredential = errors.New("agentcredential: no credential held")
+	// ErrDropped refuses to store a registration whose root was dropped, or
+	// the holder closed, while it was in flight.
+	ErrDropped = errors.New("agentcredential: entry dropped during registration")
+	// ErrOtherAgent refuses a registration that returned an agent other than
+	// the one registered.
+	ErrOtherAgent = errors.New("agentcredential: broker returned another agent")
+	// ErrExpired refuses a registration that returned an expired credential.
+	ErrExpired = errors.New("agentcredential: broker returned an expired credential")
+)
+
+// entry is one held registration.
+type entry struct {
+	// req is the request the agent was registered with; renewal sends it
+	// again, so it names the held broker session and incarnation.
+	req identitybroker.RegisterAgentRequest
+	reg identitybroker.Registration
+	// renewAt is when half the credential's lifetime has passed.
+	renewAt time.Time
+}
+
+func (e *entry) credential() Credential {
+	return Credential{
+		BrokerSessionID: e.req.SessionID,
+		Agent:           e.reg.Agent,
+		Owner:           e.req.Owner,
+		Token:           e.reg.Credential,
+		ExpiresAt:       e.reg.ExpiresAt,
+	}
+}
+
+// root holds the entries of one root session. Drop replaces it, so a store
+// started before the drop finds another root (or none) and is refused: the
+// root's identity is its epoch.
+type root struct {
+	entries map[string]*entry
+}
+
+// renewal is one in-flight renewal, which concurrent lookups of its key wait
+// for.
+type renewal struct {
+	done chan struct{}
+	cred Credential
+	err  error
+}
+
+// Holder holds agent credentials. Callers that take their own lock around
+// Drop take it before the holder's; the holder never calls out while holding
+// its own lock.
+type Holder struct {
+	broker identitybroker.Service
+	now    func() time.Time
+
+	mu       sync.Mutex
+	closed   bool
+	roots    map[string]*root
+	renewals map[Key]*renewal
+}
+
+// New returns a Holder registering through broker, with now as its clock.
+func New(broker identitybroker.Service, now func() time.Time) *Holder {
+	return &Holder{broker: broker, now: now, roots: make(map[string]*root), renewals: make(map[Key]*renewal)}
+}
+
+// Ensure is the run-entry path. It registers the agent with req unless the
+// held entry has the same incarnation and broker session and is before
+// renewAt. A registration must return an unexpired credential for an agent
+// whose ID ends in the incarnation and that, with a credential held for the
+// same incarnation, is the held agent; otherwise Ensure returns ErrExpired or
+// ErrOtherAgent and keeps what it held. admit is called, without the holder's
+// lock, only once such a registration succeeded, and its error is returned
+// unchanged; the registration is then stored only if key's root was not
+// dropped since Ensure started and the holder is not closed (ErrDropped).
+// A broker error is returned unchanged.
+func (h *Holder) Ensure(ctx context.Context, key Key, req identitybroker.RegisterAgentRequest, admit func() error) error {
+	now := h.now()
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return ErrDropped
+	}
+	r := h.roots[key.RootSessionID]
+	if r == nil {
+		r = &root{entries: make(map[string]*entry)}
+		h.roots[key.RootSessionID] = r
+	}
+	held := r.entries[key.AgentSessionID]
+	h.mu.Unlock()
+	// A credential held for another incarnation of this session ID belongs to
+	// an agent that no longer exists here: replace it rather than compare.
+	if held != nil && held.req.Incarnation != req.Incarnation {
+		held = nil
+	}
+	if held != nil && held.req.SessionID == req.SessionID && now.Before(held.renewAt) {
+		return nil
+	}
+	reg, err := h.broker.RegisterAgent(ctx, req)
+	if err != nil {
+		return err
+	}
+	if err := checkRegistration(req, reg, held, now); err != nil {
+		return err
+	}
+	if err := admit(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.roots[key.RootSessionID] != r {
+		return ErrDropped
+	}
+	r.entries[key.AgentSessionID] = newEntry(req, reg, now)
+	return nil
+}
+
+// checkRegistration applies run entry's checks to reg, registered with req.
+// held, if not nil, is the entry held for the same incarnation.
+func checkRegistration(req identitybroker.RegisterAgentRequest, reg identitybroker.Registration, held *entry, now time.Time) error {
+	// The in-process broker never returns an expired credential; this guards a
+	// remote broker, whose credential would otherwise be renewed at no point.
+	if !reg.ExpiresAt.After(now) {
+		return ErrExpired
+	}
+	// A mismatch keeps the held credential, so every later registration fails
+	// the same way until the root is dropped. That is deliberate: in this
+	// phase the ID is built from the incarnation, so it changes only if the
+	// broker misbehaves, and dropping the held agent would let the next
+	// registration accept the wrong one. While the broker runs in process, a
+	// legitimate change, such as another trust domain or per-agent identities,
+	// comes with a restart, which clears what is held; a remote broker can
+	// change without one. The comparison lasts only while this process holds
+	// the credential; across a restart, release, or lease loss the suffix
+	// check is the guarantee, as the holder does not know the broker's trust
+	// domain to predict the full ID. The suffix check is enough only while
+	// agent IDs end in .../shared/inst/<incarnation>; per-agent IDs need a
+	// full-ID match that the broker package owns.
+	if !strings.HasSuffix(reg.Agent.Subject, "/inst/"+req.Incarnation) || (held != nil && reg.Agent != held.reg.Agent) {
+		return ErrOtherAgent
+	}
+	return nil
+}
+
+func newEntry(req identitybroker.RegisterAgentRequest, reg identitybroker.Registration, now time.Time) *entry {
+	return &entry{req: req, reg: reg, renewAt: now.Add(reg.ExpiresAt.Sub(now) / 2)}
+}
+
+// Credential is the MCP broker's lookup. With no entry for key it returns
+// ErrNoCredential: it never opens, reopens, or registers. Past renewAt, or
+// with renew set (after svid_expired), it renews the credential. Renewal is
+// single-flight per key: concurrent lookups wait for the one in flight, or
+// for their context. A renewal is stored only if key's root was not dropped
+// and the holder not closed since it started (ErrDropped otherwise). If it
+// fails otherwise and the held credential has not expired, the held one is
+// returned.
+func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credential, error) {
+	h.mu.Lock()
+	r := h.roots[key.RootSessionID]
+	var e *entry
+	if r != nil {
+		e = r.entries[key.AgentSessionID]
+	}
+	if e == nil {
+		h.mu.Unlock()
+		return Credential{}, ErrNoCredential
+	}
+	if !renew && h.now().Before(e.renewAt) {
+		h.mu.Unlock()
+		return e.credential(), nil
+	}
+	if f := h.renewals[key]; f != nil {
+		h.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.cred, f.err
+		case <-ctx.Done():
+			return Credential{}, ctx.Err()
+		}
+	}
+	f := &renewal{done: make(chan struct{})}
+	h.renewals[key] = f
+	h.mu.Unlock()
+
+	f.cred, f.err = h.renew(ctx, key, r, e)
+	h.mu.Lock()
+	delete(h.renewals, key)
+	h.mu.Unlock()
+	close(f.done)
+	return f.cred, f.err
+}
+
+// renew registers e's agent again and stores the result in r, if r is still
+// key's root and e its entry.
+func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credential, error) {
+	now := h.now()
+	// Shortcut: a credential is renewed by registering again in the held broker session; removed by #2562 (a renew call).
+	reg, err := h.broker.RegisterAgent(ctx, e.req)
+	if err == nil {
+		err = checkRegistration(e.req, reg, e, now)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.roots[key.RootSessionID] != r {
+		return Credential{}, ErrDropped
+	}
+	// Run entry may have stored a newer registration meanwhile; it wins.
+	if current := r.entries[key.AgentSessionID]; current != e {
+		return current.credential(), nil
+	}
+	if err != nil {
+		if e.reg.ExpiresAt.After(h.now()) {
+			return e.credential(), nil
+		}
+		return Credential{}, err
+	}
+	n := newEntry(e.req, reg, now)
+	r.entries[key.AgentSessionID] = n
+	return n.credential(), nil
+}
+
+// Held returns the credential held for key without renewing it, and whether
+// one is held.
+func (h *Holder) Held(key Key) (Credential, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r := h.roots[key.RootSessionID]; r != nil {
+		if e := r.entries[key.AgentSessionID]; e != nil {
+			return e.credential(), true
+		}
+	}
+	return Credential{}, false
+}
+
+// Drop drops every credential held for root's session tree, and refuses to
+// store any registration or renewal for it already in flight. Callers that
+// guard their own state with a lock call it holding that lock.
+func (h *Holder) Drop(root string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.roots, root)
+}
+
+// Close drops every credential; later and in-flight stores are refused with
+// ErrDropped, and lookups return ErrNoCredential.
+func (h *Holder) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	h.roots = make(map[string]*root)
+}

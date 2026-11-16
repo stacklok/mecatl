@@ -34,6 +34,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/creatediag"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -808,6 +809,10 @@ type Config struct {
 	// enabled. With it set, every root session with an owner has a broker
 	// session; see openIdentityBrokerSession.
 	IdentityBroker identitybroker.Service
+	// IdentityAgents holds the credentials of the agents registered with
+	// IdentityBroker; the MCP broker presents them on gateway calls. NewService
+	// creates one when IdentityBroker is set and it is nil. Close closes it.
+	IdentityAgents *agentcredential.Holder
 	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
 	MCPConnectorInspector brokercontract.ConnectorInspector
 	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.
@@ -1243,11 +1248,6 @@ type Service struct {
 	// exact reattachment). Replacement, CloseSession, and Service.Close each
 	// detach it exactly once. Guarded by mu.
 	sessionEnvironmentCloses map[session.SessionID]func() error
-	// identityAgents holds the identity broker credential of each root
-	// session's main agent, in memory only. A local release or delete
-	// (closeSessionLocal), lease loss, the end of a scheduled run, and Close
-	// drop it. Guarded by mu.
-	identityAgents map[session.SessionID]identityAgent
 
 	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
 	// session's lifetime, guarded by mu. The Service never threaded these through
@@ -1743,6 +1743,7 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.MutationCapability == nil {
 		cfg.MutationCapability = NewSessionMutationCapability(cfg.SessionLease != nil)
 	}
+	cfg.IdentityAgents = identityAgentsFor(cfg)
 	if cfg.SessionLease != nil {
 		if cfg.LeaseTTL <= 0 {
 			cfg.LeaseTTL = defaultLeaseTTL
@@ -1774,7 +1775,6 @@ func NewService(cfg Config) (*Service, error) {
 		authorizationExpiry:      make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments:      make(map[session.SessionID]tool.Environment),
 		sessionEnvironmentCloses: make(map[session.SessionID]func() error),
-		identityAgents:           make(map[session.SessionID]identityAgent),
 		clientMCPSpecs:           make(map[session.SessionID][]mcp.ServerConfig),
 		reservedIDs:              make(map[session.SessionID]struct{}),
 		runEntryGenerations:      make(map[session.SessionID]uint64),
@@ -3668,7 +3668,9 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	delete(s.sessionEnvironmentCloses, id)
 	delete(s.sessionEnvironments, id)
 	delete(s.clientMCPSpecs, id)
-	delete(s.identityAgents, id)
+	if s.cfg.IdentityAgents != nil {
+		s.cfg.IdentityAgents.Drop(string(id))
+	}
 	// Drop the once-per-id approval-replay marker: the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
@@ -3834,7 +3836,9 @@ func (s *Service) Close() {
 	s.sessionEnvironmentCloses = make(map[session.SessionID]func() error)
 	s.sessionEnvironments = make(map[session.SessionID]tool.Environment)
 	s.clientMCPSpecs = make(map[session.SessionID][]mcp.ServerConfig)
-	s.identityAgents = make(map[session.SessionID]identityAgent)
+	if s.cfg.IdentityAgents != nil {
+		s.cfg.IdentityAgents.Close()
+	}
 	// Close all per-session event subscriptions so subscriber goroutines can exit
 	// cleanly. Close owns both shutdown and channel closure while holding subMu: a
 	// publisher holds subMu.RLock through its send, so no send can race close.
@@ -9141,7 +9145,9 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	delete(s.instructionSnapshots, id)
 	// Another process now runs this session's agent; run entry registers
 	// again if this process wins it back.
-	delete(s.identityAgents, id)
+	if s.cfg.IdentityAgents != nil {
+		s.cfg.IdentityAgents.Drop(string(id))
+	}
 	s.cfg.MutationCapability.Invalidate(id)
 	leaseCancel = expected.cancel
 	lease = expected.lease
