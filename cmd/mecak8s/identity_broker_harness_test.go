@@ -6,8 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -404,7 +403,7 @@ const gatewaySettings = `mcp:
 //	test-only AS-2 trust and gateway seam          #2533 and #2538
 //	  (IdentityBrokerAS2Trust,
 //	  IdentityBrokerGatewayServers)
-//	the embedded vMCP as the gateway, reached      #2728
+//	the embedded vMCP as the gateway, reached      #2812
 //	  in process
 //	no gateway stand-in: the vMCP is real, but     #2537
 //	  it finds no provider credential for the
@@ -635,18 +634,26 @@ func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
 		t.Fatalf("the transcript has no result for %s", call)
 		return session.ToolResult{}
 	}
-	// The main agent acts for the root session, so both are the session.
-	operation := func(call string) string {
-		// As mcpbroker's operationID derives a call's operation.
-		sum := sha256.Sum256([]byte("mecatl/operation\x00" + created.ID + "\x00" + created.ID + "\x00" + call))
-		return "op_" + base64.RawURLEncoding.EncodeToString(sum[:])[:32]
+	// operations is each gateway call's operation, in call order, as its
+	// gateway_call diagnostic names it.
+	operations := map[session.ToolCallID]string{}
+	nextOperation := func(call session.ToolCallID) string {
+		t.Helper()
+		ops := diag.operations(created.ID)
+		if len(ops) != len(operations)+1 {
+			t.Fatalf("gateway call diagnostics name operations %v, want one more than %v", ops, operations)
+		}
+		operations[call] = ops[len(ops)-1]
+		return operations[call]
 	}
+	operation := func(call session.ToolCallID) string { return operations[call] }
 
 	// The run's entry registers the main agent; the approved call goes
 	// through the gateway.
 	if asks := promptApprovingAsks(t, api, alice.AccessToken, created.ID, "call the calendar", nil); asks != 1 {
 		t.Fatalf("the run asked %d times, want once for the tool call", asks)
 	}
+	nextOperation("call-open")
 	opened, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID})
 	if err != nil || !ok || !opened.HoldsRefreshToken {
 		t.Fatalf("Alice's broker session = %+v, %v, %v; want one holding a refresh token", opened, ok, err)
@@ -677,6 +684,9 @@ func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
 	if asks := promptApprovingAsks(t, api, alice.AccessToken, created.ID, "call it again", closeBroker); asks != 1 {
 		t.Fatalf("the second run asked %d times, want once for the tool call", asks)
 	}
+	if nextOperation("call-closed") == operation("call-open") {
+		t.Fatal("both calls name the same operation")
+	}
 	const sessionClosed = "MCP gateway call refused: the session's authority is closed and is not reopened for this call (code session_closed)."
 	if res := toolResult("call-closed"); !res.IsError || res.Content != sessionClosed {
 		t.Fatalf("the call after the close = %+v, want the session_closed refusal", res)
@@ -689,6 +699,43 @@ func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
 	}
 	if reopened, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID}); err != nil || ok {
 		t.Fatalf("after the refused call, broker session = %+v, %v, %v; want none: the call must not reopen it", reopened, ok, err)
+	}
+
+	// No token reaches the transcript, the events, or the gateway call
+	// diagnostics. The gateway token AS-2 issued for the call is a JWT that
+	// never leaves the process, so the scan refuses every JWT there.
+	sess, err := built.Service.GetSession(owner, session.SessionID(created.ID))
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "%+v %+v\n", sess, sess.Conversation.Messages)
+	if raw, err := json.Marshal(sess); err == nil {
+		out.Write(raw)
+	}
+	stream, err := built.Service.StreamSessionEvents(owner, session.SessionID(created.ID))
+	if err != nil {
+		t.Fatalf("StreamSessionEvents: %v", err)
+	}
+	events := 0
+	for ev, err := range stream {
+		events++
+		fmt.Fprintf(&out, "%+v %v\n", ev, err)
+	}
+	if events == 0 {
+		t.Fatal("the session has no events")
+	}
+	fmt.Fprintf(&out, "%v\n", diag.operations(created.ID))
+	for _, call := range []session.ToolCallID{"call-open", "call-closed"} {
+		fmt.Fprintf(&out, "%v\n", diag.call(operation(call)))
+	}
+	jwtShaped := regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+	// Positive control: a JWT planted in the scanned text is found.
+	if !jwtShaped.MatchString(out.String() + alice.AccessToken) {
+		t.Fatal("the scan missed a planted JWT")
+	}
+	if jwtShaped.MatchString(out.String()) || strings.Contains(out.String(), alice.AccessToken) {
+		t.Fatal("the transcript, the events, or the gateway call diagnostics carry a token")
 	}
 }
 
@@ -786,6 +833,20 @@ func (d *gatewayCallDiagnostics) call(operation string) map[string]string {
 		}
 	}
 	return found
+}
+
+// operations is the operation of each gateway call logged for sessionID, in
+// the order they were logged.
+func (d *gatewayCallDiagnostics) operations(sessionID string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var ops []string
+	for _, c := range d.calls {
+		if c["session"] == sessionID {
+			ops = append(ops, c["operation"])
+		}
+	}
+	return ops
 }
 
 // vmcpInitialize is the status of an MCP initialize at the vMCP mecak8s

@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,7 +118,10 @@ type gatewayTestTransport struct {
 	mu          sync.Mutex
 	onToolsCall func()
 	rewrite     func([]byte) []byte
-	sent        []wireRequest
+	// respond, when it returns a response, answers a request in place of
+	// the gateway.
+	respond func(req *http.Request, body []byte) *http.Response
+	sent    []wireRequest
 }
 
 func (w *gatewayTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -128,7 +133,7 @@ func (w *gatewayTestTransport) RoundTrip(req *http.Request) (*http.Response, err
 	}
 	w.mu.Lock()
 	w.sent = append(w.sent, wireRequest{header: req.Header.Clone(), body: body})
-	hook, rewrite := w.onToolsCall, w.rewrite
+	hook, rewrite, respond := w.onToolsCall, w.rewrite, w.respond
 	if hook != nil && bytes.Contains(body, []byte(`"method":"tools/call"`)) {
 		w.onToolsCall = nil
 	} else {
@@ -137,6 +142,12 @@ func (w *gatewayTestTransport) RoundTrip(req *http.Request) (*http.Response, err
 	w.mu.Unlock()
 	if hook != nil {
 		hook()
+	}
+	if respond != nil {
+		if resp := respond(req, body); resp != nil {
+			resp.Request = req
+			return resp, nil
+		}
 	}
 	resp, err := w.base.RoundTrip(req)
 	if err != nil || rewrite == nil || resp.Header.Get("Content-Type") != "application/json" {
@@ -561,6 +572,155 @@ func TestGatewayCallClosedSessionFailsWithClosingReason(t *testing.T) {
 	}
 	if calls := f.g.Calls(); len(calls) != 0 {
 		t.Fatalf("gateway received %d requests", len(calls))
+	}
+}
+
+func TestGatewayOutcomeRows(t *testing.T) {
+	reason := func(r identitybroker.Reason) error { return identitybroker.ReasonError(r, "") }
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{reason(identitybroker.ReasonNoGrant), "no_grant"},
+		{reason(identitybroker.ReasonSessionClosed), "session_closed"},
+		{reason(identitybroker.ReasonSignedOut), "signed_out"},
+		{reason(identitybroker.ReasonUpstreamRevoked), "upstream_revoked"},
+		{reason(identitybroker.ReasonOwnerActionRequired), "owner_action_required"},
+		{reason(identitybroker.ReasonConsentRequired), "consent_required"},
+		{reason(identitybroker.ReasonDenied), "denied"},
+		{reason(identitybroker.ReasonSVIDExpired), "svid_expired"},
+		{identitybroker.NewError(identitybroker.CodeUnavailable, "", ""), "unavailable"},
+		{context.DeadlineExceeded, "unavailable"},
+		{identitybroker.NewError(identitybroker.CodeInternal, "", ""), "internal"},
+		{errors.New("unexpected"), "internal"},
+		{errNotIJSON, "refused_arguments"},
+		{ErrAlreadySent, "already_sent"},
+		{errSendOnceFull, "send_once_full"},
+		{agentcredential.ErrNoCredential, "identity_unavailable"},
+		{agentcredential.ErrDropped, "identity_unavailable"},
+	} {
+		if got := outcomeForAuthorization(c.err); got.code != c.want || !strings.HasSuffix(got.text, "(code "+c.want+").") {
+			t.Errorf("outcomeForAuthorization(%v) = %+v, want %s", c.err, got, c.want)
+		}
+	}
+
+	const link = "https://gateway.example/connect"
+	for _, c := range []struct {
+		name    string
+		last    mcpadapter.GatewayAttempt
+		retried bool
+		want    gatewayOutcome
+	}{
+		{"connection required with link", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionURLElicitation, ConnectURL: link}, false, outcomeConnectionRequired("github", link)},
+		{"connection required without link", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionURLElicitation}, false, outcomeConnectionRequired("github", "")},
+		{"session not found", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionSessionNotFound}, false, outcomeSessionNotFound},
+		{"token rejected twice", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionInvalidToken}, true, outcomeTokenRejected},
+		{"changed after authorization", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionChanged}, false, outcomeInternal},
+		{"authorization expired", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionExpired}, false, outcomeUnavailable},
+		{"handshake failed", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent}, false, outcomeUnavailable},
+		{"outcome unknown", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptUnknown}, false, outcomeUnknown},
+	} {
+		if got := outcomeForAttempts("github", c.last, c.retried); got != c.want {
+			t.Errorf("%s: outcomeForAttempts = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	if got := outcomeConnectionRequired("github", link); !strings.Contains(got.text, link) || got.code != "connection_required" {
+		t.Errorf("connection_required with link = %+v", got)
+	}
+
+	// Through the broker: no_grant dispatches nothing.
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.auth.script = []error{reason(identitybroker.ReasonNoGrant)}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeNoGrant)
+	if calls := f.g.Calls(); len(calls) != 0 {
+		t.Fatalf("gateway received %d requests after no_grant", len(calls))
+	}
+}
+
+// unauthorized is a 401 answer carrying challenge, or no challenge when it
+// is empty.
+func unauthorized(challenge string) *http.Response {
+	header := http.Header{}
+	if challenge != "" {
+		header.Set("WWW-Authenticate", challenge)
+	}
+	return &http.Response{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+		Header: header, Body: io.NopCloser(strings.NewReader(""))}
+}
+
+func TestGatewayCall401WithoutInvalidTokenIsNotRetried(t *testing.T) {
+	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
+	for name, challenge := range map[string]string{
+		"insufficient_scope": `Bearer error="insufficient_scope", scope="tools"`,
+		"no challenge":       "",
+	} {
+		t.Run(name+" on the call", func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+				if bytes.Contains(body, []byte(`"method":"tools/call"`)) {
+					return unauthorized(challenge)
+				}
+				return nil
+			}
+			res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+			wantRow(t, res, err, outcomeUnknown)
+			if n := len(f.auth.calls()); n != 1 {
+				t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+			}
+			if err := f.claim(t, op); !errors.Is(err, ErrAlreadySent) {
+				t.Fatalf("Claim = %v, want the call kept as sent", err)
+			}
+		})
+		t.Run(name+" on the handshake", func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+				if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+					return unauthorized(challenge)
+				}
+				return nil
+			}
+			res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+			wantRow(t, res, err, outcomeUnavailable)
+			if n := len(f.auth.calls()); n != 1 {
+				t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+			}
+			if n := len(f.toolsCalls()); n != 0 {
+				t.Fatalf("%d tools/call sent", n)
+			}
+			if err := f.claim(t, op); err != nil {
+				t.Fatalf("Claim = %v, want the never-sent call released", err)
+			}
+		})
+	}
+}
+
+func TestGatewayCallNeverFollowsARedirect(t *testing.T) {
+	var reached atomic.Int64
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached.Add(1) }))
+	t.Cleanup(other.Close)
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	gateway, err := url.Parse(f.g.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.wire.respond = func(req *http.Request, body []byte) *http.Response {
+		if req.URL.Host != gateway.Host || !bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			return nil
+		}
+		return &http.Response{StatusCode: http.StatusTemporaryRedirect, Status: "307 Temporary Redirect", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+			Header: http.Header{"Location": {other.URL + identityharness.GatewayMCPPath}}, Body: io.NopCloser(strings.NewReader(""))}
+	}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeUnavailable)
+	if n := reached.Load(); n != 0 {
+		t.Fatalf("the redirect target received %d requests", n)
+	}
+	if n := len(f.toolsCalls()); n != 0 {
+		t.Fatalf("%d tools/call sent", n)
+	}
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("Claim = %v, want the never-sent call released", err)
 	}
 }
 

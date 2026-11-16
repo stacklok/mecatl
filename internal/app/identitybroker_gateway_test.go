@@ -316,8 +316,9 @@ func TestBuildConfiguresNoGatewayInProduction(t *testing.T) {
 // involved in the session's transcript and events, the diagnostics, the
 // environment, the errors, and the broker's records (#2535 done-when 8). The
 // same places must not carry the client assertions the broker sent to AS-1,
-// and no assertion may carry a token. Model and tool content cannot carry the
-// tokens until #2536 wires calls through the gateway.
+// and no assertion may carry a token. Its run makes no tool call; a real
+// gateway tool call's transcript and events are scanned by mecak8s's
+// TestIdentityBrokerSessionToolCallThroughGateway.
 func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 	diag := &recordingDiag{}
 	g := buildWithHarnessAS1(t, true, func(cfg *Config) {
