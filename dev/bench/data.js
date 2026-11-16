@@ -378442,6 +378442,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794832749903,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c13ad21f22f2c686e5a62911c5651f94d3cb0e8",
+          "message": "build: add task check:pr for offline CI checks the pre-PR gate missed (#2801)\n\n`task lint && task test:race` skipped files behind custom build tags and the\nSDK codegen/e2e job, so #2777 passed locally and failed CI.\n\n`task check:pr` vets every module for linux and darwin with and without all\ncustom build tags, and mirrors the offline CI jobs. AGENTS.md now names it.\n\nCloses #2799",
+          "timestamp": "2026-11-16T13:32:56+01:00",
+          "tree_id": "4c4104df16ab9a826c2fed71c81f19fe3d18518c",
+          "url": "https://github.com/stacklok/mecatl/commit/6c13ad21f22f2c686e5a62911c5651f94d3cb0e8"
+        },
+        "date": 1794833525351,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -546437,6 +546471,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794833521257,
+  "lastUpdate": 1794833526363,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
