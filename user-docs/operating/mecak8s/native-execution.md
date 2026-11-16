@@ -550,9 +550,9 @@ network access.
    `mecatui connect <ADDRESS> --resume <SESSION_ID>` and the same TLS/login
    options as the initial connection. In Studio, reload and open that chat from
    history. Ask for another `Read` of the file and another approved utility
-   invocation. Expect the edited contents and the same utility version. Read
-   again before any subsequent Edit; reconnecting can discard read-version
-   evidence without losing file contents.
+   invocation. Expect the edited contents and the same utility version. Unless
+   `redis.readLedger.enabled` is `true`, read again before any subsequent Edit;
+   each prompt starts without read-version evidence, but file contents remain.
 
 This smoke test checks file operations, the added utility, approvals, and
 same-session reattachment. It is not production qualification, a fencing proof,

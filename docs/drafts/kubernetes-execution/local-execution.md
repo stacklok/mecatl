@@ -31,7 +31,7 @@ the agent loop's sight.
 | Who manages the environment | nothing to manage | `mecatl-microvmd`, started on demand | the provider's controller |
 | Isolation | none; full access as the user | a VM with configurable egress | a Pod with a RuntimeClass and default-deny network policy |
 | Background `Shell` | supported | supported | not supported |
-| Read ledger | per session | per session | per run |
+| Read ledger | per session | per session | per session with `redis.readLedger.enabled`, otherwise per run |
 | Subagents, teams, and parallel work | supported | supported | disabled |
 | Project instructions | loaded if the project is trusted | loaded from the guest worktree when selected | never loaded |
 

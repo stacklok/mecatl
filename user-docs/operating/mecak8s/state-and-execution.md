@@ -31,6 +31,12 @@ rotation, upgrades, retirement, and deletion. Configure both
 environment already bound to a session. Verify a workload image with the
 [deployed-image smoke test](native-execution.md#smoke-test-the-deployed-image).
 
+Set `redis.readLedger.enabled=true` so the agent can edit a file it read in an
+earlier prompt of the same session, whichever replica serves the prompt. Without
+it, the read-before-edit evidence lasts one run, and the agent reads each file
+again before editing it on every prompt. Either way, an edit is refused when the
+file changed after the read, including a change made by `Shell`.
+
 When `execution.enabled` is `false`, the chart mounts no execution mTLS Secret
 and passes no execution-provider flags. The separate provider and its existing
 environments continue independently. Clients can explicitly request

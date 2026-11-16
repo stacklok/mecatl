@@ -6912,15 +6912,8 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if err != nil {
 		return nil, tool.Environment{}, "", err
 	}
-	if s.cfg.SessionReadLedger != nil {
-		ledger := s.cfg.SessionReadLedger(id)
-		if ledger == nil {
-			return nil, tool.Environment{}, "", fmt.Errorf("%w: session read-ledger factory returned nil", ErrConfig)
-		}
-		verified.Environment, err = tool.NewEnvironment(verified.Ref, verified.Environment.Workspace(), ledger, verified.Environment.CommandRunner())
-		if err != nil {
-			return nil, tool.Environment{}, "", fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
-		}
+	if verified.Environment, err = s.withSessionReadLedger(id, verified.Environment); err != nil {
+		return nil, tool.Environment{}, "", err
 	}
 	verifiedPlacement := &verified
 	governanceRoot, err := PlacementGovernanceRoot(verified)
@@ -9752,6 +9745,10 @@ func (s *Service) acquireExecution(ctx context.Context, st *runState, sess *sess
 		_ = handle.Release(context.WithoutCancel(ctx))
 		return tool.Environment{}, ErrInvalidPlacementBinding
 	}
+	if env, err = s.withSessionReadLedger(sess.ID, env); err != nil {
+		_ = handle.Release(context.WithoutCancel(ctx))
+		return tool.Environment{}, err
+	}
 	st.executionMu.Lock()
 	if st.executionClosed {
 		st.executionMu.Unlock()
@@ -9760,6 +9757,27 @@ func (s *Service) acquireExecution(ctx context.Context, st *runState, sess *sess
 	}
 	st.execution = handle
 	st.executionMu.Unlock()
+	return env, nil
+}
+
+// withSessionReadLedger replaces env's ledger with the configured durable
+// ledger for session id, so read evidence outlives the placement or run that
+// produced env. Without SessionReadLedger, env is returned unchanged.
+func (s *Service) withSessionReadLedger(
+	id session.SessionID, env tool.Environment,
+) (tool.Environment, error) {
+	if s.cfg.SessionReadLedger == nil {
+		return env, nil
+	}
+	ledger := s.cfg.SessionReadLedger(id)
+	if ledger == nil {
+		return tool.Environment{}, fmt.Errorf("%w: session read-ledger factory returned nil",
+			ErrConfig)
+	}
+	env, err := tool.NewEnvironment(env.Ref(), env.Workspace(), ledger, env.CommandRunner())
+	if err != nil {
+		return tool.Environment{}, fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
+	}
 	return env, nil
 }
 
