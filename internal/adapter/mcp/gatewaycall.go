@@ -35,8 +35,8 @@ const (
 	httpsScheme            = "https"
 	maxConnectURLBytes     = 2048
 	// maxObservedReplyBytes bounds what is kept of the tools/call response
-	// while looking for its JSON-RPC reply; past it the reply is not seen
-	// and the outcome is unknown.
+	// while looking for its JSON-RPC reply; past it the reply is not seen,
+	// and only a result the SDK returns shows the call completed.
 	maxObservedReplyBytes = 8 << 20
 	// cancelNotifyWait bounds the wait for the SDK's notifications/cancelled
 	// before the session closes; it matches the SDK's own bound.
@@ -451,14 +451,14 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 	switch {
 	case w.call.rejection != "":
 		a.Outcome, a.Rejection = GatewayAttemptRefused, w.call.rejection
-	case w.reply == nil:
-		a.Outcome = GatewayAttemptUnknown
-	case w.reply.err != nil && w.reply.err.Code == mcpsdk.CodeURLElicitationRequired:
+	case w.reply != nil && w.reply.err != nil && w.reply.err.Code == mcpsdk.CodeURLElicitationRequired:
 		a.Outcome, a.Rejection = GatewayAttemptRefused, GatewayRejectionURLElicitation
 		a.ConnectURL = connectLink(w.reply.err.Data)
-	case w.reply.err != nil:
+	case w.reply != nil && w.reply.err != nil:
 		a.Outcome, a.rpcErr = GatewayAttemptCompleted, w.reply.err
 	case callErr == nil && res != nil:
+		// The SDK returns a result only from the call's own reply, so this
+		// holds even when the reply was too large to observe.
 		a.Outcome, a.result = GatewayAttemptCompleted, res
 	default: // a result arrived but did not reach the caller
 		a.Outcome = GatewayAttemptUnknown
@@ -495,7 +495,7 @@ func isInvalidTokenChallenge(header string) bool {
 // connectLink returns the link of the first URL-mode elicitation in a
 // -32042 error's data, or "" when it is not an absolute https URL without
 // user information, at most 2048 bytes, and free of control characters.
-// TODO(#2537): decide whether the link must also be on the gateway's origin.
+// TODO(#2537): also require the link to be on the gateway's origin.
 func connectLink(data json.RawMessage) string {
 	type elicitation struct {
 		Mode string `json:"mode"`

@@ -17,6 +17,7 @@ const defaultSendOnceLimit = 4096
 // Gateway is an MCP gateway reached only over HTTP. A tools/call on a route it
 // serves is authorized by the identity broker and sent with a per-call token.
 // Shortcut: tool listing for gateway routes still uses the MCP broker's OAuth login (workspace enrollment), a second sign-in after #2533; removed by #2729 (listing with a broker-issued token through Gateway).
+// Shortcut: Gateway carries no vMCP resource; the embedded endpoint is built from the issuer and checked once at build to be AS-2's resource; removed by #2728 (Gateway carries its vMCP resource).
 type Gateway interface {
 	// Endpoint is the gateway's MCP endpoint URL.
 	Endpoint() string

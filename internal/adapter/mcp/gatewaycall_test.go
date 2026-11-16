@@ -351,6 +351,16 @@ func TestSendGatewayCallDropAfterWriteIsUnknown(t *testing.T) {
 	}
 }
 
+func TestSendGatewayCallLargeResultIsCompleted(t *testing.T) {
+	f := newGatewayFixture(t)
+	f.g.PadResults("github", maxObservedReplyBytes+1)
+	got := SendGatewayCall(t.Context(), f.request("att_1"))
+	wantAttempt(t, got, GatewayAttemptCompleted, "", http.StatusOK)
+	if got.result == nil {
+		t.Fatal("the completed call's result was dropped")
+	}
+}
+
 func TestSendGatewayCallNeverResends(t *testing.T) {
 	for name, tc := range map[string]struct {
 		setup   func(*gatewayFixture, *GatewayCallRequest)

@@ -65,6 +65,7 @@ type Gateway struct {
 	missing     map[string]string // connect URL by server
 	elicit      map[string]bool   // servers whose calls elicit during the call
 	drop        map[string]bool   // servers whose calls drop the connection
+	pad         map[string]int    // bytes added to the result text of calls by server
 	sessions    map[string]bool
 	waiting     map[string]chan struct{} // by the ID of an open elicitation request
 	elicitCount int
@@ -104,6 +105,7 @@ func (*Harness) StartGateway(t testing.TB, opts GatewayOptions) *Gateway {
 		missing:  make(map[string]string),
 		elicit:   make(map[string]bool),
 		drop:     make(map[string]bool),
+		pad:      make(map[string]int),
 		sessions: make(map[string]bool),
 		waiting:  make(map[string]chan struct{}),
 	}
@@ -156,6 +158,13 @@ func (g *Gateway) DropAfterRequest(server string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.drop[server] = true
+}
+
+// PadResults adds n bytes to the text result of each tools/call on server.
+func (g *Gateway) PadResults(server string, n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pad[server] = n
 }
 
 // ForgetSessions ends every open session, so the next request on one gets 404.
@@ -227,7 +236,7 @@ func (g *Gateway) answerRequest(w http.ResponseWriter, r *http.Request, call Gat
 	g.mu.Lock()
 	server := serverOf(call.Tool)
 	connectURL, missing := g.missing[server]
-	elicit, drop := g.elicit[server], g.drop[server]
+	elicit, drop, pad := g.elicit[server], g.drop[server], g.pad[server]
 	g.mu.Unlock()
 	reply := map[string]any{"jsonrpc": "2.0", "id": id}
 	switch {
@@ -259,7 +268,7 @@ func (g *Gateway) answerRequest(w http.ResponseWriter, r *http.Request, call Gat
 		g.elicitDuringCall(w, r, call, id)
 		return
 	case call.Method == toolsCall:
-		reply["result"] = callResult(call.Tool)
+		reply["result"] = callResult(call.Tool + strings.Repeat(" ", pad))
 	default:
 		reply["error"] = rpcError{Code: -32601, Message: "method not found"}
 	}
