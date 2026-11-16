@@ -548364,9 +548364,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794836743399,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "920c38e7129968ed014e00b62383c29df6643c1f",
+          "message": "fix: make the offline suites pass on macOS (#2803)\n\nThe race suites failed on macOS hosts without GNU coreutils, where\n`t.TempDir()` sits under the `/var` -> `/private/var` symlink.\n\nProduction fixes:\n- `forker`: resolve the child temp dir so forks use a git worktree\n  instead of falling back to a full copy of the workspace.\n- `server`: resolve the governance root before matching the ACP cwd, so\n  sessions on a symlinked workspace are no longer rejected.\n- `microvm`: open the executable with `O_NOFOLLOW`, as on Linux, and\n  mark the darwin-only G703 false positive.\n\nTest fixes:\n- `mecatl-execution-kind`: shim `timeout` and GNU `stat` only when the\n  host lacks them, resolve `TMPDIR`, bound the events wait, and kill\n  the whole process group in `runStep` so a hung step cannot orphan a\n  busy loop.\n- Compare against canonical paths where production resolves them.\n- Move the Linux-only command execution tests unchanged behind a\n  `linux` build tag.\n- Split the FIFO and embedded socket fixtures into per-OS helpers,\n  since Darwin cannot poll FIFOs and caps socket paths at 104 bytes.\n- Use ECDSA test keys, which the macOS platform verifier accepts.\n- Run `helm` with an empty kubeconfig so the operator's context\n  namespace cannot leak into chart tests.\n\n`Taskfile.yml`: `e2e:microvm` checks for `cosign` before preparing\nimages.\n\nFixes #2776",
+          "timestamp": "2026-11-16T15:21:03+01:00",
+          "tree_id": "47e6aa13ad70acdea807f33636eb54db1611abce",
+          "url": "https://github.com/stacklok/mecatl/commit/920c38e7129968ed014e00b62383c29df6643c1f"
+        },
+        "date": 1794839609309,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 777,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32183.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794839604981,
+  "lastUpdate": 1794839610378,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
