@@ -417849,6 +417849,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794790568025,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff7a9abe38de68952bddfcebdfd44c6763a0f2ae",
+          "message": "feat(api): report execution capabilities as lists and bump the API to major 2 (#2777)\n\nSession and template APIs report capability lists (`filesystem`,\n`foreground-command`) instead of booleans. Requested capabilities are\nrefused until #2712, and the execution provider returns a mandatory\nadmitted set that successors inherit.\n\nBreaking change: the public API major is now 2. Upgrade the server, the\nTypeScript SDK and mecatui together.\n\nCloses #2693",
+          "timestamp": "2026-11-16T11:22:16+01:00",
+          "tree_id": "935f010a9aad9f7c510a0a1c8c104895b4d47ea9",
+          "url": "https://github.com/stacklok/mecatl/commit/ff7a9abe38de68952bddfcebdfd44c6763a0f2ae"
+        },
+        "date": 1794825261356,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13379,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12874,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -544427,6 +544466,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794825258403,
+  "lastUpdate": 1794825262134,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
