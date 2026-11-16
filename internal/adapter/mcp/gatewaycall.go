@@ -507,7 +507,7 @@ func isInvalidTokenChallenge(header string) bool {
 // connectLink returns the link of the first URL-mode elicitation in a
 // -32042 error's data, or "" when it is not an absolute https URL without
 // user information, at most 2048 bytes, and free of control characters.
-// TODO(#2537): also require the link to be on the gateway's origin.
+// TODO(#2537): decide which origin the link must also be on (the vMCP's or AS-2's issuer's).
 func connectLink(data json.RawMessage) string {
 	type elicitation struct {
 		Mode string `json:"mode"`
