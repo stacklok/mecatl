@@ -1416,6 +1416,41 @@ tasks:
       - task: test:race
       - task: build
 
+  check:pr:
+    desc: Offline CI checks that lint and test:race miss; run before a PR is ready
+    # Mirrors the offline jobs in .github/workflows/ci.yml. CI-only: kind, KVM,
+    # macOS runners, live providers, browsers, images, fuzz, and govulncheck.
+    cmds:
+      - sh scripts/vet-build-tags.sh
+      - task: lint:cgo
+      # go work sync fails under an operator's GOWORK=off; CI uses the workspace.
+      - GOWORK= task tidy
+      - task: test:module-metadata
+      - bash .github/scripts/macos-closure-guard.sh
+      - task: test:module
+        vars: {MODULE: engine}
+      - task: sdk:install
+      - task: generate:data:check
+      - task: generate
+      - task: docs:grpc-ref
+      - task: docs:model
+      - >-
+        git diff --exit-code -- contracts/gen sdk/typescript/src/gen
+        cmd/mecatui/internal/timezones/zones.json internal/configgen/settings.skeleton.yaml
+        user-docs/reference/configuration.md user-docs/reference/grpc-schema.md
+        docs/architecture/mecatl.modelith.md
+      - task: lint:proto
+        vars: {BUF_AGAINST_REF: origin/main}
+      - task: sdk:e2e
+      - task: sdk:lint
+      - task: sdk:typecheck
+      - task: sdk:test
+      - task: sdk:examples:typecheck
+      - task: sdk:api:check
+      - task: sdk:docs:check
+      - task: docs:server-cli:check
+      - task: docs:check
+
   all:
     desc: Alias for the ci task
     cmds:
