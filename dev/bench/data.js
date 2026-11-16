@@ -376652,6 +376652,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794782517308,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89a9f42d79071e4f83eb6220e5e92536716968fa",
+          "message": "feat(dtogen): generate MutableClone for DTO-backed views (#2795)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-16T00:42:50Z",
+          "tree_id": "1590eb93c6761a9fa22d6d244c5263afaeed6106",
+          "url": "https://github.com/stacklok/mecatl/commit/89a9f42d79071e4f83eb6220e5e92536716968fa"
+        },
+        "date": 1794790562940,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -543882,6 +543916,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794790559185,
+  "lastUpdate": 1794790563717,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
