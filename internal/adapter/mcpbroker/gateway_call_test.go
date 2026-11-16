@@ -309,6 +309,20 @@ func TestGatewayCallDenialBlocksDispatch(t *testing.T) {
 	}
 }
 
+func TestGatewayCallLogsTheBrokerRefusal(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	detail := "identitybroker: the authorization server refused the request: HTTP 400 invalid_request (sub_id_missing)"
+	f.auth.script = []error{identitybroker.NewError(identitybroker.CodeInternal, "", detail)}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeInternal)
+	if strings.Contains(res.Content, "sub_id_missing") {
+		t.Fatalf("result = %q, want the refusal reason only in diagnostics", res.Content)
+	}
+	if got := f.diag.String(); !strings.Contains(got, "broker_codeINTERNAL") || !strings.Contains(got, "broker_detail"+detail) {
+		t.Fatalf("diagnostics = %s, want the broker's code and detail", got)
+	}
+}
+
 func TestGatewayCallWithoutAgentCredentialIsRefused(t *testing.T) {
 	f := newGatewayFixture(t, gatewayFixtureOptions{})
 	for name, ctx := range map[string]context.Context{
