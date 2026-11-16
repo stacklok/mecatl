@@ -544787,9 +544787,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794825253587,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a988d62fa0d72fd5699e4be816897ffca036d8c",
+          "message": "feat(executor): serve the Commands gRPC service (#2775)\n\nAdd a `serve` mode to `cmd/mecatl-executor` running the executor\nCommandService; the one-shot Pod exec mode is unchanged until #2718.\n\nEach command runs under its own subreaper helper, so concurrent\ncommands keep their descendants apart and cleanup is confirmed per\ncommand; unconfirmed cleanup is reported as outcome unknown. The\nhelper's status pipe is close-on-exec and both helper and server are\nnon-dumpable, so a command cannot forge its result.\n\nA conformance suite in `internal/executorrpc/commandconformance` runs\nagainst a scripted runner and the real supervisor, ready for #2691.\n\nRefs #2695",
+          "timestamp": "2026-11-16T10:30:30Z",
+          "tree_id": "b36643d5495e6e42b41213348d6596fe723adf59",
+          "url": "https://github.com/stacklok/mecatl/commit/5a988d62fa0d72fd5699e4be816897ffca036d8c"
+        },
+        "date": 1794826069843,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 776,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32193,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794826062016,
+  "lastUpdate": 1794826071068,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
