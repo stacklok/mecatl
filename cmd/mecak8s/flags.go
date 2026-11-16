@@ -443,7 +443,13 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.useMock, "mock", false, "Use an offline mock provider without network access or an API key")
 	fs.StringVar(&cfg.mockScript, "mock-script", "", "Path to an offline JSON mock script. Implies --mock")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "Shell for Shell tool commands. An empty value disables the tool")
-	fs.BoolVar(&cfg.noShell, "no-shell", false, "Disable the Shell tool. Overrides --shell")
+	fs.BoolVar(
+		&cfg.noShell,
+		"no-shell",
+		false,
+		"Disable the Shell tool and refuse sessions that request foreground-command. "+
+			"Overrides --shell",
+	)
 
 	// Storage-free state: --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).

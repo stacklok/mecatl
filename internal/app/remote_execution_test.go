@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -467,5 +468,139 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 		if names[name] {
 			t.Errorf("remote catalog advertised unsupported tool %q", name)
 		}
+	}
+}
+
+// admittingPlacement is remoteFactoryPlacement with an admitted set and run
+// access, as the Kubernetes provider reports them.
+type admittingPlacement struct {
+	remoteFactoryPlacement
+	admitted []string
+}
+
+func (p admittingPlacement) Bind(
+	ctx context.Context,
+	req server.PlacementBindRequest,
+) (server.PlacementBinding, error) {
+	binding, err := p.remoteFactoryPlacement.Bind(ctx, req)
+	binding.AdmittedCapabilities = p.admitted
+	return binding, err
+}
+
+func (p admittingPlacement) Reattach(
+	ctx context.Context,
+	req server.PlacementReattachRequest,
+) (server.PlacementBinding, error) {
+	binding, err := p.remoteFactoryPlacement.Reattach(ctx, req)
+	binding.AdmittedCapabilities = p.admitted
+	return binding, err
+}
+
+func (admittingPlacement) EnforcesExecutionCapabilities(server.PlacementSelector) bool {
+	return true
+}
+
+func (p admittingPlacement) Applies(ref session.EnvironmentRef) bool { return ref == p.env.Ref() }
+func (p admittingPlacement) AcquireRun(
+	context.Context,
+	server.ExecutionRunRequest,
+) (server.ExecutionRunHandle, error) {
+	return admittedRun{env: p.env}, nil
+}
+
+type admittedRun struct{ env tool.Environment }
+
+func (r admittedRun) Environment() tool.Environment { return r.env }
+func (admittedRun) Renew(context.Context) error     { return nil }
+func (admittedRun) Release(context.Context) error   { return nil }
+
+type runnerProbeTool struct{ runner *atomic.Bool }
+
+func (runnerProbeTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "RunnerProbe", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (runnerProbeTool) ReadOnly() bool { return true }
+func (p runnerProbeTool) Execute(
+	_ context.Context,
+	in session.ToolCall,
+	env tool.Environment,
+) (session.ToolResult, error) {
+	p.runner.Store(env.CommandRunner() != nil)
+	return session.ToolResult{CallID: in.ID, Content: "probed"}, nil
+}
+
+func TestRealFactoryWithholdsShellAndRunnerWithoutForegroundCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		admitted []string
+		shell    bool
+	}{
+		{name: "files only", admitted: []string{"filesystem"}},
+		{name: "both", admitted: []string{"filesystem", "foreground-command"}, shell: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeRulesEnv(t, t.TempDir(), t.TempDir())
+			ref := session.EnvironmentRef{Kind: "kubernetes", ID: "env-admitted", Revision: "rev-1"}
+			runner := remotePermissionRunner{memfs.NewCommandRunner(), "/workspace"}
+			ws := memfs.NewWorkspace("/workspace")
+			env := tool.MustEnvironment(ref, ws, memledger.New(), runner)
+			var captured port.LLMRequest
+			observe := mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req })
+			probe := session.ToolCall{ID: "probe", Name: "RunnerProbe", Args: json.RawMessage(`{}`)}
+			provider := mockllm.NewWith(
+				[]mockllm.Option{observe},
+				mockllm.ToolCallTurn(probe),
+				mockllm.TextTurn("done"),
+			)
+			var sawRunner atomic.Bool
+			placement := admittingPlacement{remoteFactoryPlacement{env: env}, tc.admitted}
+			built, err := buildIsolated(t, t.Context(), Config{
+				MockProvider:       provider,
+				PlacementProvider:  placement,
+				PlacementScope:     "remote",
+				RemoteExecution:    true,
+				AllowAllTools:      true,
+				GuardrailsDisabled: true,
+				NoSoul:             true,
+				SchedulerEnabled:   false,
+				extraCoreTools:     []tool.Tool{runnerProbeTool{runner: &sawRunner}},
+				extraCoreToolClassifications: map[string]server.ClassificationEntry{
+					"RunnerProbe": {Kind: server.KindDerived, Rationale: "reads its environment"},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			ctx := session.WithPrincipal(t.Context(), &session.Principal{
+				Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser,
+			})
+			harness := server.NewHarnessServer(built.Service)
+			created, err := harness.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := created.GetSessionCapabilities().GetExecution()
+			if !slices.Equal(got, tc.admitted) {
+				t.Fatalf("effective capabilities = %v", got)
+			}
+			id := session.SessionID(created.GetSessionId())
+			run, err := built.Service.StartRun(ctx, id, "probe")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range run.Events() {
+			}
+			built.Service.FinishRun(id, run)
+			shell := slices.ContainsFunc(captured.Tools, func(spec tool.ToolSpec) bool {
+				return spec.Name == tool.ShellToolName
+			})
+			const withheld = "no built-in Shell is registered"
+			registered := !strings.Contains(captured.System.StablePrefix, withheld)
+			if shell != tc.shell || registered != tc.shell || sawRunner.Load() != tc.shell {
+				t.Fatalf("Shell tool = %v, registered = %v, runner = %v; want %v",
+					shell, registered, sawRunner.Load(), tc.shell)
+			}
+		})
 	}
 }

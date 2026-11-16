@@ -58,6 +58,12 @@ func (p *profilePlacementProvider) ValidatePlacement(ctx context.Context) error 
 	}
 	return nil
 }
+func (p *profilePlacementProvider) EnforcesExecutionCapabilities(
+	selector server.PlacementSelector,
+) bool {
+	enforcer, ok := p.remote.(server.ExecutionCapabilityEnforcer)
+	return ok && !selector.IsNoFS() && enforcer.EnforcesExecutionCapabilities(selector)
+}
 func (p *profilePlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	if req.Selector.IsNoFS() {
 		return p.local.Bind(ctx, req)

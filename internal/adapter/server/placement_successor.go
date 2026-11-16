@@ -52,6 +52,10 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 	if err != nil || absent {
 		return "", err
 	}
+	// Clear cancels the source below; refuse what this deployment disables first.
+	if err := s.refuseDisabledCapabilities(s.enforcedCapabilities(lockedSource)); err != nil {
+		return "", err
+	}
 	// Validate an explicit worktree placement while the source is still untouched.
 	// In particular, a stale, foreign, or unavailable selector must not cancel an
 	// active run or durable approval. Successor creation revalidates after
@@ -246,6 +250,10 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil {
 		return "", saved, err
 	}
+	requested := s.enforcedCapabilities(source)
+	if err := s.refuseDisabledCapabilities(requested); err != nil {
+		return "", saved, err
+	}
 	binding, err := s.successorPlacement(mutationCtx, source, req.Placement, destinationID)
 	if err != nil {
 		return "", saved, err
@@ -259,6 +267,15 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			rollbackUnpublishedPlacement(s, &binding)
 		}
 	}()
+	// A successor of an enforcing placement requests its source's recorded
+	// capabilities and keeps exactly those once admitted.
+	admitted := binding.AdmittedCapabilities
+	if requested != nil {
+		if err := checkAdmittedCapabilities(requested, admitted); err != nil {
+			return "", saved, err
+		}
+		admitted = requested
+	}
 	// Durable awaiting sessions have no registered relay for the preflight to
 	// settle. Cancel them only after placement has been revalidated under the
 	// mutation lease, so a failed successor cannot consume the pending ask.
@@ -278,6 +295,9 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	created.Placement = canonicalPlacementMetadata(binding)
+	if admitted != nil {
+		created.ExecutionCapabilities = capabilityFacts(admitted)
+	}
 	brokerKeys, brokerKeysPresent := source.WorkspaceEnrollmentBrokerKeys()
 	authority, bound := source.BoundAuthority()
 	if !bound {
@@ -390,7 +410,9 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// engine root) — otherwise the successor would carry NO per-session engine
 	// at all and would fall back to the deployment's default catalog the first
 	// time it runs, never the def's own restricted one (AC2.3).
-	if agentBound || s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
+	perSession := agentBound || s.cfg.MCPBroker != nil || s.sharedEngineExceeds(admitted) ||
+		s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot)
+	if perSession {
 		switch {
 		case agentBound:
 			if s.cfg.AgentDefSessionEngine == nil {
@@ -436,7 +458,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if builtEngine != nil {
 		engine = builtEngine.engine
 	}
-	stampExecutionCapabilities(created, engine, binding.Environment)
+	stampExecutionCapabilities(created, engine, binding.Environment, admitted)
+	if err := checkRecordedCapabilities(requested, created); err != nil {
+		cleanupEngine()
+		return "", saved, err
+	}
 	if err := s.persistNewSession(mutationCtx, created); err != nil {
 		cleanupEngine()
 		if errors.Is(err, port.ErrSessionAlreadyExists) {
@@ -508,7 +534,13 @@ func (s *Service) successorPlacement(ctx context.Context, source *session.Sessio
 			if !ok {
 				return PlacementBinding{}, ErrPlacementUnavailable
 			}
-			return reservoir.ReserveSuccessor(ctx, PlacementSuccessorRequest{Ref: source.EnvironmentRef, Principal: source.Owner, SourceBindingID: source.ID, DestinationBindingID: destination})
+			return reservoir.ReserveSuccessor(ctx, PlacementSuccessorRequest{
+				Ref:                  source.EnvironmentRef,
+				Principal:            source.Owner,
+				SourceBindingID:      source.ID,
+				DestinationBindingID: destination,
+				Capabilities:         s.enforcedCapabilities(source),
+			})
 		}
 		binding, release, err := s.borrowSessionPlacement(ctx, source)
 		if err != nil {

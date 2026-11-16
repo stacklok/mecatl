@@ -129,9 +129,17 @@ ID, or worktree selector. Omitted `execution` binds the deployment default;
 an operator-owned `{id,revision}`. Invalid selections never fall back to the
 default. The response and `GetSession` expose bounded `PlacementMetadata` and
 the effective `session_capabilities.execution` list (`filesystem`,
-`foreground-command`); clients ignore unknown names. A non-empty
-`execution.template.capabilities` returns `INVALID_ARGUMENT`; leave it empty to
-use the template's capabilities narrowed by deployment configuration. The exact
+`foreground-command`); clients ignore unknown names. Leave
+`execution.template.capabilities` empty to use the template's capabilities
+narrowed by deployment configuration. A non-empty list is honored exactly or
+refused, never narrowed: an unknown or repeated name returns `INVALID_ARGUMENT`,
+and a request the server can't honor returns `FAILED_PRECONDITION`. Sessions
+must list both names, because file-only sessions aren't supported yet. The
+server also refuses the request on a `--no-shell` deployment, for a template
+that doesn't declare a name, for an agent definition or debug target that
+doesn't allow it, and on a placement that can't enforce capabilities, such as
+local, worktree, or microVM placements. Resume keeps the session's recorded
+capabilities; `/clear` and fork successors request the source's. The exact
 `EnvironmentRef{Kind, ID, Revision}` stays private and is reattached at run entry.
 
 `ListExecutionTemplates` is an authenticated, optional catalog. Check both

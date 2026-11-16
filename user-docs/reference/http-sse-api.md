@@ -359,9 +359,11 @@ The same `execution` union exists on gRPC `CreateSessionRequest`. The server enf
   returns `501`, and a temporarily unavailable catalog returns `503`. `features`
   must include `execution_templates` and `capabilities.execution_templates` must
   be true to offer a picker.
-- `template.capabilities` must be absent or empty, which selects the template's
-  capabilities narrowed by deployment configuration. A non-empty list returns
-  `400` with code `invalid_argument`.
+- An absent or empty `template.capabilities` selects the template's
+  capabilities narrowed by deployment configuration. A non-empty list follows
+  the [gRPC rules](./grpc-api.md#server-owned-execution): an unknown or repeated
+  name returns `400` with code `invalid_argument`, and a request the server
+  can't honor exactly returns `412` with code `failed_precondition`.
 - `session_capabilities.execution` on create and get lists the effective
   execution capabilities (`filesystem`, `foreground-command`), separately from
   image/audio media input. Catalog rows list the template's declared

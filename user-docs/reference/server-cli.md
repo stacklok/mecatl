@@ -810,7 +810,8 @@ Usage: mecak8s [flags]
         Disable scheduled-task execution. Schedule management APIs remain available;
         one replica runs the scheduler when leasing is enabled
   --no-shell
-        Disable the Shell tool. Overrides --shell
+        Disable the Shell tool and refuse sessions that request foreground-command.
+        Overrides --shell
   --no-soul
         Disable the persona fragment
   --no-user-model

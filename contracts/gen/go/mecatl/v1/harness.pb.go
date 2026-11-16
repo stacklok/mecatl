@@ -1289,7 +1289,8 @@ type ExecutionTemplate struct {
 	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Revision string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	// "filesystem", "foreground-command". Empty means the template's set narrowed by
-	// deployment configuration (--no-shell, --redis-filesystem); non-empty is refused (#2712).
+	// deployment configuration (--no-shell, --redis-filesystem). A non-empty request
+	// that cannot be honored exactly is refused with FAILED_PRECONDITION.
 	Capabilities  []string `protobuf:"bytes,3,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

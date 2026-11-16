@@ -35,9 +35,10 @@ these as **declared**: they neither reserve capacity nor grant tools. The bound
 session reports its effective capabilities in `session_capabilities.execution`,
 which can be narrower because of deployment flags such as `--no-shell`, host
 tooling, or session authority. Selecting a template uses its declared set
-narrowed by deployment configuration; the server rejects a non-empty
-`capabilities` list in the selection, because it can't yet narrow a template
-by request.
+narrowed by deployment configuration. A selection can also list
+`capabilities`; on Kubernetes the server grants exactly that list or refuses
+the session, never a narrower set. File-only sessions aren't supported yet, so
+a list must name both capabilities.
 
 If creation rejects a stale revision or unavailable capacity, Studio keeps the
 draft and exact selection. Use **Refresh templates** or choose another revision;

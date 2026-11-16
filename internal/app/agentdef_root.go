@@ -202,6 +202,9 @@ func agentDefSessionEngineFactory(
 		noFS := profile == server.ProfileNoFS
 		base := baseSubagentTools(cfg)
 		runner := mainRunner
+		if !foregroundCommandAdmitted(ctx) {
+			cfg.NoShell, runner = true, nil
+		}
 		if noFS {
 			base = baseSubagentToolsNoFS()
 			runner = nil
