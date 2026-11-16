@@ -462,6 +462,7 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 	case callErr == nil && res != nil:
 		// The SDK returns a result only from the call's own reply, so this
 		// holds even when the reply was too large to observe.
+		// Shortcut: a tool error result counts as completed, though the vMCP also returns backend failures after it sent the call (timeout, dropped connection) as tool errors; removed by #2822 (the gateway says whether it sent the call to the backend).
 		a.Outcome, a.result = GatewayAttemptCompleted, res
 	default: // a result arrived but did not reach the caller
 		a.Outcome = GatewayAttemptUnknown
