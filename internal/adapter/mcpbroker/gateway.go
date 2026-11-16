@@ -10,8 +10,9 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
-// defaultSendOnceLimit bounds the in-memory send-once record.
-const defaultSendOnceLimit = 65536
+// defaultSendOnceLimit bounds the in-memory send-once record per root
+// session.
+const defaultSendOnceLimit = 4096
 
 // Gateway is an MCP gateway reached only over HTTP. A tools/call on a route it
 // serves is authorized by the identity broker and sent with a per-call token.
@@ -29,7 +30,7 @@ type Gateway interface {
 }
 
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
-// Shortcut: only the embedded gateway implements Gateway; removed by #2728 (external gateway implementation from configuration).
+// Shortcut: only the embedded gateway implements Gateway; removed by #2812 (external gateway implementation of the Gateway interface).
 type embeddedGateway struct {
 	endpoint, resource string
 	client             *http.Client

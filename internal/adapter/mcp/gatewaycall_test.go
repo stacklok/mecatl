@@ -493,6 +493,8 @@ func TestIsInvalidTokenChallenge(t *testing.T) {
 		`Bearer`:                                                                  false,
 		`Bearer error="insufficient_scope"`:                                       false,
 		`Basic error="invalid_token"`:                                             false,
+		`Basic realm="x", Bearer error="invalid_token"`:                           true,
+		`Bearer realm="a,error=invalid_token"`:                                    false,
 	} {
 		if got := isInvalidTokenChallenge(challenge); got != want {
 			t.Errorf("isInvalidTokenChallenge(%q) = %v, want %v", challenge, got, want)

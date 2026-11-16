@@ -479,21 +479,17 @@ func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	return a
 }
 
-// isInvalidTokenChallenge reports a Bearer challenge with error="invalid_token"
-// (RFC 6750 §3).
-func isInvalidTokenChallenge(challenge string) bool {
-	scheme, params, _ := strings.Cut(strings.TrimSpace(challenge), " ")
-	if !strings.EqualFold(scheme, "Bearer") {
+// isInvalidTokenChallenge reports a WWW-Authenticate value carrying a Bearer
+// challenge with error="invalid_token" (RFC 6750 §3). A value that does not
+// parse is not one.
+func isInvalidTokenChallenge(header string) bool {
+	challenges, err := parseDirectChallenges(header)
+	if err != nil {
 		return false
 	}
-	for param := range strings.SplitSeq(params, ",") {
-		key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "error") &&
-			strings.Trim(strings.TrimSpace(value), `"`) == "invalid_token" {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(challenges, func(c directChallenge) bool {
+		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == "invalid_token"
+	})
 }
 
 // connectLink returns the link of the first URL-mode elicitation in a

@@ -116,52 +116,35 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 	}
 	last := g.send(ctx, auth)
 	retried := false
-	switch last.Rejection {
-	case mcpadapter.GatewayRejectionInvalidToken:
+	if last.Rejection == mcpadapter.GatewayRejectionInvalidToken {
 		// One retry with a fresh token, reporting the rejected attempt with
 		// the call's own fields.
 		if auth, err = g.authorize(ctx, last.AttemptID); err != nil {
 			return fail(outcomeForAuthorization(err))
 		}
 		last, retried = g.send(ctx, auth), true
-	case mcpadapter.GatewayRejectionChanged:
-		// The wire refused a tools/call that differs from the authorized one:
-		// authorize and claim the arguments again, once.
-		g.release(ctx)
-		if g.args, g.hash, err = argumentsSHA256(g.call.Args); err != nil {
-			return fail(outcomeForAuthorization(err))
-		}
-		auth, err = g.authorize(ctx, "")
-		if err == nil {
-			err = g.claimCall(ctx)
-		}
-		if err != nil {
-			return fail(outcomeForAuthorization(err))
-		}
-		last = g.send(ctx, auth)
 	}
-	if last.Outcome != mcpadapter.GatewayAttemptCompleted {
-		o := outcomeForAttempts(g.server, last, retried)
-		res := o.result(g.call.ID)
-		if last.DeclinedRequests > 0 {
-			res = withDeclinedNote(res)
-		}
-		return res, o.code, nil
-	}
+	// A tools/call refused as changed after authorization is a bug: the
+	// authorization covers exactly what is sent. It maps to internal, not sent.
 	var res session.ToolResult
-	if g.t.queryFilter != "" {
+	code := diagnosticCodeCompleted
+	switch {
+	case last.Outcome != mcpadapter.GatewayAttemptCompleted:
+		o := outcomeForAttempts(g.server, last, retried)
+		res, code = o.result(g.call.ID), o.code
+	case g.t.queryFilter != "":
 		if res, err = mcpadapter.GatewayQueryResult(ctx, g.call.ID, g.server, g.call.Name, g.t.queryFilter, last); err != nil {
 			// The call ran; the projection failed. The query tool reports it
 			// as a call that may have succeeded.
 			return session.ToolResult{}, diagnosticCodeCompleted, err
 		}
-	} else {
+	default:
 		res = mcpadapter.GatewayToolResult(g.call.ID, g.server, g.call.Name, last)
 	}
 	if last.DeclinedRequests > 0 {
 		res = withDeclinedNote(res)
 	}
-	return res, diagnosticCodeCompleted, nil
+	return res, code, nil
 }
 
 // authorize asks the identity broker for this call's gateway token. On
@@ -205,7 +188,7 @@ func (g *gatewayCall) request(cred agentcredential.Credential, rejectedAttemptID
 }
 
 func (g *gatewayCall) claimCall(ctx context.Context) error {
-	if err := g.r.gatewayCalls.SendOnce.Claim(ctx, g.op, g.hash); err != nil {
+	if err := g.r.gatewayCalls.SendOnce.Claim(ctx, g.scope.root, g.op, g.hash); err != nil {
 		return err
 	}
 	g.claim = true
@@ -214,7 +197,7 @@ func (g *gatewayCall) claimCall(ctx context.Context) error {
 
 func (g *gatewayCall) release(ctx context.Context) {
 	if g.claim {
-		_ = g.r.gatewayCalls.SendOnce.Release(context.WithoutCancel(ctx), g.op, g.hash)
+		_ = g.r.gatewayCalls.SendOnce.Release(context.WithoutCancel(ctx), g.scope.root, g.op, g.hash)
 		g.claim = false
 	}
 }

@@ -255,6 +255,13 @@ func (f *gatewayFixture) toolsCalls() []identityharness.GatewayCall {
 	return out
 }
 
+// claim claims op with the test arguments in the test session's share of the
+// send-once record.
+func (f *gatewayFixture) claim(t *testing.T, op string) error {
+	t.Helper()
+	return f.runtime.gatewayCalls.SendOnce.Claim(t.Context(), gatewayTestSession, op, testHash(t, gatewayTestArgs))
+}
+
 func testHash(t *testing.T, args string) string {
 	t.Helper()
 	_, sum, err := argumentsSHA256(json.RawMessage(args))
@@ -358,7 +365,7 @@ func TestGatewayCallSendsTokenAndMeta(t *testing.T) {
 		}
 	}
 	// The call is claimed: it is never sent again.
-	if err := f.runtime.gatewayCalls.SendOnce.Claim(t.Context(), op, testHash(t, gatewayTestArgs)); !errors.Is(err, ErrAlreadySent) {
+	if err := f.claim(t, op); !errors.Is(err, ErrAlreadySent) {
 		t.Fatalf("Claim after a completed call = %v, want ErrAlreadySent", err)
 	}
 }
@@ -379,34 +386,21 @@ func changeFirstAttempts(f *gatewayFixture, n int) {
 	}
 }
 
-func TestGatewayCallChangedAfterAuthorizationIsAuthorizedAgain(t *testing.T) {
-	t.Run("once", func(t *testing.T) {
-		f := newGatewayFixture(t, gatewayFixtureOptions{})
-		changeFirstAttempts(f, 1)
-		res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
-		wantResult(t, res, err, gatewayTestResult)
-		reqs := f.auth.calls()
-		if len(reqs) != 2 || reqs[1].RejectedAttemptID != "" || reqs[1].ArgumentsSHA256 != testHash(t, gatewayTestArgs) {
-			t.Fatalf("AuthorizeCall requests = %+v, want a second authorization", reqs)
-		}
-		calls := f.toolsCalls()
-		if len(calls) != 1 || calls[0].Meta[identityharness.MetaAttempt] != "att_2" {
-			t.Fatalf("tools/call = %+v, want one, of the second attempt", calls)
-		}
-	})
-	t.Run("twice", func(t *testing.T) {
-		f := newGatewayFixture(t, gatewayFixtureOptions{})
-		changeFirstAttempts(f, 2)
-		res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
-		wantRow(t, res, err, outcomeInternal)
-		if n := len(f.toolsCalls()); n != 0 {
-			t.Fatalf("%d tools/call sent", n)
-		}
-		op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
-		if err := f.runtime.gatewayCalls.SendOnce.Claim(t.Context(), op, testHash(t, gatewayTestArgs)); err != nil {
-			t.Fatalf("Claim after a call never sent = %v, want released", err)
-		}
-	})
+func TestGatewayCallChangedAfterAuthorizationIsRefusedAndNotSent(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	changeFirstAttempts(f, 1)
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeInternal)
+	if n := len(f.toolsCalls()); n != 0 {
+		t.Fatalf("%d tools/call sent", n)
+	}
+	if n := len(f.auth.calls()); n != 1 {
+		t.Fatalf("AuthorizeCall called %d times, want 1", n)
+	}
+	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
+	if err := f.claim(t, op); err != nil {
+		t.Fatalf("Claim after a call never sent = %v, want released", err)
+	}
 }
 
 func TestGatewayCallRetriesOneRejectedToken(t *testing.T) {
@@ -475,7 +469,7 @@ func TestGatewayCallURLElicitationFailsClosedWithLink(t *testing.T) {
 		res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
 		wantRow(t, res, err, gatewayOutcome{code: "connection_required", text: want})
 		op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
-		if err := f.runtime.gatewayCalls.SendOnce.Claim(t.Context(), op, testHash(t, gatewayTestArgs)); err != nil {
+		if err := f.claim(t, op); err != nil {
 			t.Fatalf("Claim after a refused call = %v, want released", err)
 		}
 	}
@@ -511,7 +505,7 @@ func TestGatewayCallPassesResultThroughAfterDecliningARequest(t *testing.T) {
 		t.Fatalf("gateway saw %d replies, want the one decline", replies)
 	}
 	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
-	if err := f.runtime.gatewayCalls.SendOnce.Claim(t.Context(), op, testHash(t, gatewayTestArgs)); !errors.Is(err, ErrAlreadySent) {
+	if err := f.claim(t, op); !errors.Is(err, ErrAlreadySent) {
 		t.Fatalf("Claim = %v, want the call counted as sent", err)
 	}
 }
@@ -574,25 +568,25 @@ func TestGatewayCallClosedSessionFailsWithClosingReason(t *testing.T) {
 func TestSendOnceRefusesSecondSendIncludingAcrossRetry(t *testing.T) {
 	record := NewMemorySendOnceRecord(2)
 	ctx := t.Context()
-	if err := record.Claim(ctx, "op_1", "h"); err != nil {
+	if err := record.Claim(ctx, "root", "op_1", "h"); err != nil {
 		t.Fatal(err)
 	}
-	if err := record.Claim(ctx, "op_1", "h"); !errors.Is(err, ErrAlreadySent) {
+	if err := record.Claim(ctx, "root", "op_1", "h"); !errors.Is(err, ErrAlreadySent) {
 		t.Fatalf("second Claim = %v, want ErrAlreadySent", err)
 	}
-	if err := record.Claim(ctx, "op_2", "h"); err != nil {
+	if err := record.Claim(ctx, "root", "op_2", "h"); err != nil {
 		t.Fatal(err)
 	}
-	if err := record.Claim(ctx, "op_3", "h"); !errors.Is(err, errSendOnceFull) {
+	if err := record.Claim(ctx, "root", "op_3", "h"); !errors.Is(err, errSendOnceFull) {
 		t.Fatalf("Claim at the limit = %v, want it refused", err)
 	}
-	if err := record.Claim(ctx, "op_1", "h"); !errors.Is(err, ErrAlreadySent) {
+	if err := record.Claim(ctx, "root", "op_1", "h"); !errors.Is(err, ErrAlreadySent) {
 		t.Fatalf("Claim after the limit = %v, want op_1 still claimed", err)
 	}
-	if err := record.Release(ctx, "op_1", "h"); err != nil {
+	if err := record.Release(ctx, "root", "op_1", "h"); err != nil {
 		t.Fatal(err)
 	}
-	if err := record.Claim(ctx, "op_1", "h"); err != nil {
+	if err := record.Claim(ctx, "root", "op_1", "h"); err != nil {
 		t.Fatalf("Claim after Release = %v", err)
 	}
 
@@ -606,6 +600,67 @@ func TestSendOnceRefusesSecondSendIncludingAcrossRetry(t *testing.T) {
 	wantRow(t, res, err, outcomeAlreadySent)
 	if n := len(f.toolsCalls()); n != 1 {
 		t.Fatalf("gateway saw %d tools/call, want 1", n)
+	}
+}
+
+func TestSendOnceIsBoundedPerRootSession(t *testing.T) {
+	record := NewMemorySendOnceRecord(1)
+	ctx := t.Context()
+	if err := record.Claim(ctx, "root-a", "op_1", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Claim(ctx, "root-a", "op_2", "h"); !errors.Is(err, errSendOnceFull) {
+		t.Fatalf("Claim past root-a's share = %v, want errSendOnceFull", err)
+	}
+	// One root filling its share does not block another.
+	if err := record.Claim(ctx, "root-b", "op_1", "h"); err != nil {
+		t.Fatalf("root-b Claim = %v, want its own share", err)
+	}
+	if err := record.Forget(ctx, "root-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Claim(ctx, "root-a", "op_2", "h"); err != nil {
+		t.Fatalf("Claim after Forget = %v, want root-a's share freed", err)
+	}
+	if err := record.Claim(ctx, "root-b", "op_1", "h"); !errors.Is(err, ErrAlreadySent) {
+		t.Fatalf("root-b Claim after root-a's Forget = %v, want ErrAlreadySent", err)
+	}
+
+	// Through the broker: a full share refuses the call before anything is
+	// sent.
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.runtime.gatewayCalls.SendOnce = NewMemorySendOnceRecord(1)
+	if err := f.runtime.gatewayCalls.SendOnce.Claim(ctx, gatewayTestSession, "op_other", "h"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeSendOnceFull)
+	if calls := f.g.Calls(); len(calls) != 0 {
+		t.Fatalf("gateway received %d requests with the record full", len(calls))
+	}
+}
+
+func TestGatewayClaimsKeptOnCloseAndForgottenOnDelete(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.g.DropAfterRequest("github")
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeUnknown)
+	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
+
+	// Closing the attachment is not deleting the session: a resumed run is
+	// still refused.
+	if _, err := f.attachment.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.attachment, _ = attach(t, f.runtime, gatewayTestSession)
+	res, err = f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeAlreadySent)
+
+	if _, err := f.runtime.DeleteSession(t.Context(), gatewayTestSession); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.claim(t, op); err != nil {
+		t.Fatalf("Claim after the session was deleted = %v, want its claims forgotten", err)
 	}
 }
 

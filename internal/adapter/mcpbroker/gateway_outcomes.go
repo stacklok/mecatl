@@ -40,6 +40,7 @@ var (
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
 	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call was already sent and its outcome is unknown; automatic replay refused (code already_sent)."}
+	outcomeSendOnceFull        = gatewayOutcome{code: "send_once_full", text: "MCP gateway call refused: too many gateway calls are held for this session; the call was not sent (code send_once_full)."}
 	outcomeUnknown             = gatewayOutcome{code: "outcome_unknown", text: "MCP gateway call outcome unknown: the call was sent and no complete answer arrived; it may have run and is not retried (code outcome_unknown)."}
 )
 
@@ -64,6 +65,8 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 		return outcomeRefusedArguments
 	case errors.Is(err, ErrAlreadySent):
 		return outcomeAlreadySent
+	case errors.Is(err, errSendOnceFull):
+		return outcomeSendOnceFull
 	case errors.Is(err, agentcredential.ErrNoCredential), errors.Is(err, agentcredential.ErrDropped):
 		return outcomeIdentityUnavailable
 	case errors.Is(err, context.DeadlineExceeded):

@@ -391,8 +391,18 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 }
 
 // DeleteSession logically deletes one broker session and invalidates all handles
-// to that incarnation. Reattachment later creates a fresh incarnation.
+// to that incarnation. Reattachment later creates a fresh incarnation. Once its
+// operations are done, the gateway calls claimed under it as a root session
+// are forgotten: a deleted session never resumes them.
 func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
+	outcome, err := r.deleteSession(ctx, id)
+	if err == nil && r.gatewayCalls.SendOnce != nil {
+		err = r.gatewayCalls.SendOnce.Forget(ctx, string(id))
+	}
+	return outcome, err
+}
+
+func (r *Runtime) deleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
