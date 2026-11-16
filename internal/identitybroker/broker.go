@@ -22,10 +22,12 @@
 // issuer key; the token-endpoint client is an adapter. With WithAuthServer,
 // session open converts the user's access token at AS-1 through that adapter
 // into a refresh token the session holds. With WithGateway, AuthorizeCall
-// runs the checks before a grant on each MCP gateway call and records its
-// decisions (Recorder); it authorizes no call yet. The package performs no
-// file, environment, or network access; source loading and transport belong
-// in adapters that call it.
+// authorizes each MCP gateway call with its own gateway token: it exchanges
+// the session's refresh token at AS-1 (IDJAGIssuer) for an ID-JAG, records
+// it (Recorder), and redeems it at the gateway's AS-2 (GatewayAuthServer),
+// bound with BindGatewayAS2. The package performs no file, environment, or
+// network access; source loading and transport belong in adapters that call
+// it.
 package identitybroker
 
 import (
@@ -34,6 +36,7 @@ import (
 	"crypto/elliptic"
 	"errors"
 	"fmt"
+	"sync/atomic"
 )
 
 // Errors returned by New and DefinitionRecord.Validate. Each returned error
@@ -47,8 +50,10 @@ var (
 )
 
 // Broker is the identity broker core. Its startup state is immutable after
-// New; its broker sessions are guarded by a mutex. Its methods are safe for
-// concurrent use.
+// New, except the gateway's AS-2: New binds a non-zero Gateway.AS2,
+// BindGatewayAS2 binds one while none is bound, and its unbind removes it, so
+// binding again after an unbind works. Its broker sessions are guarded by a
+// mutex. Its methods are safe for concurrent use.
 type Broker struct {
 	config      Config
 	definitions map[DefinitionRef]DefinitionRecord
@@ -65,6 +70,11 @@ type Broker struct {
 	gateway *Gateway
 	// gateways counts WithGateway options, so New refuses a second.
 	gateways int
+	// as2 is the gateway's bound AS-2; nil while it is unbound, and every
+	// call that passes the checks before a grant is UNAVAILABLE.
+	as2 atomic.Pointer[as2Binding]
+	// idjag obtains each call's ID-JAG at AS-1; set whenever gateway is.
+	idjag IDJAGIssuer
 	// recorder records AuthorizeCall's ID-JAGs and decisions; nil records
 	// nothing, and is set whenever gateway is.
 	recorder Recorder

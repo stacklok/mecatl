@@ -47,9 +47,10 @@ func (w Workload) Validate() error {
 //     then the session, where an unknown session is not recorded and a
 //     closed one is; then a rejection report, the session's grant, the
 //     credential, and the server, in the order documented on Service; then it
-//     refuses the call, as no call is authorized yet. Every refusal after the
-//     session lookup is recorded with the configured Recorder, and is
-//     returned whether or not the record is accepted.
+//     exchanges the session's grant for an ID-JAG, records it, and redeems it
+//     for the gateway token. Every refusal after the session lookup is
+//     recorded with the configured Recorder, and is returned whether or not
+//     the record is accepted; a success is returned only once recorded.
 type Core interface {
 	OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error)
 	FindSession(ctx context.Context, workload Workload, req FindSessionRequest) (Session, bool, error)
