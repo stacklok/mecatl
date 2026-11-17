@@ -99,14 +99,14 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"instructions/direct", func() {
 			n := 0
-			for _, b := range v.instructions.Blocks().All() {
+			for _, b := range v.rootInstructions.Blocks().All() {
 				iteratorBlockSink = b
 				n++
 			}
 			iteratorCountSink = n
 		}},
 		{"instructions/reused", func() {
-			seq := v.instructions.Blocks().All()
+			seq := v.rootInstructions.Blocks().All()
 			n := 0
 			for range 2 {
 				for _, b := range seq {
@@ -213,7 +213,7 @@ func iteratorTraversals(v iteratorViews) []iteratorTraversal {
 		}},
 		{"nested/instructions", func() {
 			n := 0
-			for _, block := range v.instructions.Blocks().All() {
+			for _, block := range v.rootInstructions.Blocks().All() {
 				for _, part := range block.Parts().All() {
 					iteratorPartSink = part
 					n++
@@ -412,7 +412,7 @@ func BenchmarkViewIteratorTraversals(b *testing.B) {
 						iteratorTraversal{"stored-consume", func() { consumeIteratorParts(stored) }},
 						iteratorTraversal{"stored-create-consume", func() { iteratorSeqSink = v.user.Parts().All(); consumeIteratorParts(iteratorSeqSink) }},
 						iteratorTraversal{"nested-opaque", func() {
-							for _, block := range v.instructions.Blocks().All() {
+							for _, block := range v.rootInstructions.Blocks().All() {
 								consumeIteratorParts(block.Parts().All())
 							}
 						}})

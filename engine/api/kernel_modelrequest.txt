@@ -1,0 +1,83 @@
+    ifacemethod func (Source).ActiveRun() session.RunID
+    ifacemethod func (Source).HistoryID() id.HistoryID
+    ifacemethod func (Source).RecordAt(int) session.RecordView
+    ifacemethod func (Source).RecordCount() int
+    ifacemethod func (Source).Records() iter.Seq[session.RecordView]
+    method func (AssistantItemView).Call() (ToolCallView, bool)
+    method func (AssistantItemView).MutableClone() format.AssistantItem
+    method func (AssistantItemView).Output() (ContentBlockView, bool)
+    method func (AssistantItemView).Refusal() (ContentBlockView, bool)
+    method func (AssistantMessageView).Items() views.SliceView[format.AssistantItem, AssistantItemView]
+    method func (AssistantMessageView).MutableClone() format.AssistantMessage
+    method func (AssistantMessageView).Private() (OpaqueProviderDataView, bool)
+    method func (ConstructionResult).Recipe() session.ConstructionRecipe
+    method func (ConstructionResult).Request() Request
+    method func (ContentBlockView).MutableClone() format.ContentBlock
+    method func (ContentBlockView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+    method func (ContentPartView).Media() (MediaView, bool)
+    method func (ContentPartView).MutableClone() format.ContentPart
+    method func (ContentPartView).Text() (string, bool)
+    method func (ConversationItemView).Assistant() (AssistantMessageView, bool)
+    method func (ConversationItemView).MutableClone() format.ConversationItem
+    method func (ConversationItemView).ToolResult() (ToolResultView, bool)
+    method func (ConversationItemView).User() (UserMessageView, bool)
+    method func (MediaView).Filename() string
+    method func (MediaView).FormatHint() string
+    method func (MediaView).InlineData() views.Bytes
+    method func (MediaView).Kind() format.MediaKind
+    method func (MediaView).MIMEType() string
+    method func (MediaView).MutableClone() format.Media
+    method func (MediaView).ProviderName() string
+    method func (MediaView).ProviderReferenceID() string
+    method func (MediaView).ProviderScope() string
+    method func (MediaView).RemoteURI() string
+    method func (MediaView).Source() format.MediaSourceKind
+    method func (MediaView).Title() string
+    method func (ModelSettingsView).MaxOutputTokens() (int64, bool)
+    method func (ModelSettingsView).MutableClone() format.ModelSettings
+    method func (ModelSettingsView).ReasoningEffort() (string, bool)
+    method func (OpaqueProviderDataView).Data() views.Bytes
+    method func (OpaqueProviderDataView).Format() string
+    method func (OpaqueProviderDataView).MutableClone() format.OpaqueProviderData
+    method func (OpaqueProviderDataView).Producer() string
+    method func (OpaqueProviderDataView).Version() int64
+    method func (Request).API() string
+    method func (Request).CID() contentid.CID
+    method func (Request).Conversation() views.SliceView[format.ConversationItem, ConversationItemView]
+    method func (Request).Model() string
+    method func (Request).MutableClone() format.RequestV1
+    method func (Request).RootInstructions() views.SliceView[format.ContentBlock, ContentBlockView]
+    method func (Request).Settings() ModelSettingsView
+    method func (Request).Tools() views.SliceView[format.ToolDefinition, ToolDefinitionView]
+    method func (Request).UserInstructions() views.SliceView[format.ContentBlock, ContentBlockView]
+    method func (ToolCallView).Arguments() views.Bytes
+    method func (ToolCallView).MutableClone() format.ToolCall
+    method func (ToolCallView).Name() string
+    method func (ToolCallView).ProviderCallID() string
+    method func (ToolDefinitionView).ArgumentSchema() views.Bytes
+    method func (ToolDefinitionView).Description() string
+    method func (ToolDefinitionView).MutableClone() format.ToolDefinition
+    method func (ToolDefinitionView).Name() string
+    method func (ToolResultView).MutableClone() format.ToolResult
+    method func (ToolResultView).Outcome() format.ToolOutcome
+    method func (ToolResultView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+    method func (ToolResultView).ProviderCallID() string
+    method func (UserMessageView).MutableClone() format.UserMessage
+    method func (UserMessageView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+func Construct(source Source, parameters format.ParametersV1, limits codec.Limits) (ConstructionResult, error)
+func Reconstruct(snapshot session.Snapshot, requestID session.ModelRequestID, limits codec.Limits) (Request, error)
+type AssistantItemView struct{}
+type AssistantMessageView struct{}
+type ConstructionResult struct{}
+type ContentBlockView struct{}
+type ContentPartView struct{}
+type ConversationItemView struct{}
+type MediaView struct{}
+type ModelSettingsView struct{}
+type OpaqueProviderDataView struct{}
+type Request struct{}
+type Source interface{ActiveRun() session.RunID; HistoryID() id.HistoryID; RecordAt(int) session.RecordView; RecordCount() int; Records() iter.Seq[session.RecordView]}
+type ToolCallView struct{}
+type ToolDefinitionView struct{}
+type ToolResultView struct{}
+type UserMessageView struct{}

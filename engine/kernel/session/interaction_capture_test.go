@@ -102,11 +102,11 @@ func TestInteractionManyCallsDoNotEnlargeMinimalEnding(t *testing.T) {
 			interactionCheck(t, b.Create())
 			_, err := b.StartRun()
 			interactionCheck(t, err)
-			interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+			interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 		})
 		pending := interactionRequest(s, 1).ID
 		interactionSubmit(t, s, func(b *SessionCommit) {
-			_, err := b.AddModelRequest(pending.runID, interactionRequest(s, 1).ModelRequest)
+			_, err := b.AddModelRequest(pending.runID, captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 1).Recipe})
 			interactionCheck(t, err)
 		})
 		response := ModelResponse{Terminal: ResponseTerminalError}

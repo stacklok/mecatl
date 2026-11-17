@@ -34,7 +34,7 @@ func newToolCatalogRecord(v ToolCatalog, limits codec.Limits) (*materializedReco
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindToolCatalog, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// ToolCatalogView retains immutable accepted backing storage, including its
+// ToolCatalogView retains immutable accepted or proposed backing storage, including its
 // record. Capture and navigation cost O(1); zero has no history or definitions.
 //
 //dtogen:include

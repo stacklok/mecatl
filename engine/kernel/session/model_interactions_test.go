@@ -11,7 +11,7 @@ import (
 
 func TestModelInteractionValuesCloneAndRelativeReferences(t *testing.T) {
 	run := allocatedRun(t, testHistoryID(t), 1)
-	request := session.ModelRequest{RunID: 1, ID: 2, Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
+	request := session.ModelRequest{RunID: 1, ID: 2, Source: &session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
 	mustBatch(t, request.Validate())
 	requestCopy := request.Clone()
 	request.Recipe.Check[0] = 'X'
@@ -39,7 +39,7 @@ func TestModelInteractionValuesCloneAndRelativeReferences(t *testing.T) {
 }
 
 func TestModelRequestCanonicalValueAndOwnership(t *testing.T) {
-	v := session.ModelRequest{RunID: 1, ID: 2, Source: session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{1}, Check: []byte{2}}, RetryOf: new(uint64(1))}
+	v := session.ModelRequest{RunID: 1, ID: 2, Source: &session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: session.ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{1}, Check: []byte{2}}, RetryOf: new(uint64(1))}
 	clone := v.Clone()
 	if v.Validate() != nil || !v.Equal(clone) || !clone.Equal(v) || clone.RetryOf == v.RetryOf {
 		t.Fatal("clone changed values or borrowed retry storage")

@@ -59,9 +59,8 @@ func canonicalSubmit(t *testing.T, s *session.Session, b *session.SessionCommit)
 	}
 }
 
-func canonicalRequest(s *session.Session) sessionformat.ModelRequest {
-	head := s.Snapshot().Head()
-	return sessionformat.ModelRequest{Source: sessionformat.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: sessionformat.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}}
+func canonicalRequest(_ *session.Session) sessionformat.ModelRequest {
+	return sessionformat.ModelRequest{Recipe: sessionformat.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}}
 }
 
 func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
@@ -75,11 +74,11 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	authored := sessionformat.UserInput{Parts: parts}
 	input, err := b.AddUserInput(run, authored)
 	canonicalOK(t, err)
-	instructions := sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{Parts: parts, Source: sessionformat.ContentSource{Description: "source", WorkspaceFile: &sessionformat.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
+	instructions := sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core", Parts: parts, Source: sessionformat.ContentSource{Description: "source", WorkspaceFile: &sessionformat.WorkspaceFileSource{Path: "AGENTS.md"}}}}}
 	catalog := sessionformat.ToolCatalog{Tools: []sessionformat.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("true")}}}
-	binding := sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}
+	binding := sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}
 	effective := sessionformat.EffectiveInput{Inputs: []sessionformat.InputItem{{UserInputID: new(input.RunRelative())}, {Inline: &sessionformat.AttributedInput{Actor: "open/future-actor", Purpose: sessionformat.PromptContext, Parts: parts, Source: sessionformat.ContentSource{Description: "inline"}}}}}
-	canonicalOK(t, b.ReplaceInstructions(scope, instructions))
+	canonicalOK(t, b.ReplaceRootInstructions(scope, instructions))
 	canonicalOK(t, b.ReplaceToolCatalog(scope, catalog))
 	canonicalOK(t, b.ReplaceModelBinding(scope, binding))
 	canonicalOK(t, b.AddEffectiveInput(run, effective))
@@ -98,7 +97,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	*parts[0].Text = "changed"
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "changed"
 	catalog.Tools[0].ArgumentSchema[0] = 'X'
-	binding.Settings[0] = 'X'
+	*binding.Settings.ReasoningEffort = "changed"
 	*effective.Inputs[0].UserInputID = 99
 	canonicalSubmit(t, s, b)
 	loaded, err := session.Load(context.Background(), h, scope, p)
@@ -148,7 +147,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
 
 	request := canonicalRequest(s)
@@ -156,13 +155,15 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	request.Recipe.Check = []byte{1, 2}
 	originalRequest := request.Clone()
 	b = canonicalBegin(t, s)
-	first, err := b.AddModelRequest(run, request)
+	first, err := b.AddModelRequest(run, captureCommit(t, b), request)
 	canonicalOK(t, err)
 	if !request.Equal(originalRequest) {
 		t.Fatal("request addition mutated caller value")
 	}
 	wantRequest := request.Clone()
 	wantRequest.RunID, wantRequest.ID = run.HistoryRelative(), first.RunRelative()
+	head := s.Snapshot().Head()
+	wantRequest.Source = &sessionformat.SourceHead{Sequence: head.Sequence, CID: head.CID}
 	clear(request.Recipe.Parameters)
 	clear(request.Recipe.Check)
 	canonicalSubmit(t, s, b)
@@ -190,13 +191,15 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	retry.Recipe.Parameters = []byte{0xfe, 2}
 	originalRetry := retry.Clone()
 	b = canonicalBegin(t, s)
-	second, err := b.AddModelRequest(run, retry)
+	second, err := b.AddModelRequest(run, captureCommit(t, b), retry)
 	canonicalOK(t, err)
 	if !retry.Equal(originalRetry) {
 		t.Fatal("retry addition mutated caller value")
 	}
 	wantRetry := retry.Clone()
 	wantRetry.RunID, wantRetry.ID = run.HistoryRelative(), second.RunRelative()
+	head = s.Snapshot().Head()
+	wantRetry.Source = &sessionformat.SourceHead{Sequence: head.Sequence, CID: head.CID}
 	*retry.RetryOf = 99
 	clear(retry.Recipe.Parameters)
 	clear(retry.Recipe.Check)
@@ -292,16 +295,16 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	if err := b.AddEffectiveInput(run, sessionformat.EffectiveInput{Inputs: []sessionformat.InputItem{{UserInputID: new(uint64(2))}}}); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("future input: %v", err)
 	}
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
 	b = canonicalBegin(t, s)
 	request := canonicalRequest(s)
 	request.RetryOf = new(uint64(1))
-	if id, err := b.AddModelRequest(run, request); !errors.Is(err, session.ErrTransition) || id != (session.ModelRequestID{}) {
+	if id, err := b.AddModelRequest(run, captureCommit(t, b), request); !errors.Is(err, session.ErrTransition) || id != (session.ModelRequestID{}) {
 		t.Fatalf("missing retry: %v, %v", id, err)
 	}
 	request.RetryOf = nil
-	first, err := b.AddModelRequest(run, request)
+	first, err := b.AddModelRequest(run, captureCommit(t, b), request)
 	canonicalOK(t, err)
 	if first.RunRelative() != 1 {
 		t.Fatal("failed retry consumed identity")
@@ -322,11 +325,11 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	b = canonicalBegin(t, s)
 	request = canonicalRequest(s)
 	request.RetryOf = new(uint64(2))
-	if _, err := b.AddModelRequest(run, request); !errors.Is(err, session.ErrTransition) {
+	if _, err := b.AddModelRequest(run, captureCommit(t, b), request); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("future retry: %v", err)
 	}
 	request.RetryOf = new(foreignRequest.RunRelative())
-	second, err := b.AddModelRequest(run, request)
+	second, err := b.AddModelRequest(run, captureCommit(t, b), request)
 	canonicalOK(t, err)
 	if second.RunRelative() != 2 {
 		t.Fatal("failed future retry consumed identity")
@@ -389,7 +392,7 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
 	foreignScope, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	canonicalOK(t, err)
@@ -418,10 +421,10 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 		}
 		for _, dirty := range []sessionformat.ModelRequest{{RunID: component}, {ID: component}} {
 			dirty.Recipe.Parameters = oversized
-			if id, err := b.AddModelRequest(run, dirty); !errors.Is(err, codec.ErrInvalidData) || id != (session.ModelRequestID{}) {
+			if id, err := b.AddModelRequest(run, captureCommit(t, b), dirty); !errors.Is(err, codec.ErrInvalidData) || id != (session.ModelRequestID{}) {
 				t.Fatalf("dirty request: %v, %v", id, err)
 			}
-			if _, err := b.AddModelRequest(foreignRun, dirty); !errors.Is(err, session.ErrTransition) {
+			if _, err := b.AddModelRequest(foreignRun, session.CommitView{}, dirty); !errors.Is(err, session.ErrTransition) {
 				t.Fatalf("request destination must precede dirty/size: %v", err)
 			}
 		}
@@ -478,13 +481,13 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 	}
 	for _, add := range []func(historyid.HistoryID) error{
 		func(scope historyid.HistoryID) error {
-			return b.ReplaceInstructions(scope, sessionformat.Instructions{Blocks: []sessionformat.InstructionBlock{{}}})
+			return b.ReplaceRootInstructions(scope, sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core"}}})
 		},
 		func(scope historyid.HistoryID) error {
 			return b.ReplaceToolCatalog(scope, sessionformat.ToolCatalog{Tools: []sessionformat.ToolDefinition{{ArgumentSchema: oversized}}})
 		},
 		func(scope historyid.HistoryID) error {
-			return b.ReplaceModelBinding(scope, sessionformat.ModelBinding{Settings: oversized})
+			return b.ReplaceModelBinding(scope, sessionformat.ModelBinding{Settings: sessionformat.ModelSettings{ReasoningEffort: new(string(oversized))}})
 		},
 	} {
 		if err := add(foreignScope); !errors.Is(err, session.ErrIdentity) {
@@ -504,7 +507,7 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 		t.Fatal("failed additions consumed record slots")
 	}
 	b = canonicalBegin(t, s)
-	request, err := b.AddModelRequest(run, canonicalRequest(s))
+	request, err := b.AddModelRequest(run, captureCommit(t, b), canonicalRequest(s))
 	canonicalOK(t, err)
 	if request != destination {
 		t.Fatal("failed additions consumed request identity")
@@ -514,7 +517,7 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 		t.Fatalf("invalid handle must precede destination: %v", err)
 	}
 	canonicalSubmit(t, s, b)
-	if _, err := b.AddModelRequest(foreignRun, sessionformat.ModelRequest{RunID: 1}); !errors.Is(err, session.ErrBatch) {
+	if _, err := b.AddModelRequest(foreignRun, session.CommitView{}, sessionformat.ModelRequest{RunID: 1}); !errors.Is(err, session.ErrBatch) {
 		t.Fatalf("completed handle must precede destination: %v", err)
 	}
 }

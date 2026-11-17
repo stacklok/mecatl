@@ -116,7 +116,7 @@ func TestContentSourceAndAttributedOwnedValues(t *testing.T) {
 			t.Fatal("invalid item validated")
 		}
 	}
-	block := session.InstructionBlock{Parts: richContent(), Source: clone}
+	block := session.InstructionBlock{Key: "harness/core", Parts: richContent(), Source: clone}
 	bc := block.Clone()
 	block.Source.WorkspaceFile.Path = "mutated"
 	if bc.Equal(block) || bc.Validate() != nil {

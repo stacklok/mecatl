@@ -7,17 +7,19 @@ import (
 )
 
 // ContentSource retains a nonempty explanation and optional contributing file
-// label. It does not certify trust or exact copying. Assignment shares the file
+// label. Description is not identity. Upstream owns trust and framing; this
+// value does not certify trust or exact copying. Assignment shares the file
 // pointer; Clone detaches it. Zero is invalid.
 //
 //dtogen:validate validateLocal
 type ContentSource struct {
-	// Description is a required nonempty exact UTF-8 explanation of provenance,
-	// checked locally by Validate; it is not a trust or exact-copy assertion.
+	// Description is a required nonempty exact UTF-8 provenance explanation,
+	// checked locally by Validate. It is not identity, a trust assertion, or an
+	// exact-copy assertion.
 	Description string `cbor:"d"`
-	// WorkspaceFile optionally names a contributing file in its originating
-	// workspace. Nil means no file label; codec traversal validates a present child.
-	// It grants no file access and loading never resolves it.
+	// WorkspaceFile optionally names a contributing workspace-relative file. Nil
+	// means no file label; codec traversal validates a present child. It grants no
+	// file access and Load never re-reads it.
 	WorkspaceFile *WorkspaceFileSource `cbor:"w,omitempty"`
 }
 
@@ -40,8 +42,8 @@ func (v ContentSource) validateLocal() error {
 	return nil
 }
 
-// WorkspaceFileSource is a slash-separated file label relative to its originating
-// workspace, not a global locator or permission to read. Loading never resolves it.
+// WorkspaceFileSource is a slash-separated workspace-relative file label, not a
+// global locator or permission to read. Load never re-reads it.
 //
 //dtogen:validate Validate
 type WorkspaceFileSource struct {

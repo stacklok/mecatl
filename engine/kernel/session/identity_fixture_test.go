@@ -57,14 +57,13 @@ func allocatedInput(t testing.TB, run session.RunID, count uint64) session.UserI
 func allocatedRequest(t testing.TB, run session.RunID, count uint64) session.ModelRequestID {
 	t.Helper()
 	s, b := allocationBatch(t, run)
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	var id session.ModelRequestID
 	for range count {
 		b = beginBatch(t, s)
-		head := s.Snapshot().Head()
 		var err error
-		id, err = b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
+		id, err = b.AddModelRequest(run, captureCommit(t, b), session.ModelRequest{Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
 		mustBatch(t, err)
 		submitBatch(t, s, b)
 		b = beginBatch(t, s)

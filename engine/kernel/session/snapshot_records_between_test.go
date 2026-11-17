@@ -106,11 +106,11 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 	mustBatch(t, err)
 	first := submitBatch(t, s, b)
 	b = beginBatch(t, s)
-	instructions := session.Instructions{Blocks: []session.InstructionBlock{{Parts: byteParts([]byte("instructions")), Source: session.ContentSource{Description: "source"}}}}
-	mustBatch(t, b.ReplaceInstructions(scope, instructions))
-	mustBatch(t, b.ReplaceInstructions(scope, session.Instructions{}))
+	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "harness/core", Parts: byteParts([]byte("instructions")), Source: session.ContentSource{Description: "source"}}}}
+	mustBatch(t, b.ReplaceRootInstructions(scope, instructions))
+	mustBatch(t, b.ReplaceRootInstructions(scope, session.RootInstructions{}))
 	mustBatch(t, b.ReplaceToolCatalog(scope, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", ArgumentSchema: []byte("{}")}, {Name: "sibling", ArgumentSchema: []byte("true")}}}))
-	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(scope, session.ModelBinding{Route: "route", API: "api", Model: "model"}))
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 	nextRun := batchRun(t, b)
 	nextInput := batchInput(t, b, nextRun, []byte("next"))
@@ -193,8 +193,8 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 								clear(detached)
 							}
 						case 3, 4:
-							v, ok := record.Instructions()
-							if !ok || v.HistoryID() != scope || !instructionsMatch(v, []session.Instructions{instructions, {}}[i-3]) {
+							v, ok := record.RootInstructions()
+							if !ok || v.HistoryID() != scope || !instructionsMatch(v, []session.RootInstructions{instructions, {}}[i-3]) {
 								t.Fatal("intermediate replacement lost")
 							}
 						case 5:
@@ -208,7 +208,9 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 							if !ok || v.HistoryID() != scope || v.Model() != "model" {
 								t.Fatal("binding scope")
 							}
-							clear(v.Settings().Copy())
+							if _, present := v.Settings().ReasoningEffort(); present {
+								t.Fatal("omitted settings gained effort")
+							}
 						case 7:
 							v, ok := record.RunEnded()
 							if !ok || v.RunID() != run {

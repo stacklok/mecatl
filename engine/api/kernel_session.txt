@@ -3,7 +3,7 @@
     method func (*Session).SubmitCommit(ctx context.Context, b *SessionCommit) (history.CommitRef, error)
     method func (*SessionCommit).AddEffectiveInput(run RunID, v EffectiveInput) error
     method func (*SessionCommit).AddInvocationFailure(request ModelRequestID, v InvocationFailure) error
-    method func (*SessionCommit).AddModelRequest(run RunID, v ModelRequest) (ModelRequestID, error)
+    method func (*SessionCommit).AddModelRequest(run RunID, source CommitView, v ModelRequest) (ModelRequestID, error)
     method func (*SessionCommit).AddModelResponse(request ModelRequestID, v ModelResponse) error
     method func (*SessionCommit).AddRunEnded(run RunID, v RunEnded) error
     method func (*SessionCommit).AddToolDisposition(call RequestedCallID, v ToolDisposition) error
@@ -12,10 +12,12 @@
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
     method func (*SessionCommit).EndRun(reason RunEndedReason) error
-    method func (*SessionCommit).ReplaceInstructions(scope id.HistoryID, v Instructions) error
     method func (*SessionCommit).ReplaceModelBinding(scope id.HistoryID, v ModelBinding) error
+    method func (*SessionCommit).ReplaceRootInstructions(scope id.HistoryID, v RootInstructions) error
     method func (*SessionCommit).ReplaceToolCatalog(scope id.HistoryID, v ToolCatalog) error
+    method func (*SessionCommit).ReplaceUserInstructions(scope id.HistoryID, v UserInstructions) error
     method func (*SessionCommit).StartRun() (RunID, error)
+    method func (*SessionCommit).View() (CommitView, error)
     method func (AttributedInputView).Actor() format.Actor
     method func (AttributedInputView).MutableClone() format.AttributedInput
     method func (AttributedInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
@@ -25,6 +27,11 @@
     method func (CaptureFailureEvidenceView).MutableClone() format.CaptureFailureEvidence
     method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
     method func (CaptureFailureEvidenceView).Usage() (InvocationUsageView, bool)
+    method func (CommitView).ActiveRun() RunID
+    method func (CommitView).HistoryID() id.HistoryID
+    method func (CommitView).RecordAt(i int) RecordView
+    method func (CommitView).RecordCount() int
+    method func (CommitView).Records() iter.Seq[RecordView]
     method func (ConstructionRecipeView).Algorithm() string
     method func (ConstructionRecipeView).Check() views.Bytes
     method func (ConstructionRecipeView).MutableClone() format.ConstructionRecipe
@@ -44,12 +51,10 @@
     method func (InputItemView).Inline() (AttributedInputView, bool)
     method func (InputItemView).MutableClone() format.InputItem
     method func (InputItemView).UserInputID() (UserInputID, bool)
+    method func (InstructionBlockView).Key() string
     method func (InstructionBlockView).MutableClone() format.InstructionBlock
     method func (InstructionBlockView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (InstructionBlockView).Source() ContentSourceView
-    method func (InstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
-    method func (InstructionsView).HistoryID() id.HistoryID
-    method func (InstructionsView).MutableClone() format.Instructions
     method func (InvocationFailureView).Class() format.InvocationFailureClass
     method func (InvocationFailureView).Evidence() (ObservedEvidenceView, bool)
     method func (InvocationFailureView).Explanation() (string, bool)
@@ -80,7 +85,7 @@
     method func (ModelBindingView).Model() string
     method func (ModelBindingView).MutableClone() format.ModelBinding
     method func (ModelBindingView).Route() string
-    method func (ModelBindingView).Settings() views.Bytes
+    method func (ModelBindingView).Settings() ModelSettingsView
     method func (ModelRequestID).Equal(other ModelRequestID) bool
     method func (ModelRequestID).RunID() RunID
     method func (ModelRequestID).RunRelative() uint64
@@ -89,7 +94,7 @@
     method func (ModelRequestView).MutableClone() format.ModelRequest
     method func (ModelRequestView).Recipe() ConstructionRecipeView
     method func (ModelRequestView).RetryOf() (ModelRequestID, bool)
-    method func (ModelRequestView).Source() SourceHeadView
+    method func (ModelRequestView).Source() (SourceHeadView, bool)
     method func (ModelResponseView).CallAt(i int) RequestedCallView
     method func (ModelResponseView).CallCount() int
     method func (ModelResponseView).Calls() iter.Seq[RequestedCallView]
@@ -101,6 +106,9 @@
     method func (ModelResponseView).RequestID() ModelRequestID
     method func (ModelResponseView).Terminal() format.ResponseTerminalClass
     method func (ModelResponseView).Usage() (InvocationUsageView, bool)
+    method func (ModelSettingsView).MaxOutputTokens() (int64, bool)
+    method func (ModelSettingsView).MutableClone() format.ModelSettings
+    method func (ModelSettingsView).ReasoningEffort() (string, bool)
     method func (ObservedEvidenceView).Correlation() (string, bool)
     method func (ObservedEvidenceView).Detail() (string, bool)
     method func (ObservedEvidenceView).MutableClone() format.ObservedEvidence
@@ -112,7 +120,6 @@
     method func (Policy).Validate() error
     method func (RecordView).Created() (CreatedView, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
-    method func (RecordView).Instructions() (InstructionsView, bool)
     method func (RecordView).InvocationFailure() (InvocationFailureView, bool)
     method func (RecordView).Kind() string
     method func (RecordView).KindVersion() int64
@@ -120,15 +127,18 @@
     method func (RecordView).ModelRequest() (ModelRequestView, bool)
     method func (RecordView).ModelResponse() (ModelResponseView, bool)
     method func (RecordView).MutableClone() format.Record
+    method func (RecordView).RootInstructions() (RootInstructionsView, bool)
     method func (RecordView).RunEnded() (RunEndedView, bool)
     method func (RecordView).RunStarted() (RunStartedView, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).ToolDisposition() (ToolDispositionView, bool)
     method func (RecordView).ToolInvocation() (ToolInvocationView, bool)
     method func (RecordView).UserInput() (UserInputView, bool)
+    method func (RecordView).UserInstructions() (UserInstructionsView, bool)
     method func (RequestedCallDataView).Arguments() views.Bytes
     method func (RequestedCallDataView).MutableClone() format.RequestedCall
     method func (RequestedCallDataView).Name() string
+    method func (RequestedCallDataView).ProviderCallID() string
     method func (RequestedCallID).Equal(other RequestedCallID) bool
     method func (RequestedCallID).RequestID() ModelRequestID
     method func (RequestedCallID).RequestRelative() uint64
@@ -137,12 +147,16 @@
     method func (RequestedCallView).ID() RequestedCallID
     method func (RequestedCallView).MutableClone() format.RequestedCall
     method func (RequestedCallView).Name() string
+    method func (RequestedCallView).ProviderCallID() string
     method func (ResponseContentView).Kind() format.ResponseContentKind
     method func (ResponseContentView).MutableClone() format.ResponseContent
     method func (ResponseContentView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (ResponseItemView).Call() (RequestedCallDataView, bool)
     method func (ResponseItemView).Content() (ResponseContentView, bool)
     method func (ResponseItemView).MutableClone() format.ResponseItem
+    method func (RootInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
+    method func (RootInstructionsView).HistoryID() id.HistoryID
+    method func (RootInstructionsView).MutableClone() format.RootInstructions
     method func (RunEndedView).BulkToolCloseout() bool
     method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
     method func (RunEndedView).Explanation() (string, bool)
@@ -164,17 +178,18 @@
     method func (Snapshot).Created() bool
     method func (Snapshot).Head() history.CommitRef
     method func (Snapshot).HistoryID() id.HistoryID
-    method func (Snapshot).Instructions() (InstructionsView, bool)
     method func (Snapshot).ModelBinding() (ModelBindingView, bool)
     method func (Snapshot).RecordAt(i int) RecordView
     method func (Snapshot).RecordCount() int
     method func (Snapshot).Records() iter.Seq[RecordView]
     method func (Snapshot).RecordsBetween(after history.CommitRef, through history.CommitRef) (iter.Seq[RecordView], error)
+    method func (Snapshot).RootInstructions() (RootInstructionsView, bool)
     method func (Snapshot).RunAt(i int) RunView
     method func (Snapshot).RunCount() int
     method func (Snapshot).Runs() iter.Seq[RunView]
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
+    method func (Snapshot).UserInstructions() (UserInstructionsView, bool)
     method func (SourceHeadView).CID() contentid.CID
     method func (SourceHeadView).MutableClone() format.SourceHead
     method func (SourceHeadView).Sequence() int64
@@ -240,6 +255,9 @@
     method func (UserInputView).ID() UserInputID
     method func (UserInputView).MutableClone() format.UserInput
     method func (UserInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
+    method func (UserInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
+    method func (UserInstructionsView).HistoryID() id.HistoryID
+    method func (UserInstructionsView).MutableClone() format.UserInstructions
     method func (WorkspaceFileSourceView).MutableClone() format.WorkspaceFileSource
     method func (WorkspaceFileSourceView).Path() string
 const InvocationFailureLocal InvocationFailureClass = "local"
@@ -277,9 +295,12 @@ const ToolIndeterminateOther format.ToolIndeterminateReason = "other"
 const ToolIndeterminateTimeout format.ToolIndeterminateReason = "timeout"
 const ToolIndeterminateTransport format.ToolIndeterminateReason = "transport"
 const ToolNotInvokedCancelled format.ToolNotInvokedReason = "cancelled"
+const ToolNotInvokedInfrastructureFailed format.ToolNotInvokedReason = "infrastructure-failed"
 const ToolNotInvokedOther format.ToolNotInvokedReason = "other"
 const ToolNotInvokedPolicyRejected format.ToolNotInvokedReason = "policy-rejected"
 const ToolNotInvokedPreparationFailed format.ToolNotInvokedReason = "preparation-failed"
+const ToolNotInvokedUnavailable format.ToolNotInvokedReason = "unavailable"
+const ToolNotInvokedUserDenied format.ToolNotInvokedReason = "user-denied"
 const ToolReturnError format.ToolReturnStatus = "error"
 const ToolReturnSuccess format.ToolReturnStatus = "success"
 const ToolSettlementIndeterminate ToolSettlementCategory = 3
@@ -296,6 +317,7 @@ type AttributedInput = format.AttributedInput
 type AttributedInputView struct{}
 type CaptureFailureEvidence = format.CaptureFailureEvidence
 type CaptureFailureEvidenceView struct{}
+type CommitView struct{}
 type ConstructionRecipe = format.ConstructionRecipe
 type ConstructionRecipeView struct{}
 type ContentPart = format.ContentPart
@@ -310,8 +332,6 @@ type InputItem = format.InputItem
 type InputItemView struct{}
 type InstructionBlock = format.InstructionBlock
 type InstructionBlockView struct{}
-type Instructions = format.Instructions
-type InstructionsView struct{}
 type InvocationFailure = format.InvocationFailure
 type InvocationFailureClass = format.InvocationFailureClass
 type InvocationFailureView struct{}
@@ -328,6 +348,8 @@ type ModelRequestID struct{}
 type ModelRequestView struct{}
 type ModelResponse = format.ModelResponse
 type ModelResponseView struct{}
+type ModelSettings = format.ModelSettings
+type ModelSettingsView struct{}
 type ObservedEvidence = format.ObservedEvidence
 type ObservedEvidenceView struct{}
 type OpaqueProviderData = format.OpaqueProviderData
@@ -345,6 +367,8 @@ type ResponseContentView struct{}
 type ResponseItem = format.ResponseItem
 type ResponseItemView struct{}
 type ResponseTerminalClass = format.ResponseTerminalClass
+type RootInstructions = format.RootInstructions
+type RootInstructionsView struct{}
 type RunEnded = format.RunEnded
 type RunEndedReason = format.RunEndedReason
 type RunEndedView struct{}
@@ -390,6 +414,8 @@ type ToolSettlementCategory uint8
 type UserInput = format.UserInput
 type UserInputID struct{}
 type UserInputView struct{}
+type UserInstructions = format.UserInstructions
+type UserInstructionsView struct{}
 type WorkspaceFileSource = format.WorkspaceFileSource
 type WorkspaceFileSourceView struct{}
 var ErrAcceptanceUnknown error

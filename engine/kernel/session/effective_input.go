@@ -35,7 +35,7 @@ func newEffectiveInputRecord(v EffectiveInput, run RunID, limits codec.Limits) (
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindEffectiveInput, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// EffectiveInputView retains immutable accepted backing storage, including its
+// EffectiveInputView retains immutable accepted or proposed backing storage, including its
 // record. Capture and navigation cost O(1); zero has no run or items.
 //
 //dtogen:include
@@ -53,7 +53,7 @@ func (v EffectiveInputView) RunID() RunID {
 }
 
 // Inputs returns ordered immutable items, preserving duplicates; zero is empty.
-// The collection and derived items retain accepted backing. Its adapter captures
+// The collection and derived items retain accepted or proposed backing. Its adapter captures
 // only the enclosing run identity; escaping the collection may allocate a closure.
 // Construction and indexed navigation take O(1) time without copying payloads.
 func (v EffectiveInputView) Inputs() views.SliceView[sessionformat.InputItem, InputItemView] {

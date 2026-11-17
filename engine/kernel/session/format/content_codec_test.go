@@ -71,11 +71,14 @@ func TestJSONBoundedBeforeValidation(t *testing.T) {
 	badJSON := bytes.Repeat([]byte{'x'}, 64)
 	l := limits()
 	l.MaxByteStringBytes = len(badJSON) - 1
-	binding := format.ModelBinding{Route: "r", API: "a", Model: "m", Settings: badJSON}
-	if out, err := codec.Encode(binding, l); !errors.Is(err, codec.ErrLimitExceeded) || out != nil {
+	badEffort := string(bytes.Repeat([]byte{0xff}, 64))
+	binding := format.ModelBinding{Route: "r", API: "a", Model: "m", Settings: format.ModelSettings{ReasoningEffort: &badEffort}}
+	bindingLimits := limits()
+	bindingLimits.MaxStringBytes = len(badEffort) - 1
+	if out, err := codec.Encode(binding, bindingLimits); !errors.Is(err, codec.ErrLimitExceeded) || out != nil {
 		t.Fatalf("binding encode: %v", err)
 	}
-	gotBinding, err := codec.Decode[format.ModelBinding](binding.AppendCBOR(nil), l)
+	gotBinding, err := codec.Decode[format.ModelBinding](binding.AppendCBOR(nil), bindingLimits)
 	if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(gotBinding, format.ModelBinding{}) {
 		t.Fatalf("binding decode: %v", err)
 	}

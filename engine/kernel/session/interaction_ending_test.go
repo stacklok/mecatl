@@ -22,7 +22,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 					t.Run(fmt.Sprintf("%s/%s/%s/short=%t", stage, reason, dimension, short), func(t *testing.T) {
 						s := interactionFixture(t, stage)
 						run := s.Snapshot().ActiveRun()
-						contextRecord := interactionRecord(t)(newInstructionsRecord(Instructions{}, s.policy.PayloadLimits))
+						contextRecord := interactionRecord(t)(newRootInstructionsRecord(RootInstructions{}, s.policy.PayloadLimits))
 						ending := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: reason, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
 						largest := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
 						p := s.policy
@@ -51,7 +51,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						before := detachedSessionState(s.state)
 						b, err := s.BeginCommit()
 						interactionCheck(t, err)
-						interactionCheck(t, b.ReplaceInstructions(run.historyID, Instructions{}))
+						interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
 						_, err = s.SubmitCommit(context.Background(), b)
 						if short {
 							if !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, ErrAcceptanceUnknown) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -245,7 +245,7 @@ func TestInteractionDetailedAndMixedEndingsStaySoftBounded(t *testing.T) {
 			case "capture":
 				ending.Capture = &CaptureFailureEvidence{RequestID: s.state.view.lifecycle.pending.RunRelative()}
 			case "mixed":
-				interactionCheck(t, b.ReplaceInstructions(run.historyID, Instructions{}))
+				interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
 			}
 			interactionCheck(t, b.AddRunEnded(run, ending))
 			_, err = s.SubmitCommit(context.Background(), b)

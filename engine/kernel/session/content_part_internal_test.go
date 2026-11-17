@@ -31,7 +31,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			instructions, err := newInstructionsRecord(Instructions{Blocks: []InstructionBlock{{Parts: parts, Source: source}}}, limits)
+			instructions, err := newRootInstructionsRecord(RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: parts, Source: source}}}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -46,7 +46,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 			internalApply(t, s, created, started, authored, instructions, effective)
 			view := s.Snapshot()
 			inputView, _ := view.UserInputByID(input)
-			instructionView, _ := view.Instructions()
+			instructionView, _ := view.RootInstructions()
 			effectiveView, _ := view.RecordAt(4).EffectiveInput()
 			inline, _ := effectiveView.Inputs().At(0).Inline()
 			for _, part := range []ContentPartView{inputView.Parts().At(0), instructionView.Blocks().At(0).Parts().At(0), inline.Parts().At(0)} {
@@ -128,7 +128,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 		if id, err := b.AddUserInput(run, UserInput{Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
 			t.Fatalf("invalid user content: %v, %v", id, err)
 		}
-		if err := b.ReplaceInstructions(run.historyID, Instructions{Blocks: []InstructionBlock{{Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := b.ReplaceRootInstructions(run.historyID, RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("invalid instructions: %v", err)
 		}
 		if err := b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: ContentSource{Description: "source"}}}}}); !errors.Is(err, codec.ErrInvalidData) {

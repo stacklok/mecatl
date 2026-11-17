@@ -51,7 +51,8 @@ func ExampleSession() {
 		return
 	}
 	// Preparation supplies retained values; the kernel never opens this source file.
-	if err := b.ReplaceInstructions(id, session.Instructions{Blocks: []session.InstructionBlock{{
+	if err := b.ReplaceRootInstructions(id, session.RootInstructions{Blocks: []session.InstructionBlock{{
+		Key:    "workspace/root-guidance",
 		Parts:  []session.ContentPart{{Text: new("Use the project's vocabulary.")}},
 		Source: session.ContentSource{Description: "adopted workspace instructions", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}},
 	}}}); err != nil {
@@ -99,7 +100,7 @@ func ExampleSession() {
 		return
 	}
 	fmt.Printf("loaded active matches=%t inputs=%d\n", loadedView.ActiveRun() == run, inputs)
-	instructions, _ := loaded.Snapshot().Instructions()
+	instructions, _ := loaded.Snapshot().RootInstructions()
 	file, _ := instructions.Blocks().At(0).Source().WorkspaceFile()
 	fmt.Printf("instruction source=%s\n", file.Path())
 	effective, _ := loaded.Snapshot().RecordAt(4).EffectiveInput()

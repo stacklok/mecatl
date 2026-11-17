@@ -69,13 +69,13 @@ func effectiveMatches(v session.EffectiveInputView, want session.EffectiveInput)
 	return true
 }
 
-func instructionsMatch(v session.InstructionsView, want session.Instructions) bool {
+func instructionsMatch(v session.RootInstructionsView, want session.RootInstructions) bool {
 	if v.Blocks().Len() != len(want.Blocks) {
 		return false
 	}
 	for i, block := range want.Blocks {
 		got := v.Blocks().At(i)
-		if !sourceMatches(got.Source(), block.Source) || got.Parts().Len() != len(block.Parts) {
+		if got.Key() != block.Key || !sourceMatches(got.Source(), block.Source) || got.Parts().Len() != len(block.Parts) {
 			return false
 		}
 		for j, part := range block.Parts {
@@ -101,7 +101,11 @@ func catalogMatches(v session.ToolCatalogView, want session.ToolCatalog) bool {
 }
 
 func bindingMatches(v session.ModelBindingView, want session.ModelBinding) bool {
-	return v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model && bytes.Equal(v.Settings().Copy(), want.Settings)
+	effort, effortOK := v.Settings().ReasoningEffort()
+	tokens, tokensOK := v.Settings().MaxOutputTokens()
+	return v.Route() == want.Route && v.API() == want.API && v.Model() == want.Model &&
+		effortOK == (want.Settings.ReasoningEffort != nil) && (!effortOK || effort == *want.Settings.ReasoningEffort) &&
+		tokensOK == (want.Settings.MaxOutputTokens != nil) && (!tokensOK || tokens == *want.Settings.MaxOutputTokens)
 }
 
 func inlineAt(t *testing.T, v session.EffectiveInputView, i int) session.AttributedInputView {

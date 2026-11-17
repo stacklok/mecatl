@@ -9,7 +9,7 @@ import (
 
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity. ReplaceModelBinding takes history scope separately. Assignment shares
-// exact JSON Settings; Clone detaches it. Zero is invalid.
+// Settings pointers; Clone detaches them. Zero is invalid.
 type ModelBinding = sessionformat.ModelBinding
 
 // newModelBindingRecord encodes an owned replacement under explicit limits.
@@ -19,7 +19,13 @@ func newModelBindingRecord(v ModelBinding, limits codec.Limits) (*materializedRe
 	b.text(v.Route)
 	b.text(v.API)
 	b.text(v.Model)
-	b.bytes(len(v.Settings))
+	if v.Settings.ReasoningEffort != nil {
+		b.pointer()
+		b.text(*v.Settings.ReasoningEffort)
+	}
+	if v.Settings.MaxOutputTokens != nil {
+		b.pointer()
+	}
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -30,9 +36,9 @@ func newModelBindingRecord(v ModelBinding, limits codec.Limits) (*materializedRe
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindModelBinding, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// ModelBindingView retains immutable accepted backing storage, including its
+// ModelBindingView retains immutable accepted or proposed backing storage, including its
 // record. Capture and navigation cost O(1); zero has empty fields. Settings
-// borrows retained backing; Copy detaches only those exact JSON bytes.
+// borrows retained backing without cloning sibling payloads.
 //
 //dtogen:include
 type ModelBindingView struct {

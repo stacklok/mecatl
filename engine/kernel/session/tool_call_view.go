@@ -13,8 +13,9 @@ type ToolCallView struct {
 // ID returns the full scoped requested-call identity, or zero for zero.
 func (v ToolCallView) ID() RequestedCallID { return v.RequestedCall().ID() }
 
-// RequestedCall returns the original name and exact opaque arguments, not the
-// invocation's effective name or structured arguments. Zero returns a zero view.
+// RequestedCall returns the original provider call ID, name and exact opaque
+// arguments, not the invocation's effective name or structured arguments.
+// Zero returns a zero view.
 func (v ToolCallView) RequestedCall() RequestedCallView {
 	if v.location == nil {
 		return RequestedCallView{}

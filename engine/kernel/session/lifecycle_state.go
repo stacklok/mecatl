@@ -22,22 +22,23 @@ type lifecycleState struct {
 	tools                         *activeToolResponse
 }
 
-// admissionContext pins the accepted source and head independently of the ordered
-// candidate. Pinning the source makes construction reproducible and requires
-// accepted prerequisites; same-batch facts cannot manufacture them. The candidate
-// tracks prospective order. Callers copy this context before admitting an addition,
-// so a rejected fact consumes neither state nor IDs.
+// admissionContext pins accepted prerequisites and head independently of the
+// ordered candidate. Next-request preparation and coverage use that candidate;
+// execution outcomes, tool prerequisites and retries still require accepted facts.
+// Callers copy this context before admitting an addition, so a rejected fact
+// consumes neither state nor IDs.
 //
-// frontier is the admitted contribution coverage; a request captures the accepted
-// frontier, and its outcome accounts that captured value. For example, input
+// frontier is the admitted contribution coverage; a request captures the preceding
+// candidate frontier, and its outcome accounts that captured value. For example, input
 // advances frontier, a request captures it, an outcome accounts it, then later
 // input advances frontier again: the older outcome cannot justify a completed end.
 // This coverage is structural lifecycle bookkeeping, not evidence that a model
 // understood input, that work was fulfilled, or that usage was billed. An empty
 // authored submission advances frontier; an empty effective contribution does not.
 // Input gating is a chosen admission policy: pending outcomes or unresolved calls
-// prevent new input. Queues and steering live above this boundary. The pinned source
-// rule is also an accepted-prerequisite policy: same-batch facts cannot provide it.
+// prevent new input. Queues and steering live above this boundary. Only execution
+// and retry prerequisites require accepted facts; next-request preparation may
+// precede its commitment in the same batch.
 // Those choices differ from structural integrity, which requires valid scoped
 // identity, membership, and fact pairing. Policy separately controls capacity.
 // Noncompleted endings may retain pending model coverage; only explicit bulk
@@ -76,7 +77,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 		return s.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
 		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
-	case sessionformat.KindInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
+	case sessionformat.KindRootInstructions, sessionformat.KindUserInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
 		if !s.created {
 			return ErrTransition
 		}
@@ -156,24 +157,29 @@ func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) err
 	return nil
 }
 
-// admitRequest pins eligibility and coverage to the accepted source, independently
-// of prospective context replacements. Failure consumes no request ordinal.
+// admitRequest uses the valid preceding candidate for preparation and coverage.
+// Only the source anchor and RetryOf membership require earlier accepted history.
+// Failure consumes no request ordinal.
 func (a *admissionContext) admitRequest(scope historyid.HistoryID, v sessionformat.ModelRequest) error {
 	s := &a.candidate
 	src := a.source
 	id := requestID(scope, v.RunID, v.ID)
-	if !s.inputEligible() || src.activeRun != s.activeRun || !src.binding || src.pending != (ModelRequestID{}) || src.calls != 0 || s.frontier != src.frontier || id.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID != s.requests+1 {
+	if !s.inputEligible() || !s.binding || id.runID != s.activeRun || s.requests == math.MaxUint64 || v.ID != s.requests+1 {
 		return ErrTransition
 	}
-	if v.Source.Sequence != a.head.Sequence || v.Source.CID != a.head.CID {
+	if v.Source == nil {
+		if a.head != (history.CommitRef{}) || src.created {
+			return ErrIdentity
+		}
+	} else if v.Source.Sequence != a.head.Sequence || v.Source.CID != a.head.CID {
 		return ErrIdentity
 	}
-	if v.RetryOf != nil && (*v.RetryOf == 0 || *v.RetryOf > src.requests) {
+	if v.RetryOf != nil && (src.activeRun != s.activeRun || *v.RetryOf == 0 || *v.RetryOf > src.requests) {
 		return ErrTransition
 	}
 	s.requests++
 	s.pending = id
-	s.captured = src.frontier
+	s.captured = s.frontier
 	return nil
 }
 

@@ -93,7 +93,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					// count policy rejects the candidate, not its prefix.
 					interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.Create()) })
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 					})
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					request := interactionRequest(s, 1)
@@ -178,7 +178,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			for s.Snapshot().Head().Sequence < next-1 {
 				interactionSubmit(t, s, func(b *SessionCommit) {
-					interactionCheck(t, b.ReplaceInstructions(s.Snapshot().HistoryID(), Instructions{}))
+					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
 				})
 			}
 			for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {

@@ -13,9 +13,19 @@ provide a memory backend and reusable conformance checks.
 [`session`](session/doc.go) interprets accepted history as lifecycle state and
 retained context. It validates ordered batches before submission and publishes
 state only after storage acceptance. Immutable snapshots pin accepted state;
-loading reconstructs it without resolving references or executing work. The
-[session example](session/example_test.go) shows submission, snapshot access,
-and reconstruction.
+[`CommitView`](session/commit_view.go) pins one writable batch's accepted prefix
+and its proposed records for inspection and request construction. Proposed records
+remain provisional after capture and confer neither acceptance nor execution
+authority. Loading reconstructs accepted state without resolving references or
+executing work. The [session example](session/example_test.go) shows submission,
+snapshot access, and reconstruction.
+
+[`modelrequest`](modelrequest/doc.go) constructs immutable provider-neutral logical
+requests from a pinned session source and reconstructs accepted commitments from
+their retained recipes. Construction does not invoke a model. A request commitment
+must be accepted by `session` before an execution boundary can use it. The
+[model-request example](modelrequest/example_test.go) shows the complete authoring
+and reconstruction flow.
 
 Each layer's `format` package owns mutable persistence DTOs, generated codecs,
 and payload-local validation. Aggregates own cross-record legality; valid encoding

@@ -106,7 +106,7 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}
 	id := requestID(run.historyID, run.ordinal, 2)
 	retry := requestID(run.historyID, run.ordinal, 1)
-	request := identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: new(retry.RunRelative())}}
+	request := identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: new(retry.RunRelative())}}
 	ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
 	wantRequest, wantEnding := request.Clone(), ending.Clone()
 	wantRequest.RunID, wantRequest.ID = run.ordinal, id.requestOrdinal

@@ -30,7 +30,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: []byte("{}")}))
+	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	parameters := bytes.Repeat([]byte{0xa5}, field)
 	check := bytes.Repeat([]byte{0x5a}, sibling)
@@ -43,7 +43,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 		if retry != nil {
 			relativeRetry = new(retry.RunRelative())
 		}
-		id, err := b.AddModelRequest(run, session.ModelRequest{Source: session.SourceHead{Sequence: head.Sequence, CID: head.CID}, RetryOf: relativeRetry,
+		id, err := b.AddModelRequest(run, captureCommit(t, b), session.ModelRequest{RetryOf: relativeRetry,
 			Recipe: session.ConstructionRecipe{Algorithm: "algorithm", Version: 17, Parameters: parameters, Check: check}})
 		mustBatch(t, err)
 		sources[id] = session.SourceHead{Sequence: head.Sequence, CID: head.CID}
@@ -93,8 +93,9 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 		for i := 0; i < snap.RecordCount(); i++ {
 			if request, ok := snap.RecordAt(i).ModelRequest(); ok {
 				want, found := sources[request.ID()]
-				if !found || request.Source().Sequence() != want.Sequence || request.Source().CID() != want.CID {
-					t.Fatalf("%s request %v source = (%d, %v), want %+v", seam, request.ID(), request.Source().Sequence(), request.Source().CID(), want)
+				source, present := request.Source()
+				if !found || !present || source.Sequence() != want.Sequence || source.CID() != want.CID {
+					t.Fatalf("%s request %v source = (%d, %v), want %+v", seam, request.ID(), source.Sequence(), source.CID(), want)
 				}
 				seen++
 			}
@@ -190,7 +191,8 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 		record := snap.RecordAt(i)
 		if v, ok := record.ModelRequest(); ok {
 			visits.requests++
-			if v.ID().RunID().HistoryID() != snap.HistoryID() || v.Source().Sequence() == 0 || v.Source().CID() == (contentid.CID{}) {
+			source, present := v.Source()
+			if v.ID().RunID().HistoryID() != snap.HistoryID() || !present || source.Sequence() == 0 || source.CID() == (contentid.CID{}) {
 				panic("request scope/source")
 			}
 			if retry, ok := v.RetryOf(); ok {
