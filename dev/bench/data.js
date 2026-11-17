@@ -383812,6 +383812,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794939889076,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dfeea8bb52d36969991ea62456cb19481cbc8a78",
+          "message": "fix(sdk): ignore the unpatched picomatch advisory in the SDK audit (#2837)",
+          "timestamp": "2026-11-17T19:24:10+01:00",
+          "tree_id": "de8263509656cd8f1cbbee721ed9a3475272bbce",
+          "url": "https://github.com/stacklok/mecatl/commit/dfeea8bb52d36969991ea62456cb19481cbc8a78"
+        },
+        "date": 1794940624996,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -554102,6 +554136,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794940621260,
+  "lastUpdate": 1794940625889,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
