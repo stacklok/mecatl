@@ -30,14 +30,14 @@ Mecatl uses two authorization servers so that it can work with an MCP gateway it
 
 Between them, for each call, the broker runs two steps, detailed in [credentials and lifecycle](credentials-and-lifecycle.md#7-id-jag-from-as-1):
 
-1. It exchanges `RT-A42` at AS-1 (RFC 8693), with the agent-instance JWT-SVID as `actor_token`, and receives an **ID-JAG** ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) addressed to AS-2.
+1. It exchanges `RT-A42` at AS-1 (RFC 8693), with the agent-instance JWT-SVID as `actor_token`, and receives an **ID-JAG** ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) addressed to AS-2.
 2. It redeems the ID-JAG at AS-2 with the RFC 7523 JWT-bearer grant and receives the AS-2 access token `V`.
 
 The broker authenticates at both servers as one OAuth client, `mecatl`, with `private_key_jwt`. ID-JAG §4.4.1 requires the ID-JAG's `client_id` to match the client that redeems it, so one client ID is used at both. `mecatl` is the broker's client registration, not an identity of the acting agent. The [broker client authentication step](credentials-and-lifecycle.md#5-broker-client-authentication) shows the client assertion.
 
 AS-2 receives neither Alice's AS-1 access token, `RT-A42`, nor the SVID. It receives only the ID-JAG.
 
-AS-1 and AS-2 have separate issuer identities, keys, and storage, also in embedded mode. ID-JAG §9.3 says the profile is intended for parties in different trust domains, in the OAuth sense, which this design calls [administrative domains](credentials-and-lifecycle.md#7-id-jag-from-as-1); and that an IdP must not issue access tokens in response to an ID-JAG it issued itself in the same domain, because that could broaden authorization. External mode fits that scope. Embedded mode does not: AS-1, AS-2, and the credential store share one administrative domain, and separate keys do not create a boundary. See [embedded mode](#embedded-mode). The agent-instance issuer is a third identity role. RFC 8693 standardizes token-exchange input and output in [§§2.1 and 2.2.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-2), token-type identifiers in [§3](https://www.rfc-editor.org/rfc/rfc8693.html#section-3), and `act` in [§4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1). ID-JAG is a profile of [identity chaining across domains, revision 17](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html): it reuses that draft's exchange, RFC 7523 redemption, and no-refresh-token rule, and adds an explicit `typ`, required `client_id`, `jti`, `iat`, and `aud`, client-binding redemption checks, and security rules. Both are Internet-Drafts, not RFCs.
+AS-1 and AS-2 have separate issuer identities, keys, and storage, also in embedded mode. ID-JAG §9.4 says the profile is intended for parties in different trust domains, in the OAuth sense, which this design calls [administrative domains](credentials-and-lifecycle.md#7-id-jag-from-as-1); and that an IdP must not issue access tokens in response to an ID-JAG it issued itself in the same domain, because that could broaden authorization. External mode fits that scope. Embedded mode does not: AS-1, AS-2, and the credential store share one administrative domain, and separate keys do not create a boundary. See [embedded mode](#embedded-mode). The agent-instance issuer is a third identity role. RFC 8693 standardizes token-exchange input and output in [§§2.1 and 2.2.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-2), token-type identifiers in [§3](https://www.rfc-editor.org/rfc/rfc8693.html#section-3), and `act` in [§4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1). ID-JAG is a profile of [identity chaining across domains, revision 17](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html): it reuses that draft's exchange, RFC 7523 redemption, and no-refresh-token rule, and adds an explicit `typ`, required `client_id`, `jti`, `iat`, and `aud`, client-binding redemption checks, and security rules. Both are Internet-Drafts, not RFCs.
 
 ## How AS-2 resolves the user
 
@@ -61,7 +61,7 @@ There is one row per (gateway, local user, client, `actor_iss`). On each redempt
 
 The approval flow and the link-swap attack it must resist are in the [implementation companion](implementation.md#external-consent-link). The gateway UI, or Mecatl, can revoke an approval; a client may revoke only approvals that name it.
 
-An unresolved or unapproved subject fails closed, with reason `consent_required` in external mode. AS-2 must not create a user as a side effect of lookup. Resolving the user does not establish that a provider connection exists; the vMCP's credential lookup remains a separate check.
+An unresolved or unapproved subject fails closed with `access_denied`: reason `consent_required` in external mode, `subject_unknown` in embedded mode. AS-2 must not create a user as a side effect of lookup. Resolving the user does not establish that a provider connection exists; the vMCP's credential lookup remains a separate check.
 
 ## Gateway administrator configuration
 
@@ -85,7 +85,7 @@ Embedded mode runs AS-1, AS-2, and the vMCP inside the Mecatl deployment. While 
 
 This keeps one protocol path for both modes. It does not add isolation: anyone who compromises the process holds both keys.
 
-Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, because all three parties share one administrative domain. It reuses the ID-JAG format so both modes share one protocol, not to claim a trust boundary. The section's requirement still holds: AS-1 never issues an access token from its own ID-JAG, because AS-2 issues `V`. The scope broadening §9.3 guards against is bounded because AS-2 issues `V` only for the vMCP resource and issues no refresh token. Distinct issuers, audiences, and `typ` values keep the ID-JAG from being used as an AS-2 access token.
+Embedded mode is outside the cross-domain scope that ID-JAG §9.4 states, because all three parties share one administrative domain. It reuses the ID-JAG format so both modes share one protocol, not to claim a trust boundary. The section's requirement still holds: AS-1 never issues an access token from its own ID-JAG, because AS-2 issues `V`. The scope broadening §9.4 guards against is bounded because AS-2 issues `V` only for the vMCP resource and issues no refresh token. Distinct issuers, audiences, and `typ` values keep the ID-JAG from being used as an AS-2 access token.
 
 ## Outside this chapter
 
