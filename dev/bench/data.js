@@ -425392,6 +425392,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794939893565,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dfeea8bb52d36969991ea62456cb19481cbc8a78",
+          "message": "fix(sdk): ignore the unpatched picomatch advisory in the SDK audit (#2837)",
+          "timestamp": "2026-11-17T19:24:10+01:00",
+          "tree_id": "de8263509656cd8f1cbbee721ed9a3475272bbce",
+          "url": "https://github.com/stacklok/mecatl/commit/dfeea8bb52d36969991ea62456cb19481cbc8a78"
+        },
+        "date": 1794940629963,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13381,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12878,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -554136,6 +554175,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794940625889,
+  "lastUpdate": 1794940630825,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
