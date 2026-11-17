@@ -16,11 +16,7 @@ func usageFixture() format.Usage {
 		ID:         1,
 		Definition: &format.UsageDefinition{Purpose: " Future Purpose ", Granularity: format.UsageGranularityAggregate, RunID: new(uint64(2)), RequestID: new(uint64(3))},
 		Report: format.UsageReport{State: format.UsageReportActive, Buckets: []format.UsageBucket{
-			{Attribution: format.UsageAttribution{
-				Selected: &format.UsageSelectedIdentity{Provider: new(" Gateway "), Model: new("Selected/Model")},
-				Observed: &format.UsageObservedIdentity{Provider: new("Actual"), Model: new("Observed/Model"), Source: " API/source "},
-				Charging: &format.UsageChargingService{Label: " Service ", Source: "Meter"},
-			}, Counters: format.UsageCounters{Input: new(int64(0)), Output: new(int64(math.MaxInt64)), CacheRead: new(int64(7)), CacheWrite: new(int64(8)), Reasoning: new(int64(9))}},
+			{SelectedRoute: new(" Gateway "), SelectedModel: new("Selected/Model"), Counters: format.UsageCounters{Input: new(int64(0)), Output: new(int64(math.MaxInt64)), CacheRead: new(int64(7)), CacheWrite: new(int64(8)), Reasoning: new(int64(9))}},
 			{}, // Unknown bucket, retained in order; no equations or deduplication.
 		}, Raw: &format.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{1, 2, 3}}},
 	}
@@ -37,7 +33,7 @@ func TestUsageRoundTripAndPresence(t *testing.T) {
 		t.Fatalf("exact round trip: %v", err)
 	}
 	*v.Definition.RunID = 99
-	*v.Report.Buckets[0].Attribution.Selected.Provider = "changed"
+	*v.Report.Buckets[0].SelectedRoute = "changed"
 	v.Report.Raw.Data[0] = 99
 	if !got.Equal(usageFixture()) {
 		t.Fatal("decode aliased input")
@@ -47,16 +43,12 @@ func TestUsageRoundTripAndPresence(t *testing.T) {
 	if zero.Equal(got) {
 		t.Fatal("reported zero equaled unknown")
 	}
-	// Each valid shape is independent: partial attribution never requires the
-	// other identity, counters, raw, or a model response.
 	for _, bucket := range []format.UsageBucket{
 		{},
 		{Counters: format.UsageCounters{Reasoning: new(int64(20))}},
-		{Attribution: format.UsageAttribution{Selected: &format.UsageSelectedIdentity{Provider: new("route")}}},
-		{Attribution: format.UsageAttribution{Selected: &format.UsageSelectedIdentity{Model: new("model")}}},
-		{Attribution: format.UsageAttribution{Observed: &format.UsageObservedIdentity{Provider: new("provider"), Source: "source"}}},
-		{Attribution: format.UsageAttribution{Observed: &format.UsageObservedIdentity{Model: new("model"), Source: "source"}}},
-		{Attribution: format.UsageAttribution{Charging: &format.UsageChargingService{Label: "service", Source: "source"}}},
+		{SelectedRoute: new("route")},
+		{SelectedModel: new("model")},
+		{SelectedRoute: new("route"), SelectedModel: new("model")},
 	} {
 		v := format.Usage{ID: 1, Report: format.UsageReport{State: format.UsageReportActive, Buckets: []format.UsageBucket{bucket, bucket}}}
 		wire, err := codec.Encode(v, limits())
@@ -64,7 +56,7 @@ func TestUsageRoundTripAndPresence(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got, err := codec.Decode[format.Usage](wire, limits()); err != nil || !got.Equal(v) {
-			t.Fatalf("partial attribution roundtrip: %v", err)
+			t.Fatalf("independent selected labels roundtrip: %v", err)
 		}
 	}
 	for _, state := range []format.UsageReportState{format.UsageReportActive, format.UsageReportWithdrawn} {
@@ -86,6 +78,24 @@ func TestUsageRoundTripAndPresence(t *testing.T) {
 	v.Report.Buckets = nil // Raw-only first report is valid.
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	activeZero := format.Usage{ID: 1, Report: format.UsageReport{State: format.UsageReportActive, Buckets: []format.UsageBucket{{Counters: format.UsageCounters{Input: new(int64(0))}}}}}
+	if err := activeZero.Validate(); err != nil {
+		t.Fatalf("active report with explicit zero: %v", err)
+	}
+}
+
+func TestUsageZeroInvalid(t *testing.T) {
+	var zero format.Usage
+	if zero.Validate() == nil {
+		t.Fatal("zero Usage validated")
+	}
+	if out, err := codec.Encode(zero, limits()); !errors.Is(err, codec.ErrInvalidData) || out != nil {
+		t.Fatalf("zero Usage encode: %v", err)
+	}
+	wire := zero.AppendCBOR(nil)
+	if got, err := codec.Decode[format.Usage](wire, limits()); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(got, format.Usage{}) {
+		t.Fatalf("zero Usage decode: %v", err)
 	}
 }
 
@@ -113,26 +123,16 @@ func TestUsageLocalValidation(t *testing.T) {
 			v.Report.State = format.UsageReportWithdrawn
 			v.Report.Buckets = nil
 		},
-		"negative input":          func(v *format.Usage) { v.Report.Buckets[0].Counters.Input = new(int64(-1)) },
-		"negative output":         func(v *format.Usage) { v.Report.Buckets[0].Counters.Output = new(int64(-1)) },
-		"negative cache read":     func(v *format.Usage) { v.Report.Buckets[0].Counters.CacheRead = new(int64(-1)) },
-		"negative cache write":    func(v *format.Usage) { v.Report.Buckets[0].Counters.CacheWrite = new(int64(-1)) },
-		"negative reasoning":      func(v *format.Usage) { v.Report.Buckets[0].Counters.Reasoning = new(int64(-1)) },
-		"empty selected":          func(v *format.Usage) { v.Report.Buckets[0].Attribution.Selected = &format.UsageSelectedIdentity{} },
-		"empty selected provider": func(v *format.Usage) { v.Report.Buckets[0].Attribution.Selected.Provider = new("") },
-		"invalid selected model":  func(v *format.Usage) { v.Report.Buckets[0].Attribution.Selected.Model = &badUTF8 },
-		"empty observed": func(v *format.Usage) {
-			v.Report.Buckets[0].Attribution.Observed = &format.UsageObservedIdentity{Source: "source"}
-		},
-		"invalid observed provider": func(v *format.Usage) { v.Report.Buckets[0].Attribution.Observed.Provider = &badUTF8 },
-		"empty observed model":      func(v *format.Usage) { v.Report.Buckets[0].Attribution.Observed.Model = new("") },
-		"missing observed source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Observed.Source = "" },
-		"invalid observed source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Observed.Source = badUTF8 },
-		"missing charging label":    func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Label = "" },
-		"invalid charging label":    func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Label = badUTF8 },
-		"missing charging source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Source = "" },
-		"invalid charging source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Source = badUTF8 },
-		"invalid raw":               func(v *format.Usage) { v.Report.Raw.Version = 0 },
+		"negative input":         func(v *format.Usage) { v.Report.Buckets[0].Counters.Input = new(int64(-1)) },
+		"negative output":        func(v *format.Usage) { v.Report.Buckets[0].Counters.Output = new(int64(-1)) },
+		"negative cache read":    func(v *format.Usage) { v.Report.Buckets[0].Counters.CacheRead = new(int64(-1)) },
+		"negative cache write":   func(v *format.Usage) { v.Report.Buckets[0].Counters.CacheWrite = new(int64(-1)) },
+		"negative reasoning":     func(v *format.Usage) { v.Report.Buckets[0].Counters.Reasoning = new(int64(-1)) },
+		"empty selected route":   func(v *format.Usage) { v.Report.Buckets[0].SelectedRoute = new("") },
+		"invalid selected route": func(v *format.Usage) { v.Report.Buckets[0].SelectedRoute = &badUTF8 },
+		"empty selected model":   func(v *format.Usage) { v.Report.Buckets[0].SelectedModel = new("") },
+		"invalid selected model": func(v *format.Usage) { v.Report.Buckets[0].SelectedModel = &badUTF8 },
+		"invalid raw":            func(v *format.Usage) { v.Report.Raw.Version = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := usageFixture()
@@ -197,7 +197,6 @@ func TestUsageCodecBoundsAndMalformed(t *testing.T) {
 			}
 		})
 	}
-	// Pin the smallest active report's keys and required empty bucket array.
 	minimal := format.Usage{ID: 1, Report: format.UsageReport{State: format.UsageReportActive}}
 	want := []byte("\xa2\x61o\x01\x61r\xa2\x61b\x80\x61s\x66active")
 	if wire, err := codec.Encode(minimal, limits()); err != nil || !bytes.Equal(wire, want) {
@@ -229,20 +228,15 @@ func TestUsageCloneEqualOwnership(t *testing.T) {
 		"order": func(v *format.Usage) {
 			v.Report.Buckets[0], v.Report.Buckets[1] = v.Report.Buckets[1], v.Report.Buckets[0]
 		},
-		"selected provider": func(v *format.Usage) { *v.Report.Buckets[0].Attribution.Selected.Provider = "changed" },
-		"selected model":    func(v *format.Usage) { *v.Report.Buckets[0].Attribution.Selected.Model = "changed" },
-		"observed provider": func(v *format.Usage) { *v.Report.Buckets[0].Attribution.Observed.Provider = "changed" },
-		"observed model":    func(v *format.Usage) { *v.Report.Buckets[0].Attribution.Observed.Model = "changed" },
-		"observed source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Observed.Source = "changed" },
-		"charging label":    func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Label = "changed" },
-		"charging source":   func(v *format.Usage) { v.Report.Buckets[0].Attribution.Charging.Source = "changed" },
-		"input":             func(v *format.Usage) { *v.Report.Buckets[0].Counters.Input++ },
-		"output":            func(v *format.Usage) { *v.Report.Buckets[0].Counters.Output-- },
-		"cache read":        func(v *format.Usage) { *v.Report.Buckets[0].Counters.CacheRead++ },
-		"cache write":       func(v *format.Usage) { *v.Report.Buckets[0].Counters.CacheWrite++ },
-		"reasoning":         func(v *format.Usage) { *v.Report.Buckets[0].Counters.Reasoning++ },
-		"raw bytes":         func(v *format.Usage) { v.Report.Raw.Data[0]++ },
-		"raw metadata":      func(v *format.Usage) { v.Report.Raw.Producer = "changed" },
+		"selected route": func(v *format.Usage) { *v.Report.Buckets[0].SelectedRoute = "changed" },
+		"selected model": func(v *format.Usage) { *v.Report.Buckets[0].SelectedModel = "changed" },
+		"input":          func(v *format.Usage) { *v.Report.Buckets[0].Counters.Input++ },
+		"output":         func(v *format.Usage) { *v.Report.Buckets[0].Counters.Output-- },
+		"cache read":     func(v *format.Usage) { *v.Report.Buckets[0].Counters.CacheRead++ },
+		"cache write":    func(v *format.Usage) { *v.Report.Buckets[0].Counters.CacheWrite++ },
+		"reasoning":      func(v *format.Usage) { *v.Report.Buckets[0].Counters.Reasoning++ },
+		"raw bytes":      func(v *format.Usage) { v.Report.Raw.Data[0]++ },
+		"raw metadata":   func(v *format.Usage) { v.Report.Raw.Producer = "changed" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := usageFixture()

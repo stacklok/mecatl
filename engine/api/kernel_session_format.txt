@@ -47,16 +47,12 @@
     method func (*ToolReturnStatus).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*ToolReturned).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Usage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*UsageAttribution).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageBucket).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*UsageChargingService).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageCounters).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageDefinition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageGranularity).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*UsageObservedIdentity).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageReport).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageReportState).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*UsageSelectedIdentity).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UserInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UserInstructions).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*WorkspaceFileSource).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -292,21 +288,11 @@
     method func (Usage).Clone() Usage
     method func (Usage).Equal(other Usage) bool
     method func (Usage).Validate() error
-    method func (UsageAttribution).AppendCBOR(dst []byte) []byte
-    method func (UsageAttribution).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (UsageAttribution).Clone() UsageAttribution
-    method func (UsageAttribution).Equal(other UsageAttribution) bool
-    method func (UsageAttribution).Validate() error
     method func (UsageBucket).AppendCBOR(dst []byte) []byte
     method func (UsageBucket).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageBucket).Clone() UsageBucket
     method func (UsageBucket).Equal(other UsageBucket) bool
     method func (UsageBucket).Validate() error
-    method func (UsageChargingService).AppendCBOR(dst []byte) []byte
-    method func (UsageChargingService).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (UsageChargingService).Clone() UsageChargingService
-    method func (UsageChargingService).Equal(other UsageChargingService) bool
-    method func (UsageChargingService).Validate() error
     method func (UsageCounters).AppendCBOR(dst []byte) []byte
     method func (UsageCounters).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageCounters).Clone() UsageCounters
@@ -321,11 +307,6 @@
     method func (UsageGranularity).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageGranularity).Clone() UsageGranularity
     method func (UsageGranularity).Equal(other UsageGranularity) bool
-    method func (UsageObservedIdentity).AppendCBOR(dst []byte) []byte
-    method func (UsageObservedIdentity).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (UsageObservedIdentity).Clone() UsageObservedIdentity
-    method func (UsageObservedIdentity).Equal(other UsageObservedIdentity) bool
-    method func (UsageObservedIdentity).Validate() error
     method func (UsageReport).AppendCBOR(dst []byte) []byte
     method func (UsageReport).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageReport).Clone() UsageReport
@@ -335,11 +316,6 @@
     method func (UsageReportState).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageReportState).Clone() UsageReportState
     method func (UsageReportState).Equal(other UsageReportState) bool
-    method func (UsageSelectedIdentity).AppendCBOR(dst []byte) []byte
-    method func (UsageSelectedIdentity).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (UsageSelectedIdentity).Clone() UsageSelectedIdentity
-    method func (UsageSelectedIdentity).Equal(other UsageSelectedIdentity) bool
-    method func (UsageSelectedIdentity).Validate() error
     method func (UserInput).AppendCBOR(dst []byte) []byte
     method func (UserInput).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UserInput).Clone() UserInput
@@ -476,16 +452,12 @@ type ToolResource struct{URI string "cbor:\"u\" cborlimit:\"bytes=16384\""; Name
 type ToolReturnStatus string
 type ToolReturned struct{Status ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=32\""; Output ToolOutput "cbor:\"o\""}
 type Usage struct{ID uint64 "cbor:\"o\" view:\"manual\""; Definition *UsageDefinition "cbor:\"d,omitempty\" view:\"manual\""; Report UsageReport "cbor:\"r\""}
-type UsageAttribution struct{Selected *UsageSelectedIdentity "cbor:\"s,omitempty\""; Observed *UsageObservedIdentity "cbor:\"o,omitempty\""; Charging *UsageChargingService "cbor:\"c,omitempty\""}
-type UsageBucket struct{Attribution UsageAttribution "cbor:\"a\""; Counters UsageCounters "cbor:\"c\""}
-type UsageChargingService struct{Label string "cbor:\"l\""; Source string "cbor:\"s\""}
+type UsageBucket struct{SelectedRoute *string "cbor:\"r,omitempty\""; SelectedModel *string "cbor:\"m,omitempty\""; Counters UsageCounters "cbor:\"c\""}
 type UsageCounters struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""}
 type UsageDefinition struct{Purpose string "cbor:\"p\""; Granularity UsageGranularity "cbor:\"g\""; RunID *uint64 "cbor:\"r,omitempty\" view:\"manual\""; RequestID *uint64 "cbor:\"q,omitempty\" view:\"manual\""}
 type UsageGranularity string
-type UsageObservedIdentity struct{Provider *string "cbor:\"p,omitempty\""; Model *string "cbor:\"m,omitempty\""; Source string "cbor:\"s\""}
 type UsageReport struct{State UsageReportState "cbor:\"s\""; Buckets []UsageBucket "cbor:\"b\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
 type UsageReportState string
-type UsageSelectedIdentity struct{Provider *string "cbor:\"p,omitempty\""; Model *string "cbor:\"m,omitempty\""}
 type UserInput struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"i\" view:\"manual\""; Parts []ContentPart "cbor:\"p\""}
 type UserInstructions struct{Blocks []InstructionBlock "cbor:\"b\""}
 type WorkspaceFileSource struct{Path string "cbor:\"p\""}

@@ -248,16 +248,10 @@
     method func (ToolSettlement).BulkEnding() (RunEndedView, bool)
     method func (ToolSettlement).Category() ToolSettlementCategory
     method func (ToolSettlement).ExplicitDisposition() (ToolDispositionView, bool)
-    method func (UsageAttributionView).Charging() (UsageChargingServiceView, bool)
-    method func (UsageAttributionView).MutableClone() format.UsageAttribution
-    method func (UsageAttributionView).Observed() (UsageObservedIdentityView, bool)
-    method func (UsageAttributionView).Selected() (UsageSelectedIdentityView, bool)
-    method func (UsageBucketView).Attribution() UsageAttributionView
     method func (UsageBucketView).Counters() UsageCountersView
     method func (UsageBucketView).MutableClone() format.UsageBucket
-    method func (UsageChargingServiceView).Label() string
-    method func (UsageChargingServiceView).MutableClone() format.UsageChargingService
-    method func (UsageChargingServiceView).Source() string
+    method func (UsageBucketView).SelectedModel() (string, bool)
+    method func (UsageBucketView).SelectedRoute() (string, bool)
     method func (UsageCountersView).CacheRead() (int64, bool)
     method func (UsageCountersView).CacheWrite() (int64, bool)
     method func (UsageCountersView).Input() (int64, bool)
@@ -273,17 +267,10 @@
     method func (UsageID).HistoryID() id.HistoryID
     method func (UsageID).HistoryRelative() uint64
     method func (UsageID).Validate() error
-    method func (UsageObservedIdentityView).Model() (string, bool)
-    method func (UsageObservedIdentityView).MutableClone() format.UsageObservedIdentity
-    method func (UsageObservedIdentityView).Provider() (string, bool)
-    method func (UsageObservedIdentityView).Source() string
     method func (UsageReportView).Buckets() views.SliceView[format.UsageBucket, UsageBucketView]
     method func (UsageReportView).MutableClone() format.UsageReport
     method func (UsageReportView).Raw() (OpaqueProviderDataView, bool)
     method func (UsageReportView).State() format.UsageReportState
-    method func (UsageSelectedIdentityView).Model() (string, bool)
-    method func (UsageSelectedIdentityView).MutableClone() format.UsageSelectedIdentity
-    method func (UsageSelectedIdentityView).Provider() (string, bool)
     method func (UsageView).Definition() (UsageDefinitionView, bool)
     method func (UsageView).ID() UsageID
     method func (UsageView).MutableClone() format.Usage
@@ -464,25 +451,17 @@ type ToolReturned = format.ToolReturned
 type ToolReturnedView struct{}
 type ToolSettlement struct{}
 type ToolSettlementCategory uint8
-type UsageAttribution = format.UsageAttribution
-type UsageAttributionView struct{}
 type UsageBucket = format.UsageBucket
 type UsageBucketView struct{}
-type UsageChargingService = format.UsageChargingService
-type UsageChargingServiceView struct{}
 type UsageCounters = format.UsageCounters
 type UsageCountersView struct{}
 type UsageDefinition struct{Purpose string; Granularity UsageGranularity; RunID RunID; RequestID ModelRequestID}
 type UsageDefinitionView struct{}
 type UsageGranularity = format.UsageGranularity
 type UsageID struct{}
-type UsageObservedIdentity = format.UsageObservedIdentity
-type UsageObservedIdentityView struct{}
 type UsageReport = format.UsageReport
 type UsageReportState = format.UsageReportState
 type UsageReportView struct{}
-type UsageSelectedIdentity = format.UsageSelectedIdentity
-type UsageSelectedIdentityView struct{}
 type UsageView struct{}
 type UserInput = format.UserInput
 type UserInputID struct{}

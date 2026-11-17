@@ -5,13 +5,15 @@ import (
 	"unicode/utf8"
 )
 
-// Usage is one complete accounting report for a history-scoped identity. The
-// first record alone carries Definition and must be active; later records omit
-// Definition. Accepted chronological order determines the latest replacement,
-// never a delta, merge, or timestamp. Reports may repeat or decrease counters.
-// Assignment shares nested storage; Clone detaches it. Zero is invalid.
-// Local validation cannot prove first occurrence, allocation, or membership;
-// those checks belong to aggregate admission.
+// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Go value is invalid because it lacks a positive ID and a valid report state.
+// Explicitly reported zero token counts are valid and distinct from absent counts.
+// The first record alone carries Definition and must be active; later records omit
+// Definition. That first-record rule is aggregate policy; local validation cannot
+// prove it. Accepted chronological order determines the latest replacement, never
+// a delta, merge, or timestamp. Reports may repeat or decrease counters. Assignment
+// shares nested storage; Clone detaches it. Local validation cannot prove allocation
+// or membership; those checks belong to aggregate admission.
 //
 //dtogen:include
 //dtogen:validate validateLocal

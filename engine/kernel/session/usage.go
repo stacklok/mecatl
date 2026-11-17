@@ -56,8 +56,9 @@ const (
 )
 
 // UsageView retains immutable record backing and enclosing history scope for its
-// lifetime. Zero has zero ID, no definition and a zero report. Navigation is O(1)
-// without sibling clones; MutableClone detaches the payload, not enclosing scope.
+// lifetime. Zero has zero ID, no definition and an invalid zero report. Navigation
+// is O(1) without sibling clones; MutableClone detaches the payload, not enclosing
+// scope.
 //
 //dtogen:include
 type UsageView struct {
