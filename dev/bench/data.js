@@ -382738,6 +382738,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794929303666,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95c61c922fe642e655aa6736f25e951f8d5ca3a1",
+          "message": "perf(dtogen): share owner overlays and batch output type checks (#2833)\n\nA repository render recomputed the owner overlays for every target and\ntype checked each generated artifact with its own `packages.Load`.\n`renderTargets` now shares owner overlays across loads that resolve to\nidentical target lists. Each load gets its own copies, because\n`loadPrerequisites` rewrites `Wire` and `Names`. Generated outputs are\ntype checked with one load per module, and diagnostics are still\nreported per artifact.\n\n`TestTaskGenerationAndFreshness` runs the inventory scenarios in\nprocess through `GenerateRepository`. It keeps `task` runs only for the\nTaskfile wiring.\n\n`dtogen -repo . -check` drops from 216 to 59 `go list` calls (13.4s to\n5.4s), and its output is byte-identical. The `internal/dtogen` test\npackage drops from 190s to 148s.",
+          "timestamp": "2026-11-17T17:09:18+01:00",
+          "tree_id": "d315c5b2a31ca0c9b4f0ae2f030918b0259860cb",
+          "url": "https://github.com/stacklok/mecatl/commit/95c61c922fe642e655aa6736f25e951f8d5ca3a1"
+        },
+        "date": 1794932481465,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -552569,6 +552603,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794932478263,
+  "lastUpdate": 1794932482392,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
