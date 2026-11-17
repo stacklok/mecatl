@@ -422216,6 +422216,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794887010273,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9598f7c6675a4e3bfdb9eabcbe89eb91c402bbc4",
+          "message": "feat(server): honor execution capability requests in mecak8s (#2816)\n\nAdmit `execution.template.capabilities` in the shared `Service`\ncreate path instead of refusing every request. A request is honored\nexactly or refused, never narrowed. Malformed names return\n`INVALID_ARGUMENT`. Requests that cannot be honored return\n`FAILED_PRECONDITION` with a reason, via\n`ErrExecutionCapabilityRefused`.\n\nThe request reaches the provider through `EnsureTemplate`, and the\nsession records the admitted set. Without `foreground-command`, the\nsession gets no `Shell` tool and no runner. Resume reuses the recorded\nset without re-admission.\n\n`/clear`, fork and scheduled fires request their source's recorded\nset. On a `--no-shell` deployment, they are refused before anything is\nreserved.\n\nCloses #2712",
+          "timestamp": "2026-11-17T10:17:43+01:00",
+          "tree_id": "4cf23c0028e5ed3f887cb79213e437ccea50c34d",
+          "url": "https://github.com/stacklok/mecatl/commit/9598f7c6675a4e3bfdb9eabcbe89eb91c402bbc4"
+        },
+        "date": 1794907772478,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13401,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12895,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -550048,6 +550087,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794907769319,
+  "lastUpdate": 1794907773428,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
