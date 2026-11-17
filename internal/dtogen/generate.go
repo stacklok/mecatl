@@ -38,6 +38,7 @@ type artifact struct {
 func renderTargets(ctx context.Context, targets []LoadConfig) ([]artifact, error) {
 	var artifacts []artifact
 	overlay := map[string][]byte{}
+	owners := ownerCache{}
 	for _, target := range targets {
 		path, err := filepath.Abs(filepath.Join(target.Dir, target.Output))
 		if err != nil {
@@ -46,7 +47,7 @@ func renderTargets(ctx context.Context, targets []LoadConfig) ([]artifact, error
 		if _, ok := overlay[path]; ok {
 			continue
 		}
-		loaded, err := Load(ctx, target)
+		loaded, err := load(ctx, target, owners)
 		if err != nil {
 			return nil, err
 		}
@@ -62,16 +63,71 @@ func renderTargets(ctx context.Context, targets []LoadConfig) ([]artifact, error
 			artifacts = append(artifacts, artifact{owner.Output, data})
 		}
 	}
-	for _, artifact := range artifacts {
-		if _, err := loadOne(&packages.Config{
-			Context: ctx, Dir: filepath.Dir(artifact.path), Env: loadEnvironment(),
-			Mode:    packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
-			Overlay: overlay,
-		}); err != nil {
-			return nil, fmt.Errorf("typecheck generated output %s: %w", artifact.path, err)
-		}
+	if err := typecheckArtifacts(ctx, artifacts, overlay); err != nil {
+		return nil, err
 	}
 	return artifacts, nil
+}
+
+// typecheckArtifacts loads every artifact package once per module, in artifact order.
+func typecheckArtifacts(
+	ctx context.Context,
+	artifacts []artifact,
+	overlay map[string][]byte,
+) error {
+	modules := map[string][]string{}
+	var order []string
+	for _, artifact := range artifacts {
+		dir := filepath.Dir(artifact.path)
+		module := moduleRoot(dir)
+		if _, ok := modules[module]; !ok {
+			order = append(order, module)
+		}
+		modules[module] = append(modules[module], dir)
+	}
+	loaded := map[string]*packages.Package{}
+	for _, module := range order {
+		mode := packages.NeedName | packages.NeedFiles | packages.NeedTypes |
+			packages.NeedImports | packages.NeedDeps
+		cfg := &packages.Config{
+			Context: ctx,
+			Dir:     module,
+			Env:     loadEnvironment(),
+			Mode:    mode,
+			Overlay: overlay,
+		}
+		pkgs, err := packages.Load(cfg, modules[module]...)
+		if err != nil {
+			return fmt.Errorf("typecheck generated outputs in %s: %w", module, err)
+		}
+		for _, pkg := range pkgs {
+			if len(pkg.GoFiles) != 0 {
+				loaded[filepath.Dir(pkg.GoFiles[0])] = pkg
+			}
+		}
+	}
+	for _, artifact := range artifacts {
+		pkg := loaded[filepath.Dir(artifact.path)]
+		if pkg == nil {
+			return fmt.Errorf("typecheck generated output %s: package not loaded", artifact.path)
+		}
+		if err := loadDiagnostics([]*packages.Package{pkg}); err != nil {
+			return fmt.Errorf("typecheck generated output %s: %w", artifact.path, err)
+		}
+	}
+	return nil
+}
+
+// moduleRoot returns the nearest directory containing go.mod, or dir itself.
+func moduleRoot(dir string) string {
+	for p := dir; ; p = filepath.Dir(p) {
+		if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+			return p
+		}
+		if filepath.Dir(p) == p {
+			return dir
+		}
+	}
 }
 
 // writeArtifact atomically installs a completely rendered owner artifact.
