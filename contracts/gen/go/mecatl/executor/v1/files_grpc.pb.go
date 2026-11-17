@@ -43,14 +43,12 @@ const (
 //
 // FileService serves Workspace and WorkspaceNamespace on workspace-relative paths.
 type FileServiceClient interface {
-	// Whole files travel in one message, up to executionenv.MaxFileBytes (5 MiB),
-	// above gRPC's 4 MiB default, so both ends must raise the message limit.
-	// File transfer will likely need review, for example chunked streaming.
-	ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (*ReadFileResponse, error)
+	// Chunking: docs/drafts/kubernetes-execution/executor-protocol.md#file-content.
+	ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFileResponse], error)
 	StatFile(ctx context.Context, in *StatFileRequest, opts ...grpc.CallOption) (*StatFileResponse, error)
 	// Create-only.
-	CreateFile(ctx context.Context, in *CreateFileRequest, opts ...grpc.CallOption) (*CreateFileResponse, error)
-	ReplaceFile(ctx context.Context, in *ReplaceFileRequest, opts ...grpc.CallOption) (*ReplaceFileResponse, error)
+	CreateFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CreateFileRequest, CreateFileResponse], error)
+	ReplaceFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplaceFileRequest, ReplaceFileResponse], error)
 	ReadDir(ctx context.Context, in *ReadDirRequest, opts ...grpc.CallOption) (*ReadDirResponse, error)
 	RemoveFile(ctx context.Context, in *RemoveFileRequest, opts ...grpc.CallOption) (*RemoveFileResponse, error)
 	RenameFile(ctx context.Context, in *RenameFileRequest, opts ...grpc.CallOption) (*RenameFileResponse, error)
@@ -68,15 +66,24 @@ func NewFileServiceClient(cc grpc.ClientConnInterface) FileServiceClient {
 	return &fileServiceClient{cc}
 }
 
-func (c *fileServiceClient) ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (*ReadFileResponse, error) {
+func (c *fileServiceClient) ReadFile(ctx context.Context, in *ReadFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReadFileResponse)
-	err := c.cc.Invoke(ctx, FileService_ReadFile_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &FileService_ServiceDesc.Streams[0], FileService_ReadFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ReadFileRequest, ReadFileResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_ReadFileClient = grpc.ServerStreamingClient[ReadFileResponse]
 
 func (c *fileServiceClient) StatFile(ctx context.Context, in *StatFileRequest, opts ...grpc.CallOption) (*StatFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -88,25 +95,31 @@ func (c *fileServiceClient) StatFile(ctx context.Context, in *StatFileRequest, o
 	return out, nil
 }
 
-func (c *fileServiceClient) CreateFile(ctx context.Context, in *CreateFileRequest, opts ...grpc.CallOption) (*CreateFileResponse, error) {
+func (c *fileServiceClient) CreateFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CreateFileRequest, CreateFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CreateFileResponse)
-	err := c.cc.Invoke(ctx, FileService_CreateFile_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &FileService_ServiceDesc.Streams[1], FileService_CreateFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[CreateFileRequest, CreateFileResponse]{ClientStream: stream}
+	return x, nil
 }
 
-func (c *fileServiceClient) ReplaceFile(ctx context.Context, in *ReplaceFileRequest, opts ...grpc.CallOption) (*ReplaceFileResponse, error) {
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_CreateFileClient = grpc.ClientStreamingClient[CreateFileRequest, CreateFileResponse]
+
+func (c *fileServiceClient) ReplaceFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReplaceFileRequest, ReplaceFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplaceFileResponse)
-	err := c.cc.Invoke(ctx, FileService_ReplaceFile_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &FileService_ServiceDesc.Streams[2], FileService_ReplaceFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ReplaceFileRequest, ReplaceFileResponse]{ClientStream: stream}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_ReplaceFileClient = grpc.ClientStreamingClient[ReplaceFileRequest, ReplaceFileResponse]
 
 func (c *fileServiceClient) ReadDir(ctx context.Context, in *ReadDirRequest, opts ...grpc.CallOption) (*ReadDirResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -184,14 +197,12 @@ func (c *fileServiceClient) ResolveAuthorityPath(ctx context.Context, in *Resolv
 //
 // FileService serves Workspace and WorkspaceNamespace on workspace-relative paths.
 type FileServiceServer interface {
-	// Whole files travel in one message, up to executionenv.MaxFileBytes (5 MiB),
-	// above gRPC's 4 MiB default, so both ends must raise the message limit.
-	// File transfer will likely need review, for example chunked streaming.
-	ReadFile(context.Context, *ReadFileRequest) (*ReadFileResponse, error)
+	// Chunking: docs/drafts/kubernetes-execution/executor-protocol.md#file-content.
+	ReadFile(*ReadFileRequest, grpc.ServerStreamingServer[ReadFileResponse]) error
 	StatFile(context.Context, *StatFileRequest) (*StatFileResponse, error)
 	// Create-only.
-	CreateFile(context.Context, *CreateFileRequest) (*CreateFileResponse, error)
-	ReplaceFile(context.Context, *ReplaceFileRequest) (*ReplaceFileResponse, error)
+	CreateFile(grpc.ClientStreamingServer[CreateFileRequest, CreateFileResponse]) error
+	ReplaceFile(grpc.ClientStreamingServer[ReplaceFileRequest, ReplaceFileResponse]) error
 	ReadDir(context.Context, *ReadDirRequest) (*ReadDirResponse, error)
 	RemoveFile(context.Context, *RemoveFileRequest) (*RemoveFileResponse, error)
 	RenameFile(context.Context, *RenameFileRequest) (*RenameFileResponse, error)
@@ -209,17 +220,17 @@ type FileServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedFileServiceServer struct{}
 
-func (UnimplementedFileServiceServer) ReadFile(context.Context, *ReadFileRequest) (*ReadFileResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReadFile not implemented")
+func (UnimplementedFileServiceServer) ReadFile(*ReadFileRequest, grpc.ServerStreamingServer[ReadFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReadFile not implemented")
 }
 func (UnimplementedFileServiceServer) StatFile(context.Context, *StatFileRequest) (*StatFileResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StatFile not implemented")
 }
-func (UnimplementedFileServiceServer) CreateFile(context.Context, *CreateFileRequest) (*CreateFileResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateFile not implemented")
+func (UnimplementedFileServiceServer) CreateFile(grpc.ClientStreamingServer[CreateFileRequest, CreateFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method CreateFile not implemented")
 }
-func (UnimplementedFileServiceServer) ReplaceFile(context.Context, *ReplaceFileRequest) (*ReplaceFileResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReplaceFile not implemented")
+func (UnimplementedFileServiceServer) ReplaceFile(grpc.ClientStreamingServer[ReplaceFileRequest, ReplaceFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReplaceFile not implemented")
 }
 func (UnimplementedFileServiceServer) ReadDir(context.Context, *ReadDirRequest) (*ReadDirResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadDir not implemented")
@@ -263,23 +274,16 @@ func RegisterFileServiceServer(s grpc.ServiceRegistrar, srv FileServiceServer) {
 	s.RegisterService(&FileService_ServiceDesc, srv)
 }
 
-func _FileService_ReadFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReadFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _FileService_ReadFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadFileRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(FileServiceServer).ReadFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FileService_ReadFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FileServiceServer).ReadFile(ctx, req.(*ReadFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(FileServiceServer).ReadFile(m, &grpc.GenericServerStream[ReadFileRequest, ReadFileResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_ReadFileServer = grpc.ServerStreamingServer[ReadFileResponse]
 
 func _FileService_StatFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StatFileRequest)
@@ -299,41 +303,19 @@ func _FileService_StatFile_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _FileService_CreateFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(FileServiceServer).CreateFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FileService_CreateFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FileServiceServer).CreateFile(ctx, req.(*CreateFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _FileService_CreateFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(FileServiceServer).CreateFile(&grpc.GenericServerStream[CreateFileRequest, CreateFileResponse]{ServerStream: stream})
 }
 
-func _FileService_ReplaceFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplaceFileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(FileServiceServer).ReplaceFile(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FileService_ReplaceFile_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FileServiceServer).ReplaceFile(ctx, req.(*ReplaceFileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_CreateFileServer = grpc.ClientStreamingServer[CreateFileRequest, CreateFileResponse]
+
+func _FileService_ReplaceFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(FileServiceServer).ReplaceFile(&grpc.GenericServerStream[ReplaceFileRequest, ReplaceFileResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FileService_ReplaceFileServer = grpc.ClientStreamingServer[ReplaceFileRequest, ReplaceFileResponse]
 
 func _FileService_ReadDir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadDirRequest)
@@ -469,20 +451,8 @@ var FileService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*FileServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ReadFile",
-			Handler:    _FileService_ReadFile_Handler,
-		},
-		{
 			MethodName: "StatFile",
 			Handler:    _FileService_StatFile_Handler,
-		},
-		{
-			MethodName: "CreateFile",
-			Handler:    _FileService_CreateFile_Handler,
-		},
-		{
-			MethodName: "ReplaceFile",
-			Handler:    _FileService_ReplaceFile_Handler,
 		},
 		{
 			MethodName: "ReadDir",
@@ -513,6 +483,22 @@ var FileService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _FileService_ResolveAuthorityPath_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ReadFile",
+			Handler:       _FileService_ReadFile_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "CreateFile",
+			Handler:       _FileService_CreateFile_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ReplaceFile",
+			Handler:       _FileService_ReplaceFile_Handler,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "mecatl/executor/v1/files.proto",
 }

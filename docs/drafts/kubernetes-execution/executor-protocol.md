@@ -95,6 +95,30 @@ command ended and left no process running.
 The current provider API returns a command's output in one response. The trusted service can buffer the stream to keep
 that API unchanged, and expose streaming to the agent loop later.
 
+## File content
+
+File content travels in chunks, so the protocol sets no file size limit and every client, proxy, and server keeps
+gRPC's default 4 MiB message limit. `ReadFile` streams its response, and `CreateFile` and `ReplaceFile` stream their
+requests; every other file call is unary. Senders split content into chunks of at most 3 MiB, with no negotiation,
+which leaves room under the limit for the other fields of the first message. Empty content travels as one message with
+no data.
+
+The first message carries everything except the content: the request context, the path, and the expected version of a
+replacement, or the version of a read. Receivers ignore those fields in later messages, which carry only data.
+
+A write takes effect only once the whole content has arrived. The server collects chunks until the caller closes its
+side of the stream, then creates or conditionally replaces the file in one step, checking the expected version at that
+point under the serialization described in [concurrency and visibility](#concurrency-and-visibility). A stream that
+fails or is cancelled before the caller closes it writes nothing. If the stream fails after the caller closes it, the
+caller cannot tell whether the write happened, as with a unary call, and re-reads the file.
+
+A read is a snapshot: the server reads the content and its version together before sending the first chunk. The caller
+uses the content only if the stream ends without an error.
+
+The `Workspace` port still reads and writes whole files. The client assembles a read before returning it and splits a
+write before sending it, and the server does the reverse, so chunks never leave the transport. The authorizing proxy
+decides from the first message and relays the chunks that follow without assembling the file.
+
 ## Concurrency and visibility
 
 The server accepts concurrent calls. File operations and shell programs see the same files because they share one
