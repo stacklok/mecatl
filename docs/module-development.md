@@ -12,23 +12,10 @@ run nested modules' own tests.
 
 ## 1. Identify the affected modules
 
-Inspect the changed modules' `go.mod` files and the modules that depend on them.
-Directory nesting alone does not establish a dependency. The main relationships
-within this repository are:
-
-| Module | Same-repository dependencies |
-| --- | --- |
-| `engine` | None |
-| `provider/ssefilter` | None |
-| `provider/anthropic` | `engine` |
-| `provider/openai`, `provider/openaichat` | `engine`, `provider/ssefilter` |
-| `authn/oidc` | `engine` |
-| `contracts/gen/go/mecatl/driver` | None |
-| `internal/adaptersupport` | `engine` |
-| `adapters` | `engine`, `internal/adaptersupport`, generated driver |
-| `environment/microvm` | `engine` |
-| Root host | Engine, providers, OIDC, persistence modules |
-| `integration/microvm` | Root host, engine, microVM runtime; host dependencies transitively |
+Inspect [`go.work`](../go.work) for module membership, then read the changed
+modules' `go.mod` files and the requirements of other workspace members to find
+their callers. Directory nesting alone does not establish a dependency; the
+manifests define the dependency graph.
 
 Classify public Go API changes under the [engine compatibility policy](../engine/COMPATIBILITY.md)
 and [adapter compatibility policy](../adapters/COMPATIBILITY.md). For engine API
@@ -177,11 +164,10 @@ remain separate, with independent versions. A root release does not publish nest
 Go modules.
 
 The [publication policy](../.github/scripts/module-publication-policy.json)
-classifies every `go.work` member. The public engine, four providers, OIDC,
-generated driver, transitive `internal/adaptersupport`, and adapters are eligible
-for independent publication. Root is the application track; `environment/microvm`
-retains its runtime/artifact role, and `integration/microvm` is test-only. Neither
-microVM module gains an independent Go release through this procedure.
+classifies every `go.work` member and determines which modules are eligible for
+independent publication. Use the `inventory` command below for the current
+classification. See the [policy reference](../.github/scripts/module-publication-policy.md)
+for field meanings, how the tooling uses them, and when to update the file.
 
 Use a full checkout with fetched `origin/main` and tags, Python 3, and the declared
 Go toolchain. Save the exact module-directory-to-version map in
@@ -214,19 +200,25 @@ availability or human authorization.
 
 ### Request and review publication
 
-Before dispatch, an administrator must complete the
-[release protection setup](#release-protection-setup). Entry points require the
-repository variable `MODULE_RELEASES_ENABLED=true`; leave it unset until deployment,
-settings verification, and a separately authorized enforcement rehearsal are done.
-The presence of these scripts or passing offline tests proves none of those live
-prerequisites.
+Before the first release request, an administrator must complete the
+[release protection setup](#release-protection-setup). The repository-wide Actions
+variable `MODULE_RELEASES_ENABLED` is an initial rollout gate: leave it unset
+through deployment, settings verification, and the separately authorized
+enforcement rehearsal, then set it to exactly `true` and leave it enabled for
+normal releases. It is not a per-run input or a switch to toggle between release
+stages. Passing offline tests does not establish those live prerequisites.
 
-1. With explicit authorization for the exact mapping, dispatch
+1. With explicit authorization for the exact mapping, manually run
    [`request-module-release.yml`](../.github/workflows/request-module-release.yml)
-   on `main`. Its required `batch` input is the JSON object above, not a local
-   filename. The workflow previews current main and opens a designated-App-authored
-   request PR under `.github/module-releases/`. Inspect that PR's actual candidate
-   and diff; main can have advanced since your local preview.
+   on `main`. GitHub calls this a workflow **dispatch** (`workflow_dispatch`): in
+   **Actions**, select **Request module releases**, choose **Run workflow**, and
+   select `main`. Supply the JSON object above as the required `batch` input,
+   rather than a local filename. An operator can run it directly or instruct an
+   agent to run it using authorized human-account authentication and the approved
+   mapping; the workflow requires a human triggering account. This opens a
+   designated-App-authored request PR under `.github/module-releases/`, rather
+   than publishing immediately. Inspect that PR's actual candidate and diff;
+   main can have advanced since your local preview.
 2. Review the exact set, versions, dependency order, and compatibility evidence.
    Have a human merge the request PR into `main`. The actual merge SHA, including a
    squash merge, fixes the candidate; the PR-head SHA is not the released identity.
