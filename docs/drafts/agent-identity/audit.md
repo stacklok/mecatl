@@ -85,14 +85,14 @@ These records have limits:
 
 Two event types record how instances relate. Both are marked as reported by mecak8s, because only mecak8s observes these relationships.
 
-- **Registration** (`mecatl_instance_registered`) records the instance, its definition, its session tree, and the `AuditID` of its creation parent's registration.
+- **Registration** (`mecatl_instance_registered`) records the instance with its `ag_` identifier and SPIFFE ID, its definition, its session tree, and the `AuditID` of its creation parent's registration.
 - **Delegation** (`mecatl_delegation`) records the delegation, such as `D42`; the delegating run and instance; the receiving run, its owner, and its instance; and, when the delegating run was itself delegated, the `AuditID` of that parent delegation.
 
 Lineage events are audit records. They are kept for the audit retention period, and session cleanup does not delete them. References between them are `AuditID`s in the append-only audit store, not live session state.
 
 From any tool call, an investigator follows the delegation reference up to the root to reconstruct execution delegation, and registration references to reconstruct creation ancestry. If a reference does not resolve, the reconstruction reports the chain as incomplete, names where it stopped, and gives the reason: unresolved, truncated, or malformed. It stops on a cycle. It never presents a partial chain as complete.
 
-Agent SPIFFE IDs, and so `act.sub`, are opaque on purpose: creation ancestry stays in the broker's registry, inside Mecatl. The registry maps each `ag_` identifier to its registered instance, so an investigator can map a gateway record back to that instance.
+Agent SPIFFE IDs, and so `act.sub`, are opaque on purpose: creation ancestry stays inside Mecatl, in the broker's registry and in the registration events above. An investigator maps a gateway record's `act.sub` to the instance's registration event, then follows the registration references up to the root. The audit store, not the live registry, is the record investigators use.
 
 ## Decision, dispatch, and observed outcome
 
