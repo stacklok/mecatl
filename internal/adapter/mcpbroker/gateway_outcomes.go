@@ -39,7 +39,7 @@ var (
 	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys); change them and retry (code refused_arguments)."}
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
-	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call was already sent and its outcome is unknown; automatic replay refused (code already_sent)."}
+	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call is already claimed or was sent; automatic replay refused (code already_sent)."}
 	outcomeSendOnceFull        = gatewayOutcome{code: "send_once_full", text: "MCP gateway call refused: too many gateway calls are held for this session; the call was not sent (code send_once_full)."}
 	outcomeUnknown             = gatewayOutcome{code: "outcome_unknown", text: "MCP gateway call outcome unknown: the call was sent but the gateway's answer does not show whether it ran; it may have run and is not retried automatically (code outcome_unknown)."}
 )

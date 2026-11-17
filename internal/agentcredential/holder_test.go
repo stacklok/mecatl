@@ -229,6 +229,80 @@ func TestHolderRenewalIsSingleFlight(t *testing.T) {
 	}
 }
 
+func TestHolderRenewalOutlivesTheFirstLookupsCancellation(t *testing.T) {
+	h, b, _ := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	var renewCtx context.Context
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	b.setRegister(func(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		renewCtx = ctx
+		entered <- struct{}{}
+		<-release
+		return registration(req.Incarnation, "credential-renewed", b.clock.Now().Add(10*time.Minute)), nil
+	})
+
+	first, cancel := context.WithCancel(t.Context())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := h.Credential(first, key, true)
+		firstDone <- err
+	}()
+	<-entered
+	waiting := make(chan struct{}, 1)
+	second := make(chan agentcredential.Credential, 1)
+	go func() {
+		cred, _ := h.Credential(&doneSignal{Context: t.Context(), waiting: waiting}, key, true)
+		second <- cred
+	}()
+	<-waiting
+	// The first lookup's run is cancelled: it returns, and the renewal goes on.
+	cancel()
+	select {
+	case err := <-firstDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled lookup = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("a cancelled lookup kept waiting for the shared renewal")
+	}
+	if renewCtx.Err() != nil {
+		t.Fatal("the shared renewal was cancelled with the first lookup")
+	}
+	close(release)
+	if got := <-second; got.Token.Value() != "credential-renewed" {
+		t.Fatalf("waiting lookup = %q, want the renewed credential", got.Token.Value())
+	}
+}
+
+func TestHolderChecksARegistrationAgainstTheTimeItReturns(t *testing.T) {
+	h, b, c := newHolder(t)
+	// The registration takes two minutes and returns a credential that
+	// expired one minute into it.
+	b.setRegister(func(_ context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		expiry := c.Now().Add(time.Minute)
+		c.Advance(2 * time.Minute)
+		return registration(req.Incarnation, "late", expiry), nil
+	})
+	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrExpired) {
+		t.Fatalf("Ensure with a credential that expired during registration = %v, want ErrExpired", err)
+	}
+
+	b.setRegister(nil)
+	mustEnsure(t, h, "bs_1")
+	b.setRegister(func(_ context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		expiry := c.Now().Add(time.Minute)
+		c.Advance(2 * time.Minute)
+		return registration(req.Incarnation, "late", expiry), nil
+	})
+	if _, err := h.Credential(t.Context(), key, true); !errors.Is(err, agentcredential.ErrExpired) {
+		t.Fatalf("renewal with a credential that expired during registration = %v, want ErrExpired", err)
+	}
+	if held, _ := h.Held(key); held.Token.Value() == "late" {
+		t.Fatal("an expired renewal replaced the held credential")
+	}
+}
+
 func TestHolderLookupNeverRegistersMissingEntry(t *testing.T) {
 	h, b, _ := newHolder(t)
 	for _, renew := range []bool{false, true} {

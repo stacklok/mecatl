@@ -15,7 +15,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -194,7 +193,9 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 			args = req.Arguments
 		}
 		res, callErr = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: req.Tool, Arguments: args})
-		if ctx.Err() != nil {
+		// The SDK sends notifications/cancelled only when the cancellation
+		// interrupted the call, not after it returned.
+		if callErr != nil && ctx.Err() != nil {
 			wire.awaitCancelled()
 		}
 		_ = cs.Close()
@@ -510,7 +511,9 @@ func isInvalidTokenChallenge(header string) bool {
 
 // connectLink returns the link of the first URL-mode elicitation in a
 // -32042 error's data, or "" when it is not an absolute https URL without
-// user information, at most 2048 bytes, and free of control characters.
+// user information, at most 2048 bytes, made only of the characters RFC 3986
+// allows in a URI, and unchanged when parsed again. The link reaches the
+// model, so a backend must not be able to add words to it.
 // TODO(#2537): decide which origin the link must also be on (the vMCP's or AS-2's issuer's).
 func connectLink(data json.RawMessage) string {
 	type elicitation struct {
@@ -528,14 +531,25 @@ func connectLink(data json.RawMessage) string {
 		return ""
 	}
 	link := d.Elicitations[i].URL
-	if link == "" || len(link) > maxConnectURLBytes || strings.ContainsFunc(link, unicode.IsControl) {
+	if link == "" || len(link) > maxConnectURLBytes || strings.ContainsFunc(link, notURIChar) {
 		return ""
 	}
 	u, err := url.Parse(link)
-	if err != nil || u.Scheme != httpsScheme || u.Host == "" || u.Opaque != "" || u.User != nil {
+	if err != nil || u.Scheme != httpsScheme || u.Host == "" || u.Opaque != "" || u.User != nil || u.String() != link {
 		return ""
 	}
 	return link
+}
+
+// notURIChar reports whether r is outside RFC 3986's unreserved, reserved,
+// and percent characters.
+func notURIChar(r rune) bool {
+	switch {
+	case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z', '0' <= r && r <= '9':
+		return false
+	default:
+		return !strings.ContainsRune("-._~:/?#[]@!$&'()*+,;=%", r)
+	}
 }
 
 // gatewayMessage is a JSON-RPC message with the attempt's _meta added.
