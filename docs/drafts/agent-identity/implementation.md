@@ -17,9 +17,9 @@ Verify that scheduled invocations preserve owner attribution without treating sa
 
 ## SPIFFE identifier construction
 
-Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
+An agent instance's SPIFFE ID is `spiffe://<trust domain>/agent/<ag_ identifier>` and nothing more: no definition name, incarnation, or creation ancestry. The registry keys each instance by its incarnation and keeps its definition reference and creating instance. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
 
-Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root, which keeps the longest subject under 2,000 bytes, even with 71-byte `legacy_` incarnations; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
+Use literal, nonempty definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
 
 ## Grant record
 
@@ -309,7 +309,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Registration into a closed session, or a session bound to another workload, is refused.
 - A call whose SVID instance differs from the run record's instance is denied; a new run naming no delegation from a child instance is denied; two replicas recording the same new run keep one record.
 - `ReportDelegation` for a delegating root run with no record yet records it and succeeds.
-- Re-registering an instance into a new session for the same host session keeps its incarnation and `ag_` identifier; re-registering a SPIFFE ID with a different host session, owner, definition revision, or parent is refused; a repeated registration with the same content returns the same reference, with different content `ALREADY_EXISTS`.
+- Re-registering an instance into a new session for the same host session keeps its incarnation and `ag_` identifier; re-registering an incarnation with a different host session, owner, definition revision, or parent is refused; a repeated registration with the same content returns the same reference, with different content `ALREADY_EXISTS`.
 
 Test the checks at each hop:
 
