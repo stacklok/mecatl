@@ -424598,6 +424598,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794932485682,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f1c044242805a34c0ab82c10e08ebb09a0fb7bb",
+          "message": "fix(identitybroker): map ToolHive v0.66.0 actor reasons from AS-1 (#2823)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T17:36:26Z",
+          "tree_id": "0bc573f5a19974c26a3b34907c9321295b814903",
+          "url": "https://github.com/stacklok/mecatl/commit/9f1c044242805a34c0ab82c10e08ebb09a0fb7bb"
+        },
+        "date": 1794937806245,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -553114,6 +553153,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794937802038,
+  "lastUpdate": 1794937807425,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
