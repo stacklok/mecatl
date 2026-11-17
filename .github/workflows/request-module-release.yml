@@ -1,3 +1,9 @@
+# Opens an App-authored PR for an explicit Go-module/version batch on main.
+# A human dispatches this workflow (directly or through an authorized agent);
+# it previews the batch but publishes nothing. Human merge of the request PR
+# authorizes module-releases.yml to process the fixed candidate dependency-first.
+# MODULE_RELEASES_ENABLED is the repository-wide rollout gate, not a per-run input.
+# Procedure: docs/module-development.md#4-merge-and-release-dependencies-first
 name: Request module releases
 
 on:

@@ -1,3 +1,12 @@
+# Reconciles reviewed Go-module release batches after request/preparation merges,
+# main CI completion, or manual dispatch. Each run discovers all outstanding
+# requests and advances one authorized transition: prepare dependency pins for
+# human review, qualify/tag an exact candidate, or prove its public Go version.
+# Dependencies must pass public proof before consumers proceed. A failed stage
+# stops its batch until an explicit human retry; production tags stay immutable.
+# Candidate code runs without App secrets; protected jobs revalidate before writes.
+# Enabled by the repository-wide MODULE_RELEASES_ENABLED rollout gate.
+# Procedure: docs/module-development.md#4-merge-and-release-dependencies-first
 name: Module releases
 
 on:

@@ -1,18 +1,36 @@
 ---
 name: cut-release
 description: >-
-  Cut a tagged release of mecatl — dispatch the Create Release PR workflow, review and
-  merge the release PR, then verify the tag and the artifacts it publishes (images +
-  Helm charts to GHCR, plus a GitHub Release with signed archives and a Homebrew cask
-  bump). Use when asked to cut/ship/tag/publish a release or bump the version. NOT for
-  general git tagging unrelated to a mecatl release.
+  Release Mecatl: select the application, Go-module batch, or TypeScript SDK track.
+  Follow the owning procedure with human approval and verify publication. Use when
+  asked to cut a release or bump a release version; clarify the track if unspecified.
+  NOT for general Git tagging.
 metadata:
   author: stacklok
 ---
 
-# Cut a mecatl release
+# Release Mecatl
 
-A release is a `vX.Y.Z` git tag. Pushing that tag triggers `.github/workflows/release.yml`,
+## Select the release track
+
+Identify the requested track before running a release workflow. If the request
+only says "release Mecatl" or "bump the version", ask which track the operator
+intends. Release only explicitly approved tracks; their versions and schedules
+are independent. Humans merge release, request, and preparation PRs.
+
+| Track | Published result | Procedure |
+| --- | --- | --- |
+| Application | Root `vX.Y.Z` tag; images, charts, CLI archives, and Homebrew cask | Continue with **Application release** below. |
+| Go modules, including engine-only | Path-qualified module tags and publicly downloadable Go versions | Read and follow [`docs/module-development.md`](../../../docs/module-development.md#4-merge-and-release-dependencies-first). Humans approve the exact module/version mapping. Report unmet rollout/protection prerequisites rather than creating tags manually. Completion requires public proof for every selected module. |
+| TypeScript SDK | `sdk/typescript/vX.Y.Z` tag and npm package | Read and follow [Cutting a TypeScript SDK release](../../../.github/workflows/README.md#cutting-a-typescript-sdk-release). Confirm the bump type with the operator, use `create-sdk-typescript-release-pr.yml` on `main`, and preserve the separate workflow-environment and npm-maintainer 2FA approvals. Completion requires public integrity and provenance verification. |
+
+For Go-module or SDK requests, follow the linked procedure instead of the
+application steps below. Shared App credentials do not authorize releasing other
+tracks as a side effect.
+
+## Application release
+
+An application release is a root `vX.Y.Z` git tag. Pushing that tag triggers `.github/workflows/release.yml`,
 which publishes signed images (`mecated`, `mecatui`, `mecak8s`, execution provider/workload,
 Studio, and the Slack-bot example), Helm charts, and versioned microVM and Brood Box
 artifacts. It also publishes a **GitHub Release** carrying `darwin`/`linux` x
@@ -51,7 +69,7 @@ is why a release needed a commit on `main` at all. The pins are now `$/` self-re
 which resolve to this repo at the exact ref the workflow is running from, so there is nothing
 left to bump and skew is impossible rather than merely policed.
 
-## Steps
+### Application steps
 
 Run from the repo root.
 
@@ -174,32 +192,7 @@ Run from the repo root.
    brew update && brew install stacklok/tap/mecatl && mecatui --version
    ```
 
-## The engine module is tagged separately
-
-The `vX.Y.Z` release above is the **root repo / `mecated` image** release. The importable
-core, `github.com/stacklok/mecatl/engine`, is its **own Go module** with its own
-tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
-compatibility contract (`engine/COMPATIBILITY.md`).
-
-- **Engine tags are cut on their own schedule.** Cutting one is a deliberate maintainer
-  decision — do NOT cut it as part of a routine root release unless asked. The `engine/vX.Y.Z`
-  and root `vX.Y.Z` version lines are independent. Bumps follow `engine/COMPATIBILITY.md`
-  (pre-v1: minor = additive or breaking, patch = fixes only).
-
-### Releasing Go modules
-
-Use the reviewed module-batch procedure in `docs/module-development.md`, including
-for an engine-only release. Humans select exact versions and merge request and
-preparation PRs; the release App qualifies fixed commits, tags dependencies first,
-and verifies public resolution before releasing consumers. Read that procedure
-before dispatching `request-module-release.yml` or retrying `module-releases.yml`.
-
-Module release automation remains disabled until its separately authorized
-protection rollout and live rehearsal are complete. Report an unmet prerequisite
-rather than falling back to manual tag creation. A module release does not publish
-application images, CLI archives, or the SDK npm package.
-
-## Notes
+### Application notes
 
 - **Two publishing destinations, one tag.** A run can succeed on the GHCR images and still fail
   on the release or the tap (or vice versa). GoReleaser's cask pipe continues on error and the
