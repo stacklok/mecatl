@@ -19,14 +19,14 @@ type Request struct {
 // CID returns canonical request-byte identity, or unset for a zero Request.
 func (v Request) CID() contentid.CID { return v.cid }
 
-// finalizeRequest admits stable trusted in-process DTO input under explicit
-// bounds before encoding or cloning. It retains no mutable caller storage.
+// finalizeRequest validates and encodes an exclusively owned DTO, then takes
+// ownership of its mutable backing on success. Callers must keep input stable
+// during the call and must not mutate retained aliases after success.
 // Failure returns an unset request; successful bytes alone determine its CID.
 func finalizeRequest(v format.RequestV1, limits codec.Limits) (Request, error) {
 	encoded, err := codec.Encode(v, limits)
 	if err != nil {
 		return Request{}, err
 	}
-	owned := v.Clone()
-	return Request{value: &owned, cid: contentid.Sum(encoded)}, nil
+	return Request{value: &v, cid: contentid.Sum(encoded)}, nil
 }

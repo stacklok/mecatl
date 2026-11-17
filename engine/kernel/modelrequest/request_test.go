@@ -61,28 +61,25 @@ func TestFinalizationOwnershipAndIdentity(t *testing.T) {
 	if err != nil || !decoded.Equal(parameters) {
 		t.Fatalf("recipe parameters: %v", err)
 	}
-	// Mutate every mutable shape in the trusted finalizer's input.
-	*input.Settings.ReasoningEffort = "changed"
-	*input.Settings.MaxOutputTokens = 1
-	*input.RootInstructions[0].Parts[0].Text = "changed"
-	input.RootInstructions[0].Parts[1].Media.InlineData[0] = 0
-	input.UserInstructions[0].Parts = nil
-	input.Tools[0].ArgumentSchema[0] = '!'
-	input.Conversation[0].User.Parts = nil
-	input.Conversation[1].Assistant.Items[0].Output.Parts = nil
-	input.Conversation[1].Assistant.Items[1].Call.Arguments[0] = 0
-	input.Conversation[1].Assistant.Private.Data[0] = 0
-	input.Conversation[2].ToolResult.Parts = nil
+	if &request.value.Tools[0] != &input.Tools[0] || request.value.Settings.MaxOutputTokens != input.Settings.MaxOutputTokens {
+		t.Fatal("finalization copied transferred backing")
+	}
+	// MutableClone, not internal finalization, detaches mutable request storage.
+	detached := request.MutableClone()
+	*detached.Settings.ReasoningEffort = "changed"
+	*detached.Settings.MaxOutputTokens = 1
+	*detached.RootInstructions[0].Parts[0].Text = "changed"
+	detached.RootInstructions[0].Parts[1].Media.InlineData[0] = 0
+	detached.UserInstructions[0].Parts = nil
+	detached.Tools[0].ArgumentSchema[0] = '!'
+	detached.Conversation[0].User.Parts = nil
+	detached.Conversation[1].Assistant.Items[0].Output.Parts = nil
+	detached.Conversation[1].Assistant.Items[1].Call.Arguments[0] = 0
+	detached.Conversation[1].Assistant.Private.Data[0] = 0
+	detached.Conversation[2].ToolResult.Parts = nil
 	parameters.PrivateReplay[0].SourceAPI = "changed"
 	clear(recipe.Check)
 	clear(recipe.Parameters)
-	if !request.MutableClone().Equal(before) {
-		t.Fatal("finalizer retained mutable caller storage")
-	}
-	detached := request.MutableClone()
-	detached.Conversation[1].Assistant.Private.Data[0] = 0
-	detached.Tools[0].ArgumentSchema[0] = '!'
-	*detached.Settings.MaxOutputTokens = 1
 	if !built.Request().MutableClone().Equal(before) {
 		t.Fatal("MutableClone exposes mutable backing")
 	}
@@ -91,7 +88,7 @@ func TestFinalizationOwnershipAndIdentity(t *testing.T) {
 	}
 	adequate := testLimits()
 	adequate.MaxBytes = 1 << 20
-	same, err := finalizeConstruction(before, format.ParametersV1{}, adequate)
+	same, err := finalizeConstruction(before.Clone(), format.ParametersV1{}, adequate)
 	if err != nil || same.Request().CID() != request.CID() {
 		t.Fatalf("limits/unused recipe changed CID: %v", err)
 	}
@@ -282,7 +279,7 @@ func TestFinalizationBounds(t *testing.T) {
 	if !errors.Is(err, codec.ErrInvalidLimits) || got.Request().value != nil {
 		t.Fatalf("invalid policy: %v", err)
 	}
-	// A tiny bound must reject a large leaf before output allocation or DTO Clone.
+	// A tiny bound must reject a large leaf before encoded output allocation.
 	v.Conversation[1].Assistant.Items[1].Call.Arguments = bytes.Repeat([]byte{'x'}, 1<<20)
 	l = testLimits()
 	l.MaxBytes = 100
