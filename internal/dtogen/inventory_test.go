@@ -241,6 +241,22 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 			t.Fatalf("%s modified copied repository", target)
 		}
 	}
+	// Inventory semantics run in process; task runs above and below cover wiring.
+	repo := func(t *testing.T, check bool, want string) {
+		t.Helper()
+		before := repositoryState(t, root)
+		err := GenerateRepository(context.Background(), root, check)
+		if want == "" {
+			if err != nil {
+				t.Fatalf("check=%t: %v", check, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("check=%t: got %v; want %s", check, err, want)
+		}
+		if (check || want != "") && !reflect.DeepEqual(before, repositoryState(t, root)) {
+			t.Fatalf("check=%t modified copied repository", check)
+		}
+	}
 	run(t, "generate:data", "", false)
 	first, err := os.ReadFile(output)
 	if err != nil {
@@ -281,8 +297,8 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		if corrupt {
 			want = "stale data output"
 		}
-		run(t, "generate:codecs:check", want, true)
-		run(t, "generate:codecs", "", false)
+		repo(t, true, want)
+		repo(t, false, "")
 		for path, want := range artifacts {
 			got, err := os.ReadFile(path)
 			if err != nil || string(got) != want {
@@ -299,8 +315,8 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			writeFixture(t, output, tc.content)
-			run(t, "generate:codecs:check", "stale data output", true)
-			run(t, "generate:codecs", "", false)
+			repo(t, true, "stale data output")
+			repo(t, false, "")
 			got, err := os.ReadFile(output)
 			if err != nil || string(got) != string(first) {
 				t.Fatal("task failed to recover owned output", err)
@@ -315,10 +331,10 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 
 	for _, path := range []string{filepath.Join(owner, "extra.go"), filepath.Join(root, "engine/removed/obsolete.go")} {
 		writeFixture(t, path, GeneratedMarker+"\npackage obsolete\n")
-		run(t, "generate:codecs:check", "extra data output", true)
+		repo(t, true, "extra data output")
 		if strings.Contains(path, "removed") {
 			// Orphan enforcement belongs to check, never local generation.
-			run(t, "generate:codecs", "", false)
+			repo(t, false, "")
 		}
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
@@ -326,20 +342,20 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	}
 	// Removing a root changes bytes; removing the whole target changes inventory.
 	writeFixture(t, catalog, strings.Replace(string(initialCatalog), "//dtogen:include\n", "", 1))
-	run(t, "generate:codecs:check", "stale data output", true)
+	repo(t, true, "stale data output")
 	writeFixture(t, catalog, string(initialCatalog))
 	writeFixture(t, inventory, "package fixture\n")
-	run(t, "generate:codecs:check", "extra data output", true)
+	repo(t, true, "extra data output")
 	writeFixture(t, inventory, string(initialInventory))
 
 	bad := filepath.Join(owner, "bad.go")
 	writeFixture(t, bad, "package fixture\nvar Handwritten UndefinedHandwritten\n")
-	run(t, "generate:codecs", "UndefinedHandwritten", true)
+	repo(t, false, "UndefinedHandwritten")
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
 	writeFixture(t, bad, "package fixture\n//dtogen:include\ntype Unsupported struct { V int `cbor:\"v\"` }\n")
-	run(t, "generate:codecs", "fixed-width", true)
+	repo(t, false, "fixed-width")
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
@@ -349,12 +365,12 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 		"func (Sample) AppendCBOR() {}",
 	} {
 		writeFixture(t, bad, "package fixture\n"+declaration+"\n")
-		run(t, "generate:codecs", "collides with generated", true)
+		repo(t, false, "collides with generated")
 	}
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "generate:codecs:check", "", true)
+	repo(t, true, "")
 
 	// The literal directive must work with Go itself, not just discovery. Keep
 	// artifact writes behind the copied Taskfile pathway.
@@ -371,7 +387,7 @@ func roundtrip(v Sample, l codec.Limits) (Sample,error) {
 	}
 	run(t, "generate:codecs", "", false)
 	writeFixture(t, taskfile, string(originalTaskfile))
-	run(t, "generate:codecs:check", "", true)
+	repo(t, true, "")
 
 	if err := os.Remove(trap); err != nil {
 		t.Fatal(err)
