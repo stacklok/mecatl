@@ -495,10 +495,21 @@ Parallel, and Team. Copy `execution.templateRevision` from the generated
 revision key. Changing `templates.coding.default` on the provider does not
 update this explicit `mecak8s` pin; change the client values deliberately when
 choosing a different default for new sessions. Existing sessions keep their
-bound environment. Remote sessions receive filesystem tools and foreground
-Shell only when the selected template grants them. An explicit `execution.none`
-gets no filesystem, even when a template default is configured. Remote sessions
-do not ingest project instructions, rules, skills, or source from the PVC.
+bound environment.
+
+A remote session gets filesystem tools and foreground Shell from the
+template's declared `capabilities`, or exactly the capabilities its client
+requests. The provider records the set it admitted as the immutable
+`spec.admittedCapabilities` of the session's `ExecutionEnvironment`; a session
+can use less, for example under `--no-shell`. To withhold Shell, add
+`--no-shell` to the `mecak8s` `extraArgs`. New sessions then get file tools
+only. Because a request must name both capabilities, the server refuses every
+explicit capability request, along with `/clear` and fork of sessions that
+already have Shell. See
+[Execution capabilities](/features/security-and-execution/execution-environments.md#execution-capabilities)
+for how requests are honored or refused. An explicit `execution.none` gets no
+filesystem, even when a template default is configured. Remote sessions do not
+ingest project instructions, rules, skills, or source from the PVC.
 [In-chat schedules](/features/sessions/scheduled-tasks.md#placement-and-deletion)
 can borrow the session's workspace. SkillDraft, background Shell, and delegated
 filesystem execution are outside this deployment.
@@ -508,7 +519,8 @@ filesystem execution are outside this deployment.
 Use this check after installing the derivative's generated revision and updating
 `mecak8s` values. It exercises the deployed image, not repository fixtures.
 Prerequisites are an authorized OIDC account, available template capacity, and
-session capabilities that include files and foreground Shell. Configure an
+session capabilities that include `filesystem` and `foreground-command`, so
+`mecak8s` must run without `--no-shell`. Configure an
 operator permission rule to **Ask** for the utility command, following
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).
 Choose a harmless, deterministic invocation of your added utility; the example
@@ -527,10 +539,11 @@ network access.
 
    ```sh
    kubectl --namespace <NAMESPACE> get executionenvironments \
-     -o custom-columns='NAME:.metadata.name,SESSION:.spec.bindingID,TEMPLATE:.spec.templateID,REVISION:.spec.templateRevision,READY:.status.conditions[?(@.type=="Ready")].status'
+     -o custom-columns='NAME:.metadata.name,SESSION:.spec.bindingID,TEMPLATE:.spec.templateID,REVISION:.spec.templateRevision,CAPABILITIES:.spec.admittedCapabilities,READY:.status.conditions[?(@.type=="Ready")].status'
    ```
 
-   Expect the recorded session, `coding`, the exact revision, and `True`.
+   Expect the recorded session, `coding`, the exact revision, both
+   `filesystem` and `foreground-command`, and `True`.
 3. Send this prompt, using a filename unique to this smoke test:
 
    ```text
@@ -625,6 +638,13 @@ For denied run acquisition or renewal, check current client template scope and
 revision revocation; replaying an existing claim cannot bypass withdrawn policy.
 Reference release and authorized administrative cleanup remain available under
 their own safety checks.
+
+### Session creation refuses a capability request
+
+A request the deployment can't honor fails with `FAILED_PRECONDITION` (HTTP
+`412`) and names the reason. The causes an operator controls are `--no-shell`
+in the `mecak8s` `extraArgs` and an agent definition that doesn't allow the
+requested capability.
 
 ## Preserve workspace state during recovery
 
