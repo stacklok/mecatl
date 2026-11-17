@@ -363,6 +363,11 @@ func existingAuthorizationLocked(logical *logicalSession, backend string, hash [
 }
 
 func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	// The identity broker authorizes a gateway call when it runs; it never
+	// falls back to the MCP broker's OAuth grant.
+	if t.gatewayRoute() {
+		return session.ExternalAuthorization{}, false, nil
+	}
 	opCtx, done, err := t.attachment.beginOperation(ctx)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err

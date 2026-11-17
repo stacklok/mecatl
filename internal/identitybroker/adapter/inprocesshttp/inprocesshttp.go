@@ -21,7 +21,8 @@ import (
 //
 // It suits short request/response calls such as a token endpoint's: the
 // whole response is buffered and returned only after the handler finishes,
-// so it cannot carry a streamed response, such as an MCP gateway call's.
+// so it cannot carry a streamed response, such as an MCP gateway call's;
+// NewStreamingClient does.
 func NewClient(handler http.Handler, admit func(*url.URL) error) *http.Client {
 	return &http.Client{
 		Transport:     transport{handler: handler, admit: admit},

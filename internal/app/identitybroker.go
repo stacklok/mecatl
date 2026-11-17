@@ -129,6 +129,10 @@ type identityBrokerAS2 struct {
 // errAS2IssuerIsAS1s refuses an AS-2 that would share AS-1's issuer.
 var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-2) would have the same issuer as AS-1")
 
+// errGatewayIsNotAS2Resource refuses gateway calls sent to an endpoint other
+// than the resource AS-2 issues their tokens for.
+var errGatewayIsNotAS2Resource = errors.New("the MCP gateway's endpoint is not the resource its authorization server (AS-2) issues tokens for")
+
 // sameIssuer reports whether two issuer URLs name the same server: scheme and
 // host compare case-insensitively, a default port equals none, and a trailing
 // slash is ignored. Unparseable URLs compare byte for byte.
@@ -183,6 +187,9 @@ type identityBrokerParts struct {
 	// gateway reports whether the core has a gateway, whose AS-2 bindAS2
 	// binds.
 	gateway bool
+	// gatewayServers are the servers the gateway routes; set only with
+	// gateway.
+	gatewayServers []string
 	// release releases the broker and AS-1.
 	release func()
 }
@@ -361,12 +368,14 @@ type identityBroker struct {
 	client   *identitybroker.ClientAssertionSigner
 	recorder *identitybroker.MemoryRecorder
 	gateway  bool
+	// gatewayServers are the servers the gateway routes.
+	gatewayServers []string
 }
 
 // parts returns the identity broker's parts that b holds; the caller adds
 // the service, the hosted AS-1, and release.
 func (b identityBroker) parts() identityBrokerParts {
-	return identityBrokerParts{client: b.client, core: b.core, recorder: b.recorder, gateway: b.gateway}
+	return identityBrokerParts{client: b.client, core: b.core, recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers}
 }
 
 // IdentityBrokerAS1 is the AS-1 the identity broker converts access tokens
@@ -433,6 +442,7 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	recorder := identitybroker.NewMemoryRecorder()
 	opts := []identitybroker.Option{identitybroker.WithRecorder(recorder)}
 	gateway := false
+	var gatewayServers []string
 	if as1 != nil {
 		as1Client, err := authserverclient.New(authserverclient.Config{
 			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient, Now: as1.AssertionNow,
@@ -449,7 +459,7 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 		// Shortcut: production configures no gateway entry, so gateway calls are refused as not configured; removed by #2533 (AS-2 trusts AS-1 in production, gateway from configuration).
 		if cfg.IdentityBrokerGatewayServers != nil {
 			opts = append(opts, identitybroker.WithGateway(identitybroker.Gateway{Servers: cfg.IdentityBrokerGatewayServers}))
-			gateway = true
+			gateway, gatewayServers = true, append([]string(nil), cfg.IdentityBrokerGatewayServers...)
 		}
 	}
 	core, err := identitybroker.New(config, nil, key, opts...)
@@ -459,5 +469,5 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	if as1 != nil && as1.UseCredentialVerifier != nil {
 		as1.UseCredentialVerifier(core)
 	}
-	return identityBroker{core: core, client: client, recorder: recorder, gateway: gateway}, nil
+	return identityBroker{core: core, client: client, recorder: recorder, gateway: gateway, gatewayServers: gatewayServers}, nil
 }

@@ -92,6 +92,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -1583,6 +1584,9 @@ type Built struct {
 	// identity broker's AS-2; nil when startup set none up. Close releases it
 	// with the MCP broker.
 	identityBrokerAS2 *identityBrokerAS2
+	// mcpBrokerGatewayServers are the servers whose calls the MCP broker
+	// sends through the identity broker's gateway, for tests; nil for none.
+	mcpBrokerGatewayServers []string
 	// GuardrailsAdvisory reports a configured checker demoted to advisory for
 	// sessions in the server's default mode (yolo); other modes keep it enforcing.
 	GuardrailsAdvisory bool
@@ -2330,6 +2334,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			ib.release()
 		}
 	}()
+	// The server registers agents into the holder and closes it; the MCP
+	// broker will present its credentials on gateway calls. The clock is the
+	// server's default, as composition threads none.
+	var agentCredentials *agentcredential.Holder
+	if ib.service != nil {
+		agentCredentials = agentcredential.New(ib.service, time.Now)
+	}
 
 	var broker mcpBrokerParts
 	if brokerSelected && (len(brokerDeclaration.Routes) != 0 || cfg.selectsConfiguredMCPBroker()) {
@@ -2350,6 +2361,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			identity.as1Issuer = ib.hosted.Issuer
 		case cfg.IdentityBrokerAS1 != nil:
 			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
+		}
+		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
+			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
 		}
 		if err == nil {
 			broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
@@ -3008,6 +3022,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
 	svcCfg.IdentityBroker = ib.service
+	svcCfg.IdentityAgents = agentCredentials
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
 	// live discovery primitive and never satisfies the enrollment boundary.
@@ -3121,7 +3136,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

@@ -6,6 +6,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 )
 
 // TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
@@ -45,10 +46,11 @@ func SetEngineCloseTimeoutForTest(d time.Duration) (restore func()) {
 // HeldIdentityCredentialForTest returns the identity broker credential held
 // for session id's agent, so a test can check where it does and does not go.
 func (s *Service) HeldIdentityCredentialForTest(id session.SessionID) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	held, ok := s.identityAgents[id]
-	return held.registration.Credential.Value(), ok
+	if s.cfg.IdentityAgents == nil {
+		return "", false
+	}
+	held, ok := s.cfg.IdentityAgents.Held(agentcredential.Key{RootSessionID: string(id), AgentSessionID: string(id)})
+	return held.Token.Value(), ok
 }
 
 // SessionEngineContextWindowForTest exposes the per-session engine's compaction
