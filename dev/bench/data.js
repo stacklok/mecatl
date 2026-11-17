@@ -384170,6 +384170,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794940624996,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e3531db17f9d59658e341df60e4d6c1fd5160e8",
+          "message": "test(identityharness): answer a validator failure with 500 as AS-1 does (#2828)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T18:33:21Z",
+          "tree_id": "93948bb9333f3299c697bb1616f413838082fb7c",
+          "url": "https://github.com/stacklok/mecatl/commit/2e3531db17f9d59658e341df60e4d6c1fd5160e8"
+        },
+        "date": 1794941387867,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -554613,6 +554647,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794941384232,
+  "lastUpdate": 1794941388680,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
