@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -486,22 +485,4 @@ func TestConstructInvalidParametersAndLimits(t *testing.T) {
 		}
 	}
 	requireConstruction(t, f.b.Discard())
-}
-
-func TestQuotedMetadataLength(t *testing.T) {
-	values := []string{"", "quotes\" and \\ slash", "\a\b\f\n\r\t\v\x00\x01\x1f\x7f", "尾\u2028\u0080\u00ad\U000e0001"}
-	for r := rune(0); r < 0x10000; r++ {
-		if r < 0xd800 || r > 0xdfff {
-			values = append(values, string(r))
-		}
-	}
-	for _, text := range values {
-		want := len(strconv.Quote(text))
-		if got, ok := quotedLength(text, want); !ok || got != want {
-			t.Fatalf("quoted length %q: %d/%t != %d", text, got, ok, want)
-		}
-		if _, ok := quotedLength(text, want-1); ok {
-			t.Fatal("quoted expansion accepted below bound")
-		}
-	}
 }

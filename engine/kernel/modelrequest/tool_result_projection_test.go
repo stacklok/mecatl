@@ -199,13 +199,13 @@ func TestConstructBoundsExcludeUnrelatedHistory(t *testing.T) {
 	requireConstruction(t, f.b.Discard())
 }
 
-func TestConstructBoundsAmplificationBeforePayloadCopies(t *testing.T) {
+func TestConstructRejectsOversizedProjection(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		size, count int
 		change      func(*codec.Limits)
 	}{
-		{"repeated large input", 256 << 10, 200, func(l *codec.Limits) { l.MaxBytes = 1 << 20 }},
+		{"repeated large input", 4 << 10, 20, func(l *codec.Limits) { l.MaxBytes = 32 << 10 }},
 		{"conversation count", 1, 2000, func(l *codec.Limits) { l.MaxArrayElements = 100 }},
 		{"aggregate nodes", 1, 2000, func(l *codec.Limits) { l.MaxNodes = 100 }},
 		{"aggregate declarations", 1, 2000, func(l *codec.Limits) { l.MaxCollectionElements = 100 }},
@@ -216,7 +216,7 @@ func TestConstructBoundsAmplificationBeforePayloadCopies(t *testing.T) {
 			parts := textParts(strings.Repeat("x", tc.size))
 			if tc.name == "repeated large input" {
 				// Each selected leaf fits the output policy; only the repeated
-				// projection exceeds it. No media copy may precede sizing.
+				// projection exceeds it. Final encoding rejects the complete DTO.
 				parts = []session.ContentPart{{Media: &session.Media{Kind: session.MediaKindImage, Source: session.MediaSourceInline, MIMEType: "image/png", InlineData: bytes.Repeat([]byte{42}, tc.size)}}}
 			}
 			u, err := f.b.AddUserInput(f.run, session.UserInput{Parts: parts})
@@ -234,23 +234,12 @@ func TestConstructBoundsAmplificationBeforePayloadCopies(t *testing.T) {
 			tc.change(&limits)
 			view := f.view()
 			assertConstructionFailure(t, view, limits, codec.ErrLimitExceeded)
-			measurement := testing.Benchmark(func(b *testing.B) {
-				for b.Loop() {
-					result, err := Construct(view, format.ParametersV1{}, limits)
-					if !errors.Is(err, codec.ErrLimitExceeded) || result.Request().CID() != (contentid.CID{}) {
-						b.Fatal("expected bounded zero failure")
-					}
-				}
-			})
-			if allocated := measurement.AllocedBytesPerOp(); allocated > 128<<10 {
-				t.Fatalf("rejected amplified projection allocated %d bytes", allocated)
-			}
 			requireConstruction(t, f.b.Discard())
 		})
 	}
 }
 
-func TestConstructLimitsAgreeWithGeneratedOutputBudget(t *testing.T) {
+func TestConstructLimitsAgreeWithFinalCodecValidation(t *testing.T) {
 	f := newConstructionFixture(t)
 	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptInstructions, "selected")}}))
@@ -293,7 +282,7 @@ func TestConstructLimitsAgreeWithGeneratedOutputBudget(t *testing.T) {
 				}
 				got, err := Construct(view, parameters, limits)
 				if (err == nil) != (wantErr == nil) {
-					t.Fatalf("cap %d: Construct %v, generated budget %v", bound, err, wantErr)
+					t.Fatalf("cap %d: Construct %v, final codec validation %v", bound, err, wantErr)
 				}
 				if err == nil && got.Request().CID() != full.Request().CID() {
 					t.Fatal("raising limits changed successful bytes")

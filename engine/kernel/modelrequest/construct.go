@@ -30,8 +30,9 @@ type Source interface {
 // from exactly the captured source, including preparation preceding a proposed
 // request. It derives the run from source, never mutable Session state. Idle,
 // pending-model, unsettled-tool and unscoped sources fail. Limits govern parameters
-// and projected output, not unrelated history. Parameters must remain stable for
-// the call. No retrieval or invocation occurs.
+// and projected output, not unrelated history. Output limits are checked during
+// final encoding, after projection; they do not bound peak construction memory.
+// Parameters must remain stable for the call. No retrieval or invocation occurs.
 // Failure returns zero, never a usable partial request or recipe.
 func Construct(source Source, parameters format.ParametersV1, limits codec.Limits) (ConstructionResult, error) {
 	if err := codec.Check(parameters, limits); err != nil {
@@ -44,7 +45,7 @@ func Construct(source Source, parameters format.ParametersV1, limits codec.Limit
 	if err != nil {
 		return ConstructionResult{}, err
 	}
-	request, err := selection.project(limits)
+	request, err := selection.project()
 	if err != nil {
 		return ConstructionResult{}, err
 	}
@@ -52,8 +53,7 @@ func Construct(source Source, parameters format.ParametersV1, limits codec.Limit
 }
 
 // chronologicalSelection indexes associations only, retaining immutable views,
-// not payload copies or a second lifecycle aggregate. Space is source-bounded;
-// output amplification is admitted separately by the codec budget in project.
+// not payload copies or a second lifecycle aggregate. Its space is source-bounded.
 type chronologicalSelection struct {
 	source       Source
 	parameters   format.ParametersV1
@@ -151,29 +151,4 @@ func (s *chronologicalSelection) private(v session.ModelResponseView) (session.O
 		}
 	}
 	return session.OpaqueProviderDataView{}, false
-}
-
-func nonemptyParts(parts views.SliceView[sessionformat.ContentPart, session.ContentPartView]) int {
-	n := 0
-	for i := 0; i < parts.Len(); i++ {
-		if text, ok := parts.At(i).Text(); !ok || text != "" {
-			n++
-		}
-	}
-	return n
-}
-
-func assistantItemCount(v session.ModelResponseView) int {
-	n := 0
-	for i := 0; i < v.Items().Len(); i++ {
-		item := v.Items().At(i)
-		if _, ok := item.Call(); ok {
-			n++
-			continue
-		}
-		if content, ok := item.Content(); ok && content.Kind() != sessionformat.ResponseContentReasoning && nonemptyParts(content.Parts()) != 0 {
-			n++
-		}
-	}
-	return n
 }
