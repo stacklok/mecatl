@@ -84,7 +84,12 @@ COPY apps/ .
 RUN STUDIO_BUILD_ID="${STUDIO_BUILD_ID}" pnpm build
 # Reinstall production dependencies in place: pnpm deploy refuses the
 # checked-out SDK because its source lives outside the apps workspace.
-RUN pnpm install --prod --frozen-lockfile
+# Remove every node_modules first. An in-place `pnpm install --prod` unlinks
+# dev dependencies but leaves them in node_modules/.pnpm, and the runtime stage
+# copies that store. The store then ships build tools such as the TypeScript 7
+# native compiler (a Go binary) and @hey-api's js-yaml.
+RUN rm -rf node_modules contracts/node_modules server/node_modules web/node_modules \
+ && pnpm install --prod --frozen-lockfile --offline
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime (Chainguard node, pinned by digest)
