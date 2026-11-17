@@ -424995,6 +424995,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794937806245,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4eb31471ee6aef8a8fce5d9a024f351c8fefb1f0",
+          "message": "docs(agent-identity): follow ID-JAG -06 for AS-2 redemption errors (#2825)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T18:11:32Z",
+          "tree_id": "52405feaeb13c6c3e727d4fd2994b4b0f2806770",
+          "url": "https://github.com/stacklok/mecatl/commit/4eb31471ee6aef8a8fce5d9a024f351c8fefb1f0"
+        },
+        "date": 1794939893565,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13394.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12889,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -553625,6 +553664,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794939890000,
+  "lastUpdate": 1794939894426,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
