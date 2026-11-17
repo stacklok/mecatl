@@ -164,6 +164,21 @@ func config(t testing.TB, h *identityharness.Harness, issuer string) as1server.C
 // Issuer is AS-1's issuer URL.
 func (a *AS1) Issuer() string { return a.Server.Issuer() }
 
+// JWKSURL is where AS-1 serves its signing keys, over the listener.
+func (a *AS1) JWKSURL() string { return a.Server.Issuer() + "/.well-known/jwks.json" }
+
+// IssueIDJAGs is a Start edit letting the delegate obtain ID-JAGs for the
+// AS-2 at as2Issuer and its resource, naming agents of trustDomain, the
+// broker's, as actors. The ID-JAGs' AS-2 client is the delegate's ID.
+func IssueIDJAGs(trustDomain, as2Issuer, as2Resource string) func(*as1server.Config, *as1server.DelegateClient) {
+	return func(_ *as1server.Config, d *as1server.DelegateClient) {
+		d.IDJAG = &as1server.IDJAGIssuance{
+			ActIssuer: identitybroker.ActorIssuer(trustDomain),
+			Targets:   []as1server.IDJAGTarget{{Issuer: as2Issuer, ClientID: d.ID, Resources: []string{as2Resource}}},
+		}
+	}
+}
+
 // HTTPClient returns a client that reaches AS-1 in process through Faults
 // and does not follow redirects, for wiring that takes an *http.Client.
 func (a *AS1) HTTPClient() *http.Client {
@@ -213,6 +228,14 @@ type SignIn struct {
 // does not pass through Faults.
 func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 	t.Helper()
+	return SignInAt(t, a.Harness, a.Issuer(), req)
+}
+
+// SignInAt is SignIn at another real AS-1 with h's IdP as its upstream, such
+// as one Mecatl hosts, reached over a listener at issuer that h's HTTP
+// client trusts. req.Client must be one of that AS-1's public clients.
+func SignInAt(t testing.TB, h *identityharness.Harness, issuer string, req SignIn) identitybroker.Token {
+	t.Helper()
 	client := req.Client
 	if client.ID == "" {
 		client = PublicClient()
@@ -240,12 +263,12 @@ func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 	if req.User != "" {
 		// AS-1 does not forward login_hint to the IdP. The selection is a FIFO
 		// on the IdP, so concurrent sign-ins on one harness must not select.
-		a.Harness.IdP.SignInNextAs(req.User)
+		h.IdP.SignInNextAs(req.User)
 	}
-	back, err := a.Harness.AuthorizeWithConsent(t.Context(), a.Issuer()+"/oauth/authorize?"+q.Encode())
+	back, err := h.AuthorizeWithConsent(t.Context(), issuer+"/oauth/authorize?"+q.Encode())
 	if err != nil || back.Get("error") != "" || back.Get("state") != state || back.Get("code") == "" {
 		// A failure before the IdP leaves the selection for the next sign-in.
-		a.Harness.IdP.ClearSignInNextAs()
+		h.IdP.ClearSignInNextAs()
 	}
 	if err != nil {
 		t.Fatalf("as1servertest: authorize: %v", err)
@@ -254,7 +277,7 @@ func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 		t.Fatalf("as1servertest: authorize redirect: error=%q description=%q state match=%v",
 			back.Get("error"), back.Get("error_description"), back.Get("state") == state)
 	}
-	resp, err := a.Harness.HTTPClient().PostForm(a.Server.TokenEndpoint(), url.Values{
+	resp, err := h.HTTPClient().PostForm(issuer+"/oauth/token", url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {client.ID},
 		"code":          {back.Get("code")},
@@ -289,13 +312,31 @@ func (a *AS1) SignIn(t testing.TB, req SignIn) identitybroker.Token {
 // access token AS-1 issued, without verifying it.
 func SignedInUser(t testing.TB, accessToken identitybroker.Token) string {
 	t.Helper()
+	subID, _ := accessTokenClaims(t, accessToken)["sub_id"].(map[string]any)
+	user, _ := subID["sub"].(string)
+	return user
+}
+
+// Subject returns the sub of accessToken, an access token AS-1 issued,
+// without verifying it: AS-1's subject for the user, which its ID-JAGs carry
+// and AS-2's test trust lists. AS-1 assigns it at the user's first sign-in.
+func Subject(t testing.TB, accessToken identitybroker.Token) string {
+	t.Helper()
+	sub, err := accessTokenClaims(t, accessToken).GetSubject()
+	if err != nil || sub == "" {
+		t.Fatal("as1servertest: the access token has no sub")
+	}
+	return sub
+}
+
+// accessTokenClaims returns the claims of accessToken without verifying it.
+func accessTokenClaims(t testing.TB, accessToken identitybroker.Token) jwt.MapClaims {
+	t.Helper()
 	claims := jwt.MapClaims{}
 	if _, _, err := jwt.NewParser().ParseUnverified(accessToken.Value(), claims); err != nil {
 		t.Fatalf("as1servertest: parse access token: %v", err)
 	}
-	subID, _ := claims["sub_id"].(map[string]any)
-	user, _ := subID["sub"].(string)
-	return user
+	return claims
 }
 
 // ExpiredAccessToken returns accessToken, an access token AS-1 issued, with

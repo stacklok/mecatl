@@ -980,6 +980,11 @@ type Config struct {
 	// identityBrokerConfig replaces the real identity broker's interim
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
+	// identityBrokerAS2Transport wraps the identity broker's in-process
+	// transport to AS-2, so tests can observe the ID-JAGs it redeems. It is
+	// test-only and no production path sets it: it sees every ID-JAG
+	// redeemed.
+	identityBrokerAS2Transport func(http.RoundTripper) http.RoundTripper
 	// IdentityBrokerGatewayServers gives the real identity broker a gateway
 	// routing these servers, whose AS-2 Build binds once the MCP broker has
 	// started. It is test-only: production leaves it nil, which configures no
@@ -2319,8 +2324,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
 
 	// The identity broker is released after the MCP broker, on startup failure
-	// and on shutdown.
-	ib, err := buildIdentityBroker(ctx, cfg)
+	// and on shutdown. A hosted AS-1 issues the gateway's ID-JAGs for the AS-2
+	// the MCP broker will set up.
+	idjagTarget := deriveGatewayIDJAGTarget(cfg, brokerDeclaration, brokerSelected)
+	ib, err := buildIdentityBroker(ctx, cfg, idjagTarget)
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -2350,7 +2357,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		var identity mcpBrokerIdentity
+		identity := mcpBrokerIdentity{idjagTarget: idjagTarget}
 		if ib.client != nil {
 			if identity.clientKeySet, err = json.Marshal(ib.client.JWKS()); err != nil {
 				err = fmt.Errorf("encode the broker client key set: %w", err)

@@ -14,31 +14,35 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
-	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
 const grantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
-// TestRedeemAtRealAS2 redeems an ID-JAG from the harness's AS-1 at the real
+// TestRedeemAtRealAS2 redeems an ID-JAG from the real AS-1 at the real
 // embedded AS-2, set up to trust that AS-1 through mcpbrokertest. Not
 // parallel: StartAS2 sets an environment variable.
 func TestRedeemAtRealAS2(t *testing.T) {
-	f := newFixture(t)
-	keySet, err := json.Marshal(f.signer.JWKS())
+	as2Issuer, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := startIDJAGAS1(t, as2Issuer, as2Resource)
+	signer := x.a.Signer
+	keySet, err := json.Marshal(signer.JWKS())
 	if err != nil {
 		t.Fatal(err)
 	}
 	as2 := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: f.h.AS1.Issuer(), JWKSURL: f.h.AS1.JWKSURL(), CAFile: f.h.WriteCACert(t, t.TempDir()),
-		Subjects: []string{f.h.AS1.Subject(identityharness.Alice)},
+		Issuer: x.a.Issuer(), JWKSURL: x.a.JWKSURL(), CAFile: x.a.Harness.WriteCACert(t, t.TempDir()),
+		Subjects: []string{as1servertest.Subject(t, x.access)},
 	}).AS2
-	f.trustSVID(as2.Issuer, as2.Resource)
-	as1 := f.client(t, &recorder{}, nil)
-	jag, err := as1.IssueIDJAG(t.Context(), idjagRequest(f.aliceGrant(t, as1), as2.Issuer, as2.Resource))
+	jag, err := x.client.IssueIDJAG(t.Context(), x.request(as2.Issuer, as2.Resource))
 	if err != nil {
 		t.Fatalf("IssueIDJAG: %v", err)
 	}
@@ -62,7 +66,7 @@ func TestRedeemAtRealAS2(t *testing.T) {
 		return resp, err
 	})
 	c, err := authserverclient.New(authserverclient.Config{
-		Issuer: as2.Issuer, TokenEndpoint: as2.TokenEndpoint, Assertions: f.signer, HTTPClient: hc,
+		Issuer: as2.Issuer, TokenEndpoint: as2.TokenEndpoint, Assertions: signer, HTTPClient: hc,
 	})
 	if err != nil {
 		t.Fatal(err)

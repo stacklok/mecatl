@@ -39,7 +39,7 @@ func wantAgentNames(t *testing.T, got identitybroker.VerifiedAgent) {
 		t.Fatalf("agent ID %q is not an opaque ag_ identifier", got.AgentID)
 	}
 	td, _, _ := strings.Cut(strings.TrimPrefix(got.Agent.Subject, "spiffe://"), "/")
-	if want := "spiffe://" + td + "/agent/" + got.AgentID; got.ActorID != want {
+	if want := identitybroker.ActorIssuer(td) + "/agent/" + got.AgentID; got.ActorID != want {
 		t.Fatalf("actor ID %q, want %q", got.ActorID, want)
 	}
 }

@@ -119,10 +119,11 @@ func (a *AS1) Grant(token string) (Grant, bool) {
 // authenticated broker. Check 1 (client authentication) and check 2 (the
 // broker may use this grant) have passed.
 //
-// It is kept as the grant fixture for ID-JAG tests until ToolHive's AS-1
-// issues ID-JAGs (stacklok/toolhive#6898, stacklok/toolhive#6899): the
-// harness can redeem only refresh tokens it issued. Session-open behaviour
-// itself is tested against the real AS-1 (as1servertest).
+// It is kept as the grant fixture for tests of revocation and its reasons,
+// which the real AS-1 does not serve yet (#2568), and for mecak8s's
+// TestIdentityBrokerAgainstOfflineHarness: the harness can revoke and redeem
+// only refresh tokens it issued. Session-open behaviour itself is tested
+// against the real AS-1 (as1servertest).
 func (a *AS1) exchange(w http.ResponseWriter, r *http.Request) {
 	now := a.now()
 	entry, code, reason := checkExchangeForm(r.PostForm, now)

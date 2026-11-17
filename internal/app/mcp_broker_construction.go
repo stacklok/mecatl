@@ -83,6 +83,26 @@ type mcpBrokerIdentity struct {
 	as1Issuer string
 	// gatewayCalls is nil when the identity broker has no gateway path.
 	gatewayCalls *mcpBrokerGatewayCalls
+	// idjagTarget is the AS-2 AS-1 issues the gateway's ID-JAGs for, which
+	// the AS-2 set up must be; nil when none was derived.
+	idjagTarget *gatewayIDJAGTarget
+}
+
+// deriveGatewayIDJAGTarget is the AS-2 the bundled MCP broker will set up for
+// declaration, derived before the identity broker is built so a hosted AS-1
+// can issue the gateway's ID-JAGs for it. It is nil without the test-only
+// gateway servers, without a bundled broker with routes, or for a callback URL
+// AS-2 cannot derive its issuer from, which the bundled broker refuses anyway
+// when a route is protected.
+func deriveGatewayIDJAGTarget(cfg Config, declaration mcpauthority.BrokerConfig, selected bool) *gatewayIDJAGTarget {
+	if cfg.IdentityBrokerGatewayServers == nil || !selected || cfg.selectsConfiguredMCPBroker() || len(declaration.Routes) == 0 {
+		return nil
+	}
+	issuer, resource, err := mcpbroker.AS2Endpoints(declaration.CallbackURL)
+	if err != nil {
+		return nil
+	}
+	return &gatewayIDJAGTarget{Issuer: issuer, Resource: resource}
 }
 
 // mcpBrokerGatewayCalls is what the MCP broker needs to send gateway calls
@@ -188,11 +208,19 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 			authStorageClose()
 			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w: %s", errAS2IssuerIsAS1s, identity.as1Issuer)
 		}
+		if target := identity.idjagTarget; target != nil && (process.AS2.Issuer != target.Issuer || process.AS2.Resource != target.Resource) {
+			_ = process.Close()
+			authStorageClose()
+			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errAS2IsNotIDJAGTarget)
+		}
 		httpClient, err := as2InProcessClient(process.AS2)
 		if err != nil {
 			_ = process.Close()
 			authStorageClose()
 			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
+		}
+		if wrap := cfg.identityBrokerAS2Transport; wrap != nil {
+			httpClient.Transport = wrap(httpClient.Transport)
 		}
 		as2 = &identityBrokerAS2{Issuer: process.AS2.Issuer, TokenEndpoint: process.AS2.TokenEndpoint, Resource: process.AS2.Resource, HTTPClient: httpClient}
 	}

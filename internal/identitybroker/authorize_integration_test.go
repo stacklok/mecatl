@@ -22,6 +22,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
@@ -30,14 +31,19 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
-// The tests in this file authorize calls against the harness's AS-1 and the
-// real embedded ToolHive AS-2, through the real authserverclient adapter, with
-// a FaultTransport in front of each. None is parallel: mcpbrokertest.StartAS2
+// The tests in this file authorize calls against the real AS-1 and the real
+// embedded ToolHive AS-2, through the real authserverclient adapter, with a
+// FaultTransport in front of each. None is parallel: mcpbrokertest.StartAS2
 // sets an environment variable.
 
-// harnessFixture is a broker whose gateway routes "github", exchanging at the
-// harness's AS-1 and redeeming at the real AS-2, with Alice's session open on
-// openHost and its main agent registered.
+// testTrustDomain is newBroker's agent trust domain, act.iss in the ID-JAGs
+// AS-1 issues for its agents.
+const testTrustDomain = "agents.example.com"
+
+// harnessFixture is a broker whose gateway routes "github", exchanging at
+// AS-1, whose upstream is the identity harness's IdP, and redeeming at the
+// real AS-2, with Alice's session open on openHost and its main agent
+// registered.
 type harnessFixture struct {
 	h   *identityharness.Harness
 	b   *identitybroker.Broker
@@ -51,6 +57,10 @@ type harnessFixture struct {
 	as2Issuer, as2Resource, as1Iss string
 	// vmcp is the real vMCP the MCP broker process serves at as2Resource.
 	vmcp http.Handler
+	// subjects are Alice's and Bob's AS-1 subjects; accessToken returns a
+	// fresh AS-1 access token for a user.
+	subjects    map[string]string
+	accessToken func(user string) string
 
 	s    identitybroker.Session
 	cred identitybroker.Token
@@ -68,49 +78,117 @@ type harnessOptions struct {
 	// unknownAS2Key has the broker sign its AS-2 client assertions with a key
 	// AS-2 does not know.
 	unknownAS2Key bool
+	// harnessAS1 runs the identity harness's AS-1 instead of the real one,
+	// for tests of revocation reasons only it gives.
+	// Shortcut: revocation-reason tests run the harness's AS-1, which revokes a user's grants and answers revoked, as the real AS-1 sends no revocation reasons yet; removed by #2568 (AS-1 revocation reasons).
+	harnessAS1 bool
+}
+
+// fixtureAS1 is the AS-1 a harnessFixture exchanges at.
+type fixtureAS1 struct {
+	issuer, tokenEndpoint, jwksURL string
+	signer                         *identitybroker.ClientAssertionSigner
+	http                           *http.Client
+	subjects                       map[string]string
+	accessToken                    func(user string) string
+	// bind binds the built broker as AS-1's actor-token check.
+	bind func(*identitybroker.Broker)
+}
+
+// realFixtureAS1 starts the real AS-1 issuing ID-JAGs for AS-2 and signs
+// Alice and Bob in, so AS-2's test trust can name their AS-1 subjects.
+func realFixtureAS1(t *testing.T, h *identityharness.Harness, as2Issuer, as2Resource string) fixtureAS1 {
+	t.Helper()
+	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(testTrustDomain, as2Issuer, as2Resource))
+	accessToken := func(user string) string { return a.SignIn(t, as1servertest.SignIn{User: user}).Value() }
+	subjects := map[string]string{}
+	for _, user := range []string{identityharness.Alice, identityharness.Bob} {
+		subjects[user] = as1servertest.Subject(t, identitybroker.NewToken(accessToken(user)))
+	}
+	return fixtureAS1{
+		issuer: a.Issuer(), tokenEndpoint: a.Server.TokenEndpoint(), jwksURL: a.JWKSURL(), signer: a.Signer,
+		http: a.HTTPClient(), subjects: subjects, accessToken: accessToken,
+		bind: func(b *identitybroker.Broker) {
+			if err := a.Server.UseCredentialVerifier(b); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+}
+
+// harnessFixtureAS1 is the identity harness's AS-1, checking actor tokens
+// with the broker's verifier.
+func harnessFixtureAS1(t *testing.T, as2Issuer, as2Resource string) (*identityharness.Harness, fixtureAS1) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := identityharness.New(t, identityharness.Options{
+		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &key.PublicKey}},
+	})
+	h.AS1.AddIDJAGTarget(as2Issuer, as2Resource)
+	return h, fixtureAS1{
+		issuer: h.AS1.Issuer(), tokenEndpoint: h.AS1.TokenEndpoint(), jwksURL: h.AS1.JWKSURL(), signer: signer, http: h.HTTPClient(),
+		subjects: map[string]string{
+			identityharness.Alice: h.AS1.Subject(identityharness.Alice), identityharness.Bob: h.AS1.Subject(identityharness.Bob),
+		},
+		accessToken: func(user string) string {
+			return h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: user})
+		},
+		bind: func(b *identitybroker.Broker) { h.AS1.SetActorValidator(as1servertest.HarnessActorValidator(b)) },
+	}
 }
 
 func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 	t.Helper()
-	newSigner := func() (*identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
+	// AS-1 is configured with the AS-2 StartAS2 sets up, before either runs.
+	as2Issuer, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h *identityharness.Harness
+	var fa fixtureAS1
+	if opts.harnessAS1 {
+		h, fa = harnessFixtureAS1(t, as2Issuer, as2Resource)
+	} else {
+		h = identityharness.New(t, identityharness.Options{})
+		fa = realFixtureAS1(t, h, as2Issuer, as2Resource)
+	}
+	signer := fa.signer
+	as2Signer := signer
+	if opts.unknownAS2Key {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			t.Fatal(err)
 		}
-		signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-		if err != nil {
+		if as2Signer, err = identitybroker.NewClientAssertionSigner(key, 0); err != nil {
 			t.Fatal(err)
 		}
-		return signer, key
 	}
-	signer, clientKey := newSigner()
-	as2Signer := signer
-	if opts.unknownAS2Key {
-		as2Signer, _ = newSigner()
-	}
-	h := identityharness.New(t, identityharness.Options{
-		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
-	})
 	keySet, err := json.Marshal(signer.JWKS())
 	if err != nil {
 		t.Fatal(err)
 	}
-	subjects := []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)}
+	subjects := []string{fa.subjects[identityharness.Alice], fa.subjects[identityharness.Bob]}
 	if opts.distrustAlice {
 		subjects = subjects[1:]
 	}
 	process := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
+		Issuer: fa.issuer, JWKSURL: fa.jwksURL, CAFile: h.WriteCACert(t, t.TempDir()),
 		Subjects: subjects,
 	})
 	as2 := process.AS2
-	h.AS1.AddIDJAGTarget(as2.Issuer, as2.Resource)
 
-	as1HTTP := h.HTTPClient()
-	as1Faults := identityharness.NewFaultTransport(as1HTTP.Transport, h.AS1.TokenEndpoint())
+	as1HTTP := fa.http
+	as1Faults := identityharness.NewFaultTransport(as1HTTP.Transport, fa.tokenEndpoint)
 	as1HTTP.Transport = as1Faults
 	as1, err := authserverclient.New(authserverclient.Config{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), Assertions: signer, HTTPClient: as1HTTP,
+		Issuer: fa.issuer, TokenEndpoint: fa.tokenEndpoint, Assertions: signer, HTTPClient: as1HTTP,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,10 +212,11 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 			Servers: []string{"github"},
 			AS2:     identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource, AuthServer: as2Client},
 		}))
-	h.AS1.SetActorValidator(as1servertest.HarnessActorValidator(b))
+	fa.bind(b)
 	f := &harnessFixture{
 		h: h, b: b, rec: rec, as1: as1Faults, as2: as2Faults, as2Client: as2Client,
-		as2Issuer: as2.Issuer, as2Resource: as2.Resource, as1Iss: h.AS1.Issuer(), vmcp: process.Handlers.VMCP,
+		as2Issuer: as2.Issuer, as2Resource: as2.Resource, as1Iss: fa.issuer, vmcp: process.Handlers.VMCP,
+		subjects: fa.subjects, accessToken: fa.accessToken,
 	}
 	f.s, f.cred = f.open(t, openHost, identityharness.Alice)
 	return f
@@ -156,7 +235,7 @@ func (f *harnessFixture) openToken(host, user string) (identitybroker.Session, e
 	}
 	return f.b.OpenSession(context.Background(), testWorkload, identitybroker.OpenSessionRequest{
 		HostSessionID: host, Incarnation: incarnation, Owner: f.owner(user),
-		AccessToken: identitybroker.NewToken(f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: user})),
+		AccessToken: identitybroker.NewToken(f.accessToken(user)),
 	})
 }
 
@@ -221,6 +300,25 @@ func jwtPart(t *testing.T, token string, i int) map[string]any {
 	return out
 }
 
+// issued returns the claims of the ID-JAGs AS-1 answered the broker with,
+// lost answers included, oldest first.
+func (f *harnessFixture) issued(t *testing.T) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, r := range requests(f.as1, identityharness.KindIDJAG) {
+		if r.IssuedToken != "" {
+			out = append(out, jwtPart(t, r.IssuedToken, 1))
+		}
+	}
+	return out
+}
+
+// wantAct is the act claim naming agentID of the broker's trust domain.
+func wantAct(agentID string) map[string]any {
+	actIssuer := identitybroker.ActorIssuer(testTrustDomain)
+	return map[string]any{"iss": actIssuer, "sub": actIssuer + "/agent/" + agentID}
+}
+
 func unixClaim(t *testing.T, claims map[string]any, name string) time.Time {
 	t.Helper()
 	n, ok := claims[name].(float64)
@@ -260,18 +358,18 @@ func TestAuthorizeCallGetsOneGatewayTokenPerCallAtAS2(t *testing.T) {
 		agentID := f.rec.IDJAGs()[i].AgentID
 		v := jwtPart(t, got.GatewayToken.Value(), 1)
 		if v["client_id"] != identitybroker.BrokerClientID ||
-			!reflect.DeepEqual(v["act"], map[string]any{"iss": f.as1Iss, "sub": agentID}) ||
+			!reflect.DeepEqual(v["act"], wantAct(agentID)) ||
 			!reflect.DeepEqual(v["aud"], []any{f.as2Resource}) ||
-			v["sub"] != f.as1Iss+"#"+f.h.AS1.Subject(identityharness.Alice) {
-			t.Fatalf("call %d's gateway token claims = %v, want act AS-1 and %s, client_id %s, and aud the vMCP", i, v, agentID, identitybroker.BrokerClientID)
+			v["sub"] != f.as1Iss+"#"+f.subjects[identityharness.Alice] {
+			t.Fatalf("call %d's gateway token claims = %v, want act %v, client_id %s, and aud the vMCP", i, v, wantAct(agentID), identitybroker.BrokerClientID)
 		}
 		if !strings.HasPrefix(agentID, "ag_") {
 			t.Fatalf("the acting agent is %q, want an ag_ identifier", agentID)
 		}
 	}
-	jags := f.h.AS1.IDJAGsIssued()
-	if len(jags) != 2 || jags[0].JTI == jags[1].JTI || jags[0].Operation != "op-0" || jags[1].Operation != "op-1" {
-		t.Fatalf("AS-1 issued %+v, want one ID-JAG per operation", jags)
+	exchanges := requests(f.as1, identityharness.KindIDJAG)
+	if jags := f.issued(t); len(jags) != 2 || jags[0]["jti"] == jags[1]["jti"] || exchanges[0].Operation != "op-0" || exchanges[1].Operation != "op-1" {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want a distinct one per operation, op-0 then op-1", len(jags))
 	}
 	d := f.rec.Decisions()
 	if len(d) != 2 || d[0].Outcome != identitybroker.OutcomeSuccess || d[1].Outcome != identitybroker.OutcomeSuccess ||
@@ -294,8 +392,8 @@ func TestAuthorizeCallGatewayTokenExpiresWithTheIDJAGAtAS2(t *testing.T) {
 		t.Fatalf("ID-JAG records = %+v, want one with an expiry", recorded)
 	}
 	idjagExp := recorded[0].ExpiresAt
-	if issued := f.h.AS1.IDJAGsIssued(); len(issued) != 1 || !issued[0].ExpiresAt.Equal(idjagExp) {
-		t.Fatalf("AS-1 issued %+v, want one expiring at the recorded %v", issued, idjagExp)
+	if issued := f.issued(t); len(issued) != 1 || !unixClaim(t, issued[0], "exp").Equal(idjagExp) {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want one expiring at the recorded %v", len(issued), idjagExp)
 	}
 	if got.ExpiresAt.IsZero() || got.ExpiresAt.After(idjagExp) {
 		t.Fatalf("ExpiresAt = %v, want no later than the ID-JAG's exp %v", got.ExpiresAt, idjagExp)
@@ -305,8 +403,9 @@ func TestAuthorizeCallGatewayTokenExpiresWithTheIDJAGAtAS2(t *testing.T) {
 	}
 }
 
-// TestAuthorizeCallIDJAGShapeAtAS2 shows what the broker redeems is an
-// ID-JAG, and AS-1 recorded the call's operation with it.
+// TestAuthorizeCallIDJAGShapeAtAS2 shows what the broker redeems is the
+// ID-JAG AS-1 issued for the call's operation, naming Alice and her agent,
+// and the broker records it with that operation.
 func TestAuthorizeCallIDJAGShapeAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	req := callRequest(f.s.ID, f.cred)
@@ -322,19 +421,18 @@ func TestAuthorizeCallIDJAGShapeAtAS2(t *testing.T) {
 		t.Fatalf("the redeemed assertion's typ = %v, want %s", typ, identityharness.IDJAGHeaderType)
 	}
 	jag := jwtPart(t, redeemed[0].Assertion, 1)
-	issued := f.h.AS1.IDJAGsIssued()
-	if len(issued) != 1 {
-		t.Fatalf("AS-1 issued %d ID-JAGs, want 1", len(issued))
+	issued := f.issued(t)
+	if len(issued) != 1 || issued[0]["jti"] != jag["jti"] || requests(f.as1, identityharness.KindIDJAG)[0].Operation != "op-pr42-001" {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want the one redeemed, for op-pr42-001", len(issued))
 	}
-	want := identityharness.IDJAGIssuance{
-		JTI: jag["jti"].(string), Subject: f.h.AS1.Subject(identityharness.Alice), Owner: f.h.Owner(identityharness.Alice),
-		AgentID: f.rec.IDJAGs()[0].AgentID, Audience: f.as2Issuer, Resource: f.as2Resource, Operation: "op-pr42-001",
-		ExpiresAt: issued[0].ExpiresAt,
+	alice := f.h.Owner(identityharness.Alice)
+	if jag["iss"] != f.as1Iss || jag["sub"] != f.subjects[identityharness.Alice] ||
+		!reflect.DeepEqual(jag["sub_id"], map[string]any{"format": "iss_sub", "iss": alice.Issuer, "sub": alice.Subject}) ||
+		!reflect.DeepEqual(jag["act"], wantAct(f.rec.IDJAGs()[0].AgentID)) ||
+		jag["aud"] != f.as2Issuer || jag["resource"] != f.as2Resource || jag["client_id"] != identitybroker.BrokerClientID {
+		t.Fatalf("the ID-JAG's claims = %v, want Alice's for her agent at AS-2 for the vMCP", jag)
 	}
-	if issued[0] != want {
-		t.Fatalf("AS-1 issued %+v, want %+v", issued[0], want)
-	}
-	if r := f.rec.IDJAGs()[0]; r.IDJAG.Issuer != f.as1Iss || r.IDJAG.ID != want.JTI || r.OperationID != "op-pr42-001" {
+	if r := f.rec.IDJAGs()[0]; r.IDJAG.Issuer != f.as1Iss || r.IDJAG.ID != jag["jti"] || r.OperationID != "op-pr42-001" {
 		t.Fatalf("the ID-JAG record = %+v, want AS-1's jti for the operation", r)
 	}
 }
@@ -437,8 +535,9 @@ func TestAuthorizeCallRejectedTokenRetryAtGateway(t *testing.T) {
 	f.wantCounts(t, 3, 3)
 }
 
-// TestAuthorizeCallRevokedRulesAtAS1 runs the revocation rules against the
-// harness's AS-1 (#2535 done-when 4).
+// TestAuthorizeCallRevokedRulesAtAS1 runs the revocation rules against AS-1
+// (#2535 done-when 4): the real one, and the harness's for the subtests whose
+// revoked reason only it gives (harnessOptions.harnessAS1).
 func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 	closesSession := func(t *testing.T, f *harnessFixture, err error) {
 		t.Helper()
@@ -449,7 +548,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 	}
 
 	t.Run("AS-1 revoking the user's grants closes the session", func(t *testing.T) {
-		f := newHarnessFixture(t)
+		f := newHarnessFixtureWith(t, harnessOptions{harnessAS1: true})
 		if n := f.h.AS1.RevokeGrants(identityharness.Alice); n != 1 {
 			t.Fatalf("AS-1 revoked %d grants, want 1", n)
 		}
@@ -473,7 +572,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 	})
 
 	t.Run("a newer grant is retried", func(t *testing.T) {
-		f := newHarnessFixture(t)
+		f := newHarnessFixtureWith(t, harnessOptions{harnessAS1: true})
 		old, _ := identitybroker.SessionGrant(f.b, f.s.ID)
 		var reopenErr, revokeErr error
 		// The session is reopened with a fresh token and AS-1 revokes the old
@@ -574,12 +673,12 @@ func TestAuthorizeCallLostResponsesAtAS2(t *testing.T) {
 			t.Fatalf("AuthorizeCall: %v", err)
 		}
 		f.wantCounts(t, 2, 1)
-		issued := f.h.AS1.IDJAGsIssued()
+		issued := f.issued(t)
 		redeemed := requests(f.as2, identityharness.KindRedemption)
-		if len(issued) != 2 || jwtPart(t, redeemed[0].Assertion, 1)["jti"] != issued[1].JTI {
+		if len(issued) != 2 || jwtPart(t, redeemed[0].Assertion, 1)["jti"] != issued[1]["jti"] {
 			t.Fatalf("AS-1 issued %d ID-JAGs; want 2, the second redeemed", len(issued))
 		}
-		if r := f.rec.IDJAGs(); len(r) != 1 || r[0].IDJAG.ID != issued[1].JTI {
+		if r := f.rec.IDJAGs(); len(r) != 1 || r[0].IDJAG.ID != issued[1]["jti"] {
 			t.Fatalf("ID-JAG records = %+v, want only the one the broker received", r)
 		}
 		distinctClientAssertions(t, f.as1, f.as2)
@@ -811,11 +910,12 @@ func TestAuthorizeCallNeverSharesTokensAtAS2(t *testing.T) {
 		t.Fatalf("Bob's AuthorizeCall: %v", err)
 	}
 	aliceSub, bobSub := jwtPart(t, alice.GatewayToken.Value(), 1)["sub"], jwtPart(t, bob.GatewayToken.Value(), 1)["sub"]
-	if aliceSub != f.as1Iss+"#"+f.h.AS1.Subject(identityharness.Alice) || bobSub != f.as1Iss+"#"+f.h.AS1.Subject(identityharness.Bob) || aliceSub == bobSub {
+	if aliceSub != f.as1Iss+"#"+f.subjects[identityharness.Alice] || bobSub != f.as1Iss+"#"+f.subjects[identityharness.Bob] || aliceSub == bobSub {
 		t.Fatalf("gateway token subjects are %v and %v, want Alice's and Bob's", aliceSub, bobSub)
 	}
-	if issued := f.h.AS1.IDJAGsIssued(); len(issued) != 2 || issued[0].Owner != f.h.Owner(identityharness.Alice) || issued[1].Owner != f.h.Owner(identityharness.Bob) {
-		t.Fatalf("AS-1 issued %+v, want one ID-JAG for Alice and one for Bob", issued)
+	owner := func(jag map[string]any) any { subID, _ := jag["sub_id"].(map[string]any); return subID["sub"] }
+	if issued := f.issued(t); len(issued) != 2 || owner(issued[0]) != identityharness.Alice || owner(issued[1]) != identityharness.Bob {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want one for Alice and one for Bob", len(issued))
 	}
 	// An agent of one session cannot act in the other.
 	_, err = f.authorize(callRequest(bobSession.ID, f.cred))

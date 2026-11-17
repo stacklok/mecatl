@@ -16,8 +16,10 @@
 //     ClientAssertionClockSkew allowed, exp - iat, and a jti used once and
 //     kept until exp plus the skew; a client secret is refused (clientauth.go);
 //   - AS-1's conversion of a sign-in at session open, design step (3), kept
-//     only as the grant fixture for ID-JAG tests until ToolHive's AS-1 issues
-//     ID-JAGs (stacklok/toolhive#6898, stacklok/toolhive#6899). Session-open
+//     only as the grant fixture for tests of revocation and its reasons,
+//     which the real AS-1 does not serve yet (#2568), and for mecak8s's
+//     TestIdentityBrokerAgainstOfflineHarness, which mints a second client's
+//     access token and moves AS-1's clock. Session-open
 //     behaviour itself, including refusals and faults, is tested against the
 //     real AS-1 (as1servertest). The RFC 8693 exchange turns an AS-1 access
 //     token into a non-rotating refresh token of a generic grant
@@ -28,8 +30,9 @@
 //     access token gets subject_token_invalid, not the real AS-1's reasons.
 //     The grant's refresh token is refused at the refresh-token grant
 //     (sessionopen.go);
-//   - AS-1's per-call ID-JAG exchange, design step (7), until ToolHive's
-//     AS-1 issues ID-JAGs: a grant's refresh token with the agent's SVID as
+//   - AS-1's per-call ID-JAG exchange, design step (7), kept only for tests
+//     of revocation reasons until the real AS-1 sends them (#2568): a
+//     grant's refresh token with the agent's SVID as
 //     the actor token, for a configured AS-2 audience and vMCP resource. The
 //     actor checks are a test-supplied ActorValidator; the upstream re-check
 //     is not modelled, so tests inject its reasons as faults (idjag.go);
