@@ -204,7 +204,8 @@ func (t *sessionTable) exchangeFailure(ctx context.Context, s *brokerSession, g 
 // an exchange: a session closed during the redemption ends the call with its
 // closing reason, whatever AS-2 said. Otherwise a lost response is retried, as is an
 // invalid_grant without a reason code; consent_required is the user's to
-// give; anything else, including a 502 or 504, is mapped by redeemError.
+// give; access_denied with actor_denied denies the call, as AS-1's denied
+// does; anything else, including a 502 or 504, is mapped by redeemError.
 func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err error) (rule retryRule, retry, final error) {
 	if closed := t.stillOpen(s); closed != nil {
 		return 0, nil, closed
@@ -217,6 +218,8 @@ func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err 
 	// Shortcut: AS-2's error_uri is dropped (ServerRefusal keeps only the status, code and reason), so no approval link reaches the user; removed by #2735 (the approval link, shown under step (8)'s rule, through an ErrorURI the AS-2 port sets).
 	case isRefusal && !r.transient() && r.Reason == string(ReasonConsentRequired):
 		return 0, nil, ReasonError(ReasonConsentRequired, "the gateway's authorization server requires the user's consent")
+	case isRefusal && !r.transient() && r.Code == "access_denied" && r.Reason == "actor_denied":
+		return 0, nil, ReasonError(ReasonDenied, "the gateway's authorization server refused the acting agent")
 	case isRefusal && !r.transient() && r.Code == "invalid_grant" && (r.Reason == "" || r.Reason == unknownCode):
 		// AS-2 sends no reason codes until stacklok/toolhive#7030, so every
 		// invalid_grant takes this path (the #2533 AS-2 shortcut).
