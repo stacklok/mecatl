@@ -28,6 +28,11 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
   and `session/format`. Keep these packages independent of aggregates and their
   operational policy. Check identity scope at the aggregate boundary rather than
   silently discarding conflicting authoring context.
+- Reuse format DTOs for authoring payloads, exposing aliases where useful. Pass
+  scoped occurrence identities as aggregate-operation arguments and expose them
+  through scoped views. A separate authoring struct requires a concrete semantic
+  need beyond substituting scoped IDs for relative components or changing
+  optionality.
 - Organize implementation files by owning type: `commit.go`, `record.go`, etc.
   Keep the declaration, methods, and type-specific helpers together, including
   validation, cloning, equality, and encoding/decoding. Avoid capability-wide

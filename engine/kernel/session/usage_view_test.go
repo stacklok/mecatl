@@ -14,7 +14,7 @@ import (
 // materialization, Submit and Load are deferred until the contract is reviewed.
 func usageViewFixture(t *testing.T) UsageView {
 	t.Helper()
-	v := sessionformat.Usage{ID: 7, Definition: &sessionformat.UsageDefinition{Purpose: " Future ", Granularity: UsageGranularityAggregate, RunID: new(uint64(2)), RequestID: new(uint64(3))}, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{
+	v := sessionformat.Usage{ID: 7, Definition: &UsageDefinition{Purpose: " Future ", Granularity: UsageGranularityAggregate, RunID: new(uint64(2)), RequestID: new(uint64(3))}, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{
 		{SelectedRoute: new(" Route "), SelectedModel: new("Selected"), Counters: UsageCounters{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4))}},
 		{SelectedModel: new(string(bytes.Repeat([]byte("m"), 8192)))},
 	}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: bytes.Repeat([]byte{0x80}, 8192)}}}

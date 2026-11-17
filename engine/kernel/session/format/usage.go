@@ -68,20 +68,6 @@ const (
 const (
 	// UsagePurposeMain labels conversational model work, without reserved authority.
 	UsagePurposeMain = "main"
-	// UsagePurposeSessionTitle labels session title generation.
-	UsagePurposeSessionTitle = "session_title"
-	// UsagePurposeCompaction labels context compaction work.
-	UsagePurposeCompaction = "compaction"
-	// UsagePurposeReflection labels reflection work.
-	UsagePurposeReflection = "reflection"
-	// UsagePurposeRouter labels routing work.
-	UsagePurposeRouter = "router"
-	// UsagePurposeAskReviewer labels reviewer consultation.
-	UsagePurposeAskReviewer = "ask_reviewer"
-	// UsagePurposeGuardrail labels guardrail work.
-	UsagePurposeGuardrail = "guardrail"
-	// UsagePurposeParallelJudge labels parallel judging work.
-	UsagePurposeParallelJudge = "parallel_judge"
 )
 
 // UsageDefinition is immutable first-record metadata. Correlations omit enclosing

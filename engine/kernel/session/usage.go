@@ -5,25 +5,10 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// UsageDefinition is first-report authoring metadata with full scoped correlation,
-// not a persistence DTO. Zero is invalid. It owns no mutable storage. Purpose is
-// exact nonempty UTF-8 and open; Granularity is closed. Correlation is association,
-// not uniqueness, execution authority, a verified bill, or complete work coverage.
-// The destination history must agree with whichever correlation is supplied.
-type UsageDefinition struct {
-	// Purpose is an exact nonempty UTF-8 open label, without normalization or
-	// reserved-authority semantics; UsagePurpose constants name established uses.
-	Purpose string
-	// Granularity is required invocation or aggregate observation granularity.
-	Granularity UsageGranularity
-	// RunID optionally correlates run-level work. Zero means absent; it must be
-	// zero when RequestID is supplied. Neither supplied means session-level work.
-	RunID RunID
-	// RequestID optionally correlates a request, determining its enclosing run.
-	// Zero means absent; a supplied identity must be structurally valid and belong
-	// to the destination history. It is mutually exclusive with RunID.
-	RequestID ModelRequestID
-}
+// UsageDefinition is immutable first-record metadata with history-relative
+// correlation components. Assignment shares optional components; Clone detaches
+// them. Zero is invalid. UsageDefinitionView supplies scoped identities.
+type UsageDefinition = sessionformat.UsageDefinition
 
 // UsageGranularity is the closed invocation/aggregate observation vocabulary;
 // zero is invalid. Neither value proves an upstream physical-attempt count.
@@ -39,20 +24,6 @@ const (
 const (
 	// UsagePurposeMain labels conversational model work, without reserved authority.
 	UsagePurposeMain = sessionformat.UsagePurposeMain
-	// UsagePurposeSessionTitle labels session title generation.
-	UsagePurposeSessionTitle = sessionformat.UsagePurposeSessionTitle
-	// UsagePurposeCompaction labels context compaction work.
-	UsagePurposeCompaction = sessionformat.UsagePurposeCompaction
-	// UsagePurposeReflection labels reflection work.
-	UsagePurposeReflection = sessionformat.UsagePurposeReflection
-	// UsagePurposeRouter labels routing work.
-	UsagePurposeRouter = sessionformat.UsagePurposeRouter
-	// UsagePurposeAskReviewer labels reviewer consultation.
-	UsagePurposeAskReviewer = sessionformat.UsagePurposeAskReviewer
-	// UsagePurposeGuardrail labels guardrail work.
-	UsagePurposeGuardrail = sessionformat.UsagePurposeGuardrail
-	// UsagePurposeParallelJudge labels parallel judging work.
-	UsagePurposeParallelJudge = sessionformat.UsagePurposeParallelJudge
 )
 
 // UsageView retains immutable record backing and enclosing history scope for its
@@ -86,7 +57,7 @@ func (v UsageView) Definition() (UsageDefinitionView, bool) {
 // UsageDefinitionView retains immutable first-record metadata and history scope
 // for its lifetime. Zero returns empty scalars and absent correlations. Navigation
 // is O(1) without cloning siblings. MutableClone exports relative DTO components,
-// not the enclosing history scope or an authoring UsageDefinition.
+// not the enclosing history scope.
 //
 //dtogen:include
 type UsageDefinitionView struct {

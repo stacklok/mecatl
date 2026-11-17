@@ -335,14 +335,7 @@ const ToolSettlementNotInvoked ToolSettlementCategory = 2
 const ToolSettlementReturned ToolSettlementCategory = 1
 const UsageGranularityAggregate format.UsageGranularity = "aggregate"
 const UsageGranularityInvocation format.UsageGranularity = "invocation"
-const UsagePurposeAskReviewer untyped string = "ask_reviewer"
-const UsagePurposeCompaction untyped string = "compaction"
-const UsagePurposeGuardrail untyped string = "guardrail"
 const UsagePurposeMain untyped string = "main"
-const UsagePurposeParallelJudge untyped string = "parallel_judge"
-const UsagePurposeReflection untyped string = "reflection"
-const UsagePurposeRouter untyped string = "router"
-const UsagePurposeSessionTitle untyped string = "session_title"
 const UsageReportActive format.UsageReportState = "active"
 const UsageReportWithdrawn format.UsageReportState = "withdrawn"
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
@@ -455,7 +448,7 @@ type UsageBucket = format.UsageBucket
 type UsageBucketView struct{}
 type UsageCounters = format.UsageCounters
 type UsageCountersView struct{}
-type UsageDefinition struct{Purpose string; Granularity UsageGranularity; RunID RunID; RequestID ModelRequestID}
+type UsageDefinition = format.UsageDefinition
 type UsageDefinitionView struct{}
 type UsageGranularity = format.UsageGranularity
 type UsageID struct{}
