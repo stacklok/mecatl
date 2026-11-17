@@ -350,7 +350,11 @@ func revoked(err error) bool {
 // idjagError maps a failed ID-JAG exchange, other than a lost response or a
 // revocation, to the Service error the design's error reasons assign. Its
 // detail is a ServerRefusal's text, which holds only known codes, or fixed
-// text.
+// text. AS-1's actor_token_expired (svid_expired before ToolHive v0.66.0) maps
+// to ReasonSVIDExpired, and approval_required, for which the broker has no
+// approval flow, to ReasonDenied. AS-1's issuance refusals
+// (upstream_subject_missing, sub_id_missing, dpop_not_supported, and
+// bound_elapsed) are CodeInternal, named in the detail.
 func idjagError(err error) error {
 	var r *ServerRefusal
 	isRefusal := errors.As(err, &r)
@@ -362,6 +366,10 @@ func idjagError(err error) error {
 			return NewError(CodeUnavailable, "", r.Error())
 		}
 		return NewError(CodeUnavailable, "", "no response from the authorization server")
+	case isRefusal && r.Reason == "actor_token_expired":
+		return ReasonError(ReasonSVIDExpired, "the authorization server refused the ID-JAG exchange")
+	case isRefusal && r.Reason == "approval_required":
+		return ReasonError(ReasonDenied, "the authorization server refused the ID-JAG exchange")
 	case isRefusal && (r.Reason == string(ReasonSVIDExpired) || r.Reason == string(ReasonDenied) || r.Reason == string(ReasonSignedOut)):
 		return ReasonError(Reason(r.Reason), "the authorization server refused the ID-JAG exchange")
 	case isRefusal && (r.Reason == string(ReasonUpstreamRevoked) || r.Reason == string(ReasonOwnerActionRequired)):

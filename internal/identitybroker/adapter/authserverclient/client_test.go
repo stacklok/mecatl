@@ -522,6 +522,12 @@ func TestServerErrorsAreClassified(t *testing.T) {
 		{as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_audience"}, true, false},
 		{as1servertest.Fault{Error: "invalid_request", Reason: "subject_token_source_client"}, true, false},
 		{as1servertest.Fault{Error: "invalid_request", Reason: "grant_invalid"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "actor_token_expired"}, false, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "approval_required"}, false, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "upstream_subject_missing"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "sub_id_missing"}, true, false},
+		{as1servertest.Fault{Error: "invalid_request", Reason: "dpop_not_supported"}, true, false},
+		{as1servertest.Fault{Error: "invalid_grant", Reason: "bound_elapsed"}, true, false},
 		{as1servertest.Fault{Status: http.StatusServiceUnavailable, Error: "invalid_client"}, false, true},
 	} {
 		a.Faults.FailNextExchange(tt.fault)

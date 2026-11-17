@@ -540,6 +540,13 @@ func TestAuthorizeCallMapsAS1Refusals(t *testing.T) {
 		reason identitybroker.Reason
 	}{
 		{"not_issuable", refusal(400, "invalid_grant", "not_issuable"), identitybroker.CodeInternal, ""},
+		{"actor_token_expired", refusal(400, "invalid_request", "actor_token_expired"), identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
+		{"legacy svid_expired", refusal(400, "invalid_request", "svid_expired"), identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
+		{"approval_required", refusal(400, "invalid_request", "approval_required"), identitybroker.CodePermissionDenied, identitybroker.ReasonDenied},
+		{"upstream_subject_missing", refusal(400, "invalid_request", "upstream_subject_missing"), identitybroker.CodeInternal, ""},
+		{"sub_id_missing", refusal(400, "invalid_request", "sub_id_missing"), identitybroker.CodeInternal, ""},
+		{"dpop_not_supported", refusal(400, "invalid_request", "dpop_not_supported"), identitybroker.CodeInternal, ""},
+		{"bound_elapsed", refusal(400, "invalid_grant", "bound_elapsed"), identitybroker.CodeInternal, ""},
 		{"invalid_client", refusal(401, "invalid_client", ""), identitybroker.CodeInternal, ""},
 		// Only a lost response gets a new ID-JAG; a 502 or 504 fails the call.
 		{"bad gateway", refusal(502, "", ""), identitybroker.CodeUnavailable, ""},
@@ -557,6 +564,10 @@ func TestAuthorizeCallMapsAS1Refusals(t *testing.T) {
 			wantError(t, err, tc.code, tc.reason, f.cred)
 			if strings.Contains(err.Error(), "boom") {
 				t.Fatalf("AuthorizeCall = %v, want fixed detail", err)
+			}
+			var sr *identitybroker.ServerRefusal
+			if tc.code == identitybroker.CodeInternal && errors.As(tc.err, &sr) && sr.Reason != "" && !strings.Contains(err.Error(), "("+sr.Reason+")") {
+				t.Fatalf("AuthorizeCall = %v, want the reason %s named, not unknown", err, sr.Reason)
 			}
 			f.wantCounts(t, 1, 0)
 			d := f.rec.Decisions()
