@@ -385244,6 +385244,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794943524366,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e056c29a1b93e58f418af5092f5ddbd55f72f138",
+          "message": "fix(mcpbroker): address the gateway call review follow-ups (#2831)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T22:44:11Z",
+          "tree_id": "6972ee0969426cfc54fe0c9431653312d8c48ae4",
+          "url": "https://github.com/stacklok/mecatl/commit/e056c29a1b93e58f418af5092f5ddbd55f72f138"
+        },
+        "date": 1794956190949,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -556146,6 +556180,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794956187723,
+  "lastUpdate": 1794956191900,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
