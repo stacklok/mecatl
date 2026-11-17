@@ -427377,6 +427377,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794956195284,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "113200276+Nashon-Steffen@users.noreply.github.com",
+            "name": "Nashon-Steffen",
+            "username": "Nashon-Steffen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6e64d3f942c3786276df5c049090ac5d8d009c1",
+          "message": "fix(build): drop dev tooling from the Studio image and bump undici in the Slack bot (#2839)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T23:41:26Z",
+          "tree_id": "0a6644b0b1c51a698e92d2967d8b16d49146a82b",
+          "url": "https://github.com/stacklok/mecatl/commit/c6e64d3f942c3786276df5c049090ac5d8d009c1"
+        },
+        "date": 1794959661820,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -556691,6 +556730,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794959658261,
+  "lastUpdate": 1794959662926,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
