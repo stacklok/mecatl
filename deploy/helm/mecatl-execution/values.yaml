@@ -112,6 +112,7 @@ maintenance:
 #           maxFileBytes: 5242880
 #           maxCommandBytes: 1048576
 #           maxCommandDuration: 5m
-#           # Optional maximum capability set; absent means both. Both are
-#           # required until file-only templates are supported.
+#           # Optional. The most a session on this revision can get:
+#           # filesystem (file tools) and foreground-command (Shell). Absent
+#           # means both; a set list must name both, in any order.
 #           capabilities: [filesystem, foreground-command]
