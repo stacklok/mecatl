@@ -168,7 +168,7 @@ importers:
     dependencies:
       '@slack/bolt':
         specifier: 5.0.0
-        version: 5.0.0(@types/express@5.0.6)(undici@7.29.0)
+        version: 5.0.0(@types/express@5.0.6)(undici@7.30.2)
       '@stacklok-oss/mecatl-sdk':
         specifier: file:../..
         version: file:../..
@@ -1167,8 +1167,8 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
     engines: {node: '>=20.18.1'}
 
   unpipe@1.0.0:
@@ -1455,11 +1455,11 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@slack/bolt@5.0.0(@types/express@5.0.6)(undici@7.29.0)':
+  '@slack/bolt@5.0.0(@types/express@5.0.6)(undici@7.30.2)':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/oauth': 4.0.0
-      '@slack/socket-mode': 3.0.1(undici@7.29.0)
+      '@slack/socket-mode': 3.0.1(undici@7.30.2)
       '@slack/types': 3.1.0
       '@slack/web-api': 8.1.1
       '@types/express': 5.0.6
@@ -1483,13 +1483,13 @@ snapshots:
       '@types/node': 26.6.6
       jsonwebtoken: 9.0.3
 
-  '@slack/socket-mode@3.0.1(undici@7.29.0)':
+  '@slack/socket-mode@3.0.1(undici@7.30.2)':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/web-api': 8.1.1
       '@types/node': 26.6.6
       eventemitter3: 5.0.4
-      undici: 7.29.0
+      undici: 7.30.2
 
   '@slack/types@3.1.0': {}
 
@@ -2140,7 +2140,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.29.0: {}
+  undici@7.30.2: {}
 
   unpipe@1.0.0: {}
 

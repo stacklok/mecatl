@@ -794,12 +794,15 @@ jobs:
           fi
 
           # Non-root, code not writable by the server process, no build tooling.
+          # Also check the pnpm store: an unlinked dev dependency still ships there.
           docker run --rm --entrypoint /usr/bin/node mecatl-studio:ci --input-type=module --eval '
-            import { accessSync, constants, existsSync } from "node:fs";
+            import { accessSync, constants, existsSync, readdirSync } from "node:fs";
             let writable = true;
             try { accessSync(".", constants.W_OK); } catch { writable = false; }
             const forbidden = ["/usr/bin/corepack", "/usr/bin/pnpm", "node_modules/vitest", "node_modules/typescript", "node_modules/esbuild"];
-            if (process.getuid() === 0 || writable || forbidden.some(existsSync)) process.exit(1);
+            const storeTooling = readdirSync("../node_modules/.pnpm").filter((name) => /^(@typescript\+|typescript@|vitest@|esbuild@|vite@)/.test(name));
+            if (storeTooling.length > 0) console.error("build tooling in the pnpm store: " + storeTooling.join(", "));
+            if (process.getuid() === 0 || writable || forbidden.some(existsSync) || storeTooling.length > 0) process.exit(1);
           '
 
           # Boot the image with its real entrypoint against the offline daemon the
