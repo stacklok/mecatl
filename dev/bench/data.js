@@ -382380,6 +382380,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794919592043,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c8816d1ba9fc804fa45336593cb25dd9a07d1fb",
+          "message": "feat(mcpbroker): authorize gateway calls with the identity broker and send them with a per-call token (#2818)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T15:14:47Z",
+          "tree_id": "f958ac65db4230cc1b1bd42233f6f23d0379ffb7",
+          "url": "https://github.com/stacklok/mecatl/commit/4c8816d1ba9fc804fa45336593cb25dd9a07d1fb"
+        },
+        "date": 1794929303666,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -552058,6 +552092,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794929299880,
+  "lastUpdate": 1794929304500,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
