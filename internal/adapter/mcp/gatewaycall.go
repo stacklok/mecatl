@@ -193,9 +193,7 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 			args = req.Arguments
 		}
 		res, callErr = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: req.Tool, Arguments: args})
-		// The SDK sends notifications/cancelled only when the cancellation
-		// interrupted the call, not after it returned.
-		if callErr != nil && ctx.Err() != nil {
+		if sdkSentCancelled(callErr, ctx.Err()) {
 			wire.awaitCancelled()
 		}
 		_ = cs.Close()
@@ -402,6 +400,12 @@ func (w *gatewayWire) refuse(r GatewayRejection) error {
 		w.refusal = r
 	}
 	return errGatewayRefused
+}
+
+// sdkSentCancelled reports whether the SDK sent notifications/cancelled for
+// the call: it does so exactly when CallTool returns the context's error.
+func sdkSentCancelled(callErr, ctxErr error) bool {
+	return ctxErr != nil && errors.Is(callErr, ctxErr)
 }
 
 // awaitCancelled waits, bounded, for the SDK's notifications/cancelled after

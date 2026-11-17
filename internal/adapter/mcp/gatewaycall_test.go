@@ -524,6 +524,32 @@ func TestSendGatewayCallCancelSendsCancelled(t *testing.T) {
 	}
 }
 
+func TestSDKSentCancelled(t *testing.T) {
+	gatewayErr := errors.New("calling \"tools/call\": gateway error")
+	tests := []struct {
+		name    string
+		callErr error
+		ctxErr  error
+		want    bool
+	}{
+		{"success", nil, nil, false},
+		{"success then cancel", nil, context.Canceled, false},
+		{"gateway error", gatewayErr, nil, false},
+		{"gateway error then cancel", gatewayErr, context.Canceled, false},
+		{"connection closed then cancel", mcpsdk.ErrConnectionClosed, context.Canceled, false},
+		{"cancelled", context.Canceled, context.Canceled, true},
+		{"deadline", context.DeadlineExceeded, context.DeadlineExceeded, true},
+		{"blocking notify joins the error", errors.Join(context.Canceled, io.EOF), context.Canceled, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sdkSentCancelled(tt.callErr, tt.ctxErr); got != tt.want {
+				t.Fatalf("sdkSentCancelled(%v, %v) = %v, want %v", tt.callErr, tt.ctxErr, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestReplyWatcherFindsTheReplyInAnEventStream(t *testing.T) {
 	const reply = `{"jsonrpc":"2.0","id":7,"error":{"code":-32042,"message":"connect"}}`
 	for name, stream := range map[string]string{
