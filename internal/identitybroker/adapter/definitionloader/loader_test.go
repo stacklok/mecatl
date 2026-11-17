@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
@@ -28,6 +30,11 @@ func TestBuiltinRevision(t *testing.T) {
 		"v0.0.51-dirty":            "dev",
 		"abc1234":                  "dev",
 		"v01.0.0":                  "dev",
+		// Published main builds each get their own revision.
+		"v0.0.53-main.812.1.gabcdef12":       "v0.0.53-main.812.1.gabcdef12",
+		"v0.0.53-main.812.1.gabcdef12-dirty": "dev",
+		"v0.0.53-main.812.1.gABCDEF12":       "dev",
+		"v0.0.53-main.812.1.gabcdef1":        "dev",
 	} {
 		if got := definitionloader.BuiltinRevision(buildID); got != want {
 			t.Errorf("BuiltinRevision(%q) = %q, want %q", buildID, got, want)
@@ -48,8 +55,8 @@ func TestLoadBuiltins(t *testing.T) {
 			t.Fatalf("Load(%q) = problems %v, err %v; want none", tc.buildID, problems, err)
 		}
 		want := map[string]string{
-			definitionloader.BuiltinExplorer: "50e28fdf176daa2ca5b03d32adc12d0a981b862152a19cac2c429458be6bb1dd",
-			definitionloader.BuiltinMain:     "4e6784a5b89b24fb7a65a929b3d0e1df131adf081bd213b29de7c66458e47bde",
+			identitybroker.BuiltinExplorer: "50e28fdf176daa2ca5b03d32adc12d0a981b862152a19cac2c429458be6bb1dd",
+			identitybroker.BuiltinMain:     "4e6784a5b89b24fb7a65a929b3d0e1df131adf081bd213b29de7c66458e47bde",
 		}
 		if len(defs) != len(want) {
 			t.Fatalf("Load(%q) = %d definitions, want %d built-ins", tc.buildID, len(defs), len(want))
@@ -57,7 +64,7 @@ func TestLoadBuiltins(t *testing.T) {
 		for _, d := range defs {
 			rec := d.Record
 			digest, ok := want[rec.Ref.Name]
-			if !ok || rec.Ref.Source != definitionloader.SourceSystem || rec.Ref.Revision != tc.revision {
+			if !ok || rec.Ref.Source != identitybroker.SourceSystem || rec.Ref.Revision != tc.revision {
 				t.Errorf("record ref = %+v, want system/<built-in> at %q", rec.Ref, tc.revision)
 				continue
 			}
@@ -84,7 +91,7 @@ func TestLoadBuiltinsAreCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	main := find(t, first, definitionloader.SourceSystem, definitionloader.BuiltinMain)
+	main := find(t, first, identitybroker.SourceSystem, identitybroker.BuiltinMain)
 	want := main.Def.Description
 	for i := range first {
 		first[i].Def.Description = "changed by a caller"
@@ -93,7 +100,7 @@ func TestLoadBuiltinsAreCopies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := find(t, second, definitionloader.SourceSystem, definitionloader.BuiltinMain).Def.Description; got != want {
+	if got := find(t, second, identitybroker.SourceSystem, identitybroker.BuiltinMain).Def.Description; got != want {
 		t.Errorf("second Load built-in description = %q, want %q", got, want)
 	}
 }
@@ -112,9 +119,11 @@ func TestLoadGlobalDefinition(t *testing.T) {
 	if err != nil || len(problems) != 0 {
 		t.Fatalf("Load = problems %v, err %v; want none", problems, err)
 	}
-	d := find(t, defs, definitionloader.SourceGlobal, "code-reviewer")
+	d := find(t, defs, identitybroker.SourceGlobal, "code-reviewer")
 	rec := d.Record
 
+	// The time zone case is pinned by TestFileRevision: os.Stat reports the
+	// time in the process's zone, which is UTC on CI.
 	if want := "2026-11-17T08:12:44.123456789Z"; rec.Ref.Revision != want {
 		t.Errorf("revision = %q, want the file's modification time in UTC, %q", rec.Ref.Revision, want)
 	}
@@ -156,7 +165,7 @@ func TestLoadDefinitionDigestFollowsAcceptedDefinition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		return find(t, defs, definitionloader.SourceGlobal, "a").Record.Provenance
+		return find(t, defs, identitybroker.SourceGlobal, "a").Record.Provenance
 	}
 	base := load("---\nname: a\ndescription: Agent A\n---\nBody\n")
 	reformatted := load("---\n# a comment\ndescription:   Agent A\nname: a\nunknown: ignored\n---\nBody\n")
@@ -184,16 +193,39 @@ func TestLoadSkipsAndReportsBadDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	find(t, defs, definitionloader.SourceGlobal, "good")
+	find(t, defs, identitybroker.SourceGlobal, "good")
 	for _, d := range defs {
 		if d.Record.Ref.Name == "Code Reviewer" {
 			t.Errorf("loaded %+v; a name outside the SPIFFE segment grammar must be left out", d.Record.Ref)
 		}
 	}
-	for _, path := range []string{noFrontmatter, badName} {
-		if !hasProblem(problems, path, true) {
-			t.Errorf("problems = %+v, want %s reported as dropped", problems, path)
+	if !hasProblem(problems, noFrontmatter, true) {
+		t.Errorf("problems = %+v, want %s reported as dropped", problems, noFrontmatter)
+	}
+	if !hasProblemAt(problems, badName, true) {
+		t.Errorf("problems = %+v, want %s reported as dropped at its bare path", problems, badName)
+	}
+}
+
+// TestLoadDropsNonUTF8Definition plants a body with an invalid byte. JSON
+// would encode it as U+FFFD, so two different files could share a
+// DefinitionDigest; the definition is left out instead.
+func TestLoadDropsNonUTF8Definition(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := writeDef(t, dir, "bad.md", "---\nname: bad\ndescription: x\n---\na\xffb\n")
+
+	defs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, d := range defs {
+		if d.Record.Ref.Source == identitybroker.SourceGlobal {
+			t.Errorf("loaded %+v from a file that is not valid UTF-8", d.Record.Ref)
 		}
+	}
+	if !hasProblemAt(problems, path, true) {
+		t.Errorf("problems = %+v, want %s reported as dropped", problems, path)
 	}
 }
 
@@ -210,15 +242,39 @@ func TestLoadReportsAdjustedDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := find(t, defs, definitionloader.SourceGlobal, "long")
+	d := find(t, defs, identitybroker.SourceGlobal, "long")
 	if !hasProblem(problems, path, false) {
 		t.Errorf("problems = %+v, want %s reported as adjusted, not dropped", problems, path)
 	}
 	if hasProblem(problems, path, true) {
 		t.Errorf("problems = %+v, report %s as dropped though it loaded", problems, path)
 	}
-	if len(d.Def.Description) > tool.MaxAgentDescriptionBytes {
-		t.Errorf("accepted description is %d bytes, want the truncated form within %d", len(d.Def.Description), tool.MaxAgentDescriptionBytes)
+	want := agentfs.TruncateRunes(long, tool.MaxAgentDescriptionBytes)
+	if d.Def.Description != want {
+		t.Errorf("accepted description = %d bytes ending %q, want the parser's truncated form", len(d.Def.Description), d.Def.Description[max(0, len(d.Def.Description)-8):])
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if d.Record.Provenance.SourceDigest != digestOf(string(raw)) {
+		t.Error("SourceDigest does not cover the bytes read")
+	}
+
+	// A file that already holds the truncated text parses to the same accepted
+	// definition: the same DefinitionDigest from different bytes.
+	other := t.TempDir()
+	writeDef(t, other, "long.md", "---\nname: long\ndescription: "+want+"\n---\n")
+	pre, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{other}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p := find(t, pre, identitybroker.SourceGlobal, "long")
+	if p.Record.Provenance.DefinitionDigest != d.Record.Provenance.DefinitionDigest {
+		t.Error("DefinitionDigest does not cover the adjusted definition")
+	}
+	if p.Record.Provenance.SourceDigest == d.Record.Provenance.SourceDigest {
+		t.Error("SourceDigest should differ: the files' bytes differ")
 	}
 }
 
@@ -227,8 +283,8 @@ func TestLoadReportsAdjustedDefinition(t *testing.T) {
 // included, and keeps the problems found before the failure.
 func TestLoadFailsOnUnreadableDirectory(t *testing.T) {
 	t.Parallel()
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a directory regardless of its permissions")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root, and Windows, read a directory regardless of its permission bits")
 	}
 	readable, unreadable := t.TempDir(), t.TempDir()
 	broken := writeDef(t, readable, "broken.md", "no frontmatter here\n")
@@ -290,11 +346,11 @@ func TestLoadDropsNonUTF8Path(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	for _, d := range defs {
-		if d.Record.Ref.Source == definitionloader.SourceGlobal {
+		if d.Record.Ref.Source == identitybroker.SourceGlobal {
 			t.Errorf("loaded %+v from a non-UTF-8 path", d.Record.Ref)
 		}
 	}
-	if !hasProblem(problems, path, true) {
+	if !hasProblemAt(problems, path, true) {
 		t.Errorf("problems = %+v, want %q reported as dropped", problems, path)
 	}
 }
@@ -309,10 +365,21 @@ func TestLoadEarlierDirectoryWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := find(t, defs, definitionloader.SourceGlobal, "a")
+	n := 0
+	for _, x := range defs {
+		if x.Record.Ref.Source == identitybroker.SourceGlobal && x.Record.Ref.Name == "a" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("loaded %d copies of global/a, want exactly 1", n)
+	}
+	d := find(t, defs, identitybroker.SourceGlobal, "a")
 	if got := d.Record.Provenance.Metadata["path"]; got != filepath.Join(high, "a.md") || d.Def.Description != "High" {
 		t.Errorf("loaded a from %q (description %q), want the earlier directory's file", got, d.Def.Description)
 	}
+	// The shadowed definition is reported by its display locator
+	// ("explicit: <path>"), so this check matches a substring.
 	if !hasProblem(problems, shadowed, true) {
 		t.Errorf("problems = %+v, want the shadowed %s reported", problems, shadowed)
 	}
@@ -334,7 +401,7 @@ func TestLoadReadsOnlyExplicitDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	find(t, defs, definitionloader.SourceGlobal, "chosen")
+	find(t, defs, identitybroker.SourceGlobal, "chosen")
 	for _, d := range defs {
 		if strings.HasPrefix(d.Record.Ref.Name, "poisoned") {
 			t.Errorf("loaded %+v from a user-tier location; only explicit directories are loaded", d.Record.Ref)
@@ -342,17 +409,32 @@ func TestLoadReadsOnlyExplicitDirectories(t *testing.T) {
 	}
 }
 
-func TestLoadMissingDirectoryContributesNothing(t *testing.T) {
+// TestLoadFailsOnMissingDirectory shows a configured directory that does not
+// exist, or is a file, fails the load: a mistyped path or an unmounted volume
+// shows at startup. An empty entry is skipped, as the harness skips it.
+func TestLoadFailsOnMissingDirectory(t *testing.T) {
 	t.Parallel()
-	defs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{filepath.Join(t.TempDir(), "absent")}})
-	if err != nil || len(problems) != 0 {
-		t.Fatalf("Load = problems %v, err %v; want none", problems, err)
-	}
-	for _, d := range defs {
-		if d.Record.Ref.Source != definitionloader.SourceSystem {
-			t.Errorf("loaded %+v from a missing directory", d.Record.Ref)
+	present := t.TempDir()
+	writeDef(t, present, "a.md", "---\nname: a\ndescription: A\n---\n")
+	file := writeDef(t, t.TempDir(), "not-a-dir.md", "x")
+	for name, missing := range map[string]string{
+		"absent": filepath.Join(t.TempDir(), "absent"),
+		"file":   file,
+	} {
+		defs, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{present, missing}})
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Errorf("%s: Load error = %v, want one naming %s", name, err, missing)
+		}
+		if defs != nil {
+			t.Errorf("%s: Load returned %d definitions with its error, want none", name, len(defs))
 		}
 	}
+
+	defs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{"", present}})
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("Load with an empty entry = problems %v, err %v; want none", problems, err)
+	}
+	find(t, defs, identitybroker.SourceGlobal, "a")
 }
 
 func writeDef(t *testing.T, dir, file, content string) string {
@@ -378,9 +460,21 @@ func find(t *testing.T, defs []definitionloader.Definition, source, name string)
 	return definitionloader.Definition{}
 }
 
+// hasProblem reports a problem whose location contains path, which also
+// matches a display locator such as "explicit: <path>".
 func hasProblem(problems []definitionloader.Problem, path string, dropped bool) bool {
 	for _, p := range problems {
 		if p.Dropped == dropped && strings.Contains(p.Location, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasProblemAt reports a problem located exactly at path.
+func hasProblemAt(problems []definitionloader.Problem, path string, dropped bool) bool {
+	for _, p := range problems {
+		if p.Dropped == dropped && p.Location == path {
 			return true
 		}
 	}

@@ -112,7 +112,11 @@ func TestFSSourceDropsFileBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFSSource: %v", err)
 	}
-	for _, d := range snap.Discovered() {
+	got := snap.Discovered()
+	if len(got) != 1 || got[0].Def.Name != "rev" {
+		t.Fatalf("snapshot = %+v, want the rev def kept", got)
+	}
+	for _, d := range got {
 		if d.File != nil {
 			t.Errorf("snapshot keeps %q's file bytes; it must drop them", d.Def.Name)
 		}

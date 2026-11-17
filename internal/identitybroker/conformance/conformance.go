@@ -93,7 +93,7 @@ func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentReque
 		HostSessionID: s.HostSessionID,
 		Owner:         s.Owner,
 		Incarnation:   s.Incarnation,
-		Definition:    identitybroker.DefinitionRef{Source: "system", Name: "main", Revision: "v1"},
+		Definition:    identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"},
 	}
 }
 

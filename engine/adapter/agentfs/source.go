@@ -16,9 +16,10 @@ import (
 type Discovered struct {
 	Def    AgentDef
 	Detail string
-	// File is the file a filesystem source parsed Def from, or nil for a source
-	// with no file, such as a remote driver. Like Detail, it is a NON-PORT
-	// channel: it never crosses the tool.AgentDefSource port.
+	// File is the file a filesystem source parsed Def from. It is nil for a
+	// source with no file, such as a remote driver, and in FSSource's
+	// snapshot, which drops the bytes on purpose. Like Detail, it is a
+	// NON-PORT channel: it never crosses the tool.AgentDefSource port.
 	File *SourceFile
 }
 
