@@ -424201,6 +424201,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794929308266,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95c61c922fe642e655aa6736f25e951f8d5ca3a1",
+          "message": "perf(dtogen): share owner overlays and batch output type checks (#2833)\n\nA repository render recomputed the owner overlays for every target and\ntype checked each generated artifact with its own `packages.Load`.\n`renderTargets` now shares owner overlays across loads that resolve to\nidentical target lists. Each load gets its own copies, because\n`loadPrerequisites` rewrites `Wire` and `Names`. Generated outputs are\ntype checked with one load per module, and diagnostics are still\nreported per artifact.\n\n`TestTaskGenerationAndFreshness` runs the inventory scenarios in\nprocess through `GenerateRepository`. It keeps `task` runs only for the\nTaskfile wiring.\n\n`dtogen -repo . -check` drops from 216 to 59 `go list` calls (13.4s to\n5.4s), and its output is byte-identical. The `internal/dtogen` test\npackage drops from 190s to 148s.",
+          "timestamp": "2026-11-17T17:09:18+01:00",
+          "tree_id": "d315c5b2a31ca0c9b4f0ae2f030918b0259860cb",
+          "url": "https://github.com/stacklok/mecatl/commit/95c61c922fe642e655aa6736f25e951f8d5ca3a1"
+        },
+        "date": 1794932485682,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13388,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12879.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -552603,6 +552642,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794932482392,
+  "lastUpdate": 1794932486495,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
