@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -173,6 +174,9 @@ type PlacementBindRequest struct {
 	// BindingID is the final server-minted session identity. Providers that
 	// allocate durable environments use it as their idempotency/reference key.
 	BindingID session.SessionID
+	// Capabilities is the validated execution capability request; empty asks
+	// for the template's set.
+	Capabilities []string
 }
 
 // PlacementMetadata is the bounded, display-safe provider projection returned
@@ -208,6 +212,9 @@ type PlacementBinding struct {
 	// that provision durable state during Bind must supply it; it is never used
 	// after publication or for ordinary EndSession teardown.
 	Rollback func() error
+	// AdmittedCapabilities is the provider-admitted execution capability set;
+	// nil means the placement does not enforce capabilities.
+	AdmittedCapabilities []string
 }
 
 type ExecutionRunRequest struct {
@@ -287,6 +294,9 @@ type PlacementSuccessorRequest struct {
 	Principal            *session.Principal
 	SourceBindingID      session.SessionID
 	DestinationBindingID session.SessionID
+	// Capabilities is the source session's recorded set, requested for the
+	// successor; nil when the source recorded none.
+	Capabilities []string
 }
 
 type ReferenceDeleteHandle interface {
@@ -401,8 +411,12 @@ func sanitizePlacementProviderError(err error) error {
 	}
 	public := ErrPlacementUnavailable
 	var readinessErr *placementReadinessError
+	var refusal *ExecutionCapabilityRefusal
 	if errors.As(err, &readinessErr) {
 		public = readinessErr
+	} else if errors.As(err, &refusal) {
+		reason := sanitizedPlacementDiagnosticCause(errors.New(refusal.Reason))
+		public = &ExecutionCapabilityRefusal{Reason: reason}
 	} else {
 		for _, candidate := range []error{
 			ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
@@ -464,13 +478,25 @@ func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, selector PlacementSelector, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
+func (s *Service) bindPlacementForCreate(
+	ctx context.Context,
+	selector PlacementSelector,
+	profile SessionProfile,
+	owner *session.Principal,
+	bindingID session.SessionID,
+	capabilities []string,
+) (string, *PlacementBinding, error) {
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
 		Operation: PlacementOperationCreate, BindingID: bindingID,
+		Capabilities: slices.Clone(capabilities),
 	})
 	if err != nil {
 		s.logPlacementProviderError(ctx, "bind", err)
+		return "", nil, err
+	}
+	if err := checkAdmittedCapabilities(capabilities, binding.AdmittedCapabilities); err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
 		return "", nil, err
 	}
 	executionRoot := binding.Environment.Workspace().Root()
@@ -583,10 +609,21 @@ func (s *Service) ScheduleFirePlacement(ctx context.Context, spec port.ScheduleS
 	if err != nil || source.EnvironmentRef != spec.EnvironmentRef || source.Owner == nil || !source.Owner.SameIdentity(spec.Owner) {
 		return PlacementBinding{}, ErrPlacementNotFound
 	}
+	requested := s.enforcedCapabilities(source)
+	if err := s.refuseDisabledCapabilities(requested); err != nil {
+		return PlacementBinding{}, err
+	}
 	binding, err := s.successorPlacement(ctx, source, SuccessorPlacement{}, fireID)
 	if err != nil {
 		s.logPlacementProviderError(ctx, "reserve schedule fire", err)
 		return PlacementBinding{}, sanitizePlacementProviderError(err)
+	}
+	if err := checkAdmittedCapabilities(requested, binding.AdmittedCapabilities); err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
+		return PlacementBinding{}, err
+	}
+	if requested != nil {
+		binding.AdmittedCapabilities = requested
 	}
 	if binding.Ref != spec.EnvironmentRef {
 		rollbackUnpublishedPlacement(s, &binding)
@@ -868,6 +905,7 @@ func discardPlacementBinding(binding PlacementBinding) {
 
 func clonePlacementRequest(req PlacementBindRequest) PlacementBindRequest {
 	req.Principal = req.Principal.Clone()
+	req.Capabilities = slices.Clone(req.Capabilities)
 	return req
 }
 

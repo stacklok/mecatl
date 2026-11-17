@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -2558,6 +2559,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		PlacementProvider:        placementProvider,
 		PlacementScope:           placementScope,
 		ExecutionTemplateAllowed: cfg.ExecutionTemplateAllowed,
+		ExecutionShellDisabled:   cfg.NoShell,
 		ExecutionAccess:          executionAccess(placementProvider),
 		ReferenceIntents:         referenceIntentLifecycle(placementProvider),
 		SessionReadLedger:        sessionReadLedger,
@@ -3476,6 +3478,7 @@ func sessionEngineFactoryWithTools(
 	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (server.SessionEngineResult, error) {
 		cfg := cfg // Permission resolver overrides belong to this invocation, not the shared closure.
 		cfg.guardrailSessionMode = mode
+		cfg.NoShell = cfg.NoShell || !foregroundCommandAdmitted(ctx)
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
 		// Pin the CHILD permission resolver to THIS session's base root (issue
@@ -8871,6 +8874,13 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 const workspaceRootForPrompt = "/workspace"
 
 const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; in-chat schedules may borrow this session's exact workspace for future fires, but independent scheduled workspace allocation is unsupported and a fire fails if the workspace is busy; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+
+// foregroundCommandAdmitted is false when the service attached a session
+// capability set without foreground-command; the session then gets no Shell.
+func foregroundCommandAdmitted(ctx context.Context) bool {
+	names, ok := server.ExecutionCapabilitiesFromContext(ctx)
+	return !ok || slices.Contains(names, server.ExecutionCapabilityForegroundCommand)
+}
 
 func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 	if !enabled {

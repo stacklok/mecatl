@@ -37,6 +37,13 @@ type scheduledNativeProvider struct {
 func (p *scheduledNativeProvider) environment() tool.Environment {
 	return tool.MustEnvironment(p.ref, memfs.NewWorkspace("/workspace"), memledger.New(), nil)
 }
+func (p *scheduledNativeProvider) binding() server.PlacementBinding {
+	return server.PlacementBinding{
+		Ref:                  p.ref,
+		Environment:          p.environment(),
+		AdmittedCapabilities: []string{"filesystem"},
+	}
+}
 func (p *scheduledNativeProvider) Applies(ref session.EnvironmentRef) bool {
 	return ref.Kind == p.ref.Kind
 }
@@ -47,7 +54,7 @@ func (p *scheduledNativeProvider) Bind(_ context.Context, req server.PlacementBi
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
 	p.published[req.BindingID] = true
-	return server.PlacementBinding{Ref: p.ref, Environment: p.environment()}, nil
+	return p.binding(), nil
 }
 func (p *scheduledNativeProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	p.mu.Lock()
@@ -55,7 +62,7 @@ func (p *scheduledNativeProvider) Reattach(_ context.Context, req server.Placeme
 	if req.Ref != p.ref || !req.Principal.SameIdentity(p.owner) || !p.published[req.BindingID] {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
-	return server.PlacementBinding{Ref: p.ref, Environment: p.environment()}, nil
+	return p.binding(), nil
 }
 func (p *scheduledNativeProvider) ReserveSuccessor(_ context.Context, req server.PlacementSuccessorRequest) (server.PlacementBinding, error) {
 	p.mu.Lock()
@@ -69,7 +76,8 @@ func (p *scheduledNativeProvider) ReserveSuccessor(_ context.Context, req server
 	p.pending[req.DestinationBindingID] = true
 	id := req.DestinationBindingID
 	committed := false
-	return server.PlacementBinding{Ref: p.ref, Environment: p.environment(), Commit: func(context.Context) error {
+	binding := p.binding()
+	binding.Commit = func(context.Context) error {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if !p.pending[id] {
@@ -83,7 +91,8 @@ func (p *scheduledNativeProvider) ReserveSuccessor(_ context.Context, req server
 			return errors.New("commit response lost")
 		}
 		return nil
-	}, Close: func() error {
+	}
+	binding.Close = func() error {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		p.closes++
@@ -92,7 +101,8 @@ func (p *scheduledNativeProvider) ReserveSuccessor(_ context.Context, req server
 			delete(p.pending, id)
 		}
 		return nil
-	}}, nil
+	}
+	return binding, nil
 }
 func (p *scheduledNativeProvider) AcquireRun(_ context.Context, req server.ExecutionRunRequest) (server.ExecutionRunHandle, error) {
 	p.mu.Lock()

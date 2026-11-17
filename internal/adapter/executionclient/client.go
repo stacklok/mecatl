@@ -22,6 +22,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -425,11 +427,52 @@ func bindOperationID(owner executionenv.Owner, binding, profile string) string {
 }
 
 func (c *Client) EnsureTemplate(ctx context.Context, binding, id, revision string, owner executionenv.Owner, operationID string) (executionenv.EnsureEnvironmentResponse, error) {
-	v, err := c.rpc.EnsureTemplate(ctx, &executionv1.EnsureTemplateRequest{BindingId: binding, Template: &executionv1.TemplateSelector{Id: id, Revision: revision}, Owner: ownerToProto(owner), OperationId: operationID})
+	return c.EnsureTemplateCapabilities(ctx, binding, id, revision, owner, operationID, nil)
+}
+
+// EnsureTemplateCapabilities is EnsureTemplate with a capability request. A
+// refusal keeps the provider's message, which the provider limits to safe text.
+func (c *Client) EnsureTemplateCapabilities(
+	ctx context.Context,
+	binding string,
+	id string,
+	revision string,
+	owner executionenv.Owner,
+	operationID string,
+	capabilities []string,
+) (executionenv.EnsureEnvironmentResponse, error) {
+	v, err := c.rpc.EnsureTemplate(ctx, &executionv1.EnsureTemplateRequest{
+		BindingId:    binding,
+		Template:     &executionv1.TemplateSelector{Id: id, Revision: revision},
+		Owner:        ownerToProto(owner),
+		OperationId:  operationID,
+		Capabilities: capabilities,
+	})
 	if err != nil {
-		return executionenv.EnsureEnvironmentResponse{}, decodeError(ctx, err)
+		return executionenv.EnsureEnvironmentResponse{}, decodeAdmissionError(ctx, err)
 	}
 	return ensureFromProto(v)
+}
+
+func decodeAdmissionError(ctx context.Context, err error) error {
+	decoded := decodeError(ctx, err)
+	var remote *executionenv.Error
+	if !errors.As(decoded, &remote) {
+		return decoded
+	}
+	switch remote.Code {
+	case executionenv.CodeInvalidArgument,
+		executionenv.CodePermissionDenied,
+		executionenv.CodeConflict:
+	default:
+		return decoded
+	}
+	message := status.Convert(err).Message()
+	if message == genericProviderMessage || len(message) > 256 || !utf8.ValidString(message) ||
+		strings.IndexFunc(message, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return decoded
+	}
+	return &executionenv.Error{Code: remote.Code, Message: message}
 }
 
 // ListExecutionTemplates returns only operator-authorized display projections.
@@ -658,11 +701,17 @@ func decodeError(ctx context.Context, err error) error {
 	if !code.Valid() || st.Code() != grpcCodeForError(code) || (detail.Retryable && code != executionenv.CodeNotReady && code != executionenv.CodeUnauthenticated) {
 		return sanitizedProviderError()
 	}
-	return &executionenv.Error{Code: code, Message: "execution provider request failed", Retryable: detail.Retryable}
+	return &executionenv.Error{
+		Code:      code,
+		Message:   genericProviderMessage,
+		Retryable: detail.Retryable,
+	}
 }
 
+const genericProviderMessage = "execution provider request failed"
+
 func sanitizedProviderError() error {
-	return &executionenv.Error{Code: executionenv.CodeInternal, Message: "execution provider request failed"}
+	return &executionenv.Error{Code: executionenv.CodeInternal, Message: genericProviderMessage}
 }
 
 func grpcCodeForError(code executionenv.ErrorCode) codes.Code {
@@ -928,6 +977,14 @@ func (p *Provider) ReserveSuccessor(ctx context.Context, req server.PlacementSuc
 		abort()
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
+	for _, name := range req.Capabilities {
+		if !slices.Contains(inherited, name) {
+			abort()
+			return server.PlacementBinding{}, &server.ExecutionCapabilityRefusal{
+				Reason: fmt.Sprintf("the source environment was not admitted for %q", name),
+			}
+		}
+	}
 	attached, err := p.client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: ref, Owner: owner, BindingID: string(req.SourceBindingID)}, Purpose: executionenv.PurposeSession})
 	if err != nil {
 		abort()
@@ -1150,8 +1207,20 @@ func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (s
 	}
 	operationID := bindOperationID(owner, string(req.BindingID), id+"\x00"+revision)
 	ensureDone := creatediag.Begin(ctx, "bind_ensure")
-	ensured, err := p.client.EnsureTemplate(ctx, string(req.BindingID), id, revision, owner, operationID)
+	ensured, err := p.client.EnsureTemplateCapabilities(
+		ctx,
+		string(req.BindingID),
+		id,
+		revision,
+		owner,
+		operationID,
+		req.Capabilities,
+	)
 	ensureDone(err)
+	var remote *executionenv.Error
+	if errors.As(err, &remote) && remote.Message != genericProviderMessage {
+		return server.PlacementBinding{}, &server.ExecutionCapabilityRefusal{Reason: remote.Message}
+	}
 	if err != nil {
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
@@ -1268,7 +1337,22 @@ func (p *Provider) binding(owner executionenv.Owner, binding string, attached ex
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	return server.PlacementBinding{Environment: env, Ref: sref, Metadata: server.PlacementMetadata{Kind: "kubernetes", Label: "Remote Kubernetes workspace", Revision: attached.Environment.Revision}}, nil
+	return server.PlacementBinding{
+		Environment: env,
+		Ref:         sref,
+		Metadata: server.PlacementMetadata{
+			Kind:     "kubernetes",
+			Label:    "Remote Kubernetes workspace",
+			Revision: attached.Environment.Revision,
+		},
+		AdmittedCapabilities: slices.Clone(attached.AdmittedCapabilities),
+	}, nil
+}
+
+// EnforcesExecutionCapabilities reports that every environment Bind allocates
+// is admitted by the trusted service.
+func (*Provider) EnforcesExecutionCapabilities(selector server.PlacementSelector) bool {
+	return selector.IsDefault() || selector.IsTemplate()
 }
 func sameCapabilitySet(a, b []string) bool {
 	if len(a) != len(b) {

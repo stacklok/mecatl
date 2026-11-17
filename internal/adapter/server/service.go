@@ -543,6 +543,9 @@ type Config struct {
 	// function denies all public template selection even if the shared provider
 	// mTLS client has a broader allowlist.
 	ExecutionTemplateAllowed func(*session.Principal, string, string) bool
+	// ExecutionShellDisabled refuses requests for foreground-command, which
+	// this deployment never registers a Shell tool for.
+	ExecutionShellDisabled bool
 	// ExecutionAccess is an optional host-only run-ownership seam. Local and no-FS
 	// placements leave it nil and perform no lifecycle RPCs.
 	ExecutionAccess ExecutionAccess
@@ -2009,8 +2012,10 @@ type CreateSessionOption func(*createSessionOpts)
 // "WithSessionID was never called" — both leave id == "".
 type createSessionOpts struct {
 	execution ExecutionSelection
-	id        session.SessionID
-	idSet     bool
+	// capabilities is execution.Capabilities after validation, sorted.
+	capabilities []string
+	id           session.SessionID
+	idSet        bool
 	// sourceSessionID, when non-empty, seeds the new session's conversation
 	// history from the named source session (issue #20, model-switch carryover).
 	// Validated + snapshotted in createSession via validateCarryover BEFORE the
@@ -2516,6 +2521,12 @@ func (r createRequest) matches(sess *session.Session) bool {
 		sess.AgentDefinitionName != r.agentDefinitionName {
 		return false
 	}
+	effective := executionSessionCapabilities(sess)
+	for _, name := range r.execution.Capabilities {
+		if !slices.Contains(effective, name) {
+			return false
+		}
+	}
 	if r.agentDefinitionName != "" {
 		// Legacy effective values cannot prove original intent. Refuse rather
 		// than re-resolving a possibly changed definition or guessing equality.
@@ -2768,9 +2779,14 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 	if selectionErr != nil {
 		return nil, selectionErr
 	}
-	if len(opts.execution.Capabilities) != 0 {
-		return nil, errExecutionCapabilityRequest
+	requested, capabilityErr := opts.execution.requestedCapabilities()
+	if capabilityErr != nil {
+		return nil, capabilityErr
 	}
+	if err := s.refuseCapabilityRequest(requested, placementSelector, opts); err != nil {
+		return nil, err
+	}
+	opts.capabilities = requested
 	if opts.execution.Kind != "" {
 		if profile != ProfileDefault && profile != selectedProfile {
 			return nil, ErrInvalidArgument
@@ -2920,7 +2936,14 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 		if profile == ProfileNoFS {
 			selectorForBind = NoFSPlacement()
 		}
-		workspace, placement, err = s.bindPlacementForCreate(ctx, selectorForBind, profile, owner, finalID)
+		workspace, placement, err = s.bindPlacementForCreate(
+			ctx,
+			selectorForBind,
+			profile,
+			owner,
+			finalID,
+			opts.capabilities,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -2975,7 +2998,11 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 		owner = srcOwner
 	}
 
-	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil || opts.agentDefinitionName != ""
+	needPerSession := s.cfg.MCPBroker != nil ||
+		s.sessionNeedsPerFactory(sel, specs, profile, workspace) ||
+		s.cfg.LearnedSkills != nil ||
+		opts.agentDefinitionName != "" ||
+		s.sharedEngineExceeds(placement.AdmittedCapabilities)
 	if !needPerSession {
 		// Workspace broker wrappers only enter per-session catalogues; the shared
 		// engine can therefore identify a conflicting non-broker registration by
@@ -3010,7 +3037,15 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 			sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
 		}
 		s.setTitleGenerationEligibility(sess, sel)
-		stampExecutionCapabilities(sess, s.cfg.Engine, placement.Environment)
+		stampExecutionCapabilities(
+			sess,
+			s.cfg.Engine,
+			placement.Environment,
+			placement.AdmittedCapabilities,
+		)
+		if err := checkEffectiveCapabilities(opts.capabilities, sess); err != nil {
+			return nil, err
+		}
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -3037,6 +3072,7 @@ func (s *Service) createSessionRecord(ctx context.Context, mode session.Permissi
 //
 //nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
 func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carried carriedAuthority, retryRequest *createRequest, placement *PlacementBinding, publishedPlacement *bool) (*session.Session, error) {
+	ctx = withExecutionCapabilities(ctx, placement.AdmittedCapabilities)
 	switch {
 	case opts.agentDefinitionName != "":
 		if s.cfg.AgentDefSessionEngine == nil {
@@ -3217,7 +3253,18 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	s.setTitleGenerationEligibility(sess, sel)
-	stampExecutionCapabilities(sess, eng, placement.Environment)
+	stampExecutionCapabilities(
+		sess,
+		eng,
+		placement.Environment,
+		placement.AdmittedCapabilities,
+	)
+	if err := checkEffectiveCapabilities(opts.capabilities, sess); err != nil {
+		if closeFn != nil {
+			_ = closeFn()
+		}
+		return nil, err
+	}
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -6912,6 +6959,10 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	if err != nil {
 		return nil, tool.Environment{}, "", err
 	}
+	if recorded := s.enforcedCapabilities(sess); recorded != nil &&
+		checkAdmittedCapabilities(recorded, verified.AdmittedCapabilities) != nil {
+		return nil, tool.Environment{}, "", ErrPlacementChanged
+	}
 	if verified.Environment, err = s.withSessionReadLedger(id, verified.Environment); err != nil {
 		return nil, tool.Environment{}, "", err
 	}
@@ -7067,6 +7118,7 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
 		s.cfg.DefaultModelPending ||
+		s.sharedEngineExceeds(s.enforcedCapabilities(sess)) ||
 		// ADR 0353 (AC3.4): an agent-bound session ALWAYS needs rehydration, even
 		// with an empty selector, default profile, and no MCPBroker/LearnedSkills
 		// configured — the deployment's default engine is never this session's
@@ -7180,6 +7232,7 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 //nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
 func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, exactToolNames []string, useExactTools bool, forkSource ...session.SessionID) (*sessionEngine, error) {
 	id := sess.ID
+	ctx = withExecutionCapabilities(ctx, s.enforcedCapabilities(sess))
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
 	// On replace we are swapping an existing registration, so the cap is not exceeded
@@ -9742,6 +9795,10 @@ func (s *Service) acquireExecution(ctx context.Context, st *runState, sess *sess
 	}
 	env := handle.Environment()
 	if env.Ref() != sess.EnvironmentRef || env.Workspace() == nil {
+		_ = handle.Release(context.WithoutCancel(ctx))
+		return tool.Environment{}, ErrInvalidPlacementBinding
+	}
+	if env, err = s.withoutWithheldRunner(sess, env); err != nil {
 		_ = handle.Release(context.WithoutCancel(ctx))
 		return tool.Environment{}, ErrInvalidPlacementBinding
 	}

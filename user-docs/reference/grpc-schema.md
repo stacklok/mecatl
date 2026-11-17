@@ -1037,7 +1037,7 @@ ExecutionSelection is an exclusive choice; absence means deployment default.
 |---|---|---|---|---|
 | `id` | `string` |  |  |  |
 | `revision` | `string` |  |  |  |
-| `capabilities` | `string` | repeated |  | &#34;filesystem&#34;, &#34;foreground-command&#34;. Empty means the template&#39;s set narrowed by deployment configuration (--no-shell, --redis-filesystem); non-empty is refused (#2712). |
+| `capabilities` | `string` | repeated |  | &#34;filesystem&#34;, &#34;foreground-command&#34;. Empty means the template&#39;s set narrowed by deployment configuration (--no-shell, --redis-filesystem). A non-empty request that cannot be honored exactly is refused with FAILED_PRECONDITION. |
 
 
 

@@ -76,7 +76,12 @@ func (p *remoteLedgerProvider) env(ledger tool.ReadLedger) tool.Environment {
 }
 
 func (p *remoteLedgerProvider) binding() rlBinding {
-	return rlBinding{Ref: p.ref, Environment: p.env(memledger.New()), GovernanceRoot: "/remote"}
+	return rlBinding{
+		Ref:                  p.ref,
+		Environment:          p.env(memledger.New()),
+		GovernanceRoot:       "/remote",
+		AdmittedCapabilities: []string{"filesystem", "foreground-command"},
+	}
 }
 
 func (p *remoteLedgerProvider) Bind(context.Context, bindReq) (rlBinding, error) {

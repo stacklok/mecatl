@@ -267,7 +267,8 @@ export type ExecutionTemplate = Message<"mecatl.v1.ExecutionTemplate"> & {
 
   /**
    * "filesystem", "foreground-command". Empty means the template's set narrowed by
-   * deployment configuration (--no-shell, --redis-filesystem); non-empty is refused (#2712).
+   * deployment configuration (--no-shell, --redis-filesystem). A non-empty request
+   * that cannot be honored exactly is refused with FAILED_PRECONDITION.
    *
    * @generated from field: repeated string capabilities = 3;
    */
