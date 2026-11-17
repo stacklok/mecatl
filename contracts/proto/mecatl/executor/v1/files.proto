@@ -50,6 +50,7 @@ message ReadFileRequest {
 
 message ReadFileResponse {
   bytes data = 1;
+  // Last message only; covers exactly the data sent.
   FileVersion version = 2;
 }
 

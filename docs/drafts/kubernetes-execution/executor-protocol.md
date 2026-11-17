@@ -103,21 +103,30 @@ requests; every other file call is unary. Senders split content into chunks of a
 which leaves room under the limit for the other fields of the first message. Empty content travels as one message with
 no data.
 
-The first message carries everything except the content: the request context, the path, and the expected version of a
-replacement, or the version of a read. Receivers ignore those fields in later messages, which carry only data.
+A write sends the request context, the path, and for a replacement the expected version in its first message; later
+messages carry only data, and the server ignores other fields in them. The server writes each chunk to a temporary file
+in the workspace as it arrives. When the caller closes its side of the stream, the server checks the expected version
+under the serialization described in [concurrency and visibility](#concurrency-and-visibility) and renames the
+temporary file into place, refusing an existing file for a create. A stream that fails or is cancelled before the
+caller closes it writes nothing, and the server removes the temporary file. If the stream fails after the caller closes
+it, the caller cannot tell whether the write happened, as with a unary call, and re-reads the file.
 
-A write takes effect only once the whole content has arrived. The server collects chunks until the caller closes its
-side of the stream, then creates or conditionally replaces the file in one step, checking the expected version at that
-point under the serialization described in [concurrency and visibility](#concurrency-and-visibility). A stream that
-fails or is cancelled before the caller closes it writes nothing. If the stream fails after the caller closes it, the
-caller cannot tell whether the write happened, as with a unary call, and re-reads the file.
+A read copies the file to the stream from an open file, and its last message carries the version of exactly the bytes
+sent, so the version describes what the caller received even if a shell program changes the file during the read. The
+caller uses the content only if the stream ends with a version and without an error.
 
-A read is a snapshot: the server reads the content and its version together before sending the first chunk. The caller
-uses the content only if the stream ends without an error.
+The executor does not bound how much a write spools to disk. A caller could fill the volume as easily with many small
+files, so disk usage is bounded by the volume's size alone.
 
-The `Workspace` port still reads and writes whole files. The client assembles a read before returning it and splits a
-write before sending it, and the server does the reverse, so chunks never leave the transport. The authorizing proxy
-decides from the first message and relays the chunks that follow without assembling the file.
+The `Workspace` port keeps its whole-file methods, which the agent's tools use because they need the whole content;
+for those calls the client assembles a read before returning it and splits a write before sending it. Transfers that
+must not hold a whole file in memory, such as writing a download to a client's disk one chunk at a time, go through an
+optional `WorkspaceStreamer` extension, discovered by type assertion like `BoundedWorkspaceReader`: `ReadVersionTo`
+copies a file to an `io.Writer` and returns its version, and `CreateFileFrom` and `ReplaceFileFrom` read an
+`io.Reader` and commit only when it ends. The executor server spools through it, and the client implements it by
+forwarding chunks. A workspace without the extension declines such a transfer: the caller reports it as unsupported
+and never falls back to a whole-file transfer. The authorizing proxy decides from the first message and relays the
+chunks that follow without assembling the file.
 
 ## Concurrency and visibility
 
