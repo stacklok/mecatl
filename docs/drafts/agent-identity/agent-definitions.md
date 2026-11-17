@@ -112,21 +112,21 @@ Before the main loop starts, mecak8s persists the main's agent-instance incarnat
 
 ## Registering instances
 
-The broker's agent-instance issuer validates the registration records that the workload authenticated. It then constructs the canonical instance subject. The issuer makes these checks:
+The broker's agent-instance issuer validates the registration records that the workload authenticated. It then gives the instance its SPIFFE ID. The issuer makes these checks:
 
 - The workload can act for the session and the instance.
 - The reported owner is the broker session's owner. One session tree has one owner.
 - If there is a parent, the parent is registered to the same broker session.
 - A registration with no parent names a definition that can be a session's root. It runs in the broker session's root host session, with that host session's incarnation.
 - For a definition that the broker loaded, the reference matches the broker's record.
-- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. The incarnation is an `inc_` value, or a `legacy_` value for an older snapshot. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed.
-- If the SPIFFE ID was registered before, the earlier registration had the same host session, owner, definition reference and revision, and parent. Only the broker session may differ, when a replacement session re-registers the instance.
+- Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. The incarnation is an `inc_` value, or a `legacy_` value for an older snapshot.
+- If the incarnation was registered before, the earlier registration had the same host session, owner, definition reference and revision, and parent. Only the broker session may differ, when a replacement session re-registers the instance.
 
-A registration that breaks a rule fails closed. The issuer also gives each new SPIFFE ID its `ag_` identifier, reused on re-registration. The [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow is the full, ordered list of checks and their errors.
+A registration that breaks a rule fails closed. The issuer gives each new instance its `ag_` identifier, reused on re-registration, and the SPIFFE ID `spiffe://<trust domain>/agent/<ag_ identifier>`, which carries no definition name or ancestry. The [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow is the full, ordered list of checks and their errors.
 
 If the checks pass, the issuer associates the supplied incarnation with the registered definition, source, revision, ceiling, and creating instance, if any. It stores the effective ceiling that it computes from them. The session aggregate mints the incarnation. mecak8s persists it and reports it. The broker does not allocate incarnations. A known definition, or a name that the loop supplies, is not enough for issuance.
 
-When the main creates the reviewer, the harness creates the child session, and mecak8s persists the child's incarnation. mecak8s then registers that particular child. The registration carries the persisted incarnation, the reference to the reviewer definition, and the reference to the registered main instance. The issuer validates these records and constructs the child subject. This is a lifecycle assertion that mecak8s's workload credential authenticates. It is not proof derived from possession of the parent's SVID.
+When the main creates the reviewer, the harness creates the child session, and mecak8s persists the child's incarnation. mecak8s then registers that particular child. The registration carries the persisted incarnation, the reference to the reviewer definition, and the reference to the registered main instance. The issuer validates these records and gives the child its own SPIFFE ID. This is a lifecycle assertion that mecak8s's workload credential authenticates. It is not proof derived from possession of the parent's SVID.
 
 Registration establishes identity records. It does not authorize spawning, run execution, or a tool call. The harness manages execution. The broker [authorizes each MCP request](mcp-authorization.md#two-requests-two-authorization-decisions). Creation ancestry and delegation are different links. See [relationships and lifetimes](#relationships-and-lifetimes).
 

@@ -349,18 +349,18 @@ Broker checks 1 and 2 exist because only mecak8s checks that Alice owns `hostS42
 2. Session `A42` is open, bound to that workload, and owned by the reported owner: one session tree has one owner.
 3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance).
 4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`.
-5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..` (SPIFFE-ID §2.2). A name that would need encoding is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
-6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, and up to 8 child levels below the root, which keeps the longest subject under 2,000 bytes, even with `legacy_` incarnations. The agent-instance issuer also checks the whole URI against the 2,048 bytes SPIFFE-ID §2.3 says implementations should not generate beyond.
-7. If the SPIFFE ID was registered before, in any session, that registration had the same host session, owner, definition reference and revision, and parent; only the broker session may differ.
+5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..`; another name is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
+6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, and up to 8 child levels below the root.
+7. If the incarnation was registered before, in any session, that registration had the same host session, owner, definition reference and revision, and parent; only the broker session may differ.
 
-Registration records identity, not permission to spawn, run, or call tools. The agent-instance issuer constructs the canonical subject; see the [registration checks](agent-definitions.md#registering-instances). In the same transaction the agent-instance issuer gives the instance its **`ag_` identifier**: a random, opaque value such as `ag_7hq2x9`, created only if the SPIFFE ID has none yet and reused otherwise. Both directions are unique, one `ag_` identifier per SPIFFE ID and one SPIFFE ID per `ag_` identifier, and an identifier is never reassigned. Registering the same instance into a new session therefore keeps its `ag_` identifier. AS-1 later writes it into `act`.
+Registration records identity, not permission to spawn, run, or call tools. The agent-instance issuer keys each instance by its incarnation; see the [registration checks](agent-definitions.md#registering-instances). In the same transaction it gives the instance its **`ag_` identifier**: a random, opaque value such as `ag_7hq2x9`, created only if the instance has none yet and reused otherwise. One instance has one `ag_` identifier, and an identifier is never reassigned. The instance's SPIFFE ID is `spiffe://<trust domain>/agent/<ag_ identifier>`. It carries no definition name and no creation ancestry; the registry keeps both. Registering the same instance into a new session therefore keeps its `ag_` identifier and SPIFFE ID. AS-1 later writes that SPIFFE ID into `act`.
 
-**Output.** The instance reference, its canonical subject, and, on `requestSVID`, a JWT-SVID signed by the agent-instance issuer. The reviewer's, deliberately using only the claims JWT-SVID requires:
+**Output.** The instance reference, its SPIFFE ID, and, on `requestSVID`, a JWT-SVID signed by the agent-instance issuer. The reviewer's, deliberately using only the claims JWT-SVID requires:
 
 ```json
 {"alg": "ES256", "kid": "agents-2026-10"}
 {
-  "sub": "spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/global/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m",
+  "sub": "spiffe://agents.example.com/agent/ag_7hq2x9",
   "aud": ["https://broker.example.com"],
   "exp": 1800000600
 }
@@ -376,7 +376,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 4. The signature verifies.
 5. `aud` is exactly the broker's audience, as its only value. JWT-SVID §3.2 only requires the verifier's own value to be present; the single value is Mecatl policy.
 6. `exp` has not passed, allowing the clock skew, and is no further in the future than the configured maximum SVID lifetime.
-7. `sub` matches the full canonical subject of a registered instance byte for byte.
+7. `sub` matches the SPIFFE ID of a registered instance byte for byte.
 8. At the broker, the instance is registered to the session in use, `A42` from the request. At AS-1, which does not know sessions, the instance's session is open and owned by the user of the grant in use: its owner equals the `sub_id` from `RT-A42`'s record. The SVID was issued while the instance was registered to that session, so an SVID issued before a session closed does not verify in the session that replaces it.
 
 **Failures.**
@@ -558,7 +558,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 
 **Configured AS-2 issuers.** No AS-2 issuer configured for `mecatl` names the same server as AS-1's issuer, comparing scheme and host case-insensitively, a default port as equal to none, and ignoring a trailing slash. `mecatl` authenticates to both servers with the same key, so a shared issuer would let a client assertion or an ID-JAG meant for one server be accepted by the other. Mecatl refuses such a configuration at startup.
 
-**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 checks that the instance's session is open and compares its owner with that `sub_id`. It returns the instance's agent ID, `spiffe://<trust domain>/agent/<ag_ identifier>`, the SVID's SPIFFE ID for AS-1's audit, and the SVID's `exp`. AS-1 puts the agent ID in `act.sub`, sets `act.iss` to the issuer registered with the validator, the agent trust domain `spiffe://<trust domain>`, and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
+**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 checks that the instance's session is open and compares its owner with that `sub_id`. It returns the instance's SPIFFE ID, `spiffe://<trust domain>/agent/<ag_ identifier>`, as the agent ID, and the SVID's `exp`. AS-1 puts the agent ID in `act.sub`, sets `act.iss` to the issuer registered with the validator, the agent trust domain `spiffe://<trust domain>`, and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
 
 **Output.**
 
@@ -590,7 +590,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 
 - `sub` comes from `RT-A42`'s grant, never from the request.
 - `act.iss` is the agent trust domain, the namespace in which agent IDs are unique. ToolHive refuses its own issuer as `act.iss`, and AS-2 and the vMCP key agents on (`act.iss`, `act.sub`), so changing it renames every agent. AS-2 lists the trust domain among the actor issuers it accepts from AS-1.
-- `act.sub` is a SPIFFE ID in that trust domain that names the instance only by its `ag_` identifier, created at registration: no definition name and no creation ancestry. A plain `ag_` identifier would sit outside the `spiffe://` namespace that `act.iss` names. It stays the same across SVID renewals, so the vMCP can bind a session to the instance and audit can correlate its calls. The full SVID stops at AS-1, so internal structure does not cross into the gateway's domain.
+- `act.sub` is the instance's SPIFFE ID, the SVID's `sub`, which names the instance only by its `ag_` identifier: no definition name and no creation ancestry. It stays the same across SVID renewals, so the vMCP can bind a session to the instance and audit can correlate its calls. The SVID itself stops at AS-1.
 - `act` has one level and names the current actor only (RFC 8693 §4.1). RFC 8693 treats prior actors in a nested `act` as informational, so leaving them out removes nothing the gateway enforces. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 - `resource` is signed by AS-1, so AS-2 checks the redemption's `resource` against a claim, not only against a broker parameter.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
@@ -1084,7 +1084,7 @@ A workload credential alone cannot distinguish `code-reviewer` from `deployer` w
 
 ### Instance identity and creation ancestry
 
-The agent-instance SVID identifies the acting agent instance through its SPIFFE ID. The proposed identity path records the instance's definition category and name, its agent-instance incarnation, and the ancestry of instances that created it.
+The agent-instance SVID identifies the acting agent instance through its SPIFFE ID, `spiffe://<trust domain>/agent/<ag_ identifier>`. The ID is opaque. The broker's registry, not the ID, records the instance's definition category and name, its agent-instance incarnation, and the instances that created it, so no verifier reads creation ancestry from a credential.
 
 Creation ancestry is distinct from execution delegation. The same instance can participate in multiple runs, so its SPIFFE ID alone does not identify which parent run delegated the current task. Run and call records supply that context.
 
@@ -1092,24 +1092,24 @@ A definition category and name are not enough to establish provenance. Two repos
 
 #### Example instance identities
 
-Alice's main instance:
+Alice's main instance, `system/main` with incarnation `inc_cejrv7re4uy3ubxyzj2gfxfp2u`:
 
 ```text
-spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u
+spiffe://agents.example.com/agent/ag_3kd8w1
 ```
 
-A reviewer instance created by that main:
+A reviewer instance created by that main, `global/code-reviewer` with incarnation `inc_gh56irfcpnupjqgfdw7dhzzw4m`:
 
 ```text
-spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/global/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m
+spiffe://agents.example.com/agent/ag_7hq2x9
 ```
 
-A new root instance after a fork or clear:
+A new root instance after a fork or clear, with incarnation `inc_45bvtrrrpkekb6336hwe6bvape`:
 
 ```text
-spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_45bvtrrrpkekb6336hwe6bvape
+spiffe://agents.example.com/agent/ag_p2m4vz
 ```
 
-The reviewer's ID extends its creating instance's path with a child segment. A fork or clear creates a new root instance rather than extending that path. Restoring an existing instance preserves its identity.
+The registry records that the main created the reviewer. A fork or clear creates a new root instance with a new incarnation, and so a new `ag_` identifier. Restoring an existing instance preserves its identity.
 
-These IDs describe instance identity and creation ancestry. The initiating user and the current run's delegation context are recorded separately.
+These IDs describe instance identity only. Creation ancestry is in the registry, and the initiating user and the current run's delegation context are recorded separately.
