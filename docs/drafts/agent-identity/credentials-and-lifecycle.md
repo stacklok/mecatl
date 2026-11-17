@@ -525,7 +525,7 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 
 ### (7) ID-JAG from AS-1
 
-For each call, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
+For each call, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
 
 **Input.** An RFC 8693 token exchange with `RT-A42` as subject token, `reviewerSVID` as actor token, AS-2 as audience, and the vMCP as `resource`. The ID of the operation that caused the exchange travels as a request parameter for AS-1's record, as reported trace context:
 
@@ -620,11 +620,11 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 
 AS-1 does not read the grant again after the actor validator returns. An ID-JAG exchange already in flight when the session closes can therefore still return an ID-JAG. Before it redeems or uses an ID-JAG, the broker checks that the session is still open, and it discards the ID-JAG otherwise. An unused ID-JAG expires harmlessly.
 
-**Why.** ID-JAG leaves actor-token processing undefined and warns that a client could pair a valid subject token with an unrelated actor (§9.7), leaving it to the profile to say where the client, subject, and actor are bound together. Mecatl binds them in two places. The broker's [step (6)](#6-per-operation-authorization) checks pass before it picks the refresh token by session. Check 8 at AS-1 refuses an agent whose session belongs to a user other than the grant's. ID-JAG is a profile of [identity chaining across domains](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html). It adds the `typ`, required `client_id` and `jti`, client-binding redemption checks, and security rules that a private chaining profile would otherwise have to define. Both are Internet-Drafts; identity chaining is in the RFC Editor queue, and ID-JAG is a working-group draft.
+**Why.** ID-JAG leaves actor-token processing undefined and warns that a client could pair a valid subject token with an unrelated actor (§9.10), leaving it to the profile to say where the client, subject, and actor are bound together. Mecatl binds them in two places. The broker's [step (6)](#6-per-operation-authorization) checks pass before it picks the refresh token by session. Check 8 at AS-1 refuses an agent whose session belongs to a user other than the grant's. ID-JAG is a profile of [identity chaining across domains](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html). It adds the `typ`, required `client_id` and `jti`, client-binding redemption checks, and security rules that a private chaining profile would otherwise have to define. Both are Internet-Drafts; identity chaining is in the RFC Editor queue, and ID-JAG is a working-group draft.
 
 AS-1 never issues an access token for AS-2's audience, and the ID-JAG's issuer, audience, and `typ` keep the vMCP from accepting it as `V`.
 
-AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. The draft's §9.3 scopes the profile to parties in different trust domains, in the OAuth sense of a security and administrative boundary (§2.2). This design calls those administrative domains, to keep "trust domain" for SPIFFE. External mode fits §9.3, and embedded mode reuses the format for one protocol path. See [embedded mode](mcp-gateway-modes.md#embedded-mode).
+AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. The draft's §9.4 scopes the profile to parties in different trust domains, in the OAuth sense of a security and administrative boundary (§2.2). This design calls those administrative domains, to keep "trust domain" for SPIFFE. External mode fits §9.4, and embedded mode reuses the format for one protocol path. See [embedded mode](mcp-gateway-modes.md#embedded-mode).
 
 **Does not prove.** That the reviewer, rather than other code in the harness process, asked for the call: the SVID is asserted, not attested. Nor delegation or run context: those are mecak8s reports the broker checked in step (6). Nor that the agent belongs to the session independently of the broker: check 8 runs in Mecatl's validator against the broker's own registry.
 
@@ -654,13 +654,16 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 2. The ID-JAG's header `typ` is `oauth-id-jag+jwt`; `iss` is a trusted AS-1; `alg` is on the allowlist and the signature verifies against that issuer's keys.
 3. `aud` is AS-2's own issuer; `exp` and `iat` are current within the clock skew.
 4. `client_id` matches the authenticated client (ID-JAG §4.4.1).
-5. `jti` has not been redeemed before: the embedded AS-2 is configured for single use for AS-1's issuer and keeps used `jti`s until `exp` plus the clock skew, in storage shared by all its replicas. External gateways are recommended to do the same, which costs Mecatl nothing because the broker never re-submits; a gateway that allows re-submission until `exp` (§4.4.3) still re-checks the approval on every redemption.
-6. The requested `resource` is the ID-JAG's `resource` claim, and this client and this actor's issuer may reach it.
+5. `jti` has not been redeemed before: the embedded AS-2 is configured for single use for AS-1's issuer and keeps used `jti`s until `exp` plus the clock skew, in storage shared by all its replicas. External gateways are recommended to do the same, which costs Mecatl nothing because the broker never re-submits; a gateway that allows re-submission until `exp` (§4.4.4) still re-checks the approval on every redemption.
+6. The resource and the actor:
+   - **6a.** The requested `resource` is the ID-JAG's `resource` claim.
+   - **6b.** AS-2's policy lets this client reach that resource.
+   - **6c.** The actor's issuer is one that AS-2 accepts from this AS-1, and AS-2's actor policy allows the actor. The actor is the top-level `act`, found as in check 9.
 7. AS-2 maps the ID-JAG's `(iss, sub)` to a native user. It uses the subject mode configured for that issuer; see [how AS-2 resolves the user](mcp-gateway-modes.md#how-as-2-resolves-the-user). AS-2 never maps through `sub_id` alone, email, or display name.
 8. The `authorization_details` entry is well formed and names exactly one tool call. AS-2 can only narrow `V` with it, never widen it.
 9. In external mode, an unrevoked approval exists for this gateway, that native user, client `mecatl`, and an `actor_iss` equal to the current actor's issuer. The actor is the top-level `act` only (RFC 8693 §4.1). If that `act` has no `iss`, the actor's issuer is the token's `iss` (a Mecatl rule). If there is no `act`, there is no actor, and an approval that names an actor issuer does not match. Mecatl's approvals name AS-1, because `act.sub` changes with every agent instance and means nothing to AS-2. See [how AS-2 resolves the user](mcp-gateway-modes.md#how-as-2-resolves-the-user).
 
-**Output.** A short-lived access token and no refresh token (§4.4.3):
+**Output.** A short-lived access token and no refresh token (§4.4.4):
 
 ```json
 {"access_token": "<V-reviewer>", "token_type": "Bearer", "expires_in": 30,
@@ -694,25 +697,28 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 
 `V`'s lifetime does not exceed the ID-JAG's. It also limits how stale an approval can be, because AS-2 checks the approval record only at redemption. Revoking an approval stops new `V`s at once. A `V` already issued keeps working until it expires. Keep `V` short. Disconnecting a provider takes effect at once, because the vMCP reads the credential on every call.
 
-The approval-continuation profile is a convention that AS-2 advertises in its metadata. Under it, a refused redemption carries `consent_required` and an `error_uri`. The `error_uri` names a pending approval that the user can open.
+The approval-continuation profile is a convention that AS-2 advertises in its metadata. Under it, a refused redemption carries `access_denied` with `consent_required` and an `error_uri`. The `error_uri` names a pending approval that the user can open.
 
 **Failures.**
 
 | Check | Response | Broker outcome and retry |
 | --- | --- | --- |
 | 1 | 401 `invalid_client` | Call fails; not retryable. |
-| 2–5 | 400 `invalid_grant` (RFC 7523 §3.1) with `invalid_assertion` | Not retryable with the same ID-JAG. |
-| 6 | 400 `invalid_target` | Call fails; a configuration fault. |
+| 2–5 | 400 `invalid_grant` (RFC 7523 §3.1) with `invalid_assertion` | Call fails. Not retried, not even with a new ID-JAG. |
+| 6a | 400 `invalid_target` | Call fails; a broker bug, because AS-1 copies the broker's `resource` into the claim. |
+| 6b | 400 `access_denied` with `resource_denied` | Call fails; a configuration fault. Not retryable with a new ID-JAG. |
+| 6c | 400 `access_denied` with `actor_denied` | Call denied. Not retryable with a new ID-JAG. |
 | 8 | 400 `invalid_authorization_details` | Call fails; a broker bug. |
-| 7, 9, external | 400 `invalid_grant` with `consent_required` and an `error_uri` for a pending approval, under the approval-continuation profile | The existing `mcp_authorization_pending` outcome, with that link. The broker shows the `error_uri` only if the gateway advertises the profile and the `error_uri` is `https` on AS-2's issuer origin. Otherwise the call ends as pending with Mecatl's own text and no link. |
-| 7, embedded | 400 `invalid_grant` with `invalid_assertion` | A plain failure. |
-| Any `invalid_grant` with no reason code, or with an `error_uri` but no `consent_required` | — | Retry once with a new ID-JAG. If AS-2 refuses again, fail the call as a configuration or gateway error. Show no prompt. |
+| 7, 9, external | 400 `access_denied` with `consent_required` and an `error_uri` for a pending approval, under the approval-continuation profile | The existing `mcp_authorization_pending` outcome, with that link. The broker shows the `error_uri` only if the gateway advertises the profile and the `error_uri` is `https` on AS-2's issuer origin. Otherwise the call ends as pending with Mecatl's own text and no link. |
+| 7, embedded | 400 `access_denied` with `subject_unknown` | Alice has no account at the gateway: she has never signed in there. The broker returns `FAILED_PRECONDITION`, and mecak8s returns the existing `mcp_authorization_pending` outcome with a link that Mecatl builds to its embedded gateway's sign-in. After Alice signs in, the call runs again with a new authorization. Not retryable with a new ID-JAG. |
+| Any `invalid_grant` with no reason code | — | Retry once with a new ID-JAG, for gateways that send no reason codes. If AS-2 refuses again, fail the call as a configuration or gateway error. Show no prompt. |
+| Any `access_denied` with no reason code, or with an `error_uri` but no `consent_required` | — | Fail the call. No retry and no prompt. |
 | Store unavailable | 503 or `server_error` | A retryable infrastructure failure, never a prompt. |
 | Lost response | None received | Request a new ID-JAG from step (7). The broker never re-submits. |
 
 Until [stacklok/toolhive#7030](https://github.com/stacklok/toolhive/issues/7030) lands, AS-2 sends `invalid_grant` with no reason code for the `invalid_assertion` cases, so the broker's rule for an `invalid_grant` with no reason code applies: retry once with a new ID-JAG, then fail.
 
-**Why.** AS-2 sends reason codes in `error_description`, as AS-1 does, so the broker can tell a missing approval from a bad assertion. The broker never re-submits an ID-JAG; it mints a new one. Single use costs nothing, and it turns a stolen ID-JAG redeemed first by a holder of the broker key into a visible failure of the broker's own redemption. RFC 6749 §5.2 defines `error_uri` as human-readable error information, so it means a pending approval only together with `consent_required`, from a gateway that advertises the approval-continuation profile; outages and bugs then never train users to approve. Mapping and approval are separate facts, and the approval stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl; see [gateway modes](mcp-gateway-modes.md#how-as-2-resolves-the-user) and the [implementation companion](implementation.md#external-consent-link).
+**Why.** AS-2 sends reason codes in `error_description`, as AS-1 does, so the broker can tell a missing approval from a bad assertion. The `error` code says whether a new ID-JAG can help (ID-JAG §4.4.3): `invalid_grant` means the ID-JAG failed a validation rule, and a new one may succeed; `access_denied` means the ID-JAG is valid but the user, client, or actor is not authorized at AS-2, and a new one will not help. The broker still does not retry `invalid_assertion`: it mints a new ID-JAG for every call, so a refused one points to a broker bug, a configuration fault, clock skew, or a replayed ID-JAG, and retrying a replay would hide a stolen ID-JAG. The broker never re-submits an ID-JAG; it mints a new one. Single use costs nothing, and it turns a stolen ID-JAG redeemed first by a holder of the broker key into a visible failure of the broker's own redemption. RFC 6749 §5.2 defines `error_uri` as human-readable error information, so it means a pending approval only together with `consent_required`, from a gateway that advertises the approval-continuation profile; outages and bugs then never train users to approve. Mapping and approval are separate facts, and the approval stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl; see [gateway modes](mcp-gateway-modes.md#how-as-2-resolves-the-user) and the [implementation companion](implementation.md#external-consent-link).
 
 **Does not prove.** That the agent's ceiling allows the call: the broker checked that, and the binding only fixes which call `V` may make.
 
@@ -834,7 +840,7 @@ A saved owner or an available provider connection does not authorize an MCP oper
 
 ## Failure matrix
 
-The failures each step can return: where each is detected, what the user sees, and what it revokes. "Fails closed" means no provider call is made. Configuration faults, such as `invalid_client`, `unauthorized_client`, and `invalid_target`, fail every affected call until an operator fixes them, and are not listed again.
+The failures each step can return: where each is detected, what the user sees, and what it revokes. "Fails closed" means no provider call is made. Configuration faults, such as `invalid_client`, `unauthorized_client`, `invalid_target` from AS-1, and `access_denied` with `resource_denied` from AS-2, fail every affected call until an operator fixes them, and are not listed again.
 
 | Failure | Detected at | Response | User-visible outcome | Revokes |
 | --- | --- | --- | --- | --- |
@@ -865,7 +871,9 @@ The failures each step can return: where each is detected, what the user sees, a
 | Upstream refresh token past its recorded expiry, missing, or refused after an ambiguous refresh | AS-1 | `invalid_request` with `owner_action_required` | "Needs owner action": Alice signs in again | All of Alice's grants and client refresh tokens |
 | Company IdP unreachable or 5xx, or the refresh lease timed out | AS-1 | 503 | This call fails as retryable; later calls retry | Nothing |
 | AS-1 refuses the combination | AS-1 | `invalid_request` with `denied` | Call denied | Nothing |
-| No consent link (external) | AS-2 | `invalid_grant` with `consent_required` | `mcp_authorization_pending` through "Allow Mecatl" | Nothing |
+| No consent link (external) | AS-2 | `access_denied` with `consent_required` | `mcp_authorization_pending` through "Allow Mecatl" | Nothing |
+| User unknown at the gateway (embedded) | AS-2 | `access_denied` with `subject_unknown` | `mcp_authorization_pending` with a link to sign in at the embedded gateway | Nothing |
+| Gateway refuses the acting agent | AS-2 | `access_denied` with `actor_denied` | Call denied | Nothing |
 | ID-JAG reused where the issuer requires single use | AS-2 | `invalid_grant` with `invalid_assertion` | Call fails; a broker bug or a stolen ID-JAG | Nothing |
 | `V` rejected by vMCP | vMCP | 401 `invalid_token` | None: mecak8s reports it, and the call is retried once with a new `V` | Nothing |
 | Call does not match `V`'s binding, or `V` already used for a call | vMCP | 403 `insufficient_scope` | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
@@ -876,7 +884,7 @@ The failures each step can return: where each is detected, what the user sees, a
 
 ## Error reasons
 
-RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=revoked`, or `error_description=revoked: grant revoked`. The broker parses both forms. RFC 6749 §5.2 limits `error_description` to the characters `%x20-21 / %x23-5B / %x5D-7E`, so the text never contains `"` or `\`; reason codes are lowercase letters and underscores. For grants, AS-1 returns only `token_used`, `revoked`, `parent_revoked`, `not_issuable`, and `grant_invalid` for an unknown, expired, or other client's grant, besides the reasons of the upstream re-check and the actor checks. At ID-JAG issuance it also returns `upstream_subject_missing`, `sub_id_missing`, `dpop_not_supported`, and `bound_elapsed`. The actor check returns `actor_token_expired`, `approval_required`, and `denied`; there is no `svid_expired` at AS-1. For a refused subject token at session open it returns `subject_token_invalid`, `subject_token_audience`, `subject_token_source_client`, or `subject_token_offline_access`. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
+RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=revoked`, or `error_description=revoked: grant revoked`. The broker parses both forms, and treats an `error_description` that does not match `^[a-z_]+(: .*)?$` as no reason. RFC 6749 §5.2 limits `error_description` to the characters `%x20-21 / %x23-5B / %x5D-7E`, so the text never contains `"` or `\`; reason codes are lowercase letters and underscores. For grants, AS-1 returns only `token_used`, `revoked`, `parent_revoked`, `not_issuable`, and `grant_invalid` for an unknown, expired, or other client's grant, besides the reasons of the upstream re-check and the actor checks. At ID-JAG issuance it also returns `upstream_subject_missing`, `sub_id_missing`, `dpop_not_supported`, and `bound_elapsed`. The actor check returns `actor_token_expired`, `approval_required`, and `denied`; there is no `svid_expired` at AS-1. For a refused subject token at session open it returns `subject_token_invalid`, `subject_token_audience`, `subject_token_source_client`, or `subject_token_offline_access`. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
 
 | Reason | Returned by | Broker gRPC status | mecak8s outcome |
 | --- | --- | --- | --- |
@@ -900,10 +908,13 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `upstream_subject_missing`, `sub_id_missing` | AS-1 | `INTERNAL` | Fail the call; a configuration fault: the target requires a claim the grant never recorded. |
 | `dpop_not_supported` | AS-1 | `INTERNAL` | Fail the call; a broker bug. |
 | `bound_elapsed` | AS-1 | `INTERNAL` | As `grant_invalid`: the grant ended while the actor validator ran. |
-| `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
-| `invalid_assertion` | AS-2 | `INTERNAL` | Fail the call; a broker bug. |
+| `consent_required` | AS-2 (`access_denied`) | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, using the `error_uri` AS-2 returned, when the gateway advertises the approval-continuation profile. |
+| `invalid_assertion` | AS-2, only with `invalid_grant` | `INTERNAL` | Fail the call; a broker bug. No retry with a new ID-JAG. |
+| `subject_unknown` | AS-2 (`access_denied`) | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, with a link that Mecatl builds to its embedded gateway's sign-in: the user must sign in at the gateway once. Not `mcp_owner_action_required`, which means signing in again at AS-1. Mecatl builds no link for an external gateway, so there the call fails. |
+| `actor_denied` | AS-2 (`access_denied`) | `PERMISSION_DENIED` | Deny the call, as for `denied`. |
+| `resource_denied` | AS-2 (`access_denied`) | `INTERNAL` | Fail the call; a configuration fault. |
 | HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. At session open, a 502 or 504 follows the lost-response rule of [step (3)](#3-session-open-and-the-broker-refresh-token). |
-| `invalid_client`, `unauthorized_client`, `invalid_target`, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
+| `invalid_client`, `unauthorized_client`, `invalid_target`, `access_denied` with no reason, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
 A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
 

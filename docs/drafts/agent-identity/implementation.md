@@ -87,17 +87,21 @@ Test AS-2 redemption:
 
 - AS-2 rejects a wrong `typ`, untrusted issuer, wrong `aud`, expired ID-JAG, and `client_id` that does not match the authenticated client.
 - AS-2 never resolves through `sub_id` or email; a matching `sub_id` without a mapping fails closed.
-- In external mode, AS-2 refuses an ID-JAG that has no approval, a revoked approval, or an approval for another client or actor issuer. The refusal carries `consent_required` and an `error_uri`. A forwarded link approved by a different IdP identity activates nothing. A revoked approval stops new `V`s. A `V` issued before stays valid until it expires.
+- In external mode, AS-2 refuses an ID-JAG that has no approval, a revoked approval, or an approval for another client or actor issuer. The refusal carries `access_denied` with `consent_required` and an `error_uri`. A forwarded link approved by a different IdP identity activates nothing. A revoked approval stops new `V`s. A `V` issued before stays valid until it expires.
 - In embedded mode, AS-2 redeems with no approval record, by configuration.
 - `V` from an approved redemption carries the delegated-access marker; a token from an unapproved RFC 8693 delegate (wildcard client or `may_act`), or one with only `act`, does not; a marked `V` is refused as a token-exchange subject or actor token.
 - Administrator pre-approval is used only when the gateway administrator has turned it on.
 - Approval matching follows check 9 in [step (8)](credentials-and-lifecycle.md#8-as-2-access-token).
 - Embedded AS-2 refuses a second redemption of the same ID-JAG `jti` with `invalid_grant` and `invalid_assertion` (stacklok/toolhive#7030), including two concurrent redemptions on different replicas; after a lost response, the broker's new ID-JAG redeems successfully.
-- An `invalid_grant` with no reason code, or with an `error_uri` but no `consent_required`, produces no prompt. A storage outage at AS-2 returns `server_error`, and a `V` already issued still dispatches.
+- An `access_denied` with no reason code produces no prompt and no retry; an `invalid_grant` with no reason code is retried once with a new ID-JAG and produces no prompt. A refusal with an `error_uri` but no `consent_required` produces no prompt. A storage outage at AS-2 returns `server_error`, and a `V` already issued still dispatches.
 - Closing a session stops local use at once even when AS-1 is unreachable; termination at AS-1 is retried until confirmed.
 - `V` carries the native user, the ID-JAG's single-level `act` unchanged, `client_id=mecatl`, and the vMCP audience, with no refresh token.
 - After a lost redemption response, the broker mints a new ID-JAG instead of resending the first.
 - A requested `resource` other than the ID-JAG's `resource` claim is refused with `invalid_target`.
+- An unknown or ambiguous user is refused with `access_denied` and `subject_unknown`.
+- An actor issuer AS-2 does not accept, or an actor policy that denies, is refused with `access_denied` and `actor_denied`.
+- A redemption that AS-2's policy does not allow for this issuer, client, and resource is refused with `access_denied` and `resource_denied`.
+- `invalid_assertion` appears only with `invalid_grant`, and no `access_denied` refusal makes the broker retry.
 
 Test the per-call `V`:
 
@@ -206,7 +210,7 @@ In external mode the approval is the user's first-hand statement at the gateway 
 
 **Creation, once per user and gateway:**
 
-1. The first redemption finds no approval record. AS-2 creates a pending approval from the verified ID-JAG (source issuer, subject, client, gateway, actor issuer). The pending approval is single use and valid for minutes. AS-2 refuses the redemption with `invalid_grant`, `consent_required`, and an `error_uri` that points at the pending approval.
+1. The first redemption finds no approval record. AS-2 creates a pending approval from the verified ID-JAG (source issuer, subject, client, gateway, actor issuer). The pending approval is single use and valid for minutes. AS-2 refuses the redemption with `access_denied`, `consent_required`, and an `error_uri` that points at the pending approval.
 2. The broker returns `mcp_authorization_pending` with that link, in the Mecatl session whose call failed. The link is AS-2's own URL. Mecatl does not wrap it or add state to it.
 3. The user opens the link and signs in through AS-2's own login. The screen shows two accounts: the Mecatl account being linked (from the verified ID-JAG) and the gateway account the user signed in as. It asks "Allow Mecatl (any Mecatl agent) to use your connections". An actor's display name comes from the gateway administrator's registration, never from the token.
 4. When the user approves, AS-2 compares two company IdP identities: the one the user signed in with, and the one AS-1 put in the ID-JAG (`upstream_subject`). If they match, AS-2 activates the approval record. If they differ, AS-2 refuses, discards the pending approval, and activates nothing. The run resumes when the broker next redeems successfully.
@@ -214,13 +218,13 @@ In external mode the approval is the user's first-hand statement at the gateway 
 **Link swapping.** An attacker starts a link flow with their own AS-1 subject and tricks the victim into completing it. The victim's gateway account is then linked to the attacker's AS-1 subject, and the attacker's Mecatl sessions use the victim's upstream credentials. Defenses:
 
 - The identity comparison is the defense. If someone else approves a forwarded link, the approval fails, because their IdP identity is not the one in the ID-JAG. The comparison does not depend on the browser, so it also covers CLI, cross-device, and silent approvals.
-- The comparison uses a stable identifier (IdP issuer and a non-pairwise subject, or a configured immutable claim), never email or display name. When the approval is created, AS-2 trusts its own comparison, not AS-1's claim (ID-JAG §9.5). On each later redemption, AS-2 finds the user from the ID-JAG's `upstream_subject`, which is AS-1's claim. So a compromised AS-1 can name any user who has approved Mecatl, but no one else.
-- AS-2 offers user approval only for source issuers that share its company IdP. For other issuers, it refuses with plain `invalid_grant` and no link. For those issuers, administrator pre-approval is the only option.
+- The comparison uses a stable identifier (IdP issuer and a non-pairwise subject, or a configured immutable claim), never email or display name. When the approval is created, AS-2 trusts its own comparison, not AS-1's claim (ID-JAG §9.8). On each later redemption, AS-2 finds the user from the ID-JAG's `upstream_subject`, which is AS-1's claim. So a compromised AS-1 can name any user who has approved Mecatl, but no one else.
+- AS-2 offers user approval only for source issuers that share its company IdP. For other issuers, it refuses with plain `access_denied` and no link. For those issuers, administrator pre-approval is the only option.
 
 **Shared upstream IdP.** When AS-1 and AS-2 federate to the same company IdP:
 
 - **Silent step:** AS-2's login is silent through single sign-on, and the gateway administrator may pre-approve the screen for client `mecatl`, so the approval needs no UI. Mecatl can open the link right after the user's first sign-in. It stays safe, unlike blanket admin pre-consent, because AS-2 still runs the identity comparison.
-- **The sign-in is still required.** A shared IdP does not let AS-2 accept AS-1's `sub_id = (IdP, user)` directly: AS-1, not the IdP, signs that claim (§9.5), so a compromised AS-1 could name any user.
+- **The sign-in is still required.** A shared IdP does not let AS-2 accept AS-1's `sub_id = (IdP, user)` directly: AS-1, not the IdP, signs that claim (§9.8), so a compromised AS-1 could name any user.
 
 **Removing the link entirely** has two routes, each with a stated cost:
 
