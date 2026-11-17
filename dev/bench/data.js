@@ -425789,6 +425789,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794940629963,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e3531db17f9d59658e341df60e4d6c1fd5160e8",
+          "message": "test(identityharness): answer a validator failure with 500 as AS-1 does (#2828)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T18:33:21Z",
+          "tree_id": "93948bb9333f3299c697bb1616f413838082fb7c",
+          "url": "https://github.com/stacklok/mecatl/commit/2e3531db17f9d59658e341df60e4d6c1fd5160e8"
+        },
+        "date": 1794941392374,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12913,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -554647,6 +554686,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794941388680,
+  "lastUpdate": 1794941393041,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
