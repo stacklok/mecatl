@@ -426980,6 +426980,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794943528187,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e056c29a1b93e58f418af5092f5ddbd55f72f138",
+          "message": "fix(mcpbroker): address the gateway call review follow-ups (#2831)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T22:44:11Z",
+          "tree_id": "6972ee0969426cfc54fe0c9431653312d8c48ae4",
+          "url": "https://github.com/stacklok/mecatl/commit/e056c29a1b93e58f418af5092f5ddbd55f72f138"
+        },
+        "date": 1794956195284,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -556180,6 +556219,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794956191900,
+  "lastUpdate": 1794956196031,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
