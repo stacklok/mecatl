@@ -45,6 +45,10 @@ type Loaded struct {
 // Declared owner artifacts are replaced by load-only signatures; handwritten
 // diagnostics remain fatal. Imported families are validated from their sources.
 func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
+	return load(ctx, config, ownerCache{})
+}
+
+func load(ctx context.Context, config LoadConfig, cache ownerCache) (*Loaded, error) {
 	emit, dir, out, err := prepareLoad(config)
 	if err != nil {
 		return nil, err
@@ -78,7 +82,7 @@ func Load(ctx context.Context, config LoadConfig) (*Loaded, error) {
 	if metadata.Module == nil {
 		return nil, fmt.Errorf("declaring package must belong to a Go module")
 	}
-	owners, overlay, err := ownerOverlays(ctx, targets, overlay)
+	owners, overlay, err := cache.overlays(ctx, targets, overlay)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +218,16 @@ func loadOne(cfg *packages.Config) (*packages.Package, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := loadDiagnostics(pkgs); err != nil {
+		return nil, err
+	}
+	if len(pkgs) != 1 {
+		return nil, fmt.Errorf("expected one declaring package, got %d", len(pkgs))
+	}
+	return pkgs[0], nil
+}
+
+func loadDiagnostics(pkgs []*packages.Package) error {
 	var diagnostics []string
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		for _, diagnostic := range pkg.Errors {
@@ -221,12 +235,9 @@ func loadOne(cfg *packages.Config) (*packages.Package, error) {
 		}
 	})
 	if len(diagnostics) != 0 {
-		return nil, fmt.Errorf("package load:\n%s", strings.Join(diagnostics, "\n"))
+		return fmt.Errorf("package load:\n%s", strings.Join(diagnostics, "\n"))
 	}
-	if len(pkgs) != 1 {
-		return nil, fmt.Errorf("expected one declaring package, got %d", len(pkgs))
-	}
-	return pkgs[0], nil
+	return nil
 }
 
 func checkFileDeclarations(file *ast.File, fset *token.FileSet, selected map[string]*ast.TypeSpec, reserved map[string]bool, emit capabilities, overrides map[string]capabilities) error {
