@@ -423010,6 +423010,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794916210051,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d9e73e2c997885f5eabd5bf91cde5d3db4d432b5",
+          "message": "chore(deps): update node.js to f5ab32f (#2787)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T12:37:59+01:00",
+          "tree_id": "91278dd340399ee3516e31ac3ff410ecb3526834",
+          "url": "https://github.com/stacklok/mecatl/commit/d9e73e2c997885f5eabd5bf91cde5d3db4d432b5"
+        },
+        "date": 1794916983769,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -551070,6 +551109,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794916979875,
+  "lastUpdate": 1794916984998,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
