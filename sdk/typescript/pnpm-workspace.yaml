@@ -21,3 +21,6 @@ auditConfig:
     # exists. Reached only through @microsoft/api-extractor > argparse at build
     # time, never shipped in the SDK. Remove when a fixed version is published.
     - GHSA-hp3w-g68c-fv3c
+    # picomatch ReDoS via repeated extglobs; no patched release exists. Reached
+    # only through vitest > vite at test time, never shipped in the SDK.
+    - GHSA-fc5q-39xc-vjpf
