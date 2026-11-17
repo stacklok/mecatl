@@ -489,9 +489,14 @@ func TestAuthorizeCallMapsAS2Refusals(t *testing.T) {
 	}{
 		{"prose then success", refusal(400, "invalid_grant", "The JWT was already used"), nil, "", "", 2},
 		{"a known reason", refusal(400, "invalid_grant", "denied"), nil, identitybroker.CodeInternal, "", 1},
-		{"consent required", refusal(400, "invalid_grant", "consent_required"), nil, identitybroker.CodeFailedPrecondition, identitybroker.ReasonConsentRequired, 1},
+		{"actor denied", refusal(400, "access_denied", "actor_denied"), nil, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, 1},
+		{"actor denied in a 503", refusal(503, "access_denied", "actor_denied"), nil, identitybroker.CodeUnavailable, "", 1},
+		{"subject unknown", refusal(400, "access_denied", "subject_unknown"), nil, identitybroker.CodeInternal, "", 1},
+		{"resource denied", refusal(400, "access_denied", "resource_denied"), nil, identitybroker.CodeInternal, "", 1},
+		{"access denied without a reason", refusal(400, "access_denied", ""), nil, identitybroker.CodeInternal, "", 1},
+		{"consent required", refusal(400, "access_denied", "consent_required"), nil, identitybroker.CodeFailedPrecondition, identitybroker.ReasonConsentRequired, 1},
 		// A transient refusal is never a prompt, whatever its reason.
-		{"consent required in a 503", refusal(503, "invalid_grant", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
+		{"consent required in a 503", refusal(503, "access_denied", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
 		{"consent required in a server_error", refusal(400, "server_error", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
 		{"prose twice", refusal(400, "invalid_grant", "The JWT was already used"), refusal(400, "invalid_grant", ""), identitybroker.CodeInternal, "", 2},
 		{"unavailable", refusal(503, "temporarily_unavailable", ""), nil, identitybroker.CodeUnavailable, "", 1},
@@ -540,6 +545,13 @@ func TestAuthorizeCallMapsAS1Refusals(t *testing.T) {
 		reason identitybroker.Reason
 	}{
 		{"not_issuable", refusal(400, "invalid_grant", "not_issuable"), identitybroker.CodeInternal, ""},
+		{"actor_token_expired", refusal(400, "invalid_request", "actor_token_expired"), identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
+		{"legacy svid_expired", refusal(400, "invalid_request", "svid_expired"), identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
+		{"approval_required", refusal(400, "invalid_request", "approval_required"), identitybroker.CodePermissionDenied, identitybroker.ReasonDenied},
+		{"upstream_subject_missing", refusal(400, "invalid_request", "upstream_subject_missing"), identitybroker.CodeInternal, ""},
+		{"sub_id_missing", refusal(400, "invalid_request", "sub_id_missing"), identitybroker.CodeInternal, ""},
+		{"dpop_not_supported", refusal(400, "invalid_request", "dpop_not_supported"), identitybroker.CodeInternal, ""},
+		{"bound_elapsed", refusal(400, "invalid_grant", "bound_elapsed"), identitybroker.CodeInternal, ""},
 		{"invalid_client", refusal(401, "invalid_client", ""), identitybroker.CodeInternal, ""},
 		// Only a lost response gets a new ID-JAG; a 502 or 504 fails the call.
 		{"bad gateway", refusal(502, "", ""), identitybroker.CodeUnavailable, ""},
@@ -557,6 +569,10 @@ func TestAuthorizeCallMapsAS1Refusals(t *testing.T) {
 			wantError(t, err, tc.code, tc.reason, f.cred)
 			if strings.Contains(err.Error(), "boom") {
 				t.Fatalf("AuthorizeCall = %v, want fixed detail", err)
+			}
+			var sr *identitybroker.ServerRefusal
+			if tc.code == identitybroker.CodeInternal && errors.As(tc.err, &sr) && sr.Reason != "" && !strings.Contains(err.Error(), "("+sr.Reason+")") {
+				t.Fatalf("AuthorizeCall = %v, want the reason %s named, not unknown", err, sr.Reason)
 			}
 			f.wantCounts(t, 1, 0)
 			d := f.rec.Decisions()

@@ -22,7 +22,7 @@ const (
 
 	// Reasons AS-1 returns for an ID-JAG exchange (design step (7)).
 	reasonGrantInvalid = "grant_invalid"
-	reasonSVIDExpired  = "svid_expired"
+	reasonActorExpired = "actor_token_expired"
 	reasonDenied       = "denied"
 )
 
@@ -30,10 +30,10 @@ const (
 // check 6), called with the grant's company identity and the actor token. It
 // returns the agent's identifier, which becomes act.sub, and the actor
 // token's expiry, which caps the ID-JAG's exp. An error matching
-// ErrActorExpired answers svid_expired, one matching ErrActorDenied answers
-// denied, and any other answers 503 server_error. It is the harness's own
-// type, so the harness never imports the broker; tests adapt the broker's
-// validator to it.
+// ErrActorExpired answers actor_token_expired, one matching ErrActorDenied
+// answers denied, and any other answers 500 server_error, as the real AS-1
+// does. It is the harness's own type, so the harness never imports the broker;
+// tests adapt the broker's validator to it.
 type ActorValidator func(ctx context.Context, owner Owner, actorToken string) (agentID string, expiresAt time.Time, err error)
 
 var (
@@ -156,13 +156,13 @@ func (a *AS1) issueIDJAG(w http.ResponseWriter, r *http.Request) {
 	agentID, actorExpires, err := validator(r.Context(), grant.subID, form.Get("actor_token"))
 	switch {
 	case errors.Is(err, ErrActorExpired):
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonSVIDExpired)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonActorExpired)
 		return
 	case errors.Is(err, ErrActorDenied):
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonDenied)
 		return
 	case err != nil:
-		writeOAuthError(w, http.StatusServiceUnavailable, "server_error", "")
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "")
 		return
 	}
 	expires := now.Add(a.idjagLifetime)
@@ -172,7 +172,7 @@ func (a *AS1) issueIDJAG(w http.ResponseWriter, r *http.Request) {
 	if expires.Unix() <= now.Unix() {
 		// Guess: an actor token at its expiry is expired, whatever the
 		// validator said.
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonSVIDExpired)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", reasonActorExpired)
 		return
 	}
 	jti := randomToken("jag-")

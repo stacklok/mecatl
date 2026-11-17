@@ -123,11 +123,11 @@ func TestIDJAGExchangeChecks(t *testing.T) {
 			}
 		}, 400, "invalid_request", "revoked"},
 		// Check 6: the actor, through the validator.
-		{"expired actor", set("actor_token", svidExpired), 400, "invalid_request", "svid_expired"},
+		{"expired actor", set("actor_token", svidExpired), 400, "invalid_request", "actor_token_expired"},
 		{"foreign actor", set("actor_token", svidForeign), 400, "invalid_request", "denied"},
-		{"validator failure", set("actor_token", svidValidatorX), 503, "server_error", ""},
+		{"validator failure", set("actor_token", svidValidatorX), 500, "server_error", ""},
 		{"no validator", func(_ *testing.T, f *idjagFixture, _ url.Values) { f.h.AS1.SetActorValidator(nil) }, 400, "invalid_request", "denied"},
-		{"actor at its expiry", func(_ *testing.T, f *idjagFixture, _ url.Values) { f.actorExpiry = 0 }, 400, "invalid_request", "svid_expired"},
+		{"actor at its expiry", func(_ *testing.T, f *idjagFixture, _ url.Values) { f.actorExpiry = 0 }, 400, "invalid_request", "actor_token_expired"},
 		{"another user's grant", func(t *testing.T, f *idjagFixture, form url.Values) {
 			form.Set("subject_token", f.openGrant(t, identityharness.Bob))
 		}, 400, "invalid_request", "denied"},
