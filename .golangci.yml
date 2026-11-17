@@ -973,11 +973,25 @@ linters:
           files:
             - '**/internal/identitybroker/adapter/**.go'
             - '!**/internal/identitybroker/adapter/as1server/**.go'
+            - '!**/internal/identitybroker/adapter/definitionloader/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/internal/identitybroker$
             - github.com/golang-jwt/jwt/v5$
+        # The definition loader parses agent definitions with the harness's
+        # own parser, never a second one, so it may also import that parser
+        # and the definition value it returns.
+        internal-identitybroker-adapter-definitionloader:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/adapter/definitionloader/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/internal/identitybroker$
+            - github.com/stacklok/mecatl/engine/adapter/agentfs$
+            - github.com/stacklok/mecatl/engine/tool$
         # AS-1 is hosted on ToolHive's embedded authorization server; only the
         # authorization server packages it constructs are allowed.
         internal-identitybroker-adapter-as1server:

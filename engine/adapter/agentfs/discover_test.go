@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
@@ -744,5 +745,36 @@ func TestLegacyBashToolListNormalizesToShell(t *testing.T) {
 	}
 	if got, want := strings.Join(def.DisallowedTools, ","), "Shell"; got != want {
 		t.Fatalf("disallowed tools = %q, want %q", got, want)
+	}
+}
+
+// TestDirSourceRecordsSourceFile pins the File channel: each kept def carries
+// its path, the exact bytes parsed (not a normalized form), and the file's
+// modification time, so a loader never has to read the file again.
+func TestDirSourceRecordsSourceFile(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\nname: alpha\ndescription: Alpha agent\n---\nBody with trailing spaces   \n"
+	path := writeDef(t, dir, "alpha.md", content)
+	modTime := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	defs, _, err := DirSource{Dir: dir}.Agents(t.Context())
+	if err != nil || len(defs) != 1 {
+		t.Fatalf("Agents = %v, %v; want one def", defs, err)
+	}
+	f := defs[0].File
+	if f == nil {
+		t.Fatal("File is nil; a filesystem source must record the file it read")
+	}
+	if f.Path != path {
+		t.Errorf("File.Path = %q, want %q", f.Path, path)
+	}
+	if string(f.Content) != content {
+		t.Errorf("File.Content = %q, want the exact bytes %q", f.Content, content)
+	}
+	if !f.ModTime.Equal(modTime) {
+		t.Errorf("File.ModTime = %v, want %v", f.ModTime, modTime)
 	}
 }

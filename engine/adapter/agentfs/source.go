@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 )
 
 // Discovered is one discovered agent definition together with its
@@ -15,6 +16,20 @@ import (
 type Discovered struct {
 	Def    AgentDef
 	Detail string
+	// File is the file a filesystem source parsed Def from, or nil for a source
+	// with no file, such as a remote driver. Like Detail, it is a NON-PORT
+	// channel: it never crosses the tool.AgentDefSource port.
+	File *SourceFile
+}
+
+// SourceFile is the file one definition was read from: its path, the exact
+// bytes parsed, and the file's modification time when it was read. A loader
+// that records where a definition came from uses it, so it never reads the
+// file a second time and gets different bytes.
+type SourceFile struct {
+	Path    string
+	Content []byte
+	ModTime time.Time
 }
 
 // AgentSource is the pluggable EXTENSIBILITY POINT for where agent definitions
