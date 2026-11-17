@@ -552452,9 +552452,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794929299247,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95c61c922fe642e655aa6736f25e951f8d5ca3a1",
+          "message": "perf(dtogen): share owner overlays and batch output type checks (#2833)\n\nA repository render recomputed the owner overlays for every target and\ntype checked each generated artifact with its own `packages.Load`.\n`renderTargets` now shares owner overlays across loads that resolve to\nidentical target lists. Each load gets its own copies, because\n`loadPrerequisites` rewrites `Wire` and `Names`. Generated outputs are\ntype checked with one load per module, and diagnostics are still\nreported per artifact.\n\n`TestTaskGenerationAndFreshness` runs the inventory scenarios in\nprocess through `GenerateRepository`. It keeps `task` runs only for the\nTaskfile wiring.\n\n`dtogen -repo . -check` drops from 216 to 59 `go list` calls (13.4s to\n5.4s), and its output is byte-identical. The `internal/dtogen` test\npackage drops from 190s to 148s.",
+          "timestamp": "2026-11-17T17:09:18+01:00",
+          "tree_id": "d315c5b2a31ca0c9b4f0ae2f030918b0259860cb",
+          "url": "https://github.com/stacklok/mecatl/commit/95c61c922fe642e655aa6736f25e951f8d5ca3a1"
+        },
+        "date": 1794932477293,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 782.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32184,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794932473770,
+  "lastUpdate": 1794932478263,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
