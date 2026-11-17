@@ -119,9 +119,13 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 	}
 	defer g.releaseUnlessSent(ctx)
 
-	auth, err := g.authorize(ctx, "")
+	// Claimed before it is authorized, so a duplicate is refused without a
+	// gateway token being issued for it; a call refused authorization was
+	// not sent and is released.
+	err = g.claimCall(ctx)
+	var auth identitybroker.Authorization
 	if err == nil {
-		err = g.claimCall(ctx)
+		auth, err = g.authorize(ctx, "")
 	}
 	if err != nil {
 		return fail(refused(err))

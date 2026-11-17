@@ -7,7 +7,8 @@ import (
 	"sync"
 )
 
-// ErrAlreadySent refuses a claim on a call that is in flight or was sent.
+// ErrAlreadySent refuses a claim on an operation that is in flight or was
+// sent, with any arguments.
 var ErrAlreadySent = errors.New("mcpbroker: call already claimed or sent; automatic replay refused")
 
 // errSendOnceFull refuses a claim when the root session's share of the record
@@ -15,11 +16,12 @@ var ErrAlreadySent = errors.New("mcpbroker: call already claimed or sent; automa
 var errSendOnceFull = errors.New("mcpbroker: send-once record is full for this session")
 
 // SendOnceRecord records the gateway calls that were claimed for sending, by
-// root session, operation ID, and argument hash, so a call that may have run
-// is never sent again automatically.
+// root session and operation ID, with the argument hash each was claimed
+// with, so an operation that may have run is never sent again automatically,
+// even with other arguments.
 type SendOnceRecord interface {
-	// Claim claims the call, or returns ErrAlreadySent while it is in flight
-	// or once it was sent.
+	// Claim claims the operation, or returns ErrAlreadySent while it is in
+	// flight or once it was sent, whatever the argument hash.
 	Claim(ctx context.Context, rootSessionID, operationID, argumentsSHA256 string) error
 	// Complete marks a claimed call as completed: the gateway answered it.
 	// The record may then drop the claim to make room for a new one; the
@@ -34,15 +36,18 @@ type SendOnceRecord interface {
 	Forget(ctx context.Context, rootSessionID string) error
 }
 
-type sendOnceKey struct{ operationID, argumentsSHA256 string }
+// sendOnceClaim is one operation's claim: the argument hash it was claimed
+// with, and its place in completed once the call completed (nil while it is
+// in flight or its outcome is unknown).
+type sendOnceClaim struct {
+	argumentsSHA256 string
+	completed       *list.Element
+}
 
 // rootSendOnce is one root session's share of the record.
 type rootSendOnce struct {
-	// claims holds every claim; the element is nil while the call is in
-	// flight or its outcome is unknown, and its place in completed once the
-	// call completed.
-	claims map[sendOnceKey]*list.Element
-	// completed holds the completed claims' keys, oldest first.
+	claims map[string]*sendOnceClaim // by operation ID
+	// completed holds the completed claims' operation IDs, oldest first.
 	completed list.List
 }
 
@@ -63,7 +68,6 @@ func NewMemorySendOnceRecord(perRoot int) SendOnceRecord {
 }
 
 func (m *memorySendOnce) Claim(_ context.Context, rootSessionID, operationID, argumentsSHA256 string) error {
-	key := sendOnceKey{operationID, argumentsSHA256}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	root := m.roots[rootSessionID]
@@ -71,10 +75,10 @@ func (m *memorySendOnce) Claim(_ context.Context, rootSessionID, operationID, ar
 		if m.perRoot < 1 {
 			return errSendOnceFull
 		}
-		root = &rootSendOnce{claims: make(map[sendOnceKey]*list.Element)}
+		root = &rootSendOnce{claims: make(map[string]*sendOnceClaim)}
 		m.roots[rootSessionID] = root
 	}
-	if _, ok := root.claims[key]; ok {
+	if _, ok := root.claims[operationID]; ok {
 		return ErrAlreadySent
 	}
 	if len(root.claims) >= m.perRoot {
@@ -82,38 +86,45 @@ func (m *memorySendOnce) Claim(_ context.Context, rootSessionID, operationID, ar
 		if oldest == nil {
 			return errSendOnceFull
 		}
-		delete(root.claims, root.completed.Remove(oldest).(sendOnceKey))
+		delete(root.claims, root.completed.Remove(oldest).(string))
 	}
-	root.claims[key] = nil
+	root.claims[operationID] = &sendOnceClaim{argumentsSHA256: argumentsSHA256}
 	return nil
 }
 
-func (m *memorySendOnce) Complete(_ context.Context, rootSessionID, operationID, argumentsSHA256 string) error {
-	key := sendOnceKey{operationID, argumentsSHA256}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// held returns the claim of operationID made with argumentsSHA256, or nil.
+func (m *memorySendOnce) held(rootSessionID, operationID, argumentsSHA256 string) (*rootSendOnce, *sendOnceClaim) {
 	root := m.roots[rootSessionID]
 	if root == nil {
-		return nil
+		return nil, nil
 	}
-	if el, ok := root.claims[key]; ok && el == nil {
-		root.claims[key] = root.completed.PushBack(key)
+	c := root.claims[operationID]
+	if c == nil || c.argumentsSHA256 != argumentsSHA256 {
+		return root, nil
+	}
+	return root, c
+}
+
+func (m *memorySendOnce) Complete(_ context.Context, rootSessionID, operationID, argumentsSHA256 string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if root, c := m.held(rootSessionID, operationID, argumentsSHA256); c != nil && c.completed == nil {
+		c.completed = root.completed.PushBack(operationID)
 	}
 	return nil
 }
 
 func (m *memorySendOnce) Release(_ context.Context, rootSessionID, operationID, argumentsSHA256 string) error {
-	key := sendOnceKey{operationID, argumentsSHA256}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	root := m.roots[rootSessionID]
-	if root == nil {
+	root, c := m.held(rootSessionID, operationID, argumentsSHA256)
+	if c == nil {
 		return nil
 	}
-	if el := root.claims[key]; el != nil {
-		root.completed.Remove(el)
+	if c.completed != nil {
+		root.completed.Remove(c.completed)
 	}
-	delete(root.claims, key)
+	delete(root.claims, operationID)
 	if len(root.claims) == 0 {
 		delete(m.roots, rootSessionID)
 	}
