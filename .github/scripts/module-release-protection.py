@@ -21,6 +21,13 @@ from urllib.parse import quote
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 HERE = Path(__file__).resolve().parent
+MAIN_POLICY_QUERY = """query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) {
+    ref(qualifiedName:"refs/heads/main") {
+      branchProtectionRule { requiresLinearHistory }
+    }
+  }
+}"""
 
 
 class Error(Exception):
@@ -74,7 +81,8 @@ class GitHub:
         self.token, self.jwt = token, None
 
     def call(self, method, path, data=None, metadata=False, app=False):
-        require(not metadata or method == "GET", "metadata credentials are read-only in this tool")
+        policy_read = method == "POST" and path == "/graphql" and data and data.get("query") == MAIN_POLICY_QUERY
+        require(not metadata or method == "GET" or policy_read, "metadata credentials are read-only in this tool")
         if app:
             require(method == "GET" and (path == "/app" or re.fullmatch(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/installation", path)), "App JWT is restricted to identity/installation GETs")
             self.jwt = self.jwt or app_jwt()
@@ -128,12 +136,14 @@ def patterns():
 def covers(pattern, target):
     """Sufficient containment proof for GitHub FNM_PATHNAME patterns.
 
-    The target has fixed directory segments and a final v*. Unknown expressions
-    are not guessed: add the explicit managed rules alongside inherited rules.
-    Unlike Python fnmatch, '*' never consumes '/'; '**/' can consume segments.
+    The target uses fixed segments and a final v* or *. Recursive namespace
+    targets are accepted only verbatim (or ~ALL); unknown containment is not
+    guessed. Unlike Python fnmatch, '*' never consumes '/'.
     """
-    if pattern == "~ALL":
+    if pattern == "~ALL" or pattern == target:
         return True
+    if "**" in target:
+        return False
     # Ruby's bracket/escape semantics differ from Python's. Only the shared
     # literal, '?' and '*' subset is used as a containment proof.
     if any(char in pattern for char in "[]\\"):
@@ -147,7 +157,10 @@ def covers(pattern, target):
             return match(i + 1, j) or (j < len(wanted) and match(i, j + 1))
         if j == len(wanted):
             return False
-        accepted = parts[i] in ("*", "**", "v*") if wanted[j] == "v*" else fnmatch.fnmatchcase(wanted[j], parts[i])
+        if wanted[j] in ("v*", "*"):
+            accepted = parts[i] in ("*", "**") or (wanted[j] == "v*" and parts[i] == "v*")
+        else:
+            accepted = fnmatch.fnmatchcase(wanted[j], parts[i])
         return accepted and match(i + 1, j + 1)
     return match(0, 0)
 
@@ -178,6 +191,100 @@ def desired(app_id):
                  conditions=dict(ref_name=dict(include=patterns(), exclude=[])),
                  rules=[dict(type=kind) for kind in kinds])
             for name, kinds in (("creation", ["creation"]), ("immutability", ["update", "deletion"]))]
+
+
+def batch_desired(app_id, team_id):
+    app = [dict(actor_id=app_id, actor_type="Integration", bypass_mode="always")]
+    humans = [dict(actor_id=team_id, actor_type="Team", bypass_mode="pull_request")]
+    batch = "refs/heads/module-batch/*"
+    state = "refs/heads/module-batch-state/**/*"
+    active = "refs/heads/module-batch-state/active"
+    review = dict(type="pull_request", parameters=dict(required_approving_review_count=1,
+                  dismiss_stale_reviews_on_push=True, require_last_push_approval=True,
+                  required_review_thread_resolution=True, require_code_owner_review=False,
+                  allowed_merge_methods=["squash"]))
+    # Bypasses apply to the ENTIRE ruleset. Creation authority must never bypass
+    # review, force-push, or immutable-state restrictions.
+    specs = [("creation", [batch], [], app, [dict(type="creation")]),
+             ("updates", [batch], [], humans, [dict(type="update")]),
+             ("review", [batch], [], [], [review]),
+             ("safety", [batch], [], [], [dict(type="non_fast_forward"), dict(type="deletion")]),
+             ("state-creation", [state], [], app, [dict(type="creation")]),
+             ("state-updates", [state], [], [], [dict(type="update"), dict(type="non_fast_forward")]),
+             ("state-permanent", [state], [active], [], [dict(type="deletion")]),
+             ("state-active", [active], [], app, [dict(type="deletion")])]
+    return [dict(name="module-batch-" + name, target="branch", enforcement="active",
+                 bypass_actors=bypass, conditions=dict(ref_name=dict(include=include, exclude=exclude)), rules=rules)
+            for name, include, exclude, bypass, rules in specs]
+
+
+def batch_protects(actual, expected, requirement):
+    if actual.get("target") != "branch" or actual.get("enforcement") != "active":
+        return False
+    condition = actual.get("conditions", {}).get("ref_name", {})
+    wanted = expected["conditions"]["ref_name"]
+    # The only allowed hole is active in the permanent-deletion rule. Every other
+    # state ref, including future grant names and deeper paths, stays permanent.
+    if any(p not in wanted["exclude"] for p in condition.get("exclude", [])):
+        return False
+    if not all(any(covers(p, target) for p in condition.get("include", [])) for target in wanted["include"]):
+        return False
+    require(isinstance(actual.get("bypass_actors"), list), "GitHub withheld branch ruleset bypass actors")
+    if any(b not in expected["bypass_actors"] for b in actual["bypass_actors"]):
+        return False
+    for rule in actual.get("rules", []):
+        if rule.get("type") != requirement["type"]:
+            continue
+        if requirement["type"] != "pull_request":
+            return True
+        params = rule.get("parameters", {})
+        methods = params.get("allowed_merge_methods")
+        if (type(params.get("required_approving_review_count")) is int
+                and params["required_approving_review_count"] >= 1
+                and all(params.get(k) is True for k in ("dismiss_stale_reviews_on_push", "require_last_push_approval", "required_review_thread_resolution"))
+                and isinstance(methods, list) and methods == ["squash"]):
+            return True
+    return False
+
+
+def human_team(api, repository):
+    slug = os.environ.get("RELEASE_BATCH_HUMAN_TEAM", "")
+    require(re.fullmatch(r"[A-Za-z0-9_-]{1,100}", slug), "configure RELEASE_BATCH_HUMAN_TEAM as an explicitly reviewed human-writer team slug")
+    base = "/orgs/" + repository.split("/")[0] + "/teams/" + slug
+    team = api.call("GET", base, metadata=True)
+    require(type(team.get("id")) is int and team["id"] > 0, "invalid batch human team identity")
+    access = api.call("GET", base + "/repos/" + repository, metadata=True)
+    require(access.get("permissions", {}).get("push") is True, "batch human team needs repository writer access")
+    members = api.all(base + "/members", metadata=True)
+    require(members and all(m.get("type") == "User" for m in members), "batch writer team must contain only human User accounts, never Apps/bots")
+    return team["id"]
+
+
+def merge_prerequisites(api, base):
+    repo = api.call("GET", base, metadata=True)
+    require(type(repo.get("allow_merge_commit")) is bool, "repository merge-commit setting is unavailable")
+    missing = [] if repo["allow_merge_commit"] else ["enable repository merge commits by separately authorized human action"]
+    rules = api.all(base + "/rules/branches/main", metadata=True)
+    owner, name = base.removeprefix("/repos/").split("/")
+    # GraphQL distinguishes absent classic protection (null) from access errors;
+    # a REST 404 cannot safely distinguish absence from hidden metadata.
+    result = api.call("POST", "/graphql", dict(query=MAIN_POLICY_QUERY, variables=dict(owner=owner, name=name)), metadata=True)
+    require(isinstance(result, dict) and not result.get("errors"), "classic main branch policy metadata is unavailable")
+    ref = result["data"]["repository"]["ref"]
+    require(isinstance(ref, dict) and "branchProtectionRule" in ref, "main classic policy metadata is unavailable")
+    classic = ref["branchProtectionRule"]
+    require(classic is None or (isinstance(classic, dict) and type(classic.get("requiresLinearHistory")) is bool), "main classic linear-history setting is unavailable")
+    if any(r.get("type") == "required_linear_history" for r in rules) or (classic and classic["requiresLinearHistory"]):
+        missing.append("main must permit nonlinear merge history; review inherited/classic policy manually")
+    for rule in rules:
+        if rule.get("type") == "pull_request":
+            params = rule.get("parameters", {})
+            if "allowed_merge_methods" in params:
+                methods = params["allowed_merge_methods"]
+                require(isinstance(methods, list) and all(m in ("merge", "squash", "rebase") for m in methods), "main merge-method policy metadata is invalid")
+                if "merge" not in methods:
+                    missing.append("main pull-request policy must permit merge commits")
+    return missing
 
 
 def identity(api, repository, app_id=None, bot_id=None):
@@ -250,10 +357,12 @@ def inspect(api, repository, app_id, bot_id):
     identity(api, repository, app_id, bot_id)
     base = "/repos/" + repository
     environment(api, base)
+    team_id = human_team(api, repository)
+    prerequisites = merge_prerequisites(api, base)
     summaries = api.all(base + "/rulesets?includes_parents=true", metadata=True)
     rules = []
     for summary in summaries:
-        if summary.get("target") not in (None, "tag"):
+        if summary.get("target") not in (None, "tag", "branch"):
             continue
         # Fetch the source endpoint, not a repository endpoint with an inherited ID.
         source, kind = summary.get("source"), summary.get("source_type")
@@ -275,12 +384,19 @@ def inspect(api, repository, app_id, bot_id):
         require(not any(r.get("name") == rule["name"] for r in rules),
                 "managed ruleset exists but is insufficient; human must inspect/repair it (never overwrite stronger rules)")
         additions.append(rule)
-    return dict(missing=missing, create_rulesets=additions)
+    for rule in batch_desired(app_id, team_id):
+        absent = [r["type"] for r in rule["rules"] if not any(batch_protects(actual, rule, r) for actual in rules)]
+        missing[rule["name"]] = absent
+        if absent:
+            require(not any(r.get("name") == rule["name"] for r in rules),
+                    "managed branch ruleset exists but is insufficient; human must inspect/repair it (never overwrite stronger rules)")
+            additions.append(rule)
+    return dict(missing=missing, prerequisites=prerequisites, create_rulesets=additions)
 
 
 WORKFLOWS = ("create-release-pr.yml", "create-release-tag.yml",
              "create-sdk-typescript-release-pr.yml", "create-sdk-typescript-release-tag.yml",
-             "request-module-release.yml", "module-releases.yml")
+             "request-module-release.yml", "module-releases.yml", "module-release-wakeup.yml", "ci.yml")
 
 
 def workflows(api, repository):
@@ -290,13 +406,14 @@ def workflows(api, repository):
     base = "/repos/" + repository
     commit = api.call("GET", base + "/git/ref/heads/main")["object"]["sha"]
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "invalid main SHA")
-    for name in WORKFLOWS:
-        path = ".github/workflows/" + name
+    paths = [".github/workflows/" + name for name in WORKFLOWS]
+    paths.append(".github/actions/module-release-ci-bootstrap/action.yml")
+    for path in paths:
         content = (HERE.parent.parent / path).read_bytes()
         blob = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
         remote = api.call("GET", base + "/contents/" + path + "?ref=" + commit)
         require(remote.get("type") == "file" and remote.get("sha") == blob,
-                f"shared-App workflow {name} differs from trusted checkout; deploy/review the complete shared-authority changes before enabling releases")
+                f"shared-App control {path} differs from trusted checkout; deploy/review the complete shared-authority changes before enabling releases")
 
 
 def run(api, command, repository, app_id, bot_id, confirm=False):
@@ -315,9 +432,10 @@ def run(api, command, repository, app_id, bot_id, confirm=False):
             api.call("POST", "/repos/" + repository + "/rulesets", rule)
         result = inspect(api, repository, app_id, bot_id)
     if command == "check":
-        require(not any(result["missing"].values()), "missing effective tag protections; run diff, then have a human admin review/apply")
+        require(not any(result["missing"].values()), "missing effective tag/batch/state protections; run diff, then have a human admin review/apply")
+        require(not result["prerequisites"], "; ".join(result["prerequisites"]))
         workflows(api, repository)
-        return dict(schema=1, repository=repository, app_id=app_id, bot_id=bot_id, protected=True)
+        return dict(schema=2, repository=repository, app_id=app_id, bot_id=bot_id, protected=True)
     return result
 
 
@@ -332,7 +450,7 @@ def main():
     try:
         require(not args.confirm or args.command == "apply", "--confirm is apply-only")
         print(json.dumps(run(GitHub(), args.command, args.repository, args.app_id, args.bot_id, args.confirm), sort_keys=True))
-    except (Error, KeyError, ValueError, OSError) as error:
+    except (Error, KeyError, TypeError, ValueError, OSError) as error:
         # API field failures fail closed, but do not dump potentially sensitive data.
         print(str(error) if isinstance(error, Error) else "invalid or unavailable GitHub protection metadata", file=sys.stderr)
         return 1

@@ -612,13 +612,18 @@ tasks:
     cmds:
       - python3 .github/scripts/module-release_test.py --quick
       - python3 .github/scripts/module-release-github_test.py --quick
+      - python3 .github/scripts/module-release-ci_test.py --quick
+      - sh .github/scripts/check-module-publication_test.sh
       - python3 .github/scripts/module-release-protection_test.py --quick
 
   test:module-release-integration:
     desc: Run comprehensive offline release tooling integration (real temporary Go modules/proxy and mocked GitHub)
     cmds:
       - python3 .github/scripts/module-release_test.py
+      - python3 .github/scripts/module-artifact_test.py
+      - python3 .github/scripts/module-release-batch_test.py
       - python3 .github/scripts/module-release-github_test.py
+      - python3 .github/scripts/module-release-ci_test.py
       - python3 .github/scripts/module-release-protection_test.py
       - python3 .github/scripts/module-release-integration_test.py --synthetic
       - sh .github/scripts/check-module-publication_test.sh

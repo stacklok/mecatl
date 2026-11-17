@@ -6,7 +6,8 @@ if [ "$#" -eq 0 ]; then
   temporary=$(mktemp -d)
   trap 'rm -rf "$temporary"' EXIT
   mkdir "$temporary/home" "$temporary/xdg" "$temporary/hooks" "$temporary/template"
-  env -i PATH="$PATH" HOME="$temporary/home" XDG_CONFIG_HOME="$temporary/xdg" TMPDIR="$temporary" \
+  python_dir=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.executable).resolve().parent)')
+  env -i PATH="$python_dir:$PATH" HOME="$temporary/home" XDG_CONFIG_HOME="$temporary/xdg" TMPDIR="$temporary" \
     GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=4 \
     GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$temporary/hooks" \
     GIT_CONFIG_KEY_1=init.templateDir GIT_CONFIG_VALUE_1="$temporary/template" \
@@ -17,59 +18,8 @@ if [ "$#" -eq 0 ]; then
   exit
 fi
 [ "$#" -eq 1 ] && [ "$1" = --isolated ] || exit 2
-repo=$(mktemp -d)
-mkdir -p "$repo/internal/adaptersupport" "$repo/contracts/gen/go/mecatl/driver" "$repo/adapters"
-trap 'rm -rf "$repo"' EXIT
 
-git -C "$repo" init -q
-printf 'module github.com/stacklok/mecatl/internal/adaptersupport\n\ngo 1.27.2\n' > "$repo/internal/adaptersupport/go.mod"
-printf 'module github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver\n\ngo 1.27.2\n' > "$repo/contracts/gen/go/mecatl/driver/go.mod"
-printf 'module github.com/stacklok/mecatl/adapters\n\ngo 1.27.2\n' > "$repo/adapters/go.mod"
-git -C "$repo" add internal/adaptersupport/go.mod contracts/gen/go/mecatl/driver/go.mod adapters/go.mod
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.com commit -qm base
-base=$(git -C "$repo" rev-parse HEAD)
-git -C "$repo" update-ref refs/remotes/origin/main "$base"
-git -C "$repo" tag v0.1.0 "$base"
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.com commit --allow-empty -qm pr-head
-short=$(git -C "$repo" rev-parse --short=12 HEAD)
-
-printf 'module github.com/stacklok/mecatl/adapters\n\ngo 1.27.2\n\nrequire github.com/stacklok/mecatl/engine v0.0.0-20260929205240-%s\n' "$short" > "$repo/adapters/go.mod"
-if (cd "$repo" && sh "$root/.github/scripts/check-module-publication.sh") > "$repo/result" 2>&1; then
-  echo 'accepted a PR-head-only module revision' >&2
-  exit 1
-fi
-grep -q 'not on origin/main' "$repo/result"
-
-printf 'module github.com/stacklok/mecatl/adapters\n\ngo 1.27.2\n\nrequire github.com/stacklok/mecatl/engine v0.1.0\n' > "$repo/adapters/go.mod"
-if (cd "$repo" && sh "$root/.github/scripts/check-module-publication.sh") > "$repo/result" 2>&1; then
-  echo 'accepted a root tag as an engine module tag' >&2
-  exit 1
-fi
-grep -q 'no published nested tag' "$repo/result"
-
-# A publicly named adapters tag on a PR-only commit is still unsafe.
-printf 'module github.com/stacklok/mecatl/adapters\n\ngo 1.27.2\n' > "$repo/adapters/go.mod"
-printf 'module example.com/root\n\ngo 1.27.2\n\nrequire github.com/stacklok/mecatl/adapters v0.1.0\n' > "$repo/go.mod"
-mkdir -p "$repo/integration/microvm"
-printf 'module example.com/microvm\n\ngo 1.27.2\n\nrequire github.com/stacklok/mecatl/adapters v0.1.0\n' > "$repo/integration/microvm/go.mod"
-git -C "$repo" tag adapters/v0.1.0 HEAD
-if (cd "$repo" && sh "$root/.github/scripts/check-module-publication.sh") > "$repo/result" 2>&1; then
-  echo 'accepted a PR-head-only adapters tag' >&2
-  exit 1
-fi
-grep -q 'adapters/v0.1.0 is not on origin/main' "$repo/result"
-
-# A parser failure must fail before the checker reaches later manifest checks.
-mkdir "$repo/failing-jq"
-printf '#!/bin/sh\nexit 42\n' > "$repo/failing-jq/jq"
-chmod +x "$repo/failing-jq/jq"
-set +e
-(cd "$repo" && PATH="$repo/failing-jq:$PATH" sh "$root/.github/scripts/check-module-publication.sh") > "$repo/result" 2>&1
-status=$?
-set -e
-if [ "$status" -ne 42 ]; then
-  echo "jq failure produced status $status, want 42" >&2
-  exit 1
-fi
-
-echo 'module publication negative controls: passed'
+# The Python fixture supplies the complete production policy inventory, then
+# invokes this shell entry point for each focused negative control.
+python3 "$root/.github/scripts/module-release-ci_test.py" \
+  ShellPublication.test_actual_shell_checker_rejects_off_main_and_wrong_namespace_before_download

@@ -122,8 +122,10 @@ grep -Fq "if: needs.changes.outputs.module_publication_relevant == 'true'" <<<"$
   || fail 'Build must gate the publication step on module_publication_relevant'
 grep -Fq 'task test:module-publication' <<<"$build_block" \
   || fail 'Build must run the publication task'
-grep -Fq 'git fetch --unshallow --tags origin main' <<<"$build_block" \
-  || fail 'Build must fetch ancestry and nested tags before checking pins'
+grep -Fq 'if [ -f .git/shallow ]; then git fetch --unshallow origin; fi' <<<"$build_block" \
+  || fail 'Build must fetch missing ancestry before checking pins'
+grep -Fq 'git fetch --tags origin main' <<<"$build_block" \
+  || fail 'Build must fetch nested tags before checking pins'
 
 # The pure-TypeScript SDK unit job gates on sdk_relevant ALONE (no go, no
 # docs_only — sdk_relevant already implies a non-docs, TS/contract change).

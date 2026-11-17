@@ -142,26 +142,20 @@ modifying it. Intentional uncommitted metadata fails too. CI uses the same check
 after its existing Build preparation and Test suite; ignored `go.work.sum` updates
 are allowed. A clean result proves only that tracked metadata is stable.
 
-## 4. Merge and release dependencies first
+## 4. Prepare, publish, and adopt a coordinated batch
 
-Prepare the coordinated PRs in dependency order. When source changes require an
-unpublished dependency API, project CI will be red during the transition: standalone
-checks still use the old published pins, even if the assembled workspace passes.
-This is an expected dependency-publication gap. Record the affected checks and the
-missing dependency versions in each PR; investigate unrelated failures normally.
+A Go-module release is one explicit, coordinated batch. It has two human-merged
+pull requests: PR1 prepares every selected module against a fixed `main` commit
+`B`, and PR2 adopts the published batch into `main`. The controller qualifies
+the entire PR1 merge commit `R` before creating the first tag, then creates and
+publicly proves immutable dependency-first tags from `R`. It never advances `R`
+while publishing.
 
-Each module's standalone checks must pass again after its prerequisite dependencies
-are published and its pins are updated and tidied. Project-wide CI must return to
-green after the final root and integration pin updates in step 5. A workspace pass
-alone does not close this gap or waive required checks. Obtain an explicit maintainer
-decision on any intermediate merge that cannot satisfy the existing required checks.
-
-### Preview the explicit release batch
-
-Use the reviewed module-release workflows for nested Go tags. Application releases
-(`v*`) and SDK releases (`sdk/typescript/v*`, including npm staging and human 2FA)
-remain separate, with independent versions. A root release does not publish nested
-Go modules.
+The batch controller runs only from trusted `main` tooling. Its workflow run
+commit `T` is distinct from `R`: `T` identifies the controller and policy, and
+`R` identifies the release source. Root application and TypeScript SDK releases
+remain independent tracks. A module batch does not change their versions or
+release them.
 
 The [publication policy](../.github/scripts/module-publication-policy.json)
 classifies every `go.work` member and determines which modules are eligible for
@@ -169,9 +163,12 @@ independent publication. Use the `inventory` command below for the current
 classification. See the [policy reference](../.github/scripts/module-publication-policy.md)
 for field meanings, how the tooling uses them, and when to update the file.
 
-Use a full checkout with fetched `origin/main` and tags, Python 3, and the declared
-Go toolchain. Save the exact module-directory-to-version map in
-`.scratch/module-release-batch.json`. For example, replace both placeholders in:
+### Preview the explicit release batch
+
+Use a full checkout with fetched `origin/main` and tags, Python 3, and the
+declared Go toolchain. Select an exact `main` commit for `B` and save the exact
+module-directory-to-version map in `.scratch/module-release-batch.json`. For
+example, replace both placeholders in:
 
 ```json
 {"engine": "<EXACT_ENGINE_VERSION>", "provider/openai": "<EXACT_PROVIDER_VERSION>"}
@@ -179,26 +176,30 @@ Go toolchain. Save the exact module-directory-to-version map in
 
 Humans choose canonical `vX.Y.Z` versions (or canonical prereleases) under each
 module's compatibility policy. Automation does not choose versions, add modules,
-or accept a pseudo-version as a requested release. Run the local read-only checks:
+or accept a pseudo-version as a requested release. Run the local read-only
+checks:
 
 ```sh
-CANDIDATE='<FULL_MAIN_COMMIT_SHA>'
+BASE='<FULL_MAIN_COMMIT_SHA>'
 BATCH=.scratch/module-release-batch.json
-python3 .github/scripts/module-release.py inventory --candidate "$CANDIDATE"
-python3 .github/scripts/module-release.py preview --candidate "$CANDIDATE" --batch "$BATCH"
+python3 .github/scripts/module-release.py inventory --candidate "$BASE"
+python3 .github/scripts/module-release.py preview --candidate "$BASE" --batch "$BATCH"
 ```
 
 Preview archives the exact commit, ignoring uncommitted source changes. It shows
 dependency order, changes since each previous tag, compatibility/changelog paths,
 existing pins, and proposed selected-module pin updates. Review the source diffs
-and version choices; the reported policy paths are not an automated SemVer verdict.
-Fix unclassified modules, cycles, replacement leakage, tag conflicts, or missing
-prerequisites before requesting a release. An unchanged prerequisite can retain a
-suitable published pin; selection never expands automatically. Preview uses local
-Git/Go metadata, makes no GitHub/ref writes, and does not establish public download
+and version choices; the reported policy paths are not an automated SemVer
+verdict. Fix unclassified modules, cycles, replacement leakage, tag conflicts,
+or missing prerequisites before requesting a release. An unchanged prerequisite
+can retain a suitable published pin; selection never expands automatically.
+Preview uses local Git/Go metadata for releases already on main. Off-main public
+release history requires authenticated read access through `GH_TOKEN` or `gh`
+authentication; provenance is checked by tooling from fetched `origin/main`.
+Preview makes no GitHub/ref writes and does not establish public download
 availability or human authorization.
 
-### Request and review publication
+### Request and review a coordinated batch
 
 Before the first release request, an administrator must complete the
 [release protection setup](#release-protection-setup). The repository-wide Actions
@@ -208,74 +209,76 @@ enforcement rehearsal, then set it to exactly `true` and leave it enabled for
 normal releases. It is not a per-run input or a switch to toggle between release
 stages. Passing offline tests does not establish those live prerequisites.
 
-1. With explicit authorization for the exact mapping, manually run
+The protection setup also requires the repository variable
+`RELEASE_BATCH_HUMAN_TEAM`. Set it to the reviewed organization team slug for
+human batch writers. The checker verifies that the team has repository writer
+access and contains only human accounts. Separately authorize and enable
+repository merge commits before rollout. Ordinary pull requests can continue to
+use squash merges, but PR2 requires a merge commit.
+
+1. With explicit authorization for the exact mapping and `B`, manually run
    [`request-module-release.yml`](../.github/workflows/request-module-release.yml)
-   on `main`. GitHub calls this a workflow **dispatch** (`workflow_dispatch`): in
-   **Actions**, select **Request module releases**, choose **Run workflow**, and
-   select `main`. Supply the JSON object above as the required `batch` input,
-   rather than a local filename. An operator can run it directly or instruct an
-   agent to run it using authorized human-account authentication and the approved
-   mapping; the workflow requires a human triggering account. This opens a
-   designated-App-authored request PR under `.github/module-releases/`, rather
-   than publishing immediately. Inspect that PR's actual candidate and diff;
-   main can have advanced since your local preview.
-2. Review the exact set, versions, dependency order, and compatibility evidence.
-   Have a human merge the request PR into `main`. The actual merge SHA, including a
-   squash merge, fixes the candidate; the PR-head SHA is not the released identity.
-   Changing the authorized set or versions requires a new reviewed request.
-3. Watch [`module-releases.yml`](../.github/workflows/module-releases.yml). It
-   discovers outstanding reviewed requests after request merges, main CI completion,
-   and manual dispatch, and queues continuation after successful stages. It verifies
-   designated-App authorship, same-repository provenance, exact reviewed bytes,
-   merge linkage, and a non-bot human merger. No PR auto-merges.
-4. For each generated preparation PR, review the selected module's dependency pins,
-   tidy diff, requested version, and any source changes since the original candidate.
-   A human merge reconfirms those contents and supplies the next exact candidate.
-   Closing it unmerged pauses the batch. Only selected Go modules receive preparation
-   PRs; root/integration adoption remains step 5.
+   on `main`. In **Actions**, select **Request module releases**, choose **Run
+   workflow**, select `main`, and supply the JSON object as `batch` and the full
+   `B` SHA as `base`. The workflow requires a human triggering account. It
+   reserves the batch before creating branches or PRs. If another reservation is
+   active, it reports that batch instead of queueing or changing a version
+   promise.
+2. Review PR1, `Prepare module batch <ID>`, from
+   `module-batch/<ID>-prep` into `module-batch/<ID>`. It contains the complete
+   selected-module pin, sum, and permitted source/metadata diff. A human
+   **squash-merges** it. The merge commit `R` must have sole parent `B` and the
+   same whole tree as the reviewed preparation head. Do not merge PR1 into
+   `main`.
+3. The trusted-main controller binds `R`, then runs complete release-aware CI and
+   exact-version staged qualification for the whole batch. Candidate execution
+   has no App secret or write credential. Qualification checks the final
+   manifests, standalone tidy/build/tests, workspace integration, selected
+   module consumers, owning API/changelog checks, and staged artifacts. It is
+   release authority only when its run, attempt, artifacts, `R`, batch mapping,
+   and `T` agree.
+4. After whole-batch qualification succeeds, the controller tags selected modules
+   from `R` in dependency order. Each tag is immutable and receives a fresh
+   public proxy/checksum-database proof before the next tag. No human checkpoint,
+   source update, pin update, or candidate advance occurs between module tags.
+   A partial failure leaves already-created tags immutable and stops the batch.
+5. After every selected module has public proof, the controller opens PR2 from
+   `module-batch/<ID>` to `main`. Review the public-version integration result
+   and merge it with a **merge commit**, preserving `R` as a direct parent. Do
+   not squash, rebase, or cherry-pick PR2. Normal CI validates the prospective
+   main merge before adoption.
 
-The workflow qualifies dependencies before their callers. Before each tag it
-requires successful ordinary main-push CI for that exact candidate, identified by
-repository, workflow, run, and attempt. A cancelled original CI run can be rerun at
-its original SHA, up to attempt 3 and within the tooling's 25-day evidence window.
-The main-push rerun concurrency group keeps recovery separate from newer main CI.
-Candidates predating that concurrency fix need a new reviewed request: reruns use
-the original workflow revision. Missing, failed, expired, or ineligible CI stops
-publication; newer-SHA CI cannot substitute for it.
+`module-batch/<ID>` has a logical freeze after PR1. GitHub branch protection
+still permits qualifying PR updates, but the controller permanently binds the
+release to `R` and rechecks the batch tip, graph, and merge identities before
+publication and adoption writes. Any unexpected tip movement stops the batch;
+it never reuses qualification at a different SHA.
 
-Qualification runs workspace-disabled tidy-diff, build, and tests against declared
-published dependencies, plus owning API/changelog checks. It supplies no checkout
-replacements. Advisory `gorelease` remains advisory; human diff review owns SemVer
-judgment. Candidate execution runs without App secrets or write credentials.
-Protected main-side jobs revalidate authority and settings before minting narrow,
-short-lived App tokens for the exact PR or tag write.
-
-After each tag, a fresh external module and caches resolve the exact version
-through `proxy.golang.org` and `sum.golang.org`, verify tag/commit/source identity,
-exercise the owned import fixture, and check standalone closure. The support
-fixture uses a legitimate same-repository-path import of Go `internal` packages.
-Only successful public proof permits downstream preparation and publication.
+If current `main` conflicts with PR2, use a separately reviewed
+`module-adoption/<NAME>` branch descending from `R`, then dispatch the controller
+with that branch as `adoption_head`. Review and test the actual integration
+result. The original batch branch and tags remain fixed. If a damaged batch
+branch blocks abandonment or finalization, stop automation and use a separately
+reviewed repair; the controller does not repair it automatically.
 
 ### Run release-only diagnostics locally
 
-These commands do not write GitHub refs or replace reviewed-request/CI authority.
+These commands do not write GitHub refs or replace batch/qualification authority.
 They execute candidate or downloaded Go code: use an unprivileged environment
 without release credentials. They can download public dependencies and run full
 selected-module suites; keep them out of routine infrastructure checks.
 
 ```sh
-python3 .github/scripts/module-release.py qualify --candidate "$CANDIDATE" --batch "$BATCH"
+python3 .github/scripts/module-release.py qualify --candidate "$BASE" --batch "$BATCH"
 MODULE=provider/openai
 VERSION='<EXACT_PUBLISHED_VERSION>'
-python3 .github/scripts/module-release.py prove --candidate "$CANDIDATE" --module "$MODULE" --version "$VERSION"
+python3 .github/scripts/module-release.py prove --candidate "$BASE" --module "$MODULE" --version "$VERSION"
 ```
 
-`qualify` cannot resolve unpublished batch versions through local replacements;
-qualify dependent modules after public prerequisites and reviewed pin preparation.
-For `prove`, set `CANDIDATE` to the exact tagged commit. Public checks override
-ambient workspace/private-proxy settings and use fresh module/build caches.
-The shell entrypoint `check-module-publication.sh` also forwards explicit
-subcommands to this CLI.
+Local `qualify` validates a source candidate. The release controller instead
+qualifies the fixed PR1 merge `R` against its staged future versions before any
+tag. For `prove`, use the exact tagged commit. Public checks override ambient
+workspace/private-proxy settings and use fresh module/build caches.
 
 `GOWORK=off` alone leaves local `replace` directives effective. Root and both
 microVM modules retain local replacements, so their workspace-disabled tests do
@@ -291,28 +294,31 @@ It retains persistence-module pin/main-ancestry checks, root/integration adapter
 pin agreement, and a fresh external build of the chosen adapters version. It
 requires public proxy access and does not prove every module's publication.
 
-### Resume or repair a stopped batch
+### Resume, abandon, or repair a batch
 
-A failed stage stops the entire batch, including independent modules not yet
+A failed stage stops the whole batch, including independent modules not yet
 published. Completed tags remain immutable. A failed post-tag proof is
-**published-but-unverified**, not a rollback or success; the workflow tries public
-proof at most three times before stopping. Inspect the failed run and fix the
-cause before a human dispatches `module-releases.yml` on `main` with
-`retry_request` set to the exact merged request PR number. Empty input only
-reconciles; unrelated events do not retry failures. Use a fresh workflow dispatch,
-not **Re-run jobs** on an older release run. Explicit retry can open a fresh
-preparation PR after an unmerged close, still requiring human merge.
+published but unverified. The proof job attempts a transient failure at most
+three times before the batch stops.
 
-Retry reconstructs authority from reviewed commits, PRs, exact tags, and trusted
-run/attempt artifacts. Same-version/same-qualified-SHA work can resume; a different
-SHA is a hard conflict, and tag existence alone is insufficient evidence. Later
-main activity does not advance a fixed candidate silently. Missing or expired
-provenance requires a new reviewed request; use the request workflow's optional
-`supersedes` JSON list of earlier reviewed request PR numbers to retire them without
-reusing their proofs. Plan/result artifacts have 90-day retention; cancelled-CI
-recovery has the shorter window above. Successful CI evidence does not expire merely
-by age while its trusted run/attempt remains available. Preserve request/preparation
-PR, run/attempt, candidate, tag, and public-proof links when reporting completion.
+Use **Run workflow** for `module-releases.yml` on `main`. Select `retry` or
+`abandon` and provide the exact active `batch_id`; `reconcile` only discovers and
+continues valid active state. A retry is a new human workflow dispatch for the
+same batch and fixed `R`. Do not use **Re-run jobs** on an older release run, and
+do not expect events, closed PRs, or later `main` commits to retry it.
+
+Receipts and public proof are valid for 30 days. Missing, deleted, expired, or
+older receipts require fresh exact-`R` qualification and public proof before
+publication resumes. Existing tags are revalidated against the fixed batch and
+`R`; a tag alone is never success. A different SHA cannot reuse a version or
+prior evidence.
+
+Closing either unmerged PR pauses the batch. Closing PR2 neither unpublishes tags
+nor releases the active reservation. Explicit abandonment records any published
+versions and releases the reservation. The permanent state refs preserve the
+reservation, fixed `R`, publication grants, and terminal record; retain them even
+after adoption or abandonment. Temporary branch cleanup after successful adoption
+requires separate authorization.
 
 Never move, delete, or reuse a production tag as recovery. Invalid public versions
 need forward fixes because Go proxy/checksum history cannot be retracted. For an
@@ -328,29 +334,32 @@ Deploy the module workflows and all shared-App application/SDK guards together
 before enabling module releases; root/SDK namespace and provenance hardening can
 be deployed first while the module feature remains disabled.
 Use the [settings reference](../.github/scripts/module-release-protection.md) for
-identity variables, credential metadata, effective rules, and read-only
-`diff`/`check`. `apply` is also a dry run unless `--confirm` is explicitly supplied;
-confirmed apply requires separate human authorization and an administrator's
-credential. The release App must not administer its own protections.
+identity variables, the human batch-writer team, credential metadata, effective
+rules, and read-only `diff`/`check`. `apply` is also a dry run unless `--confirm`
+is explicitly supplied; confirmed apply requires separate human authorization and
+an administrator's credential. The release App must not administer its own
+protections.
 
 The checker reuses the existing environment-scoped App key/client ID to sign a
 short-lived App JWT for identity and repository-installation **GETs before minting
 any installation write token**. Installed rights and repository membership are
 verified through the App-authenticated API; no human OAuth/user-token/refresh flow
-is required. Key/JWT bytes stay out of arguments, logs, artifacts and durable files,
-and candidate jobs never receive them. Local human metadata inspection can instead
-use an explicitly supplied short-lived `RELEASE_APP_JWT` with normal `gh` auth.
+is required. Key/JWT bytes stay out of arguments, logs, artifacts and durable
+files, and candidate jobs never receive them. Local human metadata inspection can
+instead use an explicitly supplied short-lived `RELEASE_APP_JWT` with normal `gh`
+auth.
 
-Routine `check` verifies effective tag/environment protections and deployed workflow
-identities. Normal `GITHUB_TOKEN` read access is tried first; `RELEASE_SETTINGS_TOKEN`
-is only an optional human metadata override if the platform withholds required
-environment/ruleset details. Missing access is an actionable rollout blocker, not
-a request to broaden the App's permissions. The separate rollout-only `audit`
-checks key scope via secret-name metadata (or use an equivalent authorized admin
-audit); it never requires a reader secret of a particular name to exist. Complete
-this scope audit before module enablement, not on every release. The App itself
-needs Contents/write and Pull requests/write without Administration or Workflows;
-job `GITHUB_TOKEN` Actions/write handles CI recovery and continuation.
+Routine `check` verifies effective tag, batch-branch, state-ref, environment, and
+merge-commit prerequisites, along with deployed workflow identities. Normal
+`GITHUB_TOKEN` read access is tried first; `RELEASE_SETTINGS_TOKEN` is only an
+optional human metadata override if the platform withholds required environment or
+ruleset details. Missing access is an actionable rollout blocker, not a request to
+broaden the App's permissions. The separate rollout-only `audit` checks key scope
+via secret-name metadata (or use an equivalent authorized admin audit); it never
+requires a reader secret of a particular name to exist. Complete this scope audit
+before module enablement, not on every release. The App itself needs
+Contents/write and Pull requests/write without Administration or Workflows;
+`GITHUB_TOKEN` Actions/write continues controller dispatches.
 
 With `MODULE_RELEASES_ENABLED` unset/false, existing root/SDK flows keep their
 main-only environment, verified existing-App identity, constrained namespaces and
@@ -359,7 +368,10 @@ numeric identity variables. The coordinated enabled rollout adds the full global
 settings preflight to every shared-App path before write-token minting.
 
 Verify App-only tag creation and separate no-bypass update/deletion restrictions
-for root, SDK, and every supported Go prefix. Keep stronger inherited rules. Before
+for root, SDK, and every supported Go prefix. Batch branches require the reviewed
+human-writer team for updates and squash-only PR1 merges. State refs are
+controller-created and permanent, except that the controller removes the active
+reservation after a terminal record. Keep stronger inherited rules. Before
 enabling entrypoints, obtain separate authorization for a denial rehearsal in an
 isolated repository or non-release namespace with equivalent protections, and map
 production prefixes to their effective rules and App installation. Record
@@ -368,8 +380,10 @@ production**. A successful configuration check is not live enforcement evidence.
 
 ## 5. Finish integration
 
-Once dependency releases exist, finish root and integration pins, tidy affected
-modules, and run the existing full gates:
+PR1 includes the necessary in-repository root and integration pin adoption for the
+fixed batch. PR2 carries that reviewed result into `main` only after all selected
+versions have public proof. After PR2 merges, run the existing full gates for any
+subsequent integration work:
 
 ```sh
 task lint
@@ -378,9 +392,9 @@ task --concurrency 3 test:race
 go run ./cmd/mecademo
 ```
 
-Run the workspace race suite against the final coordinated candidate, then verify
-metadata cleanliness. Keep unavailable publication proofs or failing checks visible
-in the PR rather than treating a workspace pass as release readiness.
+Run the workspace race suite against the final PR2 integration result, then
+verify metadata cleanliness. Keep unavailable publication proofs or failing checks
+visible in the PR rather than treating a workspace pass as release readiness.
 
 ## Command reference
 

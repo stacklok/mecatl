@@ -20,6 +20,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-batch:
+        description: 'Trusted-main exact-R qualification; plan is revalidated through the read-only API'
+        type: string
+        default: ''
 
 # Least-privilege default for the whole workflow. The CI jobs only read source.
 permissions:
@@ -27,9 +33,7 @@ permissions:
 
 # Cancel superseded runs on the same ref so a force-push doesn't pile up minutes.
 concurrency:
-  # Reruns retain their original workflow revision: deploy this before selecting
-  # release candidates. First attempts keep the ordinary main-ref cancellation.
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt > 1 && format('rerun-{0}', github.run_id) || github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.release-batch != '' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -52,7 +56,13 @@ jobs:
     name: Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     outputs:
+      release_context: ${{ steps.release.outputs.context }}
+      public_history: ${{ steps.release.outputs.public_history }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
       # macOS runners cost ~10x a Linux minute. These flags gate the three
       # macos-26 jobs: they default to true (RUN) and flip to false only when the
@@ -77,9 +87,62 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Fetch bounded ancestry for merge-base..head PR comparisons. If the
-          # merge base is beyond that depth, classification fails closed.
+          # Bounded ordinary comparisons fail closed when ancestry is missing.
           fetch-depth: 100
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: inputs.release-batch != ''
+        with:
+          name: module-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/module-ci-plan
+
+      - name: Authenticate release CI context with fixed main tooling
+        id: release
+        if: inputs.release-batch != '' || github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+          RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_BATCH: ${{ inputs.release-batch }}
+        run: |
+          if [ -n "$RELEASE_BATCH" ]; then
+            T="$GITHUB_SHA"
+          else
+            git fetch --no-tags origin main
+            T=$(git rev-parse FETCH_HEAD)
+          fi
+          # Before deployment, ordinary CI still proves main-public pins without
+          # historical exceptions. Never substitute candidate code for this reader.
+          if ! git cat-file -e "$T:.github/scripts/module-release-ci.py"; then
+            if [ -n "$RELEASE_BATCH" ] || { [ "$MODULE_RELEASES_ENABLED" = true ] && [ -n "$RELEASE_PR" ]; }; then
+              echo "Trusted main has no release CI reader" >&2
+              exit 1
+            fi
+            printf 'context=\npublic_history=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir "$RUNNER_TEMP/module-ci-classifier"
+          git archive "$T" .github/scripts | tar -x -C "$RUNNER_TEMP/module-ci-classifier"
+          # Separate trusted control checkout; no PR code executes with GH_TOKEN.
+          git worktree add --detach "$RUNNER_TEMP/module-ci-trusted" "$T"
+          helper="$RUNNER_TEMP/module-ci-classifier/.github/scripts/module-release-ci.py"
+          if [ -n "$RELEASE_BATCH" ]; then
+            python3 "$helper" context --root "$RUNNER_TEMP/module-ci-trusted" --input "$RUNNER_TEMP/module-ci-plan/plan.json"
+          else
+            python3 "$helper" context --root "$RUNNER_TEMP/module-ci-trusted"
+          fi
+
+      - name: Preserve authenticated premerge adoption identities
+        if: steps.release.outputs.context != '' && fromJSON(steps.release.outputs.context).kind == 'adoption'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: module-adoption-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/module-adoption.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Classify changed paths
         id: classify
@@ -90,6 +153,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PUSH_SHA: ${{ github.sha }}
+          RELEASE_CI_CONTEXT: ${{ steps.release.outputs.context }}
         run: |
           set -euo pipefail
           docs_only=false
@@ -118,6 +182,12 @@ jobs:
               head=""
               ;;
           esac
+          # Verified release runs deliberately exercise the complete existing
+          # fanout, not a second, smaller release-specific suite.
+          if [ -n "$RELEASE_CI_CONTEXT" ]; then
+            base=""
+            head=""
+          fi
           if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]] \
             && [[ "$base" != 0000000000000000000000000000000000000000 ]] \
             && [[ "$head" != 0000000000000000000000000000000000000000 ]] \
@@ -208,6 +278,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # Install the packageManager pin explicitly. Do not rely on corepack being
       # present or enabled on the runner.
@@ -267,6 +344,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -276,7 +360,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-sdk
@@ -292,6 +381,7 @@ jobs:
           retention-days: 1
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -312,6 +402,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -339,7 +436,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-sdk
@@ -373,6 +475,7 @@ jobs:
         run: task sdk:e2e
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -396,6 +499,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -467,6 +577,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -522,6 +639,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -540,7 +664,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-sdk
@@ -556,6 +685,7 @@ jobs:
         run: task sdk:macos-spawn
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -578,6 +708,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -716,6 +853,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -891,6 +1035,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # bin/mecated comes from the mecated job; artifacts drop the exec bit.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -992,6 +1143,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
@@ -1001,7 +1159,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-build
@@ -1041,10 +1204,28 @@ jobs:
           task tidy
           task test:module-metadata
 
-      - name: Verify nested module publication
-        if: needs.changes.outputs.module_publication_relevant == 'true'
+      - name: Verify ordinary nested module publication with fixed main tooling
+        if: needs.changes.outputs.module_publication_relevant == 'true' && needs.changes.outputs.release_context == ''
+        env:
+          PUBLICATION_CI_CONTEXT: ${{ needs.changes.outputs.public_history }}
         run: |
-          git fetch --unshallow --tags origin main
+          if [ -f .git/shallow ]; then git fetch --unshallow origin; fi
+          git fetch --tags origin main
+          T=$(python3 -c 'import json,os; print(json.loads(os.environ["PUBLICATION_CI_CONTEXT"])["T"] if os.environ["PUBLICATION_CI_CONTEXT"] else "")')
+          if [ -z "$T" ]; then T=$(git rev-parse refs/remotes/origin/main); fi
+          if ! git cat-file -e "$T:.github/scripts/module-release-ci.py"; then
+            task test:module-publication
+            exit 0
+          fi
+          mkdir "$RUNNER_TEMP/module-publication-reader"
+          git archive "$T" .github/scripts | tar -x -C "$RUNNER_TEMP/module-publication-reader"
+          python3 "$RUNNER_TEMP/module-publication-reader/.github/scripts/module-release-ci.py" ordinary-ci-publication
+
+      - name: Verify nested module publication
+        if: needs.changes.outputs.module_publication_relevant == 'true' && needs.changes.outputs.release_context != ''
+        run: |
+          if [ -f .git/shallow ]; then git fetch --unshallow origin; fi
+          git fetch --tags origin main
           task test:module-publication
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
@@ -1061,6 +1242,7 @@ jobs:
         run: task test:module MODULE=engine
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1095,11 +1277,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-sdk
@@ -1130,6 +1324,7 @@ jobs:
           go test ./cmd/mecatui -run '^(TestProviderCommandsOIDCLoginPreparesAbsentPrivateRoot|TestInvariant_ProviderSetupFollowup_SecretSafety|TestProviderReview.*)$' -count=1
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1153,11 +1348,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-sdk
@@ -1171,6 +1378,7 @@ jobs:
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1195,6 +1403,13 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: 3.54.0
@@ -1205,6 +1420,10 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       # The race suite takes about 6 minutes with a warm build and test cache and
       # about 17-23 minutes cold. setup-go's own cache restores only an exact
       # go.sum-hash match, so any dependency bump or evicted entry made the run
@@ -1214,7 +1433,7 @@ jobs:
       # Drafts run -race too: a non-race build cannot reuse race objects, so a
       # non-race draft compiled from scratch and finished slower than race.
       - name: Restore Go race cache
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && needs.changes.outputs.release_context == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -1228,11 +1447,14 @@ jobs:
       - name: Test modules
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task --concurrency 3 test:race
+      - name: Verify release workspace integration explicitly
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: task --concurrency 3 test:workspace:race
       - name: Verify Go module metadata freshness
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task test:module-metadata
       - name: Save Go race cache
-        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release_context == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -1250,12 +1472,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1267,6 +1501,7 @@ jobs:
       # release local `task lint` installs into .tools/bin.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
+          skip-cache: ${{ needs.changes.outputs.release_context != '' }}
           # Must be a golangci-lint built with Go >= the go.mod toolchain
           # (1.26.x): older binaries refuse to load with "the Go language
           # version used to build golangci-lint is lower than the targeted Go
@@ -1344,6 +1579,7 @@ jobs:
           esac
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1363,12 +1599,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1379,6 +1627,7 @@ jobs:
       # Install the same pinned release the Analysis job runs onto PATH.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
+          skip-cache: ${{ needs.changes.outputs.release_context != '' }}
           version: ${{ steps.golangci-version.outputs.version }}
           install-only: true
 
@@ -1415,6 +1664,7 @@ jobs:
           (cd provider/openaichat && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1435,12 +1685,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1466,6 +1728,7 @@ jobs:
         run: bash .github/scripts/microvm-ci-release_test.sh
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1535,12 +1798,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1548,7 +1823,7 @@ jobs:
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
         with:
           version: 3.54.0
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          repo-token: ${{ github.token }}
 
       # A short coverage-guided pass over the security-critical parsers. This is
       # a smoke check (find shallow crashers fast), NOT the nightly deep fuzz —
@@ -1572,6 +1847,7 @@ jobs:
         run: task fuzz FUZZTIME=300000x
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1596,12 +1872,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1610,6 +1898,7 @@ jobs:
         run: go test ./internal/apicheck
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1645,12 +1934,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-analysis
@@ -1711,6 +2012,7 @@ jobs:
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1726,6 +2028,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # The config-reference + skeleton generator is a Go program; the matlatl
       # composite action below brings its own toolchain but does not expose one to
@@ -1735,7 +2044,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+
+      - name: Start isolated release resolution for this Go job
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        run: python3 "$MODULE_RELEASE_CI_DIRECTORY/trusted/.github/scripts/module-release-ci.py" start
       - id: go-cache
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-restore
         with:
           family: go-docs
@@ -1811,6 +2125,7 @@ jobs:
           strict: "true"
 
       - name: Save Go caches
+        if: needs.changes.outputs.release_context == ''
         uses: ./.github/actions/go-cache-save
         with:
           key: ${{ steps.go-cache.outputs.key }}
@@ -1838,6 +2153,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -1921,6 +2243,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.changes.outputs.release_context != '' && fromJSON(needs.changes.outputs.release_context).T || github.sha }}
+
+      - name: Bootstrap fixed trusted release CI caller
+        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''
+        uses: ./.github/actions/module-release-ci-bootstrap
+        with:
+          release-ci-context: ${{ needs.changes.outputs.release_context }}
 
       # modelith's composite action downloads a prebuilt, checksum-verified
       # release binary — stacklok/modelith is now public, so there's no

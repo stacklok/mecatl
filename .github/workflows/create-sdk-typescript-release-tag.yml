@@ -92,12 +92,6 @@ jobs:
 
           state="$(python3 .github/scripts/release-app-guard.py tag --track sdk)"
 
-          if [ "$state" = current ]; then
-            echo "should_tag=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::${TAG} already points at ${SHA}"
-            exit 0
-          fi
-
           changed="$(git diff --name-only "${SHA}^" "$SHA" | sort)"
           expected="$(printf '%s\n' sdk/typescript/CHANGELOG.md sdk/typescript/VERSION sdk/typescript/package.json | sort)"
           if [ "$changed" != "$expected" ]; then
@@ -123,6 +117,12 @@ jobs:
           previous_tag="sdk/typescript/v${previous}"
           git rev-parse -q --verify "refs/tags/${previous_tag}^{commit}" >/dev/null
           git merge-base --is-ancestor "refs/tags/${previous_tag}^{commit}" "${SHA}^"
+
+          if [ "$state" = current ]; then
+            echo "should_tag=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${TAG} already points at ${SHA}"
+            exit 0
+          fi
 
           echo "should_tag=true" >> "$GITHUB_OUTPUT"
           echo "verified: ${TAG} will be created at ${SHA}"

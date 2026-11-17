@@ -16,12 +16,13 @@ metadata:
 Identify the requested track before running a release workflow. If the request
 only says "release Mecatl" or "bump the version", ask which track the operator
 intends. Release only explicitly approved tracks; their versions and schedules
-are independent. Humans merge release, request, and preparation PRs.
+are independent. Humans merge the application release PR and the Go-module batch
+PRs; the controller never merges them.
 
 | Track | Published result | Procedure |
 | --- | --- | --- |
 | Application | Root `vX.Y.Z` tag; images, charts, CLI archives, and Homebrew cask | Continue with **Application release** below. |
-| Go modules, including engine-only | Path-qualified module tags and publicly downloadable Go versions | Read and follow [`docs/module-development.md`](../../../docs/module-development.md#4-merge-and-release-dependencies-first). Humans approve the exact module/version mapping. Report unmet rollout/protection prerequisites rather than creating tags manually. Completion requires public proof for every selected module. |
+| Go modules, including engine-only | Path-qualified module tags and publicly downloadable Go versions | Read and follow [`docs/module-development.md`](../../../docs/module-development.md#4-prepare-publish-and-adopt-a-coordinated-batch). Humans approve the exact module/version mapping and fixed base. PR1 prepares the complete batch, the controller qualifies its fixed `R` before dependency-first tags and public proof, and PR2 adopts it with a human merge commit. Report unmet rollout/protection prerequisites rather than creating tags manually. |
 | TypeScript SDK | `sdk/typescript/vX.Y.Z` tag and npm package | Read and follow [Cutting a TypeScript SDK release](../../../.github/workflows/README.md#cutting-a-typescript-sdk-release). Confirm the bump type with the operator, use `create-sdk-typescript-release-pr.yml` on `main`, and preserve the separate workflow-environment and npm-maintainer 2FA approvals. Completion requires public integrity and provenance verification. |
 
 For Go-module or SDK requests, follow the linked procedure instead of the

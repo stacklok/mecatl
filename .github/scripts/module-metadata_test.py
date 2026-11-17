@@ -151,7 +151,12 @@ class ModuleMetadataTests(unittest.TestCase):
                      "&& needs.changes.outputs.go_relevant == 'true'\n")
         for command in (guard, infrastructure):
             self.assertIn(condition + command, test)
-        self.assertNotRegex(workflow, r"\btask[^\n]*\btest:workspace(?::race)?(?:\s|$)")
+        release_step = ("      - name: Verify release workspace integration explicitly\n"
+                        "        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''\n"
+                        "        run: task --concurrency 3 test:workspace:race\n")
+        self.assertIn(release_step, test)
+        self.assertEqual(workflow.count(release_step), 1)
+        self.assertNotRegex(workflow.replace(release_step, ""), r"\btask[^\n]*\btest:workspace(?::race)?(?:\s|$)")
 
     def test_ci_wiring_and_negative_controls(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
@@ -163,6 +168,9 @@ class ModuleMetadataTests(unittest.TestCase):
             workflow.replace("          task tidy\n          task test:module-metadata\n",
                              "          task test:module-metadata\n          task tidy\n"),
             workflow.replace("task --concurrency 3 test:race\n", "task --concurrency 3 test:workspace:race\n"),
+            workflow.replace("        if: inputs.release-batch != '' || needs.changes.outputs.release_context != ''\n"
+                             "        run: task --concurrency 3 test:workspace:race\n",
+                             "        run: task --concurrency 3 test:workspace:race\n"),
         ):
             with self.subTest(broken=broken != workflow):
                 with self.assertRaises(AssertionError):

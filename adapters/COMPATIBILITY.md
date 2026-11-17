@@ -78,7 +78,7 @@ revision outside `main`. Proxy resolution of that revision is not a durable
 release dependency contract. Use `adapters/v0.1.1` or later for standalone
 installation; the existing `v0.1.0` tag is immutable.
 
-Release through the [reviewed module-release procedure](../docs/module-development.md#4-merge-and-release-dependencies-first).
+Release through the [reviewed module-release procedure](../docs/module-development.md#4-prepare-publish-and-adopt-a-coordinated-batch).
 Humans choose independent versions and merge the request/preparation PRs; the
 release App creates tags only after exact-candidate CI and standalone qualification.
 Public proof must pass before downstream preparation or root/integration adoption.

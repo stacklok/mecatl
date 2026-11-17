@@ -1,0 +1,27 @@
+# module-release-ci-bootstrap: install the fixed trusted release CI caller.
+#
+# The release context is authenticated by the changes job. This action only
+# fetches the fixed commits named there and executes the installer archived from
+# T; it never runs the candidate checkout's release script.
+name: Bootstrap trusted release CI
+description: Install the fixed trusted release CI caller from its authenticated commit.
+inputs:
+  release-ci-context:
+    description: Authenticated release CI context from the changes job.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RELEASE_CI_CONTEXT: ${{ inputs.release-ci-context }}
+      run: |
+        set -euo pipefail
+        T=$(python3 -c 'import json,os; print(json.loads(os.environ["RELEASE_CI_CONTEXT"])["T"])')
+        source=$(python3 -c 'import json,os; print(json.loads(os.environ["RELEASE_CI_CONTEXT"])["source"])')
+        if [ -f .git/shallow ]; then git fetch --unshallow origin; fi
+        git fetch --tags origin main "$T" "$source"
+        mkdir "$RUNNER_TEMP/module-ci-bootstrap"
+        git archive "$T" .github/scripts | tar -x -C "$RUNNER_TEMP/module-ci-bootstrap"
+        python3 "$RUNNER_TEMP/module-ci-bootstrap/.github/scripts/module-release-ci.py" install --directory "$RUNNER_TEMP/module-release-ci"

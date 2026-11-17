@@ -1,60 +1,55 @@
-# Opens an App-authored PR for an explicit Go-module/version batch on main.
-# A human dispatches this workflow (directly or through an authorized agent);
-# it previews the batch but publishes nothing. Human merge of the request PR
-# authorizes module-releases.yml to process the fixed candidate dependency-first.
-# MODULE_RELEASES_ENABLED is the repository-wide rollout gate, not a per-run input.
-# Procedure: docs/module-development.md#4-merge-and-release-dependencies-first
+# Reserves one durable coordinated batch BEFORE creating preparation branches/PR1.
+# Human dispatch specifies the complete mapping and fixed main source base B.
+# PR1 is the only preparation review; there is no separate request-PR checkpoint.
 name: Request module releases
 
 on:
   workflow_dispatch:
     inputs:
       batch:
-        description: 'Exact JSON map of go.work module directories to versions (no automatic choices)'
+        description: 'Exact JSON map of publishable module directories to versions'
         required: true
         type: string
-      supersedes:
-        description: 'Optional explicit JSON list of reviewed request PR numbers to retire; does not reuse their proofs'
-        required: false
-        default: '[]'
+      base:
+        description: 'Exact full main commit SHA B (never a moving ref)'
+        required: true
         type: string
 
 permissions:
   contents: read
 
-# Intake inputs are not durable until their request PR exists. Never let a
-# newer dispatch replace another human's pending exact map.
 concurrency:
-  group: module-release-request-${{ github.run_id }}
+  group: module-releases
   cancel-in-progress: false
 
 env:
   MODULE_RELEASES_ENABLED: ${{ vars.MODULE_RELEASES_ENABLED }}
   RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
   RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+  RELEASE_BATCH_HUMAN_TEAM: ${{ vars.RELEASE_BATCH_HUMAN_TEAM }}
   MODULE_BATCH: ${{ inputs.batch }}
-  SUPERSEDES_REQUESTS: ${{ inputs.supersedes }}
+  MODULE_BASE: ${{ inputs.base }}
 
 jobs:
   preview:
     if: vars.MODULE_RELEASES_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
+      pull-requests: read
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/heads/main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-      - name: Read-only preview and exact request
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/module-release-github.py request-plan --output request.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -63,12 +58,11 @@ jobs:
           path: request.json
           retention-days: 90
 
-  request:
+  reserve:
     needs: preview
-    if: vars.MODULE_RELEASES_ENABLED == 'true' && github.ref == 'refs/heads/main'
     environment: release
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -76,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/heads/main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -87,14 +81,13 @@ jobs:
         with:
           name: module-request-${{ github.run_id }}-${{ github.run_attempt }}
           path: incoming
-      # Data only; rederive the request and check protections BEFORE minting.
-      - name: Validate request and effective protections
+      - name: Revalidate human intent, one-active lock and protections
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
           RELEASE_SETTINGS_TOKEN: ${{ secrets.RELEASE_SETTINGS_TOKEN }}
           RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-        run: python3 .github/scripts/module-release-github.py request-validate --input incoming/request.json --output "$RUNNER_TEMP/module-write.json"
+        run: python3 .github/scripts/module-release-github.py request-validate --input incoming/request.json --output "$RUNNER_TEMP/module-reservation.json"
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -103,9 +96,22 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
-          permission-pull-requests: write
-      - name: Open the exact App-authored request PR (never merge)
+      - name: Atomically acquire durable reservation (API only)
         env:
           GH_TOKEN: ${{ github.token }}
           MODULE_RELEASE_WRITE_TOKEN: ${{ steps.app.outputs.token }}
-        run: python3 .github/scripts/module-release-github.py write --input "$RUNNER_TEMP/module-write.json"
+        run: python3 .github/scripts/module-release-github.py reserve --input "$RUNNER_TEMP/module-reservation.json"
+
+  continue:
+    needs: reserve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # No checkout and no candidate code. A lost dispatch is recoverable through
+      # ordinary reconcile: discovery starts at the fixed active ref, not events.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run module-releases.yml --repo "$GH_REPO" --ref main

@@ -1,15 +1,18 @@
 # Release protection settings reference
 
-Use the contributor [module release procedure](../../docs/module-development.md#4-merge-and-release-dependencies-first)
+Use the contributor [module release procedure](../../docs/module-development.md#4-prepare-publish-and-adopt-a-coordinated-batch)
 for request, qualification, continuation, rollout, and recovery. This reference
 covers settings and credential inspection only. Its commands do not authorize
 live settings changes or permission extensions.
 
 ## Configuration and read access
 
-Set `RELEASE_APP_ID` (numeric App ID) and `RELEASE_APP_BOT_ID` (numeric bot ID)
-for module rollout, alongside the existing `RELEASE_APP_CLIENT_ID`. Before rollout,
-root/SDK guards derive both numeric identities from the existing App: JWT-authenticated
+Set `RELEASE_APP_ID` (numeric App ID), `RELEASE_APP_BOT_ID` (numeric bot ID),
+and `RELEASE_BATCH_HUMAN_TEAM` (the reviewed human batch-writer team slug) for
+module rollout, alongside the existing `RELEASE_APP_CLIENT_ID`. The protection
+checker requires the team to have repository writer access and to contain only
+human User accounts. Before rollout, root/SDK guards derive both numeric
+identities from the existing App: JWT-authenticated
 `GET /app` binds the configured client ID to its App ID/slug, and public
 `GET /users/{slug}[bot]` resolves the bot ID. Configured numeric IDs, when supplied,
 must agree. Names or unauthenticated supplied IDs alone are not evidence.
@@ -36,9 +39,10 @@ token-minting action. Post-mint root/SDK writers consume a trusted runner-local
 **non-secret** authority record, bound to repository, exact SHA, track and version;
 they never load a key/JWT or accept arbitrary ref namespaces.
 
-Routine `check` verifies the main-only environment's custom branch policy, effective
-inherited tag rules and all six deployed workflow blobs. It uses `GH_TOKEN`/normal
-`gh` authentication for these GETs. `RELEASE_SETTINGS_TOKEN` is an **optional** human
+Routine `check` verifies the main-only environment's custom branch policy,
+effective inherited tag and batch/state branch rules, merge-commit prerequisites,
+and all eight deployed workflow blobs. It uses `GH_TOKEN`/normal `gh`
+authentication for these GETs. `RELEASE_SETTINGS_TOKEN` is an **optional** human
 metadata reader override when normal access cannot read the environment or inherited
 ruleset details; no secret of that name is required to exist. GitHub may withhold
 `bypass_actors` from readers without ruleset write **access**. Missing actors are an
@@ -46,7 +50,7 @@ error, not an empty list. If the platform withholds required metadata, module
 rollout remains blocked pending separately authorized read access. The checker
 reports the failing endpoint; it never grants permissions, assumes protections,
 or gives administration to the release App. Job `GITHUB_TOKEN` Actions/write, not
-an App permission extension, handles module CI recovery/continuation.
+an App permission extension, dispatches module-controller continuation.
 
 `MODULE_RELEASES_ENABLED != true` stages root/SDK hardening independently: their
 existing main-only `release` environment, authenticated App/installation identity,
@@ -116,6 +120,7 @@ For enablement prerequisites and exceptional administrative recovery, follow the
 Offline tests and settings inspection do not prove live enforcement.
 
 The shared-App audit covers `create-release-{pr,tag}.yml`,
-`create-sdk-typescript-release-{pr,tag}.yml`, `request-module-release.yml` and
-`module-releases.yml`. `release.yml`'s Homebrew App and `mecatequi-reusable.yml`'s
+`create-sdk-typescript-release-{pr,tag}.yml`, `request-module-release.yml`,
+`module-releases.yml`, `module-release-wakeup.yml`, `ci.yml`, and the
+`module-release-ci-bootstrap` composite action. `release.yml`'s Homebrew App and `mecatequi-reusable.yml`'s
 caller-supplied publishing App use different credentials and are not modified.

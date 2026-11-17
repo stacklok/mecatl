@@ -1,0 +1,22 @@
+# Metadata-only off-main merge bridge. The event is a wakeup, NEVER authority.
+# No checkout, candidate code, App/environment secrets or contents write rights.
+name: Module release wakeup
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  wakeup:
+    if: vars.MODULE_RELEASES_ENABLED == 'true' && github.event.pull_request.merged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run module-releases.yml --repo "$GH_REPO" --ref main

@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Offline executable GitHub transitions with real Git/Go/file-proxy fixtures."""
+"""Offline coordinated controller tests: fake GitHub with real Git objects/refs.
+
+Synthetic full-CI receipts below exercise the caller contract, NOT the full gate
+suite. module-release-ci_test.py separately checks the reusable production fanout.
+"""
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+import base64
 import copy
 from datetime import datetime, timezone
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -28,1115 +35,989 @@ def load(name, path):
 
 gh = load("release_github", HERE / "module-release-github.py")
 fixtures = load("release_fixtures", HERE / "module-release_test.py")
+artifacts = load("artifact_fixtures", HERE / "module-artifact_test.py")
 git = gh.release.git
-DEP, APP, SUPPORT = fixtures.DEP, fixtures.APP, fixtures.SUPPORT
+DEP, APP = fixtures.DEP, fixtures.APP
 HUMAN = dict(type="User", id=42, login="release-human")
-BOT = dict(type="Bot", id=700, login="designated-release[bot]")
-STAMP = "2026-11-15T00:00:00Z"
+BOT = dict(type="Bot", id=700, login="release[bot]")
 
 
 class FakeGitHub(gh.GitHub):
-    """Git data API writes really create Git objects/refs; PRs/runs are API fixtures."""
+    """API writes create actual Git data; no network or operator Git configuration."""
     def __init__(self, fixture):
-        super().__init__("stacklok/mecatl", "offline-no-credential")
-        self.fixture = fixture
+        super().__init__("stacklok/mecatl", "offline-not-a-credential")
+        self.f = fixture
         self.prs, self.runs, self.artifacts = {}, {}, {}
-        self.writes, self.reruns = [], []
-        self.current_jobs = {}
-        self.attempts = {}
-        self.permissions = {}
-        self.sequence = {}
-        self.links = {}
-        self.clock = 1
+        self.writes, self.links, self.permissions = [], {}, {}
+        self.clock = 0
+        self.ref_lock = threading.Lock()
+        self.before_write = None
+
+    def stamp(self):
+        self.clock += 1
+        return f"2026-11-17T00:{self.clock // 60:02d}:{self.clock % 60:02d}Z"
 
     def call(self, method, path, data=None, missing=False):
         parsed = urlsplit(path)
         path, query = unquote(parsed.path), parse_qs(parsed.query)
-        root = self.fixture.root
+        f, root = self.f, self.f.root
         if method != "GET":
+            if self.before_write:
+                self.before_write(method, path, data)
             self.writes.append((method, path, copy.deepcopy(data)))
         if path.startswith("/collaborators/"):
             return dict(permission=self.permissions.get(path.split("/")[2], "write"))
-        if path.startswith("/actions/workflows/") and path.endswith(".yml"):
-            return dict(id=10 if path.endswith("/ci.yml") else 30 if path.endswith("/" + gh.REQUEST_WORKFLOW) else 20)
-        if path == "/pulls" and method == "GET":
-            prs = list(self.prs.values())
-            if "head" in query:
-                branch = query["head"][0].split(":", 1)[1]
-                prs = [p for p in prs if p["head"]["ref"] == branch]
-            return prs if query.get("page", ["1"])[0] == "1" else []
-        if path == "/pulls" and method == "POST":
-            number = max(self.prs, default=0) + 1
-            head = git(root, "rev-parse", "refs/heads/" + data["head"])
-            base = git(root, "rev-parse", "refs/remotes/origin/main")
-            pr = dict(number=number, user=copy.deepcopy(BOT), merged=False, merged_by=None,
-                      state="open", merge_commit_sha=None, merged_at=None, closed_at=None,
-                      head=dict(sha=head, ref=data["head"], repo=dict(full_name=self.repository)),
-                      base=dict(sha=base, ref="main", repo=dict(full_name=self.repository)), body=data["body"])
-            changed = git(root, "diff", "--name-status", git(root, "merge-base", base, head), head).splitlines()
-            pr["_files"] = [dict(filename=line.split("\t")[1], status={"A": "added", "M": "modified"}[line[0]]) for line in changed]
-            pr["changed_files"] = len(pr["_files"])
-            self.prs[number] = pr
-            return pr
-        if path.startswith("/pulls/"):
-            parts = path.split("/")
-            pr = self.prs[int(parts[2])]
-            return pr["_files"] if len(parts) == 4 else pr
-        if path.startswith("/contents/"):
-            file = path[len("/contents/"):]
-            try:
-                text = git(root, "show", query["ref"][0] + ":" + file) + "\n"
-            except gh.Error:
-                if missing:
-                    return None
-                raise
-            import base64
-            return dict(type="file", encoding="base64", content=base64.b64encode(text.encode()).decode())
-        if path.startswith("/commits/") and path.endswith("/pulls"):
-            return [self.prs[n] for n in self.links.get(path.split("/")[2], [])]
-        if path.startswith("/git/ref/"):
-            ref = "refs/" + path[len("/git/ref/"):]
-            try:
-                commit = git(root, "rev-parse", "--verify", ref)
-            except gh.Error:
-                if missing:
-                    return None
-                raise
-            return dict(object=dict(type="commit", sha=commit))
-        if path == "/git/refs":
-            git(root, "update-ref", data["ref"], data["sha"], "0" * 40)
-            return {}
-        if path == "/git/blobs":
-            blob = subprocess.check_output(["git", "hash-object", "-w", "--stdin"], cwd=root, input=data["content"].encode()).decode().strip()
-            return dict(sha=blob)
-        if path == "/git/trees":
-            env = dict(self.fixture.env, GIT_INDEX_FILE=str(root.parent / "api-index"))
-            gh.release.run(root, "git", "read-tree", data["base_tree"], env=env)
-            for entry in data["tree"]:
-                gh.release.run(root, "git", "update-index", "--add", "--cacheinfo", entry["mode"], entry["sha"], entry["path"], env=env)
-            return dict(sha=gh.release.run(root, "git", "write-tree", env=env).strip())
-        if path.startswith("/git/commits/"):
-            return dict(tree=dict(sha=git(root, "rev-parse", path.split("/")[-1] + "^{tree}")))
-        if path == "/git/commits":
-            commit = git(root, "commit-tree", data["tree"], "-p", data["parents"][0], "-m", data["message"])
-            return dict(sha=commit)
-        if path.startswith("/actions/workflows/") and "/runs" in path:
-            workflow = 10 if "/ci.yml/" in path else 20
-            runs = [r for r in self.runs.values() if r["workflow_id"] == workflow]
-            if "head_sha" in query:
-                runs = [r for r in runs if r["head_sha"] == query["head_sha"][0]]
-            return dict(workflow_runs=runs if query.get("page", ["1"])[0] == "1" else [])
+        if path.startswith("/actions/workflows/"):
+            workflow = path.split("/")[3]
+            if path.endswith("/dispatches"):
+                return None
+            if path.endswith("/runs"):
+                values = [r for r in self.runs.values() if r["path"].endswith("/" + workflow)]
+                return dict(workflow_runs=values if query.get("page", ["1"])[0] == "1" else [])
+            return dict(id=30 if workflow == gh.REQUEST_WORKFLOW else 20)
         if path.startswith("/actions/runs/"):
             parts = path.split("/")
-            run_id = int(parts[3])
-            run = self.attempts.get((run_id, int(parts[5])), self.runs.get(run_id)) if "/attempts/" in path else self.runs[run_id]
-            if parts[-1] == "rerun":
-                self.reruns.append(run_id)
-                return {}
-            if parts[-1] == "artifacts":
-                return dict(artifacts=[a for a in self.artifacts.values() if a["run_id"] == run_id])
-            if parts[-1] == "jobs":
-                if run_id in self.current_jobs:
-                    return dict(jobs=self.current_jobs[run_id])
+            run = self.runs[int(parts[3])]
+            if path.endswith("/jobs"):
                 return dict(jobs=run["_jobs"])
+            if path.endswith("/artifacts"):
+                return dict(artifacts=[a for a in self.artifacts.values() if a["run_id"] == run["id"]])
             return run
         if path.startswith("/actions/artifacts/"):
             return self.artifacts[int(path.split("/")[3])]["_zip"]
-        if path.endswith("/dispatches"):
+        if path.startswith("/compare/"):
+            old, new = path.split("/")[-1].split("...")
+            status = "identical" if old == new else "ahead" if subprocess.run(
+                ["git", "merge-base", "--is-ancestor", old, new], cwd=root, env=f.env).returncode == 0 else "diverged"
+            return dict(status=status)
+        if path.startswith("/contents/"):
+            result = subprocess.run(["git", "show", query["ref"][0] + ":" + path[len("/contents/"):]],
+                                    cwd=root, env=f.env, capture_output=True)
+            if result.returncode and missing:
+                return None
+            gh.require(result.returncode == 0, "missing fixture file")
+            return dict(type="file", encoding="base64", content=base64.b64encode(result.stdout).decode())
+        if path.startswith("/git/ref/"):
+            name = "refs/" + path[len("/git/ref/"):]
+            if method == "GET":
+                result = subprocess.run(["git", "rev-parse", "--verify", name], cwd=root, env=f.env, capture_output=True, text=True)
+                if result.returncode and missing:
+                    return None
+                gh.require(result.returncode == 0, "missing fixture ref")
+                return dict(ref=name, object=dict(type="commit", sha=result.stdout.strip(), url="https://api.invalid/object"))
+        if path.startswith("/git/matching-refs/heads/"):
+            prefix = "refs/heads/" + path[len("/git/matching-refs/heads/"):]
+            lines = git(root, "for-each-ref", "--format=%(refname) %(objectname)", prefix).splitlines()
+            return [dict(ref=line.split()[0], object=dict(type="commit", sha=line.split()[1])) for line in lines]
+        if path == "/git/refs" and method == "POST":
+            with self.ref_lock:
+                result = subprocess.run(["git", "update-ref", data["ref"], data["sha"], "0" * 40], cwd=root, env=f.env, capture_output=True)
+                gh.require(result.returncode == 0, "atomic ref already exists")
+            return {}
+        if path.startswith("/git/refs/heads/") and method == "DELETE":
+            git(root, "update-ref", "-d", "refs/heads/" + path[len("/git/refs/heads/"):])
             return None
+        if path.startswith("/git/commits/"):
+            commit = path.split("/")[-1]
+            parents = git(root, "show", "-s", "--format=%P", commit).split()
+            return dict(sha=commit, tree=dict(sha=git(root, "rev-parse", commit + "^{tree}")), parents=[dict(sha=p) for p in parents])
+        if path.startswith("/git/trees/"):
+            lines = git(root, "ls-tree", "-r", path.split("/")[-1]).splitlines()
+            entries = []
+            for line in lines:
+                meta, name = line.split("\t")
+                mode, kind, value = meta.split()
+                entries.append(dict(path=name, mode=mode, type=kind, sha=value))
+            return dict(truncated=False, tree=entries)
+        if path == "/git/blobs":
+            value = subprocess.check_output(["git", "hash-object", "-w", "--stdin"], cwd=root, env=f.env, input=data["content"].encode()).decode().strip()
+            return dict(sha=value)
+        if path == "/git/trees":
+            with tempfile.TemporaryDirectory(dir=f.env["TMPDIR"]) as temporary:
+                env = dict(f.env, GIT_INDEX_FILE=str(Path(temporary) / "index"))
+                gh.release.run(root, "git", "read-tree", data["base_tree"], env=env)
+                for entry in data["tree"]:
+                    gh.release.run(root, "git", "update-index", "--add", "--cacheinfo", entry["mode"], entry["sha"], entry["path"], env=env)
+                return dict(sha=gh.release.run(root, "git", "write-tree", env=env).strip())
+        if path == "/git/commits":
+            args = ["commit-tree", data["tree"]]
+            for parent in data["parents"]:
+                args.extend(["-p", parent])
+            return dict(sha=git(root, *args, "-m", data["message"]))
+        if path == "/pulls" and method == "GET":
+            values = list(self.prs.values())
+            if "head" in query:
+                values = [p for p in values if p["head"]["ref"] == query["head"][0].split(":", 1)[1]]
+            if "base" in query:
+                values = [p for p in values if p["base"]["ref"] == query["base"][0]]
+            return values if query.get("page", ["1"])[0] == "1" else []
+        if path == "/pulls" and method == "POST":
+            number = len(self.prs) + 1
+            pr = dict(number=number, user=copy.deepcopy(BOT), merged=False, state="open", merged_by=None,
+                      merge_commit_sha=None, head=dict(ref=data["head"], sha=git(root, "rev-parse", "refs/heads/" + data["head"]), repo=dict(full_name=self.repository)),
+                      base=dict(ref=data["base"], sha=git(root, "rev-parse", "refs/heads/" + data["base"]), repo=dict(full_name=self.repository)), body=data["body"])
+            self.prs[number] = pr
+            return pr
+        if path.startswith("/pulls/"):
+            return self.prs[int(path.split("/")[2])]
+        if path.startswith("/commits/") and path.endswith("/pulls"):
+            return [self.prs[n] for n in self.links.get(path.split("/")[2], [])]
         raise AssertionError((method, path, data))
 
-    def merge(self, number):
-        pr = self.prs[number]
-        git(self.fixture.root, "merge", "--squash", pr["head"]["sha"])
-        commit = self.fixture.commit()
-        pr.update(merged=True, merged_by=copy.deepcopy(HUMAN), state="closed", merge_commit_sha=commit,
-                  merged_at=self.tick(), closed_at=self.tick())
-        self.links[commit] = [number]
-        self.ci(commit)
-        return commit
-
-    def tick(self):
-        value = f"2026-11-15T00:{self.clock // 60:02d}:{self.clock % 60:02d}Z"
-        self.clock += 1
+    def run(self, number, trusted, request=False):
+        workflow = gh.REQUEST_WORKFLOW if request else gh.WORKFLOW
+        stamp = self.stamp()
+        value = dict(id=number, run_attempt=1, run_number=1 + sum(r["path"].endswith("/" + workflow) for r in self.runs.values()),
+                     workflow_id=30 if request else 20, path=".github/workflows/" + workflow,
+                     repository=dict(full_name=self.repository), head_repository=dict(full_name=self.repository),
+                     head_sha=trusted, head_branch="main", event="workflow_dispatch", status="in_progress", conclusion=None,
+                     actor=copy.deepcopy(HUMAN), triggering_actor=copy.deepcopy(HUMAN), created_at=stamp, updated_at=stamp, _jobs=[])
+        self.runs[number] = value
         return value
 
-    def ci(self, commit, conclusion="success"):
-        run_id = 100 + len([r for r in self.runs.values() if r["workflow_id"] == 10])
-        self.runs[run_id] = self.run(run_id, commit, 10, conclusion, event="push")
-        return self.runs[run_id]
+    def artifact(self, run, name, filename, value):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr(filename, gh.canonical(value))
+        number = len(self.artifacts) + 1
+        self.artifacts[number] = dict(id=number, run_id=run["id"], name=f"module-{name}-{run['id']}-1", expired=False, _zip=stream.getvalue())
 
-    def run(self, run_id, commit, workflow=20, conclusion="success", event="workflow_dispatch"):
-        number = self.runs.get(run_id, {}).get("run_number")
-        if number is None:
-            number = self.sequence.get(workflow, 0) + 1
-            self.sequence[workflow] = number
-        return dict(id=run_id, head_sha=commit, workflow_id=workflow, run_number=number,
-                    path=".github/workflows/" + ("ci.yml" if workflow == 10 else gh.REQUEST_WORKFLOW if workflow == 30 else gh.WORKFLOW),
-                    run_attempt=1, head_branch="main", event=event, created_at=self.tick(),
-                    repository=dict(full_name=self.repository), head_repository=dict(full_name=self.repository),
-                    status="completed", conclusion=conclusion, actor=copy.deepcopy(HUMAN), triggering_actor=copy.deepcopy(HUMAN))
+    def finish(self, run, plan, result=None, ci=True, success=True):
+        action = plan["action"]
+        kind, batch = action["kind"], action["id"]
+        run.update(status="completed", conclusion="success" if success else "failure", updated_at=self.stamp())
+        names = {"prepare": "Prepare", "qualify": "Qualify", "prove": "Proof", "tag": "Tag"}
+        name = names.get(kind, "Write" if kind in ("tag", "bind", "adopt") else "Continue")
+        run["_jobs"] = [dict(name=name + " " + batch, conclusion="success" if success else "failure")]
+        self.artifact(run, "plan", "plan.json", plan)
+        if result:
+            self.artifact(run, "result", "result.json", result)
+        if kind == "qualify" and ci:
+            run["_jobs"].append(dict(name="Fixture full CI", conclusion="success"))
+            self.artifact(run, "full-ci", "full-ci.json", dict(schema=2, kind="full-ci", binding=action["binding"],
+                                                             run=run["id"], attempt=1, jobs=["Fixture full CI"]))
 
-    def record(self, plan, success=True, execute="success", write="success"):
-        run_id = plan["run"]
-        commit = git(self.fixture.root, "rev-parse", "refs/remotes/origin/main")
-        run = self.run(run_id, commit, conclusion="success" if success else "failure")
-        run["run_attempt"] = plan["attempt"]
-        failures = json.dumps([f["request"] for f in plan.get("failures", [])])
-        run["_jobs"] = [dict(name=f"Execute request-{plan['action'].get('request', '')} blocked-{failures}", conclusion=execute), dict(name=f"Write request-{plan['action'].get('request', '')} blocked-{failures}", conclusion=write)]
-        run["run_started_at"] = run["created_at"]
-        run["updated_at"] = self.tick()
-        self.runs[run_id] = run
-        self.attempts[(run_id, plan["attempt"])] = copy.deepcopy(run)
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as zipped:
-            zipped.writestr("plan.json", gh.canonical(plan))
-        artifact_id = run_id if plan["attempt"] == 1 else run_id * 10 + plan["attempt"]
-        self.artifacts[artifact_id] = dict(id=artifact_id, run_id=run_id, name=f"module-plan-{run_id}-{plan['attempt']}", expired=False, _zip=archive.getvalue())
-        self.current_jobs.pop(run_id, None)
+    def merge(self, pr, method="squash"):
+        head, base = pr["head"]["sha"], pr["base"]["sha"]
+        args = ["commit-tree", git(self.f.root, "rev-parse", head + "^{tree}"), "-p", base]
+        if method == "merge":
+            args.extend(["-p", head])
+        commit = git(self.f.root, *args, "-m", "human reviewed " + method)
+        git(self.f.root, "update-ref", "refs/heads/" + pr["base"]["ref"], commit)
+        pr.update(merged=True, merged_by=copy.deepcopy(HUMAN), state="closed", merge_commit_sha=commit, merged_at=self.stamp())
+        pr["base"]["sha"] = commit  # GitHub's mutable postmerge projection.
+        self.links[commit] = [pr["number"]]
+        return commit
 
 
 class FixtureDriver(gh.Driver):
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("now", datetime(2026, 11, 15, 1, tzinfo=timezone.utc))
-        super().__init__(*args, **kwargs)
-
     @contextmanager
-    def check(self, commit):
-        self.ancestor(commit)
+    def check(self, commit, authority=None):
         with gh.release.source_tree(self.root, commit) as source:
-            yield gh.release.Release(self.root, source, commit, self.api.fixture.policy, self.api.fixture.env)
+            yield gh.release.Release(self.root, source, commit, self.api.f.policy, self.api.f.env,
+                                     authority if authority is not None else self.authority())
 
 
-class GitHubTransitions(unittest.TestCase):
+class Controller(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix="module-github-test-")
-        self.addCleanup(temp.cleanup)
-        isolation = mock.patch.dict(gh.os.environ, fixtures.fixture_environment(Path(temp.name)), clear=True)
-        isolation.start()
-        self.addCleanup(isolation.stop)
-        self.fixture = fixtures.Fixture(Path(temp.name))
-        f = self.fixture
-        f.write(".github/workflows/ci.yml", (HERE.parent / "workflows/ci.yml").read_text())
+        self.temp = tempfile.TemporaryDirectory(prefix="module-controller-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        patch = mock.patch.dict(os.environ, fixtures.fixture_environment(self.directory), clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.f = f = fixtures.Fixture(self.directory)
+        f.write(DEP + "/fixture.go", '''package ssefilter
+import "os"
+func New() {}
+func init() {
+ for _, key := range []string{"GH_TOKEN", "MODULE_RELEASE_WRITE_TOKEN", "RELEASE_APP_PRIVATE_KEY", "UNKNOWN_CONTROLLER_SECRET"} {
+  if os.Getenv(key) != "" { panic("controller credential leaked: " + key) }
+ }
+}
+''')
+        f.write(DEP + "/isolation_test.go", 'package ssefilter\nimport "testing"\nfunc TestIsolation(t *testing.T) { New() }\n')
+        f.add_module(APP, f'package openai\nimport dep "{fixtures.NS}/{DEP}"\nfunc New() {{ dep.New() }}\n', f'\nrequire {fixtures.NS}/{DEP} v0.2.0\n')
+        f.write(".github/scripts/module-publication-policy.json", gh.canonical(f.policy))
+        f.write(".github/scripts/module-release-ci.json", gh.canonical(dict(schema=2, required_jobs=["Fixture full CI"])))
         f.write(".github/workflows/" + gh.WORKFLOW, (HERE.parent / "workflows" / gh.WORKFLOW).read_text())
         f.write(".github/workflows/" + gh.REQUEST_WORKFLOW, (HERE.parent / "workflows" / gh.REQUEST_WORKFLOW).read_text())
-        self.initial = f.commit()
+        f.write(".github/workflows/ci.yml", (HERE.parent / "workflows/ci.yml").read_text())
+        self.B = f.commit()
         self.api = FakeGitHub(f)
-        self.run_id = 1000
-        self.now = datetime(2026, 11, 15, 1, tzinfo=timezone.utc)
-        original_environment = gh.release.public_environment
+        self.intake_run = self.api.run(100, self.B, request=True)
+        self.counter = 100
+        self.batch = {APP: "v0.2.0", DEP: "v0.2.0"}
+        self.record = self.driver(self.intake_run).intake(self.batch, self.B, self.intake_run)
+        gh.Writer(self.driver(self.intake_run)).reserve(self.record)
+        self.api.finish(self.intake_run, dict(action=dict(kind="intake", id=self.record["id"])))
 
-        def environment(path):
-            return dict(original_environment(path), GOPROXY=f.proxy.as_uri(), GOSUMDB="off")
-        self.patch = mock.patch.object(gh.release, "public_environment", side_effect=environment)
-        self.patch.start()
-        self.addCleanup(self.patch.stop)
+    def driver(self, run):
+        return FixtureDriver(self.api, self.f.root, 70, 700, run["id"], now=datetime(2026, 11, 17, 1, tzinfo=timezone.utc))
 
-    def driver(self):
-        return FixtureDriver(self.api, self.fixture.root, 70, 700, self.run_id, now=self.now)
+    def next(self):
+        self.counter += 1
+        run = self.api.run(self.counter, self.B)
+        d = self.driver(run)
+        return d, run, d.envelope(d.plan(run), run)
 
-    def request(self, batch, supersedes=None):
-        tx = self.driver().request_plan(batch, HUMAN, supersedes)
-        gh.write_transaction(self.api, tx)
-        number = max(self.api.prs)
-        merged = self.api.merge(number)
-        self.run_id += 1
-        return number, merged
+    def prepared(self):
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "prepare")
+        records = {p: dict(module=fixtures.NS + "/" + p, version=v, sum="h1:fixture-zip", go_mod_sum="h1:fixture-mod") for p, v in self.batch.items()}
+        metadata = dict(schema=2, kind="preparation", reservation=gh.digest(self.record), repository=self.api.repository,
+                        B=self.B, batch=self.batch, policy=self.record["policy"], base=d.branch(self.record), head=d.branch(self.record) + "-prep", artifacts=records)
+        result = dict(schema=2, run=run["id"], attempt=1, kind="prepared", reservation=gh.digest(self.record),
+                      files={gh.PREFIX + self.record["id"] + ".json": gh.canonical(metadata)})
+        run["_jobs"] = [dict(name="Prepare " + self.record["id"], conclusion="success")]
+        tx = d.validate_write(plan, result, run)
+        gh.Writer(d).apply(tx)
+        self.api.finish(run, plan, result)
+        return d.pr(d.branch(self.record) + "-prep", d.branch(self.record))
 
-    def step(self, publish=True):
-        driver = self.driver()
-        plan = driver.plan()
-        action = plan["action"]
-        if action["kind"] not in ("wait", "retry"):
-            result = driver.execute(action)
-            if action["kind"] in ("release", "prepare"):
-                self.api.current_jobs[self.run_id] = [dict(name="Execute", conclusion="success")]
-                transaction = driver.validate_write(plan, result)
-                if action["kind"] == "release" and publish:
-                    self.fixture.publish(action["module"], action["version"], action["candidate"])
-                gh.write_transaction(self.api, transaction)
-        self.api.record(plan)
-        self.run_id += 1
-        return action
+    def candidate(self):
+        pr = self.prepared()
+        self.R = self.api.merge(pr)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "bind")
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        return self.R
 
-    def retry(self, request):
-        plan = self.driver().plan(request, HUMAN)
-        self.api.record(plan, execute="skipped", write="skipped")
-        self.run_id += 1
-        return plan
+    def qualification(self, ci=True, success=True):
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "qualify")
+        candidate, _ = d.candidate(self.record)
+        records = {p: dict(r, sha=self.R) for p, r in candidate["artifacts"].items()}
+        result = dict(schema=2, binding=plan["action"]["binding"], run=run["id"], attempt=1,
+                      report=dict(stage="staged-qualified", candidate=self.R, order=[p for p in (DEP, APP) if p in self.batch], artifacts=records,
+                                  releases=[dict(module=p, version=self.batch[p]) for p in (DEP, APP) if p in self.batch]))
+        self.api.finish(run, plan, result, ci=ci, success=success)
+        return run
 
-    def test_executable_request_qualify_tag_public_proof_and_duplicates(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        self.assertNotEqual(candidate, self.api.prs[number]["head"]["sha"], "must exercise squash identity")
-        self.assertEqual(self.step()["kind"], "release")
-        self.assertEqual(self.step()["kind"], "prove")
-        count = len(self.api.writes)
-        self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(len(self.api.writes), count)
-        self.assertFalse(any(method in ("PATCH", "DELETE") or path.endswith("/merge") for method, path, _ in self.api.writes))
-
-    def test_request_authority_rejects_wrong_app_fork_bot_merge_unlinked_and_changed_bytes(self):
-        number, _ = self.request({DEP: "v0.1.0"})
-        original = copy.deepcopy(self.api.prs[number])
-        for edit, message in (
-            (lambda p: p["user"].update(id=701), "designated App"),
-            (lambda p: p["head"]["repo"].update(full_name="attacker/fork"), "fork"),
-            (lambda p: p.update(merged_by=BOT), "human"),
-            (lambda p: self.api.links.clear(), "linked"),
-        ):
-            self.api.prs[number] = copy.deepcopy(original)
-            self.api.links[original["merge_commit_sha"]] = [number]
-            edit(self.api.prs[number])
-            writes = len(self.api.writes)
-            with self.assertRaisesRegex(gh.Error, message):
-                self.driver().plan()
-            self.assertEqual(len(self.api.writes), writes)
-        self.api.prs[number] = original
-        self.api.links[original["merge_commit_sha"]] = [number]
-        original_file = self.api.file
-        def changed(path, ref):
-            value = original_file(path, ref)
-            if ref == original["merge_commit_sha"]:
-                value = value.replace("v0.1.0", "v0.2.0")
-            return value
-        with mock.patch.object(self.api, "file", side_effect=changed), self.assertRaisesRegex(gh.Error, "differs"):
-            self.driver().plan()
-
-    def test_ci_identity_mismatches_expiry_and_safe_original_rerun(self):
-        _, candidate = self.request({DEP: "v0.1.0"})
-        run = next(r for r in self.api.runs.values() if r["workflow_id"] == 10)
-        original = copy.deepcopy(run)
-        for key, value in (("workflow_id", 99), ("head_sha", self.initial), ("run_attempt", 2),
-                           ("head_repository", dict(full_name="attacker/fork")), ("event", "pull_request")):
-            self.api.runs[original["id"]] = copy.deepcopy(original)
-            # Change only the fetched attempt, not the discovery summary.
-            attempt = dict(original, **{key: value})
-            real_call = self.api.call
-            def call(method, path, data=None, missing=False):
-                if "/attempts/" in path:
-                    return attempt
-                return real_call(method, path, data, missing)
-            with mock.patch.object(self.api, "call", side_effect=call), self.assertRaises(gh.Error):
-                self.driver().ci(candidate)
-        self.api.runs[original["id"]] = dict(original, created_at="2025-01-01T00:00:00Z")
-        self.assertIsNone(self.driver().ci(candidate))
-        self.api.runs[original["id"]]["conclusion"] = "cancelled"
-        with self.assertRaisesRegex(gh.Error, "expired"):
-            self.driver().ci(candidate)
-        self.api.runs[original["id"]] = dict(original, conclusion="cancelled")
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "recover-ci")
-        # New main activity must not substitute its SHA or cancel its CI.
-        self.fixture.write("unrelated", "new main\n")
-        newer = self.fixture.commit()
-        new_run = self.api.ci(newer)
-        self.driver().execute(action)
-        self.assertEqual(self.api.reruns, [original["id"]])
-        self.assertEqual(new_run["conclusion"], "success")
-        self.api.runs[original["id"]].update(run_attempt=3)
-        with self.assertRaisesRegex(gh.Error, "budget"):
-            self.driver().ci(candidate)
-
-    def test_no_silent_new_tip_and_immutable_tag_conflict(self):
-        _, candidate = self.request({DEP: "v0.1.0"})
-        self.fixture.write("unrelated", "later commit\n")
-        newer = self.fixture.commit()
-        self.api.ci(newer)
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["candidate"], candidate)
-        self.fixture.publish(DEP, "v0.1.0", newer)
-        plan = self.driver().plan()
-        self.assertEqual(plan["action"]["kind"], "fail")
-        with self.assertRaisesRegex(gh.Error, "conflict"):
-            self.driver().execute(plan["action"])
-        writes = len(self.api.writes)
-        with self.assertRaisesRegex(gh.Error, "conflict"):
-            gh.write_transaction(self.api, dict(kind="tag", tag=DEP + "/v0.1.0", sha=candidate))
-        self.assertEqual(len(self.api.writes), writes)
-
-    def add_consumer(self):
-        f = self.fixture
-        # An already published public pin, then candidate dependency source.
-        f.publish(DEP, "v0.1.0", self.initial)
-        f.add_module(APP, 'package openai\nimport "' + fixtures.NS + '/' + DEP + '"\nfunc New() { ssefilter.New() }\n',
-                     "\nrequire " + fixtures.NS + "/" + DEP + " v0.1.0\n")
-        gh.release.run(f.root / APP, "go", "mod", "tidy", env=f.env)
-        f.write(DEP + "/fixture.go", "package ssefilter\nfunc New() {}\nfunc CandidateOnly() {}\n")
-        f.commit()
-
-    def test_preparation_proves_unchanged_unselected_public_pins(self):
-        self.add_consumer()
-        f = self.fixture
-        f.add_module(SUPPORT, "package adaptersupport\nfunc Ready() {}\n", role="support")
-        f.write(SUPPORT + "/filewatch/watch.go", "package filewatch\n")
-        f.write(SUPPORT + "/soulbody/body.go", "package soulbody\n")
-        f.write(SUPPORT + "/fixture_test.go", 'package adaptersupport\nimport "testing"\nfunc TestBroken(t *testing.T) { t.Fatal("unchanged support public closure fails") }\n')
-        support = f.commit()
-        f.publish(SUPPORT, "v0.1.0", support)
-        f.write(APP + "/fixture.go", 'package openai\nimport ("' + fixtures.NS + '/' + DEP + '"; "' + fixtures.NS + '/' + SUPPORT + '")\nfunc New() { ssefilter.New(); adaptersupport.Ready() }\n')
-        gh.release.run(f.root / APP, "go", "mod", "edit", "-require=" + fixtures.NS + "/" + SUPPORT + "@v0.1.0", env=f.env)
-        gh.release.run(f.root / APP, "go", "mod", "tidy", env=f.env)
-        f.commit()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        action = self.driver().plan()["action"]
-        self.assertEqual((action["kind"], action["updates"]), ("prepare", {DEP: "v0.2.0"}))
-        writes = len(self.api.writes)
-        with self.assertRaisesRegex(gh.Error, "unchanged support public closure fails"):
-            self.driver().execute(action)
-        self.assertEqual(len(self.api.writes), writes)
-        self.assertEqual(git(f.root, "tag", "--list", APP + "/*"), "")
-
-    def test_public_dependency_then_real_selective_pin_tidy_pr_and_human_merge(self):
-        self.add_consumer()
-        number, candidate = self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.assertEqual(self.step()["module"], DEP)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.fixture.write(APP + "/fixture.go", 'package openai\nimport "' + fixtures.NS + '/' + DEP + '"\nfunc New() { ssefilter.CandidateOnly() }\n')
-        new_source = self.fixture.commit()
-        action = self.step()
-        self.assertEqual(action["kind"], "prepare")
-        self.assertEqual(action["base"], new_source)
-        prep = self.api.prs[max(self.api.prs)]
-        paths = {f["filename"] for f in prep["_files"]}
-        self.assertIn(APP + "/go.mod", paths)
-        self.assertIn(APP + "/go.sum", paths)
-        self.assertTrue(all(p.startswith(APP + "/") or p.startswith(gh.PREFIX) for p in paths))
-        self.assertIn("CandidateOnly", prep["body"])
-        self.assertEqual(self.step()["kind"], "wait")
-        merged = self.api.merge(prep["number"])
-        action = self.step()
-        self.assertEqual((action["kind"], action["module"], action["candidate"]), ("release", APP, merged))
-        self.assertNotEqual(merged, candidate)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.assertEqual(self.step()["kind"], "wait")
-
-    def test_closed_preparation_pauses_until_explicit_retry_and_fresh_merge(self):
-        self.add_consumer()
-        number, _ = self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        self.step()
-        prep = self.api.prs[max(self.api.prs)]
-        prep.update(state="closed", closed_at=self.api.tick())
-        writes = len(self.api.writes)
-        for _ in range(3):
-            self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(len(self.api.writes), writes)
-        self.retry(number)
-        self.assertEqual(self.step()["kind"], "prepare")
-        fresh = self.api.prs[max(self.api.prs)]
-        self.assertNotEqual(prep["number"], fresh["number"])
-        self.assertEqual(self.step()["kind"], "wait")
-        self.api.merge(fresh["number"])
-        self.assertEqual(self.step()["kind"], "release")
-
-    def test_failed_public_proof_stops_entire_batch_until_human_retry(self):
-        self.fixture.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        self.fixture.write(SUPPORT + "/filewatch/watch.go", "package filewatch\n")
-        self.fixture.write(SUPPORT + "/soulbody/body.go", "package soulbody\n")
-        self.fixture.commit()
-        number, _ = self.request({DEP: "v0.1.0", SUPPORT: "v0.1.0"})
-        first = self.step()["module"]
-        remaining = ({DEP, SUPPORT} - {first}).pop()
-        plan = self.driver().plan()
+    def publish_one(self):
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "tag")
+        tx = d.validate_write(plan, {}, run)
+        with mock.patch.object(d, "check", side_effect=AssertionError("writer materialized candidate")), \
+                mock.patch.object(d, "current", side_effect=AssertionError("writer invoked Git")), \
+                mock.patch.object(d, "execute", side_effect=AssertionError("writer executed candidate")):
+            gh.Writer(d).apply(tx)
+        self.api.finish(run, plan)
+        d, run, plan = self.next()
         self.assertEqual(plan["action"]["kind"], "prove")
-        with mock.patch.object(gh.release.Release, "prove", side_effect=gh.Error("offline proxy missing")) as prove:
-            with self.assertRaisesRegex(gh.Error, "published-but-unverified"):
-                self.driver().execute(plan["action"])
-            self.assertEqual(prove.call_count, 3)
-        self.api.record(plan, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        for _ in range(3):
-            self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(git(self.fixture.root, "tag", "--list", remaining + "/*"), "")
-        with self.assertRaises(gh.Error):
-            self.driver().plan(number, BOT)
-        self.retry(number)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.assertEqual(self.step()["module"], remaining)
+        action = plan["action"]
+        result = dict(schema=2, binding=action["binding"], run=run["id"], attempt=1, module=action["module"], version=action["version"],
+                      report=dict(stage="public-verified", candidate=self.R, module=action["module"], version=action["version"],
+                                  sum=action["expected"]["sum"], go_mod_sum=action["expected"]["go_mod_sum"]))
+        self.api.finish(run, plan, result)
+        return action["module"]
 
-    def test_three_events_displaced_pending_discover_all_and_serialize_overlaps(self):
-        first, first_sha = self.request({DEP: "v0.1.0"})
-        # Two more reviewed requests while a running discovery holds the lock;
-        # GitHub may discard the middle pending event. Neither event is input
-        # to Driver.plan: the surviving run must discover every request itself.
-        second, _ = self.request({DEP: "v0.2.0"})
-        third, _ = self.request({DEP: "v0.3.0"})
-        # Model a replaced pending run and an older still-queued slot. Neither
-        # has executed a plan or owns any batch progress.
-        tip = git(self.fixture.root, "rev-parse", "refs/remotes/origin/main")
-        cancelled = self.api.run(900, tip, conclusion="cancelled")
-        cancelled["_jobs"] = []
-        queued = self.api.run(901, tip)
-        queued.update(status="queued", conclusion=None)
-        self.api.runs.update({900: cancelled, 901: queued})
-        self.assertEqual(len(self.driver().requests(list(self.api.prs.values()))), 3)
-        self.assertEqual(self.step()["request"], first)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.assertEqual(self.step()["request"], second)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.assertEqual(self.step()["request"], third)
-        self.assertEqual(self.step()["kind"], "prove")
-        self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(git(self.fixture.root, "rev-parse", "refs/tags/" + DEP + "/v0.1.0"), first_sha)
+    def adoption_ci(self, pr, tree=None, number=900):
+        head, base = pr["head"]["sha"], pr["base"]["sha"]
+        merge = git(self.f.root, "commit-tree", tree or git(self.f.root, "rev-parse", head + "^{tree}"),
+                    "-p", base, "-p", head, "-m", "CI prospective merge")
+        run = self.api.run(number, head)
+        run.update(event="pull_request", path=".github/workflows/ci.yml", status="completed", conclusion="success")
+        run["_jobs"] = [dict(name="Fixture full CI", conclusion="success")]
+        d = self.driver(run)
+        candidate, _ = d.candidate(self.record)
+        receipt = dict(schema=2, kind="adoption", run=run["id"], attempt=1, T=self.B, pr=pr["number"],
+                       head=head, base=base, merge=merge, binding=d.binding(self.record, candidate, self.B))
+        self.api.artifact(run, "adoption", "module-adoption.json", receipt)
+        return run, receipt
 
-    def test_missing_expired_or_wrong_workflow_evidence_fails_closed(self):
-        self.request({DEP: "v0.1.0"})
-        self.step()
-        recorded = next(r for r in self.api.runs.values() if r["workflow_id"] == 20)
-        artifact = self.api.artifacts[recorded["id"]]
-        artifact["expired"] = True
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        requests = self.driver().requests(list(self.api.prs.values()))
-        self.assertIn("expired", self.driver().history(requests)[0]["action"]["reason"])
-        artifact["expired"] = False
-        self.api.attempts[(recorded["id"], 1)]["head_repository"] = dict(full_name="fork/repo")
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        self.assertIn("provenance", self.driver().history(requests)[0]["action"]["reason"])
-        recorded["head_repository"] = dict(full_name=self.api.repository)
-        recorded["workflow_id"] = 99
-        # Simulate a forged attempt response with the discovery still correct.
-        with self.assertRaisesRegex(gh.Error, "workflow"):
-            self.driver().trusted_run(recorded)
+    def retry(self):
+        d, run, _ = self.next()
+        plan = d.envelope(d.plan(run, "retry", self.record["id"]), run)
+        self.api.finish(run, plan)
 
-    def test_closed_request_is_not_authority_and_exact_mapping_no_expansion(self):
-        tx = self.driver().request_plan({DEP: "v0.1.0"}, HUMAN)
-        request = gh.document(next(iter(tx["files"].values())))
-        self.assertEqual(request["batch"], {DEP: "v0.1.0"})
-        gh.write_transaction(self.api, tx)
-        pr = self.api.prs[max(self.api.prs)]
-        pr.update(state="closed", closed_at=self.api.tick())
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        with self.assertRaises(gh.Error):
-            self.driver().request_plan({"../engine": "v0.1.0"}, HUMAN)
-        with self.assertRaises(gh.Error):
-            gh.document('{"engine":"v1.0.0","engine":"v1.0.1"}')
+    def test_durable_reservation_precedes_all_branches_and_intake_rejects_active(self):
+        refs = [data["ref"] for method, path, data in self.api.writes if path == "/git/refs"]
+        self.assertEqual(refs[0], "refs/heads/" + gh.ACTIVE)
+        self.assertEqual(len(refs), 2)
+        self.assertFalse(self.api.prs)
+        run = self.api.run(999, self.B, request=True)
+        with self.assertRaisesRegex(gh.Error, "one active batch"):
+            self.driver(run).intake({DEP: "v0.3.0"}, self.B, run)
 
-    def test_old_ci_workflow_and_rerun_ineligible_are_durable_failures(self):
-        self.fixture.write(".github/workflows/ci.yml", "name: CI\nconcurrency:\n  group: ci-main\n")
-        self.fixture.commit()
-        number, _ = self.request({DEP: "v0.1.0"})
-        plan = self.driver().plan()
-        self.assertEqual(plan["action"]["kind"], "fail")
-        self.assertIn("unsafe old", plan["action"]["reason"])
-        self.api.record(plan, success=False, execute="failure")
-        self.run_id += 1
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        self.retry(number)
-        self.assertEqual(self.driver().plan()["action"]["kind"], "fail")
+    def test_same_R_dependency_first_proofs_then_human_merge_adoption(self):
+        self.candidate()
+        self.qualification()
+        self.assertEqual(self.publish_one(), DEP)
+        self.assertEqual(self.publish_one(), APP)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "adopt")
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        self.assertEqual(len(self.api.prs), 2)
+        self.adoption_ci(self.api.prs[2])
+        A = self.api.merge(self.api.prs[2], "merge")
+        self.assertEqual(self.api.prs[2]["base"]["sha"], A)
+        newer = git(self.f.root, "commit-tree", git(self.f.root, "rev-parse", A + "^{tree}"), "-p", A, "-m", "later main")
+        git(self.f.root, "update-ref", "refs/heads/main", newer)
+        self.api.prs[2]["base"]["sha"] = newer
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "complete")
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.assertIsNone(d.ref(gh.ACTIVE, missing=True))
+        self.assertEqual({git(self.f.root, "rev-parse", "refs/tags/" + p + "/v0.2.0") for p in self.batch}, {self.R})
+        d.ancestor(self.R, A)
 
-    def test_partial_batch_qualification_failure_preserves_prior_proof_and_stops(self):
-        self.fixture.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        self.fixture.write(SUPPORT + "/filewatch/watch.go", "package filewatch\n")
-        self.fixture.write(SUPPORT + "/soulbody/body.go", "package soulbody\n")
-        self.fixture.write(DEP + "/fixture_test.go", 'package ssefilter\nimport "testing"\nfunc TestFail(t *testing.T) { t.Fatal("deliberate qualification failure") }\n')
-        self.fixture.commit()
-        number, candidate = self.request({DEP: "v0.1.0", SUPPORT: "v0.1.0"})
-        self.assertEqual(self.step()["module"], SUPPORT)
-        self.assertEqual(self.step()["kind"], "prove")
-        plan = self.driver().plan()
-        with self.assertRaisesRegex(gh.Error, "deliberate qualification failure"):
-            self.driver().execute(plan["action"])
-        self.api.record(plan, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        count = len(self.api.writes)
-        self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(len(self.api.writes), count)
-        self.retry(number)
-        action = self.driver().plan()["action"]
-        self.assertEqual((action["kind"], action["module"], action["candidate"]), ("release", DEP, candidate))
-        self.assertEqual(git(self.fixture.root, "tag", "--list", DEP + "/*"), "")
+    def test_adoption_receipt_rejects_unrelated_parents_and_incomplete_ci(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
+        self.publish_one()
+        d, run, plan = self.next()
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        pr = self.api.prs[2]
+        ci, receipt = self.adoption_ci(pr)
+        A = self.api.merge(pr, "merge")
+        # Mutable API base need not equal the independently recorded premerge base.
+        self.assertEqual(pr["base"]["sha"], A)
+        ci["_jobs"][0]["conclusion"] = "failure"
+        with self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+            d.adoption_evidence(self.record, d.candidate(self.record)[0], pr)
+        ci["_jobs"][0]["conclusion"] = "success"
+        tree = git(self.f.root, "rev-parse", A + "^{tree}")
+        unrelated = git(self.f.root, "commit-tree", tree, "-m", "unrelated base")
+        wrong = git(self.f.root, "commit-tree", tree, "-p", unrelated, "-p", self.R, "-m", "unrelated parents")
+        pr["merge_commit_sha"] = wrong
+        self.api.links[wrong] = [2]
+        git(self.f.root, "update-ref", "refs/heads/main", wrong)
+        with self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+            d.adoption_evidence(self.record, d.candidate(self.record)[0], pr)
+        # A two-parent rebase-like result retaining neither reviewed head identity
+        # nor its tested parent pair cannot substitute for a merge commit either.
+        rewritten = git(self.f.root, "commit-tree", tree, "-p", self.B, "-m", "rewritten head")
+        wrong = git(self.f.root, "commit-tree", tree, "-p", self.B, "-p", rewritten, "-m", "rewritten merge")
+        pr["merge_commit_sha"] = wrong
+        self.api.links[wrong] = [2]
+        git(self.f.root, "update-ref", "refs/heads/main", wrong)
+        with self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+            d.adoption_evidence(self.record, d.candidate(self.record)[0], pr)
+        pr["merge_commit_sha"] = A
+        git(self.f.root, "update-ref", "refs/heads/main", A)
+        d, run, plan = self.next()
+        tx = d.validate_write(plan, {}, run)
+        # The late API-only writer rechecks the SAME independent receipt.
+        ci["_jobs"][0]["conclusion"] = "failure"
+        with self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+            gh.Writer(d).apply(tx)
+        ci["_jobs"][0]["conclusion"] = "success"
+        gh.Writer(d).apply(tx)
+        self.assertIsNone(d.ref(gh.ACTIVE, missing=True))
 
-    def test_preparation_artifacts_cannot_expand_writes_or_change_direct_dependencies(self):
-        self.add_consumer()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        driver = self.driver()
-        plan = driver.plan()
-        result = driver.execute(plan["action"])
-        self.api.current_jobs[self.run_id] = [dict(name="Execute", conclusion="success")]
-        edits = (
-            lambda r: r["files"].update({DEP + "/go.mod": "bad"}),
-            lambda r: r.update(base=self.initial),
-            lambda r: r["files"].update({APP + "/go.mod": r["files"][APP + "/go.mod"] + "\nreplace example.com/a => ../local\n"}),
-            lambda r: r["files"].update({APP + "/go.mod": r["files"][APP + "/go.mod"] + "\nrequire example.com/unrelated v1.0.0\n"}),
-        )
-        count = len(self.api.writes)
-        for edit in edits:
-            changed = copy.deepcopy(result)
-            edit(changed)
+    def test_zero_tags_without_full_qualification_and_explicit_retry(self):
+        self.candidate()
+        self.qualification(ci=False)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertIn("stopped", plan["action"])
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+        self.api.finish(run, plan)
+        self.retry()
+        self.qualification()
+        self.assertEqual(self.publish_one(), DEP)
+
+    def test_qualification_failure_stops_independent_remaining_modules(self):
+        self.candidate()
+        self.qualification(success=False)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+
+    def test_logical_freeze_revalidated_immediately_before_every_write(self):
+        self.candidate()
+        self.qualification()
+        d, run, plan = self.next()
+        tx = d.validate_write(plan, {}, run)
+        moved = git(self.f.root, "commit-tree", git(self.f.root, "rev-parse", self.R + "^{tree}"), "-p", self.R, "-m", "unexpected update")
+        git(self.f.root, "update-ref", "refs/heads/" + d.branch(self.record), moved)
+        before = len(self.api.writes)
+        with self.assertRaisesRegex(gh.Error, "logical freeze"):
+            gh.Writer(d).apply(tx)
+        self.assertEqual(len(self.api.writes), before)
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+
+    def test_wrong_parent_tree_app_human_repository_and_mapping_rejected(self):
+        self.candidate()
+        for change, message in ((lambda p: p["user"].update(id=701), "App"),
+                                (lambda p: p["merged_by"].update(type="Bot"), "human"),
+                                (lambda p: p["head"]["repo"].update(full_name="evil/fork"), "repository")):
+            saved = copy.deepcopy(self.api.prs[1])
+            change(self.api.prs[1])
+            with self.subTest(message=message), self.assertRaisesRegex(gh.Error, message):
+                self.driver(self.intake_run).candidate(self.record)
+            self.api.prs[1] = saved
+        pr = self.api.prs[1]
+        tree = git(self.f.root, "rev-parse", self.R + "^{tree}")
+        wrong = git(self.f.root, "commit-tree", tree, "-p", self.B, "-p", pr["head"]["sha"], "-m", "wrong method")
+        pr["merge_commit_sha"] = wrong
+        self.api.links[wrong] = [1]
+        with self.assertRaisesRegex(gh.Error, "sole parent"):
+            self.driver(self.intake_run).candidate(self.record)
+
+    def test_authoritative_writer_rejects_wrong_tree_single_parent_and_mapping_without_writes(self):
+        self.candidate()
+        self.qualification()
+        d, run, plan = self.next()
+        tx = d.validate_write(plan, {}, run)
+        pr = self.api.prs[1]
+        tree = git(self.f.root, "rev-parse", self.R + "^{tree}")
+        wrong_tree = git(self.f.root, "commit-tree", git(self.f.root, "rev-parse", self.B + "^{tree}"),
+                         "-p", self.B, "-m", "unreviewed tree")
+        wrong_parent = git(self.f.root, "commit-tree", tree, "-p", pr["head"]["sha"], "-m", "wrong sole parent")
+        for commit, message in ((wrong_tree, "whole reviewed preparation tree"), (wrong_parent, "sole parent B")):
+            with self.subTest(message=message):
+                pr["merge_commit_sha"] = commit
+                self.api.links[commit] = [1]
+                before = len(self.api.writes)
+                with self.assertRaisesRegex(gh.Error, message):
+                    gh.Writer(d).apply(tx)
+                self.assertEqual(len(self.api.writes), before)
+                self.assertEqual(git(self.f.root, "tag", "-l"), "")
+        pr["merge_commit_sha"] = self.R
+        original = self.api.file
+        def changed_mapping(path, ref, **kwargs):
+            value = original(path, ref, **kwargs)
+            if path == gh.PREFIX + self.record["id"] + ".json":
+                value = gh.document(value)
+                value["batch"][DEP] = "v0.9.0"
+                return gh.canonical(value)
+            return value
+        before = len(self.api.writes)
+        with mock.patch.object(self.api, "file", side_effect=changed_mapping), self.assertRaisesRegex(gh.Error, "changed mapping"):
+            gh.Writer(d).apply(tx)
+        self.assertEqual(len(self.api.writes), before)
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+
+    def test_writer_rechecks_staged_and_public_checksums_before_any_write(self):
+        self.candidate()
+        qualification = self.qualification()
+        for stage in ("staged", "public"):
+            if stage == "public":
+                self.publish_one()
+            d, run, plan = self.next()
+            tx = d.validate_write(plan, {}, run)
+            artifact = max((a for a in self.api.artifacts.values() if a["name"].startswith("module-result-")
+                            and (a["run_id"] == qualification["id"] if stage == "staged" else a["run_id"] != qualification["id"])),
+                           key=lambda a: a["id"])
+            saved = artifact["_zip"]
+            for field in ("sum", "go_mod_sum"):
+                with self.subTest(stage=stage, field=field):
+                    with zipfile.ZipFile(io.BytesIO(saved)) as archive:
+                        value = gh.document(archive.read("result.json"))
+                    target = value["report"]["artifacts"][DEP] if stage == "staged" else value["report"]
+                    target[field] = "h1:corrupt"
+                    stream = io.BytesIO()
+                    with zipfile.ZipFile(stream, "w") as archive:
+                        archive.writestr("result.json", gh.canonical(value))
+                    artifact["_zip"] = stream.getvalue()
+                    before = len(self.api.writes)
+                    tags = git(self.f.root, "tag", "-l")
+                    with self.assertRaisesRegex(gh.Error, "lost full qualification authority"):
+                        gh.Writer(d).apply(tx)
+                    self.assertEqual(len(self.api.writes), before)
+                    self.assertEqual(git(self.f.root, "tag", "-l"), tags)
+                    artifact["_zip"] = saved
+            self.api.finish(run, plan, success=False)
+            if stage == "staged":
+                self.retry()
+                qualification = self.qualification()
+
+    def test_control_plane_diff_and_forged_classification_rejected(self):
+        pr = self.prepared()
+        d = self.driver(self.intake_run)
+        bad = gh.Writer(d).data_commit(pr["head"]["sha"], {".github/workflows/ci.yml": "malicious change"}, "not permitted", lambda: None)
+        pr["head"]["sha"] = bad
+        with self.assertRaisesRegex(gh.Error, "forbidden"):
+            d.classify(1, self.intake_run)
+        for path in ("VERSION", "SDKVERSION", "sdk/typescript/VERSION", "policy.md", ".github/scripts/module-consumers/openai.go", "Taskfile.yml"):
+            self.assertFalse(d.allowed(path, self.f.policy, "expected-metadata.json"), path)
+
+    def test_expired_receipt_is_not_tag_success(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
+        for a in self.api.artifacts.values():
+            if a["name"].startswith("module-result-"):
+                a["expired"] = True
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.api.finish(run, plan)
+        self.retry()
+        self.qualification()
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "prove")
+        self.assertEqual(plan["action"]["module"], DEP)
+
+    def test_closed_PR1_pauses_without_recreation(self):
+        pr = self.prepared()
+        pr["state"] = "closed"
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertIn("closed", plan["action"]["reason"])
+        self.assertEqual(len(self.api.prs), 1)
+
+    def test_closed_PR2_keeps_reservation_and_never_recreates(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
+        self.publish_one()
+        d, run, plan = self.next()
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        self.api.prs[2]["state"] = "closed"
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertIn("closed", plan["action"]["reason"])
+        self.assertEqual(len(self.api.prs), 2)
+        self.assertIsNotNone(d.ref(gh.ACTIVE))
+
+    def test_post_tag_crash_needs_human_retry_qualification_and_fresh_proof(self):
+        self.candidate()
+        self.qualification()
+        d, run, plan = self.next()
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan, success=False)  # Tag exists; response/journal failed.
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.api.finish(run, plan)
+        self.retry()
+        self.qualification()
+        tags = [data for _, path, data in self.api.writes if path == "/git/refs" and data["ref"].startswith("refs/tags/")]
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "prove")
+        self.assertEqual(plan["action"]["module"], DEP)
+        self.assertEqual(len(tags), 1)
+        self.assertFalse(d.ref("main") == self.R)
+
+    def test_intake_racing_reservation_release_cannot_acquire_early(self):
+        d, run, _ = self.next()
+        plan = d.envelope(d.plan(run, "abandon", self.record["id"]), run)
+        tx = d.validate_write(plan, {}, run)
+        intake_run = self.api.run(999, self.B, request=True)
+        rejected = []
+        def race(method, path, data):
+            if method == "DELETE":
+                try:
+                    self.driver(intake_run).intake({DEP: "v0.3.0"}, self.B, intake_run)
+                except gh.Error as error:
+                    rejected.append(str(error))
+        self.api.before_write = race
+        gh.Writer(d).apply(tx)
+        self.assertEqual(len(rejected), 1)
+        self.assertIn("one active batch", rejected[0])
+        self.assertEqual(self.driver(intake_run).intake({DEP: "v0.3.0"}, self.B, intake_run)["id"], "999-1")
+
+    def test_wrong_adoption_merge_method_pauses(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
+        self.publish_one()
+        d, run, plan = self.next()
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        self.api.merge(self.api.prs[2], "squash")
+        with self.assertRaisesRegex(gh.Error, "wrong merge method"):
+            self.next()
+        self.assertIsNotNone(d.ref(gh.ACTIVE))
+
+    def test_abandoned_public_versions_retain_authority(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
+        d, run, _ = self.next()
+        plan = d.envelope(d.plan(run, "abandon", self.record["id"]), run)
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.assertIsNone(d.ref(gh.ACTIVE, missing=True))
+        self.assertEqual(d.authority()[DEP]["v0.2.0"], self.R)
+        with d.check(self.B) as check:
+            self.assertEqual(check.latest(DEP), "v0.2.0")
             with self.assertRaises(gh.Error):
-                driver.validate_write(plan, changed)
-        wrong_attempt = dict(plan, attempt=2)
-        with self.assertRaisesRegex(gh.Error, "run mismatch"):
-            driver.validate_write(wrong_attempt, result)
-        self.assertEqual(len(self.api.writes), count)
-        tx = driver.validate_write(plan, result)
-        gh.write_transaction(self.api, tx)
-        self.assertEqual(self.api.prs[max(self.api.prs)]["state"], "open")
+                check.preview({DEP: "v0.1.0"})
+        terminal = d.record(d.ref(d.state_ref(self.record, "terminal")))
+        self.assertEqual(terminal["published"], {DEP: dict(version="v0.2.0", sha=self.R)})
 
-    def test_tag_write_partial_failure_requires_retry_and_fresh_qualification(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        driver = self.driver()
-        plan = driver.plan()
-        result = driver.execute(plan["action"])
-        self.api.current_jobs[self.run_id] = [dict(name="Execute", conclusion="success")]
-        tx = driver.validate_write(plan, result)
-        gh.write_transaction(self.api, tx)
-        # Simulate an interruption after the immutable ref reached GitHub, but
-        # before the protected job could record success.
-        self.api.record(plan, success=False, write="failure")
-        self.run_id += 1
-        self.assertEqual(self.step()["kind"], "wait")
-        self.retry(number)
-        next_plan = self.driver().plan()
-        self.assertEqual(next_plan["action"]["kind"], "release", "tag existence is not qualification authority")
-        result = self.driver().execute(next_plan["action"])
-        self.api.current_jobs[self.run_id] = [dict(name="Execute", conclusion="success")]
-        tx = self.driver().validate_write(next_plan, result)
-        count = len(self.api.writes)
-        gh.write_transaction(self.api, tx)
-        self.assertEqual(len(self.api.writes), count, "same-SHA resume must not move the tag")
-        self.assertEqual(git(self.fixture.root, "rev-parse", "refs/tags/" + DEP + "/v0.1.0"), candidate)
-
-    def test_new_reviewed_request_can_retire_expired_evidence_without_reusing_it(self):
-        first, _ = self.request({DEP: "v0.1.0"})
-        plan = self.driver().plan()
-        self.api.record(plan, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        self.api.artifacts[plan["run"]]["expired"] = True
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        second, _ = self.request({DEP: "v0.1.0"}, [first])
-        action = self.driver().plan()["action"]
-        self.assertEqual((action["kind"], action["request"]), ("release", second))
-        self.assertNotEqual(action["candidate"], plan["action"]["candidate"])
-
-    def test_recovery_api_ineligible_stops_batch_and_does_not_dispatch_replacement_ci(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        ci = next(r for r in self.api.runs.values() if r["workflow_id"] == 10)
-        ci["conclusion"] = "cancelled"
-        plan = self.driver().plan()
+    def test_read_only_history_command_uses_authenticated_identity_not_local_flags(self):
+        self.candidate()
+        self.qualification()
+        self.publish_one()
         original = self.api.call
-        def ineligible(method, path, data=None, missing=False):
-            if path == f"/actions/runs/{ci['id']}/rerun":
-                raise gh.Error("GitHub rerun HTTP 422: ineligible")
-            return original(method, path, data, missing)
-        with mock.patch.object(self.api, "call", side_effect=ineligible), self.assertRaisesRegex(gh.Error, "ineligible"):
-            self.driver().execute(plan["action"])
-        self.api.record(plan, success=False, execute="skipped", write="skipped")
-        self.run_id += 1
-        count = len(self.api.writes)
-        for _ in range(3):
-            self.assertEqual(self.step()["kind"], "wait")
-        self.assertEqual(len(self.api.writes), count)
-        self.assertFalse(any(path.endswith("/dispatches") for _, path, _ in self.api.writes))
-
-    def test_candidate_release_scripts_are_never_executed(self):
-        self.fixture.write(".github/scripts/module-release.py", "raise SystemExit('candidate script must not run')\n")
-        self.fixture.commit()
-        self.request({DEP: "v0.1.0"})
-        self.assertEqual(self.step()["kind"], "release")
-        self.assertEqual(self.step()["kind"], "prove")
-
-    def test_cli_executes_discovery_with_injected_github_api(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        current = self.api.run(self.run_id, candidate)
-        current.update(status="in_progress", conclusion=None)
-        self.api.runs[self.run_id] = current
-        output = self.fixture.root.parent / "cli-plan.json"
-        env = dict(MODULE_RELEASES_ENABLED="true", GITHUB_REF="refs/heads/main",
-                   GITHUB_REPOSITORY=self.api.repository, RELEASE_APP_ID="70", RELEASE_APP_BOT_ID="700",
-                   GITHUB_RUN_ID=str(self.run_id), GITHUB_RUN_ATTEMPT="1", GITHUB_EVENT_NAME="workflow_dispatch")
-        argv = [str(HERE / "module-release-github.py"), "plan", "--root", str(self.fixture.root), "--output", str(output)]
-        with mock.patch.dict(gh.os.environ, env), mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(gh, "GitHub", return_value=self.api), mock.patch.object(gh, "Driver", FixtureDriver):
+        def read(method, path, *args, **kwargs):
+            if path == "/actions/variables/RELEASE_APP_ID":
+                return dict(value="70")
+            if path == "/actions/variables/RELEASE_APP_BOT_ID":
+                return dict(value="700")
+            return original(method, path, *args, **kwargs)
+        before = len(self.api.writes)
+        with mock.patch.object(gh, "GitHub", return_value=self.api), \
+                mock.patch.object(self.api, "call", side_effect=read), \
+                mock.patch.dict(os.environ, GH_TOKEN="offline-read-token", RELEASE_APP_ID="999", RELEASE_APP_BOT_ID="999"), \
+                mock.patch.object(sys, "argv", ["module-release-github.py", "authority", "--root", str(self.f.root)]), \
+                redirect_stdout(io.StringIO()) as output:
             self.assertEqual(gh.main(), 0)
-        action = gh.document(output.read_text())["action"]
-        self.assertEqual((action["kind"], action["request"], action["candidate"]), ("release", number, candidate))
+        self.assertEqual(gh.document(output.getvalue()), {DEP: {"v0.2.0": self.R}})
+        self.assertEqual(len(self.api.writes), before)
+        self.api.prs[1]["user"]["id"] = 999
+        with mock.patch.object(gh, "GitHub", return_value=self.api), \
+                mock.patch.object(self.api, "call", side_effect=read), \
+                mock.patch.object(sys, "argv", ["module-release-github.py", "authority", "--root", str(self.f.root)]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(gh.main(), 1)
+        self.assertIn("App", errors.getvalue())
+        self.assertEqual(len(self.api.writes), before)
 
-    def test_whole_batch_shared_validation_precedes_even_independent_publication(self):
-        f = self.fixture
-        f.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        f.add_module(APP, "package openai\nfunc New() {}\n", "\nrequire " + fixtures.NS + "/" + SUPPORT + " v0.1.0\n")
-        base = f.commit()
-        # Model an App PR edited before human merge: identity/merge is necessary,
-        # but cannot replace shared validation of the exact reviewed mapping.
-        request = dict(schema=1, kind="request", base=base, batch={DEP: "v0.1.0", APP: "v0.1.0"}, nonce="999-1", supersedes=[])
-        key = gh.digest(request)
-        gh.write_transaction(self.api, dict(kind="request", base=base, branch="module-release/request-" + key,
-                                           files={gh.PREFIX + "request-" + key + ".json": gh.canonical(request)},
-                                           title="Exact mapping", body="Review exact map"))
-        self.api.merge(max(self.api.prs))
-        count = len(self.api.writes)
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "fail")
-        self.assertIn("missing published prerequisite", action["reason"])
-        self.assertEqual(len(self.api.writes), count)
-        self.assertEqual(git(f.root, "tag", "--list"), "")
+    def test_old_reruns_and_candidate_as_T_rejected(self):
+        self.candidate()
+        d, run, plan = self.next()
+        run["run_attempt"] = 2
+        with self.assertRaisesRegex(gh.Error, "reruns"):
+            d.current()
+        run["run_attempt"] = 1
+        run["head_sha"] = self.R
+        with self.assertRaisesRegex(gh.Error, "ancestry"):
+            d.current()
 
-    def test_failed_transition_waits_for_explicit_human_retry_without_writes(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        plan = self.driver().plan()
-        self.assertEqual(plan["action"]["kind"], "release")
-        # A failed qualification run has durable evidence but no tag. Exercise
-        # reconciliation, not qualification itself (covered by integration).
-        self.api.record(plan, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        writes = len(self.api.writes)
-        for _ in range(3):
-            self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        with self.assertRaisesRegex(gh.Error, "human"):
-            self.driver().plan(number, BOT)
-        self.retry(number)
-        action = self.driver().plan()["action"]
-        self.assertEqual((action["kind"], action["candidate"]), ("release", candidate))
-        self.assertEqual(len(self.api.writes), writes)
-        self.assertEqual(git(self.fixture.root, "tag", "--list"), "")
+    def test_deleted_whole_run_stops_until_new_retry(self):
+        self.candidate()
+        qualified = self.qualification()
+        del self.api.runs[qualified["id"]]
+        # Preserve GitHub's monotonic sequence after deletion.
+        d, run, plan = self.next()
+        run["run_number"] += 1
+        plan = d.envelope(d.plan(run), run)
+        self.assertEqual(plan["action"]["kind"], "wait")
 
-    def current(self, workflow=20):
-        tip = git(self.fixture.root, "rev-parse", "refs/remotes/origin/main")
-        self.api.runs[self.run_id] = self.api.run(self.run_id, tip, workflow)
-        self.api.runs[self.run_id].update(status="in_progress", conclusion=None, _jobs=[])
+    def test_intake_racing_reservation_atomic_create_never_creates_second_PR(self):
+        # Two stale previews can exist, but create-only active acquisition is the
+        # final authority. Shared workflow concurrency additionally serializes it.
+        old = self.record
+        d = self.driver(self.intake_run)
+        git(self.f.root, "update-ref", "-d", "refs/heads/" + gh.ACTIVE)
+        second_run = self.api.run(999, self.B, request=True)
+        second = self.driver(second_run).intake({DEP: "v0.3.0"}, self.B, second_run)
+        gh.Writer(d).reserve(old)
+        before = len(self.api.writes)
+        with self.assertRaisesRegex(gh.Error, "active batch"):
+            gh.Writer(self.driver(second_run)).reserve(second)
+        self.assertEqual(len(self.api.writes), before)
+        self.assertFalse(self.api.prs)
 
-    def cli(self, command, value=None, result=None, **changes):
-        directory = self.fixture.root.parent
-        output = directory / (command + "-output.json")
+    def test_full_CI_receipt_requires_server_jobs_and_exact_binding(self):
+        self.candidate()
+        run = self.qualification()
+        run["_jobs"][-1]["conclusion"] = "skipped"
+        d, _, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+
+    def test_concurrent_stale_intakes_only_one_atomic_reservation_wins(self):
+        git(self.f.root, "update-ref", "-d", "refs/heads/" + gh.ACTIVE)
+        run = self.api.run(999, self.B, request=True)
+        second = self.driver(run).intake({DEP: "v0.3.0"}, self.B, run)
+        barrier = threading.Barrier(2)
+        errors = []
+        def pause(method, path, data):
+            if path == "/git/refs" and data["ref"] == "refs/heads/" + gh.ACTIVE:
+                barrier.wait(timeout=10)
+        self.api.before_write = pause
+        def reserve(record, run):
+            try:
+                gh.Writer(self.driver(run)).reserve(record)
+            except gh.Error as error:
+                errors.append(str(error))
+        threads = [threading.Thread(target=reserve, args=(r, n)) for r, n in ((self.record, self.intake_run), (second, run))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIn("atomic ref", errors[0])
+        _, active = self.driver(run).active()
+        self.assertIn(active["id"], (self.record["id"], second["id"]))
+        self.assertFalse(self.api.prs)
+
+    def test_interrupted_prepare_and_terminal_deletion_are_idempotent(self):
+        original = self.api.call
+        failed = False
+        def interrupted(method, path, data=None, missing=False):
+            nonlocal failed
+            if method == "POST" and path == "/pulls" and not failed:
+                failed = True
+                raise gh.Error("crash before PR creation")
+            return original(method, path, data, missing)
+        with mock.patch.object(self.api, "call", side_effect=interrupted):
+            with self.assertRaisesRegex(gh.Error, "crash"):
+                self.prepared()
+        # A failed preparation stops the batch; a fresh explicit retry can recover
+        # the already-created branch without another human review checkpoint.
+        failed_run = self.api.runs[self.counter]
+        failed_run.update(status="completed", conclusion="failure", updated_at=self.api.stamp())
+        self.retry()
+        self.prepared()
+        self.assertEqual(len(self.api.prs), 1)
+        d, run, _ = self.next()
+        plan = d.envelope(d.plan(run, "abandon", self.record["id"]), run)
+        tx = d.validate_write(plan, {}, run)
+        def delete_crash(method, path, data=None, missing=False):
+            if method == "DELETE":
+                raise gh.Error("crash before reservation deletion")
+            return original(method, path, data, missing)
+        with mock.patch.object(self.api, "call", side_effect=delete_crash), self.assertRaisesRegex(gh.Error, "deletion"):
+            gh.Writer(d).apply(tx)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "finalize")
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.assertIsNone(d.ref(gh.ACTIVE, missing=True))
+
+    def test_exceptional_integration_is_discovered_and_preserves_R(self):
+        pr1 = self.prepared()
+        writer = gh.Writer(self.driver(self.intake_run))
+        original = self.api.file(DEP + "/fixture.go", self.B)
+        source = writer.data_commit(pr1["head"]["sha"], {DEP + "/fixture.go": original + "func SourceChange() {}\n"},
+                                    "reviewed source change", lambda: None)
+        pr1["head"]["sha"] = source
+        git(self.f.root, "update-ref", "refs/heads/" + pr1["head"]["ref"], source)
+        self.R = self.api.merge(pr1)
+        d, run, plan = self.next()
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        self.qualification()
+        self.publish_one()
+        self.publish_one()
+        main = writer.data_commit(self.B, {DEP + "/fixture.go": original + "func MainChange() {}\n"},
+                                  "divergent main source", lambda: None)
+        self.B = main
+        for ref in ("refs/heads/main", "refs/remotes/origin/main"):
+            git(self.f.root, "update-ref", ref, main)
+        resolution = writer.data_commit(main, {DEP + "/fixture.go": original + "func MainChange() {}\nfunc SourceChange() {}\n"},
+                                       "reviewed conflict resolution", lambda: None)
+        integrated = git(self.f.root, "commit-tree", git(self.f.root, "rev-parse", resolution + "^{tree}"),
+                         "-p", main, "-p", self.R, "-m", "reviewed integration preserving source and main")
+        self.assertNotEqual(git(self.f.root, "rev-parse", integrated + "^{tree}"), git(self.f.root, "rev-parse", self.R + "^{tree}"))
+        git(self.f.root, "update-ref", "refs/heads/module-adoption/reviewed", integrated)
+        d, run, _ = self.next()
+        plan = d.envelope(d.plan(run, integration="module-adoption/reviewed"), run)
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.api.finish(run, plan)
+        pr = self.api.prs[2]
+        self.adoption_ci(pr)
+        candidate = d.candidate(self.record)[0]
+        wrong = git(self.f.root, "commit-tree", git(self.f.root, "rev-parse", self.R + "^{tree}"),
+                    "-p", main, "-p", integrated, "-m", "wrong integration result")
+        pr.update(merged=True, merge_commit_sha=wrong)
+        git(self.f.root, "update-ref", "refs/heads/main", wrong)
+        with self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+            d.adoption_evidence(self.record, candidate, pr)
+        # A genuine two-parent prospective merge at the old base is still stale.
+        # Advancing main twice must not promote that receipt into fresh evidence.
+        for index in (1, 2):
+            main = writer.data_commit(main, {f"advance{index}.go": "package advance\n"}, "main advance", lambda: None)
+            self.B = main
+            pr["base"]["sha"] = main
+            result = writer.data_commit(integrated, {f"advance{i}.go": "package advance\n" for i in range(1, index + 1)},
+                                        "prospective integration", lambda: None)
+            tree = git(self.f.root, "rev-parse", result + "^{tree}")
+            actual = git(self.f.root, "commit-tree", tree, "-p", main, "-p", integrated, "-m", "actual adoption")
+            pr["merge_commit_sha"] = actual
+            git(self.f.root, "update-ref", "refs/heads/main", actual)
+            with self.subTest(advance=index), self.assertRaisesRegex(gh.Error, "premerge head/base/CI merge"):
+                d.adoption_evidence(self.record, candidate, pr)
+        pr["merged"] = False
+        git(self.f.root, "update-ref", "refs/heads/main", main)
+        git(self.f.root, "update-ref", "refs/remotes/origin/main", main)
+        self.adoption_ci(pr, tree=tree, number=901)
+        pr.update(merged=True, merged_by=copy.deepcopy(HUMAN), state="closed", merge_commit_sha=actual)
+        self.api.links[actual] = [2]
+        git(self.f.root, "update-ref", "refs/heads/main", actual)
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "complete")
+        gh.Writer(d).apply(d.validate_write(plan, {}, run))
+        self.assertIsNone(d.ref(gh.ACTIVE, missing=True))
+        self.assertEqual(len(self.api.prs), 2)
+
+    def test_historical_receipt_cannot_substitute_controller_T(self):
+        self.candidate()
+        run = self.qualification()
+        artifact = next(a for a in self.api.artifacts.values() if a["run_id"] == run["id"] and a["name"].startswith("module-plan-"))
+        with zipfile.ZipFile(io.BytesIO(artifact["_zip"])) as archive:
+            plan = gh.document(archive.read("plan.json"))
+        plan["T"] = self.R
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("plan.json", gh.canonical(plan))
+        artifact["_zip"] = stream.getvalue()
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+        self.assertEqual(git(self.f.root, "tag", "-l"), "")
+
+    def test_receipt_schema1_is_not_batch_qualification(self):
+        self.candidate()
+        run = self.qualification()
+        artifact = next(a for a in self.api.artifacts.values() if a["run_id"] == run["id"] and a["name"].startswith("module-result-"))
+        with zipfile.ZipFile(io.BytesIO(artifact["_zip"])) as archive:
+            result = gh.document(archive.read("result.json"))
+        result["schema"] = 1
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("result.json", gh.canonical(result))
+        artifact["_zip"] = stream.getvalue()
+        d, run, plan = self.next()
+        self.assertEqual(plan["action"]["kind"], "wait")
+
+    def test_protected_writer_source_has_no_execution_calls(self):
+        import ast
+        tree = ast.parse((HERE / "module-release-github.py").read_text())
+        writer = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Writer")
+        forbidden = {"run", "git", "source_tree", "check", "helper", "execute", "current", "Popen", "system"}
+        for node in ast.walk(writer):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                self.assertNotIn(node.func.attr, forbidden)
+
+
+class Execution(unittest.TestCase):
+    setUp = Controller.setUp
+    driver = Controller.driver
+    next = Controller.next
+
+    @classmethod
+    def setUpClass(cls):
+        artifacts.ArtifactTests.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tools.cleanup()
+
+    def cli(self, command, run, value=None, result=None):
+        output = self.directory / (command + "-output.json")
         if output.exists():
             output.unlink()
-        argv = [str(HERE / "module-release-github.py"), command, "--root", str(self.fixture.root), "--output", str(output)]
+        argv = ["module-release-github.py", command, "--root", str(self.f.root), "--output", str(output)]
         if value is not None:
-            path = directory / (command + "-input.json")
-            path.write_text(gh.canonical(value))
-            argv.extend(["--input", str(path)])
+            input_path = self.directory / "input.json"
+            input_path.write_text(gh.canonical(value))
+            argv.extend(["--input", str(input_path)])
         if result is not None:
-            path = directory / (command + "-result.json")
-            path.write_text(gh.canonical(result))
-            argv.extend(["--result", str(path)])
-        env = {k: v for k, v in self.fixture.env.items()
-               if k in ("PATH", "HOME", "LANG", "XDG_CONFIG_HOME", "TMPDIR") or k.startswith("GIT_")}
-        env.update(MODULE_RELEASES_ENABLED="true", GITHUB_REF="refs/heads/main", GITHUB_REPOSITORY=self.api.repository,
-                   RELEASE_APP_ID="70", RELEASE_APP_BOT_ID="700", GH_TOKEN="read-only-fixture",
-                   GITHUB_RUN_ID=str(self.run_id), GITHUB_RUN_ATTEMPT="1", GITHUB_EVENT_NAME="workflow_dispatch",
-                   MODULE_BATCH=gh.canonical({DEP: "v0.1.0"}), SUPERSEDES_REQUESTS="[]", RETRY_REQUEST="")
-        if command == "write":
-            env["MODULE_RELEASE_WRITE_TOKEN"] = "late-fixture"
-        env.update(changes)
-        stderr = io.StringIO()
-        with mock.patch.dict(gh.os.environ, env, clear=True), mock.patch.object(sys, "argv", argv), \
+            result_path = self.directory / "result.json"
+            result_path.write_text(gh.canonical(result))
+            argv.extend(["--result", str(result_path)])
+        env = dict(GITHUB_REPOSITORY=self.api.repository, RELEASE_APP_ID="70", RELEASE_APP_BOT_ID="700",
+                   GITHUB_RUN_ID=str(run["id"]), GITHUB_RUN_ATTEMPT="1", MODULE_RELEASES_ENABLED="true",
+                   GITHUB_REF="refs/heads/main", GH_TOKEN="controller-sentinel", MODULE_RELEASE_WRITE_TOKEN="writer-sentinel")
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(gh, "GitHub", return_value=self.api), mock.patch.object(gh, "Driver", FixtureDriver), \
-                mock.patch.object(gh, "protection_check") as guard, redirect_stderr(stderr), redirect_stdout(io.StringIO()):
-            self.assertEqual(gh.release.public_environment(directory)["TMPDIR"], self.fixture.env["TMPDIR"])
-            self.assertTrue(Path(self.fixture.env["TMPDIR"]).is_dir())
+                mock.patch.object(gh, "protection_check") as protections, redirect_stderr(io.StringIO()) as errors, redirect_stdout(io.StringIO()):
             code = gh.main()
-            if command in ("request-validate", "validate-write") and code == 0:
-                guard.assert_called_once_with(self.api.repository, 70, 700)
-        return code, gh.document(output.read_text()) if output.exists() else stderr.getvalue()
+        self.assertEqual(code, 0, errors.getvalue())
+        if command == "validate-write":
+            protections.assert_called_once_with(self.api.repository, 70, 700)
+        return gh.document(output.read_text())
 
-    def test_preparation_rejects_module_source_landing_between_reviewed_base_and_merge(self):
-        self.add_consumer()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        self.step()
-        prep = self.api.prs[max(self.api.prs)]
-        self.fixture.write(APP + "/new.go", "package openai\nfunc Unreviewed() {}\n")
-        self.fixture.commit()
-        self.api.merge(prep["number"])
-        count = len(self.api.writes)
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "fail")
-        self.assertIn("changed after reviewed preparation base", action["reason"])
-        self.assertEqual(len(self.api.writes), count)
-        self.assertEqual(git(self.fixture.root, "tag", "--list", APP + "/*"), "")
+    def test_actual_CLI_prepare_qualify_public_proofs_same_R(self):
+        original = gh.release.public_environment
+        def public(temporary):
+            return dict(original(temporary), GOPROXY=self.f.proxy.as_uri(), GOSUMDB="off", GOPROXY_TEST="offline",
+                        GOCACHE=str(self.directory / "go-build"))
+        with mock.patch.object(gh.release, "public_environment", side_effect=public), \
+                mock.patch.object(FixtureDriver, "helper", return_value=self.helper):
+            d, run, _ = self.next()
+            plan = self.cli("plan", run)
+            prepared = self.cli("execute", run, plan)
+            run["_jobs"] = [dict(name="Prepare " + self.record["id"], conclusion="success")]
+            tx = self.cli("validate-write", run, plan, prepared)
+            self.cli("write", run, tx)
+            self.api.finish(run, plan, prepared)
+            R = self.api.merge(self.api.prs[1])
+            self.assertNotEqual(R, self.B)
+            d, run, _ = self.next()
+            plan = self.cli("plan", run)
+            self.assertEqual(plan["action"]["kind"], "bind")
+            self.cli("write", run, self.cli("validate-write", run, plan))
+            self.api.finish(run, plan)
+            d, run, _ = self.next()
+            plan = self.cli("plan", run)
+            self.assertEqual(plan["action"]["kind"], "qualify")
+            qualified = self.cli("execute", run, plan)
+            self.assertEqual(qualified["report"]["stage"], "staged-qualified")
+            self.assertEqual({r["sha"] for r in qualified["report"]["artifacts"].values()}, {R})
+            self.assertEqual(git(self.f.root, "tag", "-l"), "")
+            # This is a synthetic COMPLETE-caller receipt, not a claim that this
+            # test runs the production full-CI gate set (task 5 owns that wiring).
+            self.api.finish(run, plan, qualified)
+            authority = {p: {v: R} for p, v in self.batch.items()}
+            proxy = self.directory / "canonical-public"
+            with d.check(R, authority) as check:
+                check.stage(self.batch, self.helper, proxy, qualified["report"]["artifacts"])
+            import shutil
+            seen = []
+            for path in (DEP, APP):
+                d, run, _ = self.next()
+                plan = self.cli("plan", run)
+                self.assertEqual(plan["action"]["kind"], "tag")
+                self.assertEqual(plan["action"]["module"], path)
+                self.cli("write", run, self.cli("validate-write", run, plan))
+                self.api.finish(run, plan)
+                identity = fixtures.NS + "/" + path
+                shutil.copytree(proxy / identity, self.f.proxy / identity, dirs_exist_ok=True)
+                d, run, _ = self.next()
+                plan = self.cli("plan", run)
+                self.assertEqual(plan["action"]["kind"], "prove")
+                proof = self.cli("execute", run, plan)
+                self.assertEqual(proof["report"]["sum"], qualified["report"]["artifacts"][path]["sum"])
+                self.api.finish(run, plan, proof)
+                seen.append(proof["report"]["candidate"])
+            self.assertEqual(seen, [R, R])
+            d, run, _ = self.next()
+            self.assertEqual(self.cli("plan", run)["action"]["kind"], "adopt")
 
-    def test_preparation_preserves_fixed_base_and_accepts_only_unrelated_main_advance(self):
-        self.add_consumer()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        driver = self.driver()
-        plan = driver.plan()
-        result = driver.execute(plan["action"])
-        base = plan["action"]["base"]
-        self.fixture.write("unrelated-before-write", "main may keep moving\n")
-        self.fixture.commit()
-        self.api.current_jobs[self.run_id] = [dict(name=f"Execute request-{plan['action']['request']}", conclusion="success")]
-        tx = driver.validate_write(plan, result)
-        self.assertEqual(tx["base"], base)
-        gh.write_transaction(self.api, tx)
-        self.api.record(plan)
-        self.run_id += 1
-        self.fixture.write("unrelated-before-merge", "still not a new module candidate\n")
-        self.fixture.commit()
-        prep = self.api.prs[max(self.api.prs)]
-        merged = self.api.merge(prep["number"])
-        action = self.driver().plan()["action"]
-        self.assertEqual((action["kind"], action["module"], action["candidate"]), ("release", APP, merged))
 
-    def test_preparation_rejects_midflight_owning_policy_and_manifest_changes(self):
-        self.add_consumer()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        self.step()
-        prep = self.api.prs[max(self.api.prs)]
-        self.fixture.write("policy.md", "Unreviewed compatibility policy change\n")
-        self.fixture.commit()
-        self.api.merge(prep["number"])
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "fail")
-        self.assertIn("source/API/changelog", action["reason"])
-        # Even explicitly allowed filenames must retain the reviewed contents.
-        request = self.driver().requests(list(self.api.prs.values()))[0]
-        with self.assertRaises(gh.Error):
-            self.driver().preparations(list(self.api.prs.values()), request, APP)
+class WorkflowBoundary(unittest.TestCase):
+    def test_fixed_T_shared_serialization_and_static_credential_boundaries(self):
+        release = (HERE.parent / "workflows" / gh.WORKFLOW).read_text()
+        request = (HERE.parent / "workflows" / gh.REQUEST_WORKFLOW).read_text()
+        for value in (release, request):
+            self.assertIn("group: module-releases\n  cancel-in-progress: false", value)
+            self.assertNotIn("ref: refs/heads/main", value)
+            self.assertEqual(value.count("uses: actions/checkout@"), value.count("ref: ${{ github.sha }}"))
+            self.assertNotIn("permission-administration:", value)
+            self.assertNotIn("permission-workflows:", value)
+        proof = release.split("  proof:\n", 1)[1].split("  write:\n", 1)[0]
+        self.assertNotIn("secrets.", proof)
+        self.assertNotIn("environment: release", proof)
+        self.assertNotIn("MODULE_RELEASE_WRITE_TOKEN", proof)
+        writer = release.split("  write:\n", 1)[1].split("  continue:\n", 1)[0]
+        after_mint = writer.split("permission-pull-requests: write", 1)[1]
+        self.assertNotIn("execute --", after_mint)
+        self.assertIn("write --input", after_mint)
+        tag = release.split("  tag:\n", 1)[1].split("  continue:\n", 1)[0]
+        self.assertNotIn("permission-pull-requests: write", tag)
+        self.assertNotIn("execute --", tag)
+        self.assertIn("environment: release", tag)
+        self.assertIn("uses: ./.github/workflows/ci.yml", release)
+        self.assertIn("module-full-ci-${{ github.run_id }}-${{ github.run_attempt }}", release)
+        self.assertNotIn("is not wired", release)
+        self.assertNotIn("recover-ci", release)
+        self.assertNotIn("supersedes", request)
 
-    def test_old_waiting_run_cannot_hide_newer_failure_or_override_retry_chronology(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        old_run = self.run_id
-        wait = dict(schema=1, run=old_run, attempt=1, action=dict(kind="wait", reason="CI pending"))
-        self.api.record(wait, execute="skipped", write="skipped")
-        self.run_id += 1
-        failure = self.driver().plan()
-        self.api.record(failure, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        count = len(self.api.writes)
-        old = FixtureDriver(self.api, self.fixture.root, 70, 700, old_run)
-        self.assertEqual(old.plan()["action"]["kind"], "wait", "later run IDs cannot disappear")
-        with self.assertRaisesRegex(gh.Error, "reruns"):
-            FixtureDriver(self.api, self.fixture.root, 70, 700, old_run, 2).plan()
-        self.retry(number)
-        # A rerun of an OLD failed run happens after that accepted fresh retry.
-        # It must not sort before/revive the retry just because its run ID is old.
-        rerun = dict(failure, attempt=2)
-        self.api.record(rerun, success=False, execute="failure", write="skipped")
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        self.retry(number)
-        self.assertEqual(self.driver().plan()["action"]["candidate"], candidate)
-        self.assertEqual(len(self.api.writes), count)
-
-    def test_expired_scoped_history_does_not_block_independent_or_superseding_request(self):
-        self.fixture.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        self.fixture.commit()
-        old, _ = self.request({DEP: "v0.1.0"})
-        failure = self.driver().plan()
-        self.api.record(failure, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        other, _ = self.request({SUPPORT: "v0.1.0"})
-        # The old request's later attempt overlaps the new request's lifetime.
-        # Its durable job binding, not a global oldest-since window, scopes loss.
-        self.api.record(dict(failure, attempt=2), success=False, execute="failure", write="skipped")
-        for artifact in self.api.artifacts.values():
-            artifact["expired"] = True
-        self.assertEqual(self.driver().plan()["action"].get("request"), other)
-        same, _ = self.request({DEP: "v0.2.0"})
-        action = self.driver().plan()["action"]
-        self.assertNotEqual(action.get("request"), same, "overlap with uncertain batch must remain locked")
-        replacement, _ = self.request({DEP: "v0.3.0"}, [old, same, other])
-        self.assertEqual(self.driver().plan()["action"].get("request"), replacement)
-
-    def test_historical_workflow_revision_and_aged_successful_ci_remain_valid(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        plan = self.driver().plan()
-        self.api.record(plan, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        self.fixture.write(".github/workflows/" + gh.WORKFLOW, "# Later trusted main revision\n" + (HERE.parent / "workflows" / gh.WORKFLOW).read_text())
-        self.fixture.commit()
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        self.retry(number)
-        self.assertEqual(self.driver().plan()["action"]["kind"], "release")
-        ci = next(r for r in self.api.runs.values() if r["workflow_id"] == 10)
-        ci["created_at"] = "2020-01-01T00:00:00Z"
-        self.assertIsNone(self.driver().ci(candidate, dict(run=ci["id"], attempt=1)))
-
-    def test_cli_workflow_chain_fixed_intake_base_execution_write_and_continuation(self):
-        self.fixture.write(DEP + "/credentials_test.go", 'package ssefilter\nimport ("os"; "testing")\nfunc TestNoWriteCredentials(t *testing.T) { for _, key := range []string{"MODULE_RELEASE_WRITE_TOKEN", "RELEASE_APP_PRIVATE_KEY", "RELEASE_SETTINGS_TOKEN", "RELEASE_APP_JWT"} { if os.Getenv(key) != "" { t.Fatal("write credential exposed to candidate") } } }\n')
-        self.fixture.commit()
-        self.current(30)
-        code, request = self.cli("request-plan")
-        self.assertEqual(code, 0, request)
-        fixed = request["base"]
-        self.fixture.write("intake-main-advance", "unrelated\n")
-        self.fixture.commit()
-        code, sealed = self.cli("request-validate", request)
-        self.assertEqual(code, 0, sealed)
-        self.assertEqual(sealed["base"], fixed)
-        self.assertEqual(self.cli("write", sealed)[0], 0)
-        number = max(self.api.prs)
-        candidate = self.api.merge(number)
-        self.run_id += 1
-        self.current()
-        code, plan = self.cli("plan")
-        self.assertEqual(code, 0, plan)
-        code, result = self.cli("execute", plan)
-        self.assertEqual(code, 0, result)
-        self.api.current_jobs[self.run_id] = [dict(name=f"Execute request-{number}", conclusion="success")]
-        code, sealed = self.cli("validate-write", plan, result)
-        self.assertEqual(code, 0, sealed)
-        # Publish the file-proxy fixture between prevalidation and idempotent
-        # tag write; the write still checks exact immutable commit identity.
-        self.fixture.publish(DEP, "v0.1.0", candidate)
-        self.assertEqual(self.cli("write", sealed)[0], 0)
-        run_head = self.api.runs[self.run_id]["head_sha"]
-        self.fixture.write("continuation-main-advance", "unrelated\n")
-        tip = self.fixture.commit()
-        self.assertNotEqual(run_head, tip)
-        self.assertEqual(self.cli("continue", plan)[0], 0)
-        continuation = (HERE.parent / "workflows" / gh.WORKFLOW).read_text().split("  continue:\n", 1)[1]
-        self.assertIn("fetch-depth: 0", continuation)
-        self.api.record(plan)
-        self.run_id += 1
-        self.current()
-        code, proof_plan = self.cli("plan")
-        self.assertEqual(code, 0, proof_plan)
-        self.assertEqual(proof_plan["action"]["kind"], "prove")
-        code, proof = self.cli("execute", proof_plan)
-        self.assertEqual(code, 0, proof)
-        self.assertEqual(proof["stage"], "public-verified")
-
-    def test_cli_rejects_stale_attempt_nonwriter_and_nondispatch_retry_without_writes(self):
-        number, _ = self.request({DEP: "v0.1.0"})
-        self.current()
-        plan = self.driver().plan()
-        count = len(self.api.writes)
-        for command in ("plan", "execute", "validate-write", "write", "continue"):
-            code, error = self.cli(command, plan, GITHUB_RUN_ATTEMPT="2")
-            self.assertEqual(code, 1)
-            self.assertIn("stale run attempt", error)
-        self.assertEqual(self.cli("plan", RETRY_REQUEST=str(number), GITHUB_EVENT_NAME="workflow_run")[0], 1)
-        self.api.runs[self.run_id]["event"] = "workflow_run"
-        code, error = self.cli("plan", RETRY_REQUEST=str(number), GITHUB_EVENT_NAME="workflow_run")
-        self.assertEqual(code, 1)
-        self.assertIn("retry requires human dispatch", error)
-        self.api.runs[self.run_id]["event"] = "workflow_dispatch"
-        self.api.permissions[HUMAN["login"]] = "read"
-        self.assertEqual(self.cli("plan", RETRY_REQUEST=str(number))[0], 1)
-        self.current(30)
-        self.assertEqual(self.cli("request-plan")[0], 1)
-        self.api.permissions[HUMAN["login"]] = "write"
-        code, request = self.cli("request-plan")
-        self.assertEqual(code, 0, request)
-        self.api.permissions[HUMAN["login"]] = "read"
-        self.assertEqual(self.cli("request-validate", request)[0], 1)
-        self.assertEqual(len(self.api.writes), count)
-
-    def test_three_intake_dispatches_survive_without_replaceable_pending_inputs(self):
-        workflow = (HERE.parent / "workflows" / gh.REQUEST_WORKFLOW).read_text()
-        self.assertIn("group: module-release-request-${{ github.run_id }}", workflow)
-        pending = []
-        for version in ("v0.1.0", "v0.2.0", "v0.3.0"):
-            self.current(30)
-            env = dict(MODULE_BATCH=gh.canonical({DEP: version}))
-            code, tx = self.cli("request-plan", **env)
-            self.assertEqual(code, 0, tx)
-            pending.append((self.run_id, env, tx))
-            self.run_id += 1
-        self.fixture.write("main-advances-with-three-intakes", "unrelated\n")
-        self.fixture.commit()
-        for run_id, env, tx in pending:
-            self.run_id = run_id
-            code, sealed = self.cli("request-validate", tx, **env)
-            self.assertEqual(code, 0, sealed)
-            self.assertEqual(self.cli("write", sealed)[0], 0)
-        self.assertEqual(len(self.api.prs), 3)
-        maps = [gh.document(next(iter(tx["files"].values())))["batch"] for _, _, tx in pending]
-        self.assertEqual(maps, [{DEP: "v0.1.0"}, {DEP: "v0.2.0"}, {DEP: "v0.3.0"}])
-
-    def test_cli_preparation_chain_and_midflight_reviewed_manifest_guard(self):
-        self.add_consumer()
-        self.request({APP: "v0.1.0", DEP: "v0.2.0"})
-        self.step()
-        self.step()
-        self.current()
-        code, plan = self.cli("plan")
-        self.assertEqual(code, 0, plan)
-        self.assertEqual(plan["action"]["kind"], "prepare")
-        code, result = self.cli("execute", plan)
-        self.assertEqual(code, 0, result)
-        self.fixture.write("main-moves-during-tidy", "unrelated\n")
-        self.fixture.commit()
-        self.api.current_jobs[self.run_id] = [dict(name=f"Execute request-{plan['action']['request']}", conclusion="success")]
-        code, sealed = self.cli("validate-write", plan, result)
-        self.assertEqual(code, 0, sealed)
-        self.assertEqual(self.cli("write", sealed)[0], 0)
-        self.api.record(plan)
-        self.run_id += 1
-        prep = self.api.prs[max(self.api.prs)]
-        self.api.merge(prep["number"])
-        # Model a merge conflict resolution that adds an unreviewed requirement.
-        mod = self.fixture.root / APP / "go.mod"
-        self.fixture.write(APP + "/go.mod", mod.read_text() + "\nrequire example.com/unreviewed v1.0.0\n")
-        merged = self.fixture.commit()
-        prep["merge_commit_sha"] = merged
-        self.api.links[merged] = [prep["number"]]
-        self.api.ci(merged)
-        count = len(self.api.writes)
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "fail")
-        self.assertIn("merged manifests differ", action["reason"])
-        self.assertEqual(len(self.api.writes), count)
-
-    def test_completed_batch_expired_or_missing_artifact_is_scoped_not_tag_success(self):
-        self.fixture.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        self.fixture.commit()
-        old, _ = self.request({DEP: "v0.1.0"})
-        self.step()
-        self.step()
-        other, _ = self.request({SUPPORT: "v0.1.0"})
-        saved = copy.deepcopy(self.api.artifacts)
-        for missing in (False, True):
-            self.api.artifacts = copy.deepcopy(saved)
-            if missing:
-                self.api.artifacts.clear()
-            else:
-                for artifact in self.api.artifacts.values():
-                    artifact["expired"] = True
-            action = self.driver().plan()["action"]
-            self.assertEqual((action["kind"], action["request"]), ("release", other))
-            requests = self.driver().requests(list(self.api.prs.values()))
-            uncertain = [r for r in self.driver().history(requests) if r["action"]["kind"] == "uncertain"]
-            self.assertEqual({r["action"]["request"] for r in uncertain}, {old})
-        # Unknown historical schemas likewise affect only their bound request.
-        self.api.artifacts = saved
-        first = next(iter(self.api.artifacts.values()))
-        with zipfile.ZipFile(io.BytesIO(first["_zip"])) as archive:
-            plan = gh.document(archive.read("plan.json"))
-        plan["schema"] = 999
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("plan.json", gh.canonical(plan))
-        first["_zip"] = buffer.getvalue()
-        self.assertEqual(self.driver().plan()["action"].get("request"), other)
-
-    def test_retry_rerun_cannot_override_newer_failure_or_disable_fresh_retry(self):
-        number, _ = self.request({DEP: "v0.1.0"})
-        failed = self.driver().plan()
-        self.api.record(failed, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        retry = self.retry(number)
-        later = self.driver().plan()
-        self.api.record(later, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        self.api.record(dict(retry, attempt=2), execute="skipped", write="skipped")
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        self.retry(number)
-        self.assertEqual(self.driver().plan()["action"]["kind"], "release")
-
-    def test_request_candidate_rejects_midflight_module_source_not_unrelated_main(self):
-        self.current(30)
-        code, tx = self.cli("request-plan")
-        self.assertEqual(code, 0, tx)
-        self.fixture.write(DEP + "/new.go", "package ssefilter\nfunc NotInPreview() {}\n")
-        self.fixture.commit()
-        code, sealed = self.cli("request-validate", tx)
-        self.assertEqual(code, 0, f"prevalidation must preserve the planned base, not chase main: {sealed}")
-        self.assertEqual(self.cli("write", sealed)[0], 0)
-        self.api.merge(max(self.api.prs))
-        self.run_id += 1
-        action = self.driver().plan()["action"]
-        self.assertEqual(action["kind"], "fail")
-        self.assertIn("changed after reviewed request base", action["reason"])
-        self.assertEqual(git(self.fixture.root, "tag", "--list"), "")
-
-    def test_deleted_whole_run_cannot_erase_failure_or_poison_later_reviewed_intent(self):
-        self.fixture.add_module(SUPPORT, "package adaptersupport\n", role="support")
-        self.fixture.commit()
-        old, _ = self.request({DEP: "v0.1.0"})
-        failure = self.driver().plan()
-        self.api.record(failure, success=False, execute="failure", write="skipped")
-        self.api.runs.pop(failure["run"])
-        self.api.attempts.clear()
-        self.api.artifacts.clear()
-        self.run_id += 1
-        self.current()
-        count = len(self.api.writes)
-        code, boundary = self.cli("plan")
-        self.assertEqual(code, 0, boundary)
-        self.assertEqual(boundary["action"]["kind"], "wait", "deleted failure cannot silently retry")
-        self.assertEqual(len(self.api.writes), count)
-        self.api.record(boundary, execute="skipped", write="skipped")
-        self.run_id += 1
-        newer, _ = self.request({SUPPORT: "v0.1.0"})
-        intake_count = len(self.api.writes)
-        self.current()
-        code, plan = self.cli("plan")
-        self.assertEqual(code, 0, plan)
-        self.assertEqual((plan["action"]["kind"], plan["action"]["request"]), ("release", newer))
-        self.assertNotEqual(plan["action"]["request"], old)
-        self.assertEqual(len(self.api.writes), intake_count, "only the explicit new intake may write")
-
-    def test_other_branch_run_numbers_count_without_release_authority(self):
-        number, candidate = self.request({DEP: "v0.1.0"})
-        branch = self.api.run(900, candidate)
-        branch.update(head_branch="feature", _jobs=[])
-        self.api.runs[900] = branch
-        self.current()
-        code, plan = self.cli("plan")
-        self.assertEqual(code, 0, plan)
-        self.assertEqual((plan["action"]["kind"], plan["action"]["request"]), ("release", number))
-
-    def test_queued_retry_intent_does_not_authorize_a_later_failure(self):
-        number, _ = self.request({DEP: "v0.1.0"})
-        failed = self.driver().plan()
-        self.api.record(failed, success=False, execute="failure", write="skipped")
-        self.run_id += 1
-        queued = self.driver().plan(number, HUMAN)
-        intent = self.api.tick()
-        self.run_id += 1
-        newer_failure = dict(failed, run=self.run_id)
-        self.api.record(newer_failure, success=False, execute="failure", write="skipped")
-        self.api.record(queued, execute="skipped", write="skipped")
-        self.api.attempts[(queued["run"], 1)]["created_at"] = intent
-        self.api.runs[queued["run"]]["created_at"] = intent
-        self.run_id += 1
-        self.assertEqual(self.driver().plan()["action"]["kind"], "wait")
-        # Attempt job timestamps, not a mutable run-wide updated_at, bound the
-        # completed failure. A genuinely fresh human dispatch may now resume.
-        attempt = self.api.attempts[(newer_failure["run"], 1)]
-        for job in attempt["_jobs"]:
-            job.update(started_at=attempt["run_started_at"], completed_at=attempt["updated_at"])
-        attempt["updated_at"] = "2099-01-01T00:00:00Z"
-        self.retry(number)
-        self.assertEqual(self.driver().plan()["action"]["kind"], "release")
-
-    def test_gate_defaults_off_and_missing_protection_checker_denies(self):
-        with mock.patch.dict(gh.os.environ, {}, clear=True), self.assertRaisesRegex(gh.Error, "disabled"):
-            gh.protection_check(self.api.repository, 70, 700)
-        # Task 5 supplies this fixed interface; absence is intentionally closed.
-        with mock.patch.dict(gh.os.environ, MODULE_RELEASES_ENABLED="true"), mock.patch.object(gh.subprocess, "run") as run:
-            run.return_value = subprocess.CompletedProcess([], 0, gh.canonical(dict(schema=1, repository=self.api.repository, app_id=70, bot_id=700, protected=True)), "")
-            with mock.patch.object(Path, "is_file", return_value=True):
-                gh.protection_check(self.api.repository, 70, 700)
-            self.assertEqual(run.call_args.args[0][2:4], ["check", "--repository"])
+    def test_merge_bridge_is_metadata_only_and_main_dispatch(self):
+        bridge = (HERE.parent / "workflows/module-release-wakeup.yml").read_text()
+        self.assertIn("pull_request_target:", bridge)
+        self.assertNotIn("checkout", bridge.split("jobs:", 1)[1])
+        self.assertNotIn("secrets.", bridge)
+        self.assertIn("--ref main", bridge)
+        self.assertNotIn("github.event.pull_request.head", bridge)
 
 
 if __name__ == "__main__":
-    # Exercise the actual planner/authority API with cheap histories, leaving
-    # qualification, public proofs and generated tidy PRs to integration tests.
     quick = "--quick" in sys.argv
     if quick:
         sys.argv.remove("--quick")
-    unittest.main(defaultTest=["GitHubTransitions." + name for name in (
-        "test_request_authority_rejects_wrong_app_fork_bot_merge_unlinked_and_changed_bytes",
-        "test_ci_identity_mismatches_expiry_and_safe_original_rerun",
-        "test_no_silent_new_tip_and_immutable_tag_conflict",
-        "test_closed_request_is_not_authority_and_exact_mapping_no_expansion",
-        "test_cli_executes_discovery_with_injected_github_api",
-        "test_whole_batch_shared_validation_precedes_even_independent_publication",
-        "test_failed_transition_waits_for_explicit_human_retry_without_writes",
-        "test_old_waiting_run_cannot_hide_newer_failure_or_override_retry_chronology",
-        "test_expired_scoped_history_does_not_block_independent_or_superseding_request",
-        "test_historical_workflow_revision_and_aged_successful_ci_remain_valid",
-        "test_cli_rejects_stale_attempt_nonwriter_and_nondispatch_retry_without_writes",
-        "test_three_intake_dispatches_survive_without_replaceable_pending_inputs",
-        "test_request_candidate_rejects_midflight_module_source_not_unrelated_main",
-        "test_retry_rerun_cannot_override_newer_failure_or_disable_fresh_retry",
-        "test_deleted_whole_run_cannot_erase_failure_or_poison_later_reviewed_intent",
-        "test_other_branch_run_numbers_count_without_release_authority",
-        "test_queued_retry_intent_does_not_authorize_a_later_failure",
-        "test_gate_defaults_off_and_missing_protection_checker_denies",
-    )] if quick else None)
+    unittest.main(defaultTest=["WorkflowBoundary", "Controller.test_durable_reservation_precedes_all_branches_and_intake_rejects_active",
+                               "Controller.test_logical_freeze_revalidated_immediately_before_every_write",
+                               "Controller.test_full_CI_receipt_requires_server_jobs_and_exact_binding",
+                               "Controller.test_concurrent_stale_intakes_only_one_atomic_reservation_wins"] if quick else None)

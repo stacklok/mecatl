@@ -6,7 +6,7 @@ namespaces, and verification metadata to the module membership in
 [`go.work`](../../go.work). Dependency relationships come from each module's
 `go.mod`; exact release versions come from the requested batch.
 
-Use the contributor [module release procedure](../../docs/module-development.md#4-merge-and-release-dependencies-first)
+Use the contributor [module release procedure](../../docs/module-development.md#4-prepare-publish-and-adopt-a-coordinated-batch)
 for preview, request, publication, and recovery.
 
 ## Format
@@ -55,10 +55,11 @@ entries: the protection checker collects every entry containing `tag_prefix`.
   checks; public proof exercises the selected consumer fixture against the exact
   downloaded version. Engine qualification also runs its existing API freshness
   gate. Unknown workspace members and stale policy entries fail validation.
-- [`module-release-github.py`](module-release-github.py) uses that validation for
-  reviewed requests and release transitions. It includes the owning policy,
-  changelog, and API paths when detecting relevant source changes that need human
-  review.
+- [`module-release-github.py`](module-release-github.py) reserves one schema-2
+  batch, creates the two PR lifecycle, binds the fixed PR1 merge `R`, and
+  revalidates trusted-main controller identity `T` before protected writes. It
+  includes the owning policy, changelog, and API paths when detecting relevant
+  source changes that need human review.
 - [`module-release-protection.py`](module-release-protection.py) derives protected
   Go tag patterns from `tag_prefix`, alongside separate application and SDK
   patterns. Policy changes can therefore require live protection changes.
