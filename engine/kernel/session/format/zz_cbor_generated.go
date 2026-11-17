@@ -1798,7 +1798,7 @@ func (v ToolInvocation) Clone() ToolInvocation { return (dtogen{}).clone113(v) }
 func (v ToolInvocation) Equal(other ToolInvocation) bool { return (dtogen{}).equal113(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UserInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v Usage) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1809,10 +1809,10 @@ func (v UserInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UserInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append116(dst, v) }
+func (v Usage) AppendCBOR(dst []byte) []byte { return (dtogen{}).append116(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *Usage) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1828,13 +1828,13 @@ func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UserInput) Clone() UserInput { return (dtogen{}).clone116(v) }
+func (v Usage) Clone() Usage { return (dtogen{}).clone116(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UserInput) Equal(other UserInput) bool { return (dtogen{}).equal116(v, other) }
+func (v Usage) Equal(other Usage) bool { return (dtogen{}).equal116(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UserInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v UsageDefinition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1845,10 +1845,10 @@ func (v UserInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) 
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UserInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append118(dst, v) }
+func (v UsageDefinition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append118(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *UsageDefinition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1864,10 +1864,412 @@ func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UserInstructions) Clone() UserInstructions { return (dtogen{}).clone118(v) }
+func (v UsageDefinition) Clone() UsageDefinition { return (dtogen{}).clone118(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UserInstructions) Equal(other UserInstructions) bool { return (dtogen{}).equal118(v, other) }
+func (v UsageDefinition) Equal(other UsageDefinition) bool { return (dtogen{}).equal118(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageGranularity) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check119(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageGranularity) AppendCBOR(dst []byte) []byte { return (dtogen{}).append119(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageGranularity) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read119(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageGranularity) Clone() UsageGranularity { return (dtogen{}).clone119(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageGranularity) Equal(other UsageGranularity) bool { return (dtogen{}).equal119(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageReport) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check122(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageReport) AppendCBOR(dst []byte) []byte { return (dtogen{}).append122(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageReport) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read122(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageReport) Clone() UsageReport { return (dtogen{}).clone122(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageReport) Equal(other UsageReport) bool { return (dtogen{}).equal122(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageReportState) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check123(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageReportState) AppendCBOR(dst []byte) []byte { return (dtogen{}).append123(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageReportState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read123(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageReportState) Clone() UsageReportState { return (dtogen{}).clone123(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageReportState) Equal(other UsageReportState) bool { return (dtogen{}).equal123(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageBucket) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check125(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageBucket) AppendCBOR(dst []byte) []byte { return (dtogen{}).append125(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageBucket) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read125(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageBucket) Clone() UsageBucket { return (dtogen{}).clone125(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageBucket) Equal(other UsageBucket) bool { return (dtogen{}).equal125(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageAttribution) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check126(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageAttribution) AppendCBOR(dst []byte) []byte { return (dtogen{}).append126(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageAttribution) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read126(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageAttribution) Clone() UsageAttribution { return (dtogen{}).clone126(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageAttribution) Equal(other UsageAttribution) bool { return (dtogen{}).equal126(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageSelectedIdentity) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check128(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageSelectedIdentity) AppendCBOR(dst []byte) []byte { return (dtogen{}).append128(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageSelectedIdentity) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read128(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageSelectedIdentity) Clone() UsageSelectedIdentity { return (dtogen{}).clone128(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageSelectedIdentity) Equal(other UsageSelectedIdentity) bool {
+	return (dtogen{}).equal128(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageObservedIdentity) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check132(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageObservedIdentity) AppendCBOR(dst []byte) []byte { return (dtogen{}).append132(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageObservedIdentity) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read132(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageObservedIdentity) Clone() UsageObservedIdentity { return (dtogen{}).clone132(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageObservedIdentity) Equal(other UsageObservedIdentity) bool {
+	return (dtogen{}).equal132(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageChargingService) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check136(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageChargingService) AppendCBOR(dst []byte) []byte { return (dtogen{}).append136(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageChargingService) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read136(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageChargingService) Clone() UsageChargingService { return (dtogen{}).clone136(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageChargingService) Equal(other UsageChargingService) bool {
+	return (dtogen{}).equal136(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageCounters) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check137(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UsageCounters) AppendCBOR(dst []byte) []byte { return (dtogen{}).append137(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UsageCounters) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read137(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UsageCounters) Clone() UsageCounters { return (dtogen{}).clone137(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UsageCounters) Equal(other UsageCounters) bool { return (dtogen{}).equal137(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UserInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check144(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UserInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append144(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read144(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UserInput) Clone() UserInput { return (dtogen{}).clone144(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UserInput) Equal(other UserInput) bool { return (dtogen{}).equal144(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UserInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check146(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v UserInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append146(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read146(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v UserInstructions) Clone() UserInstructions { return (dtogen{}).clone146(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v UserInstructions) Equal(other UserInstructions) bool { return (dtogen{}).equal146(v, other) }
 
 // Helpers 0: CaptureFailureEvidence.
 func (h dtogen) clone0(v CaptureFailureEvidence) CaptureFailureEvidence {
@@ -9339,27 +9741,1774 @@ func (h dtogen) read115(r *dtogenCodec.Reader, d, cap int) (v []uint64, err erro
 	return v, nil
 }
 
-// Helpers 116: UserInput.
-func (h dtogen) clone116(v UserInput) UserInput {
+// Helpers 116: Usage.
+func (h dtogen) clone116(v Usage) Usage {
+	out := v
+	out.ID = h.clone1(v.ID)
+	out.Definition = h.clone117(v.Definition)
+	out.Report = h.clone122(v.Report)
+	return out
+}
+func (h dtogen) equal116(v, w Usage) bool {
+	if !h.equal1(v.ID, w.ID) {
+		return false
+	}
+	if !h.equal117(v.Definition, w.Definition) {
+		return false
+	}
+	if !h.equal122(v.Report, w.Report) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check116(v Usage, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 2
+	if v.Definition != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Definition != nil {
+		if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Definition: %w", err)
+		}
+		if err := h.check117(v.Definition, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Definition: %w", err)
+		}
+	}
+	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("ID: %w", err)
+	}
+	if err := h.check1(v.ID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("ID: %w", err)
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Report: %w", err)
+	}
+	if err := h.check122(v.Report, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Report: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append116(out []byte, v Usage) []byte {
+	count := 2
+	if v.Definition != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Definition != nil {
+		out = dtogenCBOR.AppendText(out, "d")
+		out = h.append117(out, v.Definition)
+	}
+	out = dtogenCBOR.AppendText(out, "o")
+	out = h.append1(out, v.ID)
+	out = dtogenCBOR.AppendText(out, "r")
+	out = h.append122(out, v.Report)
+	return out
+}
+func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "d":
+			seen[0] = true
+			v.Definition, err = h.read117(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Definition: %w", err)
+			}
+		case "o":
+			seen[1] = true
+			v.ID, err = h.read1(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("ID: %w", err)
+			}
+		case "r":
+			seen[2] = true
+			v.Report, err = h.read122(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Report: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 117: *UsageDefinition.
+func (h dtogen) clone117(v *UsageDefinition) *UsageDefinition {
+	if v == nil {
+		return nil
+	}
+	x := h.clone118(*v)
+	return (*UsageDefinition)(&x)
+}
+func (h dtogen) equal117(v, w *UsageDefinition) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal118(*v, *w)
+}
+func (h dtogen) check117(v *UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check118(*v, b, d, cap)
+}
+func (h dtogen) append117(out []byte, v *UsageDefinition) []byte {
+	return h.append118(out, *v)
+}
+func (h dtogen) read117(r *dtogenCodec.Reader, d, cap int) (v *UsageDefinition, err error) {
+	x, err := h.read118(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*UsageDefinition)(&x), nil
+}
+
+// Helpers 118: UsageDefinition.
+func (h dtogen) clone118(v UsageDefinition) UsageDefinition {
+	out := v
+	out.Purpose = h.clone5(v.Purpose)
+	out.Granularity = h.clone119(v.Granularity)
+	out.RunID = h.clone120(v.RunID)
+	out.RequestID = h.clone121(v.RequestID)
+	return out
+}
+func (h dtogen) equal118(v, w UsageDefinition) bool {
+	if !h.equal5(v.Purpose, w.Purpose) {
+		return false
+	}
+	if !h.equal119(v.Granularity, w.Granularity) {
+		return false
+	}
+	if !h.equal120(v.RunID, w.RunID) {
+		return false
+	}
+	if !h.equal121(v.RequestID, w.RequestID) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check118(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 2
+	if v.RequestID != nil {
+		count++
+	}
+	if v.RunID != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("g", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Granularity: %w", err)
+	}
+	if err := h.check119(v.Granularity, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Granularity: %w", err)
+	}
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Purpose: %w", err)
+	}
+	if err := h.check5(v.Purpose, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Purpose: %w", err)
+	}
+	if v.RequestID != nil {
+		if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("RequestID: %w", err)
+		}
+		if err := h.check121(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("RequestID: %w", err)
+		}
+	}
+	if v.RunID != nil {
+		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("RunID: %w", err)
+		}
+		if err := h.check120(v.RunID, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("RunID: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append118(out []byte, v UsageDefinition) []byte {
+	count := 2
+	if v.RequestID != nil {
+		count++
+	}
+	if v.RunID != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	out = dtogenCBOR.AppendText(out, "g")
+	out = h.append119(out, v.Granularity)
+	out = dtogenCBOR.AppendText(out, "p")
+	out = h.append5(out, v.Purpose)
+	if v.RequestID != nil {
+		out = dtogenCBOR.AppendText(out, "q")
+		out = h.append121(out, v.RequestID)
+	}
+	if v.RunID != nil {
+		out = dtogenCBOR.AppendText(out, "r")
+		out = h.append120(out, v.RunID)
+	}
+	return out
+}
+func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [4]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "g":
+			seen[0] = true
+			v.Granularity, err = h.read119(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Granularity: %w", err)
+			}
+		case "p":
+			seen[1] = true
+			v.Purpose, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Purpose: %w", err)
+			}
+		case "q":
+			seen[2] = true
+			v.RequestID, err = h.read121(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("RequestID: %w", err)
+			}
+		case "r":
+			seen[3] = true
+			v.RunID, err = h.read120(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("RunID: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 119: UsageGranularity.
+func (h dtogen) clone119(v UsageGranularity) UsageGranularity {
+	return v
+}
+func (h dtogen) equal119(v, w UsageGranularity) bool {
+	return v == w
+}
+func (h dtogen) check119(v UsageGranularity, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckString(string(v), d, cap)
+}
+func (h dtogen) append119(out []byte, v UsageGranularity) []byte {
+	return dtogenCodec.AppendString(out, string(v))
+}
+func (h dtogen) read119(r *dtogenCodec.Reader, d, cap int) (v UsageGranularity, err error) {
+	x, err := r.String(d, cap)
+	if err != nil {
+		return v, err
+	}
+	return UsageGranularity(x), nil
+}
+
+// Helpers 120: *uint64.
+func (h dtogen) clone120(v *uint64) *uint64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone1(*v)
+	return (*uint64)(&x)
+}
+func (h dtogen) equal120(v, w *uint64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal1(*v, *w)
+}
+func (h dtogen) check120(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check1(*v, b, d, cap)
+}
+func (h dtogen) append120(out []byte, v *uint64) []byte {
+	return h.append1(out, *v)
+}
+func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+	x, err := h.read1(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*uint64)(&x), nil
+}
+
+// Helpers 121: *uint64.
+func (h dtogen) clone121(v *uint64) *uint64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone1(*v)
+	return (*uint64)(&x)
+}
+func (h dtogen) equal121(v, w *uint64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal1(*v, *w)
+}
+func (h dtogen) check121(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check1(*v, b, d, cap)
+}
+func (h dtogen) append121(out []byte, v *uint64) []byte {
+	return h.append1(out, *v)
+}
+func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+	x, err := h.read1(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*uint64)(&x), nil
+}
+
+// Helpers 122: UsageReport.
+func (h dtogen) clone122(v UsageReport) UsageReport {
+	out := v
+	out.State = h.clone123(v.State)
+	out.Buckets = h.clone124(v.Buckets)
+	out.Raw = h.clone143(v.Raw)
+	return out
+}
+func (h dtogen) equal122(v, w UsageReport) bool {
+	if !h.equal123(v.State, w.State) {
+		return false
+	}
+	if !h.equal124(v.Buckets, w.Buckets) {
+		return false
+	}
+	if !h.equal143(v.Raw, w.Raw) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check122(v UsageReport, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 2
+	if v.Raw != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Buckets: %w", err)
+	}
+	if err := h.check124(v.Buckets, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Buckets: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("State: %w", err)
+	}
+	if err := h.check123(v.State, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("State: %w", err)
+	}
+	if v.Raw != nil {
+		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Raw: %w", err)
+		}
+		if err := h.check143(v.Raw, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Raw: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append122(out []byte, v UsageReport) []byte {
+	count := 2
+	if v.Raw != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	out = dtogenCBOR.AppendText(out, "b")
+	out = h.append124(out, v.Buckets)
+	out = dtogenCBOR.AppendText(out, "s")
+	out = h.append123(out, v.State)
+	if v.Raw != nil {
+		out = dtogenCBOR.AppendText(out, "x")
+		out = h.append143(out, v.Raw)
+	}
+	return out
+}
+func (h dtogen) read122(r *dtogenCodec.Reader, d, cap int) (v UsageReport, err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "b":
+			seen[0] = true
+			v.Buckets, err = h.read124(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Buckets: %w", err)
+			}
+		case "s":
+			seen[1] = true
+			v.State, err = h.read123(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("State: %w", err)
+			}
+		case "x":
+			seen[2] = true
+			v.Raw, err = h.read143(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Raw: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 123: UsageReportState.
+func (h dtogen) clone123(v UsageReportState) UsageReportState {
+	return v
+}
+func (h dtogen) equal123(v, w UsageReportState) bool {
+	return v == w
+}
+func (h dtogen) check123(v UsageReportState, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckString(string(v), d, cap)
+}
+func (h dtogen) append123(out []byte, v UsageReportState) []byte {
+	return dtogenCodec.AppendString(out, string(v))
+}
+func (h dtogen) read123(r *dtogenCodec.Reader, d, cap int) (v UsageReportState, err error) {
+	x, err := r.String(d, cap)
+	if err != nil {
+		return v, err
+	}
+	return UsageReportState(x), nil
+}
+
+// Helpers 124: []UsageBucket.
+func (h dtogen) clone124(v []UsageBucket) []UsageBucket {
+	if v == nil {
+		return nil
+	}
+	out := make([]UsageBucket, len(v))
+	for i := range v {
+		out[i] = h.clone125(v[i])
+	}
+	return out
+}
+func (h dtogen) equal124(v, w []UsageBucket) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal125(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h dtogen) check124(v []UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if err := b.CheckArray(len(v), d, cap); err != nil {
+		return err
+	}
+	for i, x := range v {
+		if err := h.check125(x, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append124(out []byte, v []UsageBucket) []byte {
+	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = h.append125(out, x)
+	}
+	return out
+}
+func (h dtogen) read124(r *dtogenCodec.Reader, d, cap int) (v []UsageBucket, err error) {
+	count, err := r.Array(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]UsageBucket, count)
+	for i := range v {
+		v[i], err = h.read125(r, d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, dtogenFmt.Errorf("index %d: %w", i, err)
+		}
+	}
+	return v, nil
+}
+
+// Helpers 125: UsageBucket.
+func (h dtogen) clone125(v UsageBucket) UsageBucket {
+	out := v
+	out.Attribution = h.clone126(v.Attribution)
+	out.Counters = h.clone137(v.Counters)
+	return out
+}
+func (h dtogen) equal125(v, w UsageBucket) bool {
+	if !h.equal126(v.Attribution, w.Attribution) {
+		return false
+	}
+	if !h.equal137(v.Counters, w.Counters) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check125(v UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
+	count := 2
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Attribution: %w", err)
+	}
+	if err := h.check126(v.Attribution, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Attribution: %w", err)
+	}
+	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Counters: %w", err)
+	}
+	if err := h.check137(v.Counters, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Counters: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append125(out []byte, v UsageBucket) []byte {
+	count := 2
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	out = dtogenCBOR.AppendText(out, "a")
+	out = h.append126(out, v.Attribution)
+	out = dtogenCBOR.AppendText(out, "c")
+	out = h.append137(out, v.Counters)
+	return out
+}
+func (h dtogen) read125(r *dtogenCodec.Reader, d, cap int) (v UsageBucket, err error) {
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [2]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "a":
+			seen[0] = true
+			v.Attribution, err = h.read126(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Attribution: %w", err)
+			}
+		case "c":
+			seen[1] = true
+			v.Counters, err = h.read137(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Counters: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 126: UsageAttribution.
+func (h dtogen) clone126(v UsageAttribution) UsageAttribution {
+	out := v
+	out.Selected = h.clone127(v.Selected)
+	out.Observed = h.clone131(v.Observed)
+	out.Charging = h.clone135(v.Charging)
+	return out
+}
+func (h dtogen) equal126(v, w UsageAttribution) bool {
+	if !h.equal127(v.Selected, w.Selected) {
+		return false
+	}
+	if !h.equal131(v.Observed, w.Observed) {
+		return false
+	}
+	if !h.equal135(v.Charging, w.Charging) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check126(v UsageAttribution, b *dtogenCodec.Budget, d, cap int) (err error) {
+	count := 0
+	if v.Charging != nil {
+		count++
+	}
+	if v.Observed != nil {
+		count++
+	}
+	if v.Selected != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Charging != nil {
+		if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Charging: %w", err)
+		}
+		if err := h.check135(v.Charging, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Charging: %w", err)
+		}
+	}
+	if v.Observed != nil {
+		if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Observed: %w", err)
+		}
+		if err := h.check131(v.Observed, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Observed: %w", err)
+		}
+	}
+	if v.Selected != nil {
+		if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Selected: %w", err)
+		}
+		if err := h.check127(v.Selected, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Selected: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append126(out []byte, v UsageAttribution) []byte {
+	count := 0
+	if v.Charging != nil {
+		count++
+	}
+	if v.Observed != nil {
+		count++
+	}
+	if v.Selected != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Charging != nil {
+		out = dtogenCBOR.AppendText(out, "c")
+		out = h.append135(out, v.Charging)
+	}
+	if v.Observed != nil {
+		out = dtogenCBOR.AppendText(out, "o")
+		out = h.append131(out, v.Observed)
+	}
+	if v.Selected != nil {
+		out = dtogenCBOR.AppendText(out, "s")
+		out = h.append127(out, v.Selected)
+	}
+	return out
+}
+func (h dtogen) read126(r *dtogenCodec.Reader, d, cap int) (v UsageAttribution, err error) {
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "c":
+			seen[0] = true
+			v.Charging, err = h.read135(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Charging: %w", err)
+			}
+		case "o":
+			seen[1] = true
+			v.Observed, err = h.read131(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Observed: %w", err)
+			}
+		case "s":
+			seen[2] = true
+			v.Selected, err = h.read127(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Selected: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	return v, nil
+}
+
+// Helpers 127: *UsageSelectedIdentity.
+func (h dtogen) clone127(v *UsageSelectedIdentity) *UsageSelectedIdentity {
+	if v == nil {
+		return nil
+	}
+	x := h.clone128(*v)
+	return (*UsageSelectedIdentity)(&x)
+}
+func (h dtogen) equal127(v, w *UsageSelectedIdentity) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal128(*v, *w)
+}
+func (h dtogen) check127(v *UsageSelectedIdentity, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check128(*v, b, d, cap)
+}
+func (h dtogen) append127(out []byte, v *UsageSelectedIdentity) []byte {
+	return h.append128(out, *v)
+}
+func (h dtogen) read127(r *dtogenCodec.Reader, d, cap int) (v *UsageSelectedIdentity, err error) {
+	x, err := h.read128(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*UsageSelectedIdentity)(&x), nil
+}
+
+// Helpers 128: UsageSelectedIdentity.
+func (h dtogen) clone128(v UsageSelectedIdentity) UsageSelectedIdentity {
+	out := v
+	out.Provider = h.clone129(v.Provider)
+	out.Model = h.clone130(v.Model)
+	return out
+}
+func (h dtogen) equal128(v, w UsageSelectedIdentity) bool {
+	if !h.equal129(v.Provider, w.Provider) {
+		return false
+	}
+	if !h.equal130(v.Model, w.Model) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check128(v UsageSelectedIdentity, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 0
+	if v.Model != nil {
+		count++
+	}
+	if v.Provider != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Model != nil {
+		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Model: %w", err)
+		}
+		if err := h.check130(v.Model, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Model: %w", err)
+		}
+	}
+	if v.Provider != nil {
+		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Provider: %w", err)
+		}
+		if err := h.check129(v.Provider, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Provider: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append128(out []byte, v UsageSelectedIdentity) []byte {
+	count := 0
+	if v.Model != nil {
+		count++
+	}
+	if v.Provider != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Model != nil {
+		out = dtogenCBOR.AppendText(out, "m")
+		out = h.append130(out, v.Model)
+	}
+	if v.Provider != nil {
+		out = dtogenCBOR.AppendText(out, "p")
+		out = h.append129(out, v.Provider)
+	}
+	return out
+}
+func (h dtogen) read128(r *dtogenCodec.Reader, d, cap int) (v UsageSelectedIdentity, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [2]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "m":
+			seen[0] = true
+			v.Model, err = h.read130(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Model: %w", err)
+			}
+		case "p":
+			seen[1] = true
+			v.Provider, err = h.read129(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Provider: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	return v, nil
+}
+
+// Helpers 129: *string.
+func (h dtogen) clone129(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal129(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check129(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append129(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read129(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 130: *string.
+func (h dtogen) clone130(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal130(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check130(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append130(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read130(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 131: *UsageObservedIdentity.
+func (h dtogen) clone131(v *UsageObservedIdentity) *UsageObservedIdentity {
+	if v == nil {
+		return nil
+	}
+	x := h.clone132(*v)
+	return (*UsageObservedIdentity)(&x)
+}
+func (h dtogen) equal131(v, w *UsageObservedIdentity) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal132(*v, *w)
+}
+func (h dtogen) check131(v *UsageObservedIdentity, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check132(*v, b, d, cap)
+}
+func (h dtogen) append131(out []byte, v *UsageObservedIdentity) []byte {
+	return h.append132(out, *v)
+}
+func (h dtogen) read131(r *dtogenCodec.Reader, d, cap int) (v *UsageObservedIdentity, err error) {
+	x, err := h.read132(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*UsageObservedIdentity)(&x), nil
+}
+
+// Helpers 132: UsageObservedIdentity.
+func (h dtogen) clone132(v UsageObservedIdentity) UsageObservedIdentity {
+	out := v
+	out.Provider = h.clone133(v.Provider)
+	out.Model = h.clone134(v.Model)
+	out.Source = h.clone5(v.Source)
+	return out
+}
+func (h dtogen) equal132(v, w UsageObservedIdentity) bool {
+	if !h.equal133(v.Provider, w.Provider) {
+		return false
+	}
+	if !h.equal134(v.Model, w.Model) {
+		return false
+	}
+	if !h.equal5(v.Source, w.Source) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check132(v UsageObservedIdentity, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if v.Model != nil {
+		count++
+	}
+	if v.Provider != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Model != nil {
+		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Model: %w", err)
+		}
+		if err := h.check134(v.Model, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Model: %w", err)
+		}
+	}
+	if v.Provider != nil {
+		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Provider: %w", err)
+		}
+		if err := h.check133(v.Provider, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Provider: %w", err)
+		}
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Source: %w", err)
+	}
+	if err := h.check5(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Source: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append132(out []byte, v UsageObservedIdentity) []byte {
+	count := 1
+	if v.Model != nil {
+		count++
+	}
+	if v.Provider != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Model != nil {
+		out = dtogenCBOR.AppendText(out, "m")
+		out = h.append134(out, v.Model)
+	}
+	if v.Provider != nil {
+		out = dtogenCBOR.AppendText(out, "p")
+		out = h.append133(out, v.Provider)
+	}
+	out = dtogenCBOR.AppendText(out, "s")
+	out = h.append5(out, v.Source)
+	return out
+}
+func (h dtogen) read132(r *dtogenCodec.Reader, d, cap int) (v UsageObservedIdentity, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "m":
+			seen[0] = true
+			v.Model, err = h.read134(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Model: %w", err)
+			}
+		case "p":
+			seen[1] = true
+			v.Provider, err = h.read133(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Provider: %w", err)
+			}
+		case "s":
+			seen[2] = true
+			v.Source, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Source: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[2] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 133: *string.
+func (h dtogen) clone133(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal133(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check133(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append133(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read133(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 134: *string.
+func (h dtogen) clone134(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal134(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check134(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append134(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read134(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 135: *UsageChargingService.
+func (h dtogen) clone135(v *UsageChargingService) *UsageChargingService {
+	if v == nil {
+		return nil
+	}
+	x := h.clone136(*v)
+	return (*UsageChargingService)(&x)
+}
+func (h dtogen) equal135(v, w *UsageChargingService) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal136(*v, *w)
+}
+func (h dtogen) check135(v *UsageChargingService, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check136(*v, b, d, cap)
+}
+func (h dtogen) append135(out []byte, v *UsageChargingService) []byte {
+	return h.append136(out, *v)
+}
+func (h dtogen) read135(r *dtogenCodec.Reader, d, cap int) (v *UsageChargingService, err error) {
+	x, err := h.read136(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*UsageChargingService)(&x), nil
+}
+
+// Helpers 136: UsageChargingService.
+func (h dtogen) clone136(v UsageChargingService) UsageChargingService {
+	out := v
+	out.Label = h.clone5(v.Label)
+	out.Source = h.clone5(v.Source)
+	return out
+}
+func (h dtogen) equal136(v, w UsageChargingService) bool {
+	if !h.equal5(v.Label, w.Label) {
+		return false
+	}
+	if !h.equal5(v.Source, w.Source) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check136(v UsageChargingService, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 2
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("l", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Label: %w", err)
+	}
+	if err := h.check5(v.Label, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Label: %w", err)
+	}
+	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Source: %w", err)
+	}
+	if err := h.check5(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Source: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append136(out []byte, v UsageChargingService) []byte {
+	count := 2
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	out = dtogenCBOR.AppendText(out, "l")
+	out = h.append5(out, v.Label)
+	out = dtogenCBOR.AppendText(out, "s")
+	out = h.append5(out, v.Source)
+	return out
+}
+func (h dtogen) read136(r *dtogenCodec.Reader, d, cap int) (v UsageChargingService, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [2]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "l":
+			seen[0] = true
+			v.Label, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Label: %w", err)
+			}
+		case "s":
+			seen[1] = true
+			v.Source, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Source: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 137: UsageCounters.
+func (h dtogen) clone137(v UsageCounters) UsageCounters {
+	out := v
+	out.Input = h.clone138(v.Input)
+	out.Output = h.clone139(v.Output)
+	out.CacheRead = h.clone140(v.CacheRead)
+	out.CacheWrite = h.clone141(v.CacheWrite)
+	out.Reasoning = h.clone142(v.Reasoning)
+	return out
+}
+func (h dtogen) equal137(v, w UsageCounters) bool {
+	if !h.equal138(v.Input, w.Input) {
+		return false
+	}
+	if !h.equal139(v.Output, w.Output) {
+		return false
+	}
+	if !h.equal140(v.CacheRead, w.CacheRead) {
+		return false
+	}
+	if !h.equal141(v.CacheWrite, w.CacheWrite) {
+		return false
+	}
+	if !h.equal142(v.Reasoning, w.Reasoning) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check137(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 0
+	if v.Input != nil {
+		count++
+	}
+	if v.Reasoning != nil {
+		count++
+	}
+	if v.Output != nil {
+		count++
+	}
+	if v.CacheRead != nil {
+		count++
+	}
+	if v.CacheWrite != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Input != nil {
+		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Input: %w", err)
+		}
+		if err := h.check138(v.Input, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Input: %w", err)
+		}
+	}
+	if v.Reasoning != nil {
+		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Reasoning: %w", err)
+		}
+		if err := h.check142(v.Reasoning, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Reasoning: %w", err)
+		}
+	}
+	if v.Output != nil {
+		if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Output: %w", err)
+		}
+		if err := h.check139(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Output: %w", err)
+		}
+	}
+	if v.CacheRead != nil {
+		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("CacheRead: %w", err)
+		}
+		if err := h.check140(v.CacheRead, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("CacheRead: %w", err)
+		}
+	}
+	if v.CacheWrite != nil {
+		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("CacheWrite: %w", err)
+		}
+		if err := h.check141(v.CacheWrite, b, d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("CacheWrite: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append137(out []byte, v UsageCounters) []byte {
+	count := 0
+	if v.Input != nil {
+		count++
+	}
+	if v.Reasoning != nil {
+		count++
+	}
+	if v.Output != nil {
+		count++
+	}
+	if v.CacheRead != nil {
+		count++
+	}
+	if v.CacheWrite != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Input != nil {
+		out = dtogenCBOR.AppendText(out, "i")
+		out = h.append138(out, v.Input)
+	}
+	if v.Reasoning != nil {
+		out = dtogenCBOR.AppendText(out, "n")
+		out = h.append142(out, v.Reasoning)
+	}
+	if v.Output != nil {
+		out = dtogenCBOR.AppendText(out, "o")
+		out = h.append139(out, v.Output)
+	}
+	if v.CacheRead != nil {
+		out = dtogenCBOR.AppendText(out, "r")
+		out = h.append140(out, v.CacheRead)
+	}
+	if v.CacheWrite != nil {
+		out = dtogenCBOR.AppendText(out, "w")
+		out = h.append141(out, v.CacheWrite)
+	}
+	return out
+}
+func (h dtogen) read137(r *dtogenCodec.Reader, d, cap int) (v UsageCounters, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [5]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "i":
+			seen[0] = true
+			v.Input, err = h.read138(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Input: %w", err)
+			}
+		case "n":
+			seen[1] = true
+			v.Reasoning, err = h.read142(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Reasoning: %w", err)
+			}
+		case "o":
+			seen[2] = true
+			v.Output, err = h.read139(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Output: %w", err)
+			}
+		case "r":
+			seen[3] = true
+			v.CacheRead, err = h.read140(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("CacheRead: %w", err)
+			}
+		case "w":
+			seen[4] = true
+			v.CacheWrite, err = h.read141(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("CacheWrite: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	return v, nil
+}
+
+// Helpers 138: *int64.
+func (h dtogen) clone138(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone10(*v)
+	return (*int64)(&x)
+}
+func (h dtogen) equal138(v, w *int64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal10(*v, *w)
+}
+func (h dtogen) check138(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check10(*v, b, d, cap)
+}
+func (h dtogen) append138(out []byte, v *int64) []byte {
+	return h.append10(out, *v)
+}
+func (h dtogen) read138(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read10(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*int64)(&x), nil
+}
+
+// Helpers 139: *int64.
+func (h dtogen) clone139(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone10(*v)
+	return (*int64)(&x)
+}
+func (h dtogen) equal139(v, w *int64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal10(*v, *w)
+}
+func (h dtogen) check139(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check10(*v, b, d, cap)
+}
+func (h dtogen) append139(out []byte, v *int64) []byte {
+	return h.append10(out, *v)
+}
+func (h dtogen) read139(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read10(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*int64)(&x), nil
+}
+
+// Helpers 140: *int64.
+func (h dtogen) clone140(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone10(*v)
+	return (*int64)(&x)
+}
+func (h dtogen) equal140(v, w *int64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal10(*v, *w)
+}
+func (h dtogen) check140(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check10(*v, b, d, cap)
+}
+func (h dtogen) append140(out []byte, v *int64) []byte {
+	return h.append10(out, *v)
+}
+func (h dtogen) read140(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read10(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*int64)(&x), nil
+}
+
+// Helpers 141: *int64.
+func (h dtogen) clone141(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone10(*v)
+	return (*int64)(&x)
+}
+func (h dtogen) equal141(v, w *int64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal10(*v, *w)
+}
+func (h dtogen) check141(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check10(*v, b, d, cap)
+}
+func (h dtogen) append141(out []byte, v *int64) []byte {
+	return h.append10(out, *v)
+}
+func (h dtogen) read141(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read10(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*int64)(&x), nil
+}
+
+// Helpers 142: *int64.
+func (h dtogen) clone142(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	x := h.clone10(*v)
+	return (*int64)(&x)
+}
+func (h dtogen) equal142(v, w *int64) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal10(*v, *w)
+}
+func (h dtogen) check142(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check10(*v, b, d, cap)
+}
+func (h dtogen) append142(out []byte, v *int64) []byte {
+	return h.append10(out, *v)
+}
+func (h dtogen) read142(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read10(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*int64)(&x), nil
+}
+
+// Helpers 143: *OpaqueProviderData.
+func (h dtogen) clone143(v *OpaqueProviderData) *OpaqueProviderData {
+	if v == nil {
+		return nil
+	}
+	x := h.clone16(*v)
+	return (*OpaqueProviderData)(&x)
+}
+func (h dtogen) equal143(v, w *OpaqueProviderData) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal16(*v, *w)
+}
+func (h dtogen) check143(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check16(*v, b, d, cap)
+}
+func (h dtogen) append143(out []byte, v *OpaqueProviderData) []byte {
+	return h.append16(out, *v)
+}
+func (h dtogen) read143(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
+	x, err := h.read16(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*OpaqueProviderData)(&x), nil
+}
+
+// Helpers 144: UserInput.
+func (h dtogen) clone144(v UserInput) UserInput {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.ID = h.clone1(v.ID)
-	out.Parts = h.clone117(v.Parts)
+	out.Parts = h.clone145(v.Parts)
 	return out
 }
-func (h dtogen) equal116(v, w UserInput) bool {
+func (h dtogen) equal144(v, w UserInput) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
-	if !h.equal117(v.Parts, w.Parts) {
+	if !h.equal145(v.Parts, w.Parts) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check116(v UserInput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check144(v UserInput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9378,7 +11527,7 @@ func (h dtogen) check116(v UserInput, b *dtogenCodec.Budget, d, cap int) (err er
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check117(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check145(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
@@ -9389,18 +11538,18 @@ func (h dtogen) check116(v UserInput, b *dtogenCodec.Budget, d, cap int) (err er
 	}
 	return nil
 }
-func (h dtogen) append116(out []byte, v UserInput) []byte {
+func (h dtogen) append144(out []byte, v UserInput) []byte {
 	count := 3
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "i")
 	out = h.append1(out, v.ID)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append117(out, v.Parts)
+	out = h.append145(out, v.Parts)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	return out
 }
-func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v UserInput, err error) {
+func (h dtogen) read144(r *dtogenCodec.Reader, d, cap int) (v UserInput, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9431,7 +11580,7 @@ func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v UserInput, err err
 			}
 		case "p":
 			seen[1] = true
-			v.Parts, err = h.read117(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read145(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
@@ -9457,8 +11606,8 @@ func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v UserInput, err err
 	return v, nil
 }
 
-// Helpers 117: []ContentPart.
-func (h dtogen) clone117(v []ContentPart) []ContentPart {
+// Helpers 145: []ContentPart.
+func (h dtogen) clone145(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
@@ -9468,7 +11617,7 @@ func (h dtogen) clone117(v []ContentPart) []ContentPart {
 	}
 	return out
 }
-func (h dtogen) equal117(v, w []ContentPart) bool {
+func (h dtogen) equal145(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
@@ -9479,7 +11628,7 @@ func (h dtogen) equal117(v, w []ContentPart) bool {
 	}
 	return true
 }
-func (h dtogen) check117(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check145(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
@@ -9490,14 +11639,14 @@ func (h dtogen) check117(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (er
 	}
 	return nil
 }
-func (h dtogen) append117(out []byte, v []ContentPart) []byte {
+func (h dtogen) append145(out []byte, v []ContentPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = h.append30(out, x)
 	}
 	return out
 }
-func (h dtogen) read117(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+func (h dtogen) read145(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
@@ -9512,19 +11661,19 @@ func (h dtogen) read117(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err
 	return v, nil
 }
 
-// Helpers 118: UserInstructions.
-func (h dtogen) clone118(v UserInstructions) UserInstructions {
+// Helpers 146: UserInstructions.
+func (h dtogen) clone146(v UserInstructions) UserInstructions {
 	out := v
-	out.Blocks = h.clone119(v.Blocks)
+	out.Blocks = h.clone147(v.Blocks)
 	return out
 }
-func (h dtogen) equal118(v, w UserInstructions) bool {
-	if !h.equal119(v.Blocks, w.Blocks) {
+func (h dtogen) equal146(v, w UserInstructions) bool {
+	if !h.equal147(v.Blocks, w.Blocks) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check118(v UserInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check146(v UserInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9537,19 +11686,19 @@ func (h dtogen) check118(v UserInstructions, b *dtogenCodec.Budget, d, cap int) 
 	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
-	if err := h.check119(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check147(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append118(out []byte, v UserInstructions) []byte {
+func (h dtogen) append146(out []byte, v UserInstructions) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "b")
-	out = h.append119(out, v.Blocks)
+	out = h.append147(out, v.Blocks)
 	return out
 }
-func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, err error) {
+func (h dtogen) read146(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9574,7 +11723,7 @@ func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, 
 		switch key {
 		case "b":
 			seen[0] = true
-			v.Blocks, err = h.read119(r, d+1, int(^uint(0)>>1))
+			v.Blocks, err = h.read147(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Blocks: %w", err)
 			}
@@ -9588,8 +11737,8 @@ func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, 
 	return v, nil
 }
 
-// Helpers 119: []InstructionBlock.
-func (h dtogen) clone119(v []InstructionBlock) []InstructionBlock {
+// Helpers 147: []InstructionBlock.
+func (h dtogen) clone147(v []InstructionBlock) []InstructionBlock {
 	if v == nil {
 		return nil
 	}
@@ -9599,7 +11748,7 @@ func (h dtogen) clone119(v []InstructionBlock) []InstructionBlock {
 	}
 	return out
 }
-func (h dtogen) equal119(v, w []InstructionBlock) bool {
+func (h dtogen) equal147(v, w []InstructionBlock) bool {
 	if len(v) != len(w) {
 		return false
 	}
@@ -9610,7 +11759,7 @@ func (h dtogen) equal119(v, w []InstructionBlock) bool {
 	}
 	return true
 }
-func (h dtogen) check119(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check147(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
@@ -9621,14 +11770,14 @@ func (h dtogen) check119(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int
 	}
 	return nil
 }
-func (h dtogen) append119(out []byte, v []InstructionBlock) []byte {
+func (h dtogen) append147(out []byte, v []InstructionBlock) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = h.append73(out, x)
 	}
 	return out
 }
-func (h dtogen) read119(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
+func (h dtogen) read147(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err

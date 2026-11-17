@@ -248,6 +248,46 @@
     method func (ToolSettlement).BulkEnding() (RunEndedView, bool)
     method func (ToolSettlement).Category() ToolSettlementCategory
     method func (ToolSettlement).ExplicitDisposition() (ToolDispositionView, bool)
+    method func (UsageAttributionView).Charging() (UsageChargingServiceView, bool)
+    method func (UsageAttributionView).MutableClone() format.UsageAttribution
+    method func (UsageAttributionView).Observed() (UsageObservedIdentityView, bool)
+    method func (UsageAttributionView).Selected() (UsageSelectedIdentityView, bool)
+    method func (UsageBucketView).Attribution() UsageAttributionView
+    method func (UsageBucketView).Counters() UsageCountersView
+    method func (UsageBucketView).MutableClone() format.UsageBucket
+    method func (UsageChargingServiceView).Label() string
+    method func (UsageChargingServiceView).MutableClone() format.UsageChargingService
+    method func (UsageChargingServiceView).Source() string
+    method func (UsageCountersView).CacheRead() (int64, bool)
+    method func (UsageCountersView).CacheWrite() (int64, bool)
+    method func (UsageCountersView).Input() (int64, bool)
+    method func (UsageCountersView).MutableClone() format.UsageCounters
+    method func (UsageCountersView).Output() (int64, bool)
+    method func (UsageCountersView).Reasoning() (int64, bool)
+    method func (UsageDefinitionView).Granularity() format.UsageGranularity
+    method func (UsageDefinitionView).MutableClone() format.UsageDefinition
+    method func (UsageDefinitionView).Purpose() string
+    method func (UsageDefinitionView).RequestID() (ModelRequestID, bool)
+    method func (UsageDefinitionView).RunID() (RunID, bool)
+    method func (UsageID).Equal(other UsageID) bool
+    method func (UsageID).HistoryID() id.HistoryID
+    method func (UsageID).HistoryRelative() uint64
+    method func (UsageID).Validate() error
+    method func (UsageObservedIdentityView).Model() (string, bool)
+    method func (UsageObservedIdentityView).MutableClone() format.UsageObservedIdentity
+    method func (UsageObservedIdentityView).Provider() (string, bool)
+    method func (UsageObservedIdentityView).Source() string
+    method func (UsageReportView).Buckets() views.SliceView[format.UsageBucket, UsageBucketView]
+    method func (UsageReportView).MutableClone() format.UsageReport
+    method func (UsageReportView).Raw() (OpaqueProviderDataView, bool)
+    method func (UsageReportView).State() format.UsageReportState
+    method func (UsageSelectedIdentityView).Model() (string, bool)
+    method func (UsageSelectedIdentityView).MutableClone() format.UsageSelectedIdentity
+    method func (UsageSelectedIdentityView).Provider() (string, bool)
+    method func (UsageView).Definition() (UsageDefinitionView, bool)
+    method func (UsageView).ID() UsageID
+    method func (UsageView).MutableClone() format.Usage
+    method func (UsageView).Report() UsageReportView
     method func (UserInputID).Equal(other UserInputID) bool
     method func (UserInputID).RunID() RunID
     method func (UserInputID).RunRelative() uint64
@@ -306,11 +346,24 @@ const ToolReturnSuccess format.ToolReturnStatus = "success"
 const ToolSettlementIndeterminate ToolSettlementCategory = 3
 const ToolSettlementNotInvoked ToolSettlementCategory = 2
 const ToolSettlementReturned ToolSettlementCategory = 1
+const UsageGranularityAggregate format.UsageGranularity = "aggregate"
+const UsageGranularityInvocation format.UsageGranularity = "invocation"
+const UsagePurposeAskReviewer untyped string = "ask_reviewer"
+const UsagePurposeCompaction untyped string = "compaction"
+const UsagePurposeGuardrail untyped string = "guardrail"
+const UsagePurposeMain untyped string = "main"
+const UsagePurposeParallelJudge untyped string = "parallel_judge"
+const UsagePurposeReflection untyped string = "reflection"
+const UsagePurposeRouter untyped string = "router"
+const UsagePurposeSessionTitle untyped string = "session_title"
+const UsageReportActive format.UsageReportState = "active"
+const UsageReportWithdrawn format.UsageReportState = "withdrawn"
 func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
 func NewModelRequestID(runID RunID, component uint64) (ModelRequestID, error)
 func NewRequestedCallID(requestID ModelRequestID, component uint64) (RequestedCallID, error)
 func NewRunID(historyID id.HistoryID, component uint64) (RunID, error)
+func NewUsageID(historyID id.HistoryID, component uint64) (UsageID, error)
 func NewUserInputID(runID RunID, component uint64) (UserInputID, error)
 type Actor = format.Actor
 type AttributedInput = format.AttributedInput
@@ -411,6 +464,26 @@ type ToolReturned = format.ToolReturned
 type ToolReturnedView struct{}
 type ToolSettlement struct{}
 type ToolSettlementCategory uint8
+type UsageAttribution = format.UsageAttribution
+type UsageAttributionView struct{}
+type UsageBucket = format.UsageBucket
+type UsageBucketView struct{}
+type UsageChargingService = format.UsageChargingService
+type UsageChargingServiceView struct{}
+type UsageCounters = format.UsageCounters
+type UsageCountersView struct{}
+type UsageDefinition struct{Purpose string; Granularity UsageGranularity; RunID RunID; RequestID ModelRequestID}
+type UsageDefinitionView struct{}
+type UsageGranularity = format.UsageGranularity
+type UsageID struct{}
+type UsageObservedIdentity = format.UsageObservedIdentity
+type UsageObservedIdentityView struct{}
+type UsageReport = format.UsageReport
+type UsageReportState = format.UsageReportState
+type UsageReportView struct{}
+type UsageSelectedIdentity = format.UsageSelectedIdentity
+type UsageSelectedIdentityView struct{}
+type UsageView struct{}
 type UserInput = format.UserInput
 type UserInputID struct{}
 type UserInputView struct{}

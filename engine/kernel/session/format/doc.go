@@ -44,6 +44,9 @@ const (
 	KindModelRequest = "session.model_request"
 	// KindModelResponse identifies a complete terminal response.
 	KindModelResponse = "session.model_response"
+	// KindUsage identifies a complete usage report with first-record definition.
+	// Declaration does not imply aggregate support for materializing this kind.
+	KindUsage = "session.usage"
 	// KindInvocationFailure identifies an observed invocation failure.
 	KindInvocationFailure = "session.invocation_failure"
 	// KindToolInvocation identifies effective committed tool intent.
