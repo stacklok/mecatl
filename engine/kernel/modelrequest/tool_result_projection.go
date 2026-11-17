@@ -63,7 +63,7 @@ func (s *chronologicalSelection) toolResult(call session.RequestedCallView) (*fo
 			out.Parts = append(out.Parts, textPart(notice))
 		}
 	}
-	out.Parts = append(out.Parts, parts...)
+	out.Parts = coalesceTextParts(append(out.Parts, parts...))
 	return out, nil
 }
 

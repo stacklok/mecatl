@@ -196,10 +196,10 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	}}))
 	first := f.build(format.ParametersV1{})
 	wantUsers := []format.ConversationItem{
-		{User: &format.UserMessage{Parts: append(textParts(" \n", inputSentinel), media)}},
-		{User: &format.UserMessage{Parts: textParts("<supplemental-instructions>\n", "inline", "\n</supplemental-instructions>")}},
-		{User: &format.UserMessage{Parts: append(textParts(" \n", inputSentinel), media)}},
-		{User: &format.UserMessage{Parts: textParts("<supplemental-context>\n", " ", "\n</supplemental-context>")}},
+		{User: &format.UserMessage{Parts: append(textParts(" \n"+inputSentinel), media)}},
+		{User: &format.UserMessage{Parts: textParts("<supplemental-instructions>\ninline\n</supplemental-instructions>")}},
+		{User: &format.UserMessage{Parts: append(textParts(" \n"+inputSentinel), media)}},
+		{User: &format.UserMessage{Parts: textParts("<supplemental-context>\n \n</supplemental-context>")}},
 	}
 	initial := format.RequestV1{API: "api", Model: "model", RootInstructions: []format.ContentBlock{{Parts: textParts("old root")}}, UserInstructions: []format.ContentBlock{{Parts: textParts("prefix")}}, Tools: []session.ToolDefinition{{Name: "tool", Description: "description", ArgumentSchema: []byte(" true ")}}, Conversation: wantUsers}
 	if !first.Request().MutableClone().Equal(initial) {
@@ -247,7 +247,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 		format.ConversationItem{Assistant: &format.AssistantMessage{Items: []format.AssistantItem{
 			{Output: &format.ContentBlock{Parts: textParts("output")}}, {Call: &format.ToolCall{ProviderCallID: "provider/一", Arguments: []byte{0xff, '{', 0}}}, {Refusal: &format.ContentBlock{Parts: textParts("refusal")}}, {Call: &format.ToolCall{ProviderCallID: "provider/two", Name: "unknown", Arguments: []byte("not JSON")}},
 		}, Private: &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 3, Data: privateData}}},
-		format.ConversationItem{ToolResult: &format.ToolResult{ProviderCallID: "provider/一", Outcome: format.ToolOutcomeReturnedError, Parts: textParts("Tool returned an error.", "Tool output is incomplete.", " {\"x\": 1} \n")}},
+		format.ConversationItem{ToolResult: &format.ToolResult{ProviderCallID: "provider/一", Outcome: format.ToolOutcomeReturnedError, Parts: textParts("Tool returned an error.Tool output is incomplete. {\"x\": 1} \n")}},
 		format.ConversationItem{ToolResult: &format.ToolResult{ProviderCallID: "provider/two", Outcome: format.ToolOutcomeNotInvoked, Parts: textParts("User denied tool execution")}},
 	)
 	if !built.Request().MutableClone().Equal(want) {

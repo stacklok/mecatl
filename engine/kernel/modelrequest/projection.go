@@ -2,6 +2,7 @@ package modelrequest
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
@@ -46,6 +47,29 @@ func projectParts(v views.SliceView[sessionformat.ContentPart, session.ContentPa
 	if len(out) != 0 && frame != "" {
 		out = append(out, textPart("\n</"+frame+">"))
 	}
+	return coalesceTextParts(out)
+}
+
+// coalesceTextParts joins adjacent text without inserting separators. Media parts
+// retain their order and split text runs. Input parts are owned and are not mutated.
+func coalesceTextParts(parts []sessionformat.ContentPart) []sessionformat.ContentPart {
+	var out []sessionformat.ContentPart
+	var text strings.Builder
+	flush := func() {
+		if text.Len() != 0 {
+			out = append(out, textPart(text.String()))
+			text.Reset()
+		}
+	}
+	for _, part := range parts {
+		if part.Text != nil {
+			text.WriteString(*part.Text)
+		} else {
+			flush()
+			out = append(out, part)
+		}
+	}
+	flush()
 	return out
 }
 

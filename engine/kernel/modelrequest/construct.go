@@ -28,7 +28,9 @@ type Source interface {
 
 // Construct builds an owned chronological-v1 logical request and detached recipe
 // from exactly the captured source, including preparation preceding a proposed
-// request. It derives the run from source, never mutable Session state. Idle,
+// request. Adjacent text within each content sequence is joined byte-for-byte;
+// media, message, instruction-block and assistant-item boundaries are preserved.
+// It derives the run from source, never mutable Session state. Idle,
 // pending-model, unsettled-tool and unscoped sources fail. Limits govern parameters
 // and projected output, not unrelated history. Output limits are checked during
 // final encoding, after projection; they do not bound peak construction memory.

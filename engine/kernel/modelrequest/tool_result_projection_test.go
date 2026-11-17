@@ -67,37 +67,37 @@ func TestConstructToolOutcomeCaptureNotices(t *testing.T) {
 						output.Parts = []session.ToolOutputPart{{Content: &session.ContentPart{Text: new(text)}}}
 					}
 					disposition := session.ToolDisposition{Diagnostic: new("private MUST NOT RENDER")}
-					var want []session.ContentPart
+					var want string
 					wantOutcome := format.ToolOutcomeReturnedSuccess
 					if outcome == "indeterminate" {
 						disposition.Indeterminate = &session.ToolIndeterminate{Reason: session.ToolIndeterminateTimeout, Output: output}
 						wantOutcome = format.ToolOutcomeIndeterminate
-						want = textParts("Tool outcome is unknown; side effects may have occurred.")
+						want = "Tool outcome is unknown; side effects may have occurred."
 					} else {
 						status := session.ToolReturnSuccess
 						if outcome == "error" {
 							status = session.ToolReturnError
 							wantOutcome = format.ToolOutcomeReturnedError
-							want = textParts("Tool returned an error.")
+							want = "Tool returned an error."
 						}
 						disposition.Returned = &session.ToolReturned{Status: status, Output: output}
 					}
 					switch capture {
 					case session.ToolCaptureComplete:
 						if text == "" {
-							want = append(want, textParts("Tool returned no output.")...)
+							want += "Tool returned no output."
 						}
 					case session.ToolCaptureOmitted:
-						want = append(want, textParts("Tool output was not retained.")...)
+						want += "Tool output was not retained."
 					case session.ToolCaptureTruncated:
-						want = append(want, textParts("Tool output is incomplete.")...)
+						want += "Tool output is incomplete."
 					}
 					if text != "" {
-						want = append(want, textParts(text)...)
+						want += text
 					}
 					requireConstruction(t, f.b.AddToolDisposition(call, disposition))
 					got := f.build(format.ParametersV1{}).Request().MutableClone().Conversation[1].ToolResult
-					if got.Outcome != wantOutcome || !(format.ContentBlock{Parts: got.Parts}).Equal(format.ContentBlock{Parts: want}) {
+					if got.Outcome != wantOutcome || len(got.Parts) != 1 || got.Parts[0].Text == nil || *got.Parts[0].Text != want {
 						t.Fatalf("outcome/capture rendering: %#v", got)
 					}
 					requireConstruction(t, f.b.Discard())
@@ -130,7 +130,7 @@ func TestConstructToolResourcesAndTypedMedia(t *testing.T) {
 	metadata := "Resource URI: \"https://example.invalid/a?x=\\\"quoted\\\"\"\nName: \"line\\nname\"\nTitle: \"\"\nMIME type: \"image/png\""
 	want := textParts(" \n {\"z\": 2, \"a\":1} \t")
 	want = append(want, media)
-	want = append(want, textParts(metadata, metadata, "exact body\n\u2028", metadata, "Binary body not included in this request.", "Resource URI: \"urn:empty\"", "Binary body not included in this request.", "Resource URI: \"urn:empty-text\"")...)
+	want = append(want, textParts(metadata+metadata+"exact body\n\u2028"+metadata+"Binary body not included in this request."+"Resource URI: \"urn:empty\""+"Binary body not included in this request."+"Resource URI: \"urn:empty-text\"")...)
 	built := f.build(format.ParametersV1{})
 	result := built.Request().MutableClone().Conversation[1].ToolResult
 	if result.Outcome != format.ToolOutcomeReturnedSuccess || !(format.ContentBlock{Parts: result.Parts}).Equal(format.ContentBlock{Parts: want}) {
@@ -209,7 +209,7 @@ func TestConstructRejectsOversizedProjection(t *testing.T) {
 		{"conversation count", 1, 2000, func(l *codec.Limits) { l.MaxArrayElements = 100 }},
 		{"aggregate nodes", 1, 2000, func(l *codec.Limits) { l.MaxNodes = 100 }},
 		{"aggregate declarations", 1, 2000, func(l *codec.Limits) { l.MaxCollectionElements = 100 }},
-		{"inline framing", 1, 1, func(l *codec.Limits) { l.MaxArrayElements = 2 }},
+		{"inline framing", 1, 1, func(l *codec.Limits) { l.MaxStringBytes = 32 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newConstructionFixture(t)
