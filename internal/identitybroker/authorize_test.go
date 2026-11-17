@@ -489,9 +489,14 @@ func TestAuthorizeCallMapsAS2Refusals(t *testing.T) {
 	}{
 		{"prose then success", refusal(400, "invalid_grant", "The JWT was already used"), nil, "", "", 2},
 		{"a known reason", refusal(400, "invalid_grant", "denied"), nil, identitybroker.CodeInternal, "", 1},
-		{"consent required", refusal(400, "invalid_grant", "consent_required"), nil, identitybroker.CodeFailedPrecondition, identitybroker.ReasonConsentRequired, 1},
+		{"actor denied", refusal(400, "access_denied", "actor_denied"), nil, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, 1},
+		{"actor denied in a 503", refusal(503, "access_denied", "actor_denied"), nil, identitybroker.CodeUnavailable, "", 1},
+		{"subject unknown", refusal(400, "access_denied", "subject_unknown"), nil, identitybroker.CodeInternal, "", 1},
+		{"resource denied", refusal(400, "access_denied", "resource_denied"), nil, identitybroker.CodeInternal, "", 1},
+		{"access denied without a reason", refusal(400, "access_denied", ""), nil, identitybroker.CodeInternal, "", 1},
+		{"consent required", refusal(400, "access_denied", "consent_required"), nil, identitybroker.CodeFailedPrecondition, identitybroker.ReasonConsentRequired, 1},
 		// A transient refusal is never a prompt, whatever its reason.
-		{"consent required in a 503", refusal(503, "invalid_grant", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
+		{"consent required in a 503", refusal(503, "access_denied", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
 		{"consent required in a server_error", refusal(400, "server_error", "consent_required"), nil, identitybroker.CodeUnavailable, "", 1},
 		{"prose twice", refusal(400, "invalid_grant", "The JWT was already used"), refusal(400, "invalid_grant", ""), identitybroker.CodeInternal, "", 2},
 		{"unavailable", refusal(503, "temporarily_unavailable", ""), nil, identitybroker.CodeUnavailable, "", 1},

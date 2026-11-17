@@ -30,7 +30,10 @@ func TestNewServerRefusalKeepsOnlyKnownCodes(t *testing.T) {
 		{"invalid_grant", "bound_elapsed", ServerRefusal{400, "invalid_grant", "bound_elapsed"}},
 		{"invalid_request", "the token eyJhbGciOi.x.y was refused", ServerRefusal{400, "invalid_request", "unknown"}},
 		{"eyJhbGciOi.x.y", "Session_Closed", ServerRefusal{400, "unknown", "unknown"}},
-		{"access_denied", "", ServerRefusal{400, "unknown", ""}},
+		{"access_denied", "", ServerRefusal{400, "access_denied", ""}},
+		{"access_denied", "subject_unknown", ServerRefusal{400, "access_denied", "subject_unknown"}},
+		{"access_denied", "actor_denied: agent not allowed", ServerRefusal{400, "access_denied", "actor_denied"}},
+		{"access_denied", "resource_denied", ServerRefusal{400, "access_denied", "resource_denied"}},
 		{"", "", ServerRefusal{400, "", ""}},
 	}
 	for _, tt := range tests {
@@ -97,6 +100,10 @@ func TestServerRefusalClassification(t *testing.T) {
 		{"sub_id missing", NewServerRefusal(400, "invalid_request", "sub_id_missing"), true, false},
 		{"dpop not supported", NewServerRefusal(400, "invalid_request", "dpop_not_supported"), true, false},
 		{"bound elapsed", NewServerRefusal(400, "invalid_grant", "bound_elapsed"), true, false},
+		{"access_denied, no reason", NewServerRefusal(400, "access_denied", ""), true, false},
+		{"subject unknown", NewServerRefusal(400, "access_denied", "subject_unknown"), false, false},
+		{"actor denied", NewServerRefusal(400, "access_denied", "actor_denied"), false, false},
+		{"resource denied", NewServerRefusal(400, "access_denied", "resource_denied"), true, false},
 		{"503 grant invalid", NewServerRefusal(503, "invalid_request", "grant_invalid"), false, true},
 		{"superseded is no longer a reason", NewServerRefusal(400, "invalid_request", "superseded"), true, false},
 		{"unknown reason is no reason", NewServerRefusal(400, "invalid_request", "brand_new_reason"), true, false},
