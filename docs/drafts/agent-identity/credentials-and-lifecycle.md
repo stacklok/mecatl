@@ -728,7 +728,7 @@ Until [stacklok/toolhive#7030](https://github.com/stacklok/toolhive/issues/7030)
 
 ### (9) vMCP decision and provider credential
 
-**Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The broker mints the attempt ID with each authorization and returns it with `V` ([audit](audit.md#delivery-protection-and-reconciliation)); the MCP client only passes it on. The run ID travels in trace headers.
+**Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The same IDs go on every message of the call, including the session handshake, the cancellation, and replies to requests the vMCP sends; an error reply carries them in `error.data._meta`. The broker mints the attempt ID with each authorization and returns it with `V` ([audit](audit.md#delivery-protection-and-reconciliation)); the MCP client only passes it on. The run ID travels in trace headers.
 
 **Checks, at the vMCP:**
 
@@ -754,9 +754,9 @@ Until [stacklok/toolhive#7030](https://github.com/stacklok/toolhive/issues/7030)
 | 6, no row, or refresh no longer possible | An MCP URL-mode elicitation with the gateway's connect link | The existing `mcp_authorization_pending` outcome with that link. If the vMCP refused before running the call, the call was not sent; after Alice connects GitHub, it runs again with a new authorization and passes every check again. A row owned by another user is refused and recorded. |
 | 6, refresh or storage failure | 5xx | An unknown outcome: the MCP client cannot tell this 5xx from one returned after the call ran, so it is not retried automatically. A new tool call can be made. |
 
-The answers to checks 1, 2, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
+The answers to checks 1, 2, 3, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, 403 `insufficient_scope`, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
 
-Any other answer after the request was written, including a 5xx, is also an unknown outcome: the MCP client sees only the status and cannot tell a 5xx the vMCP returned before running the call from one returned after it ran, for example by a proxy or after a crash.
+A JSON-RPC error that rejects the request itself (-32700, -32600, -32601, or -32602) means the tool did not run, and the call fails. Any other JSON-RPC error, such as -32603, or any other HTTP error status after the request was written, including a 5xx, is also an unknown outcome: the MCP client sees only the status and cannot tell a 5xx the vMCP returned before running the call from one returned after it ran, for example by a proxy or after a crash.
 
 **Why.** The vMCP is the only component that holds the provider credential, so it makes the last check before the provider call and looks the credential up from the validated user alone. The model cannot select another user's credential by supplying a URL, header, audience, or credential selector. If identity, link, connection, or authorization evidence is missing, stale, or revoked, the call fails closed; it never falls back to a service credential, another user, or a more privileged agent.
 
@@ -880,6 +880,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | vMCP session rejected | vMCP | 404 | None: one retry with a new session | Stored session ID dropped |
 | vMCP policy denies the tool | vMCP | Tool error | Call denied | Nothing |
 | No provider credential | vMCP | MCP URL-mode elicitation with the connect link | `mcp_authorization_pending`; Alice connects GitHub | Nothing |
+| Provider credential refresh or storage failure | vMCP | 5xx | Unknown outcome; not retried automatically. A new tool call can be made | Nothing |
 | Dispatch happened, no completion observed | Broker | Unknown outcome | Reported as unknown; not replayed | Nothing |
 
 ## Error reasons
