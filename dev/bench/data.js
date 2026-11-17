@@ -423407,6 +423407,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794916983769,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "069bedbdb3da9166943a89d0178c2adf625b0909",
+          "message": "docs(execution): document template capabilities and capability requests (#2827)\n\nGive execution capabilities a canonical section on the execution\nenvironments page. It covers what `filesystem` and `foreground-command`\ngrant, the declared set versus the effective set in\n`session_capabilities.execution`, and the\n`execution.template.capabilities` request, which is honored exactly or\nrefused. It lists the refusal reasons and links the gRPC and HTTP\nreferences for status codes. It also explains that resume reuses the\nrecorded set, and that `/clear`, fork and scheduled runs request the\nsource's set.\n\nOn the Kubernetes execution guide, explain that the provider records\nits admitted set in `spec.admittedCapabilities`. Show how `--no-shell`\nin `extraArgs` withholds Shell from new sessions and refuses every\nexplicit request. Add the admitted set to the smoke-test check and a\ntroubleshooting entry for refused requests. Document the template\n`capabilities` key in the `mecatl-execution` chart values.\n\nCloses #2713",
+          "timestamp": "2026-11-17T13:33:55+01:00",
+          "tree_id": "725dc911e787d1420d21936c0b203a0ac45000c2",
+          "url": "https://github.com/stacklok/mecatl/commit/069bedbdb3da9166943a89d0178c2adf625b0909"
+        },
+        "date": 1794919596463,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -551581,6 +551620,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794919592971,
+  "lastUpdate": 1794919597341,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
