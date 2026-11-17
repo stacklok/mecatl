@@ -421819,6 +421819,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794840347534,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "91e3155236feb5dd684f0f6bf51e805cad1d30a4",
+          "message": "feat(kernel): construct and reconstruct logical model requests (#2793)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T03:29:52Z",
+          "tree_id": "c15037d3c4c78024c41a57e857f5ae4d2f4f6c0c",
+          "url": "https://github.com/stacklok/mecatl/commit/91e3155236feb5dd684f0f6bf51e805cad1d30a4"
+        },
+        "date": 1794887010273,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13423,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -549537,6 +549576,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794887004335,
+  "lastUpdate": 1794887011247,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
