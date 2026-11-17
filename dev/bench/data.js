@@ -385602,6 +385602,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794956190949,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "113200276+Nashon-Steffen@users.noreply.github.com",
+            "name": "Nashon-Steffen",
+            "username": "Nashon-Steffen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6e64d3f942c3786276df5c049090ac5d8d009c1",
+          "message": "fix(build): drop dev tooling from the Studio image and bump undici in the Slack bot (#2839)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T23:41:26Z",
+          "tree_id": "0a6644b0b1c51a698e92d2967d8b16d49146a82b",
+          "url": "https://github.com/stacklok/mecatl/commit/c6e64d3f942c3786276df5c049090ac5d8d009c1"
+        },
+        "date": 1794959657150,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -556657,6 +556691,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794959653300,
+  "lastUpdate": 1794959658261,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
