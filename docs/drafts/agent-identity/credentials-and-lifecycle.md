@@ -608,13 +608,13 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 | 5, IdP refuses the refresh | 400 `invalid_request` with `upstream_revoked` or `owner_action_required` | AS-1 has ended all of Alice's grants; see [upstream re-check](#upstream-re-check). |
 | 5, recorded expiry reached, or no upstream refresh token | 400 `invalid_request` with `owner_action_required` | AS-1 has ended all of Alice's grants; she must sign in again. |
 | 5, IdP unreachable, 5xx, or refresh lease timed out | 503 with `Retry-After`, nothing revoked | Call fails closed as a retryable infrastructure error. A 503 is plain HTTP, not an OAuth error, and never means revocation. |
+| Before 6, the target requires a subject claim the grant never recorded | 400 `invalid_request` with `upstream_subject_missing` or `sub_id_missing` | Call fails; a configuration fault, not retryable. AS-1 refuses it before it calls the actor validator, so the validator never sees such a grant. |
+| Before 6, a DPoP header on the request | 400 `invalid_request` with `dpop_not_supported` | Call fails; a broker bug. AS-1 refuses it after checks 1 to 4 and before it calls the actor validator. |
 | 6, expired | 400 `invalid_request` with `actor_token_expired` | The broker reports `svid_expired`. mecak8s renews the SVID and retries once. |
 | 6, approval needed | 400 `invalid_request` with `approval_required` | Call denied; the broker reports `denied`, because Mecatl has no per-agent approval flow yet. |
 | 6, otherwise | 400 `invalid_request` with `denied` | Call denied. |
 | 6, validator failure | 500 `server_error`, also for an accepted answer whose expiry passed 60 s or more ago | A retryable infrastructure failure. Nothing is revoked. |
 | 7 | 400 `invalid_request` with `denied` | Call denied. |
-| After 6, the target requires a subject claim the grant never recorded | 400 `invalid_request` with `upstream_subject_missing` or `sub_id_missing` | Call fails; a configuration fault, not retryable. |
-| After 6, a DPoP header on the request | 400 `invalid_request` with `dpop_not_supported` | Call fails; a broker bug. |
 | After 6, the grant ended during the call | 400 `invalid_grant` with `bound_elapsed` | The grant expired, or reached the client's ID-JAG lifetime cap, while the actor validator ran. Handle as `grant_invalid`. |
 | Lost response | None received | Request a new ID-JAG with a new client assertion. An unused ID-JAG expires harmlessly. |
 
