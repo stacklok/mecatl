@@ -381306,6 +381306,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794907768448,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8368b4c8453a52e3edd312ba405736ae70070a48",
+          "message": "chore(deps): lock file maintenance (#2797)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-17T12:37:20+01:00",
+          "tree_id": "ec01a04c0b15d91a85262aa84595cbf1a6033bcd",
+          "url": "https://github.com/stacklok/mecatl/commit/8368b4c8453a52e3edd312ba405736ae70070a48"
+        },
+        "date": 1794916205887,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -550525,6 +550559,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794916201808,
+  "lastUpdate": 1794916206766,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
