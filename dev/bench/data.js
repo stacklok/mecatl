@@ -383454,6 +383454,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794937799682,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4eb31471ee6aef8a8fce5d9a024f351c8fefb1f0",
+          "message": "docs(agent-identity): follow ID-JAG -06 for AS-2 redemption errors (#2825)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T18:11:32Z",
+          "tree_id": "52405feaeb13c6c3e727d4fd2994b4b0f2806770",
+          "url": "https://github.com/stacklok/mecatl/commit/4eb31471ee6aef8a8fce5d9a024f351c8fefb1f0"
+        },
+        "date": 1794939889076,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -553591,6 +553625,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794939885607,
+  "lastUpdate": 1794939890000,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
