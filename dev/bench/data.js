@@ -380590,6 +380590,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794840343512,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "91e3155236feb5dd684f0f6bf51e805cad1d30a4",
+          "message": "feat(kernel): construct and reconstruct logical model requests (#2793)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-17T03:29:52Z",
+          "tree_id": "c15037d3c4c78024c41a57e857f5ae4d2f4f6c0c",
+          "url": "https://github.com/stacklok/mecatl/commit/91e3155236feb5dd684f0f6bf51e805cad1d30a4"
+        },
+        "date": 1794887003130,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -549503,6 +549537,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794886999404,
+  "lastUpdate": 1794887004335,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
