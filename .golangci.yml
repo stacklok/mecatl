@@ -967,7 +967,9 @@ linters:
         # The identity broker's adapters (network, transport) live under
         # internal/identitybroker/adapter so the whole broker can move into its
         # own service as one tree. They depend on the broker core and the
-        # standard library, never on the rest of Mecatl.
+        # standard library, never on the rest of Mecatl; the definition loader
+        # below also uses the separately published engine module's
+        # agent-definition parser.
         internal-identitybroker-adapter:
           list-mode: strict
           files:

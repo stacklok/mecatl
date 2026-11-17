@@ -250,6 +250,55 @@ func TestLoadFailsOnUnreadableDirectory(t *testing.T) {
 	}
 }
 
+// TestLoadSortsAndKeepsBuiltins pins the order Load returns: by source, then
+// name. The built-ins stay when directories are given, and a global definition
+// named like a built-in sits beside it rather than replacing it.
+func TestLoadSortsAndKeepsBuiltins(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, name := range []string{"zeta", "main", "alpha"} {
+		writeDef(t, dir, name+".md", "---\nname: "+name+"\ndescription: x\n---\n")
+	}
+
+	defs, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var got []string
+	for _, d := range defs {
+		got = append(got, d.Record.Ref.Source+"/"+d.Record.Ref.Name)
+	}
+	want := []string{"global/alpha", "global/main", "global/zeta", "system/explorer", "system/main"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Load order = %v, want %v", got, want)
+	}
+}
+
+// TestLoadDropsNonUTF8Path plants a definition under a directory whose name is
+// not valid UTF-8. Its path cannot go in the provenance metadata, so it is
+// left out and reported. File systems that refuse such names skip the test.
+func TestLoadDropsNonUTF8Path(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "bad\xff")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Skipf("file system refuses a non-UTF-8 name: %v", err)
+	}
+	path := writeDef(t, dir, "a.md", "---\nname: a\ndescription: A\n---\n")
+
+	defs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, d := range defs {
+		if d.Record.Ref.Source == definitionloader.SourceGlobal {
+			t.Errorf("loaded %+v from a non-UTF-8 path", d.Record.Ref)
+		}
+	}
+	if !hasProblem(problems, path, true) {
+		t.Errorf("problems = %+v, want %q reported as dropped", problems, path)
+	}
+}
+
 func TestLoadEarlierDirectoryWins(t *testing.T) {
 	t.Parallel()
 	high, low := t.TempDir(), t.TempDir()

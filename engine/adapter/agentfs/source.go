@@ -26,6 +26,12 @@ type Discovered struct {
 // bytes parsed, and the file's modification time when it was read. A loader
 // that records where a definition came from uses it, so it never reads the
 // file a second time and gets different bytes.
+//
+// Content is the file as read, before the parser truncates or drops anything:
+// a digest of it identifies the source bytes, not the adjusted definition. It
+// can hold an inline MCP server's secret-shaped headers, so it is never logged
+// or projected. The bytes and ModTime come from one open file; a symlink is
+// followed, so both describe its target.
 type SourceFile struct {
 	Path    string
 	Content []byte

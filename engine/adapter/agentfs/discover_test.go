@@ -778,3 +778,29 @@ func TestDirSourceRecordsSourceFile(t *testing.T) {
 		t.Errorf("File.ModTime = %v, want %v", f.ModTime, modTime)
 	}
 }
+
+// TestDirSourceRecordsSymlinkTarget pins that a symlinked definition is read
+// through to its target: the bytes and the modification time both describe
+// the target, and Path is the link the directory holds.
+func TestDirSourceRecordsSymlinkTarget(t *testing.T) {
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	content := "---\nname: linked\ndescription: Linked agent\n---\n"
+	target := writeDef(t, elsewhere, "target.md", content)
+	modTime := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if err := os.Chtimes(target, modTime, modTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	link := filepath.Join(dir, "linked.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	defs, _, err := DirSource{Dir: dir}.Agents(t.Context())
+	if err != nil || len(defs) != 1 || defs[0].File == nil {
+		t.Fatalf("Agents = %+v, %v; want the linked def with its file", defs, err)
+	}
+	f := defs[0].File
+	if f.Path != link || string(f.Content) != content || !f.ModTime.Equal(modTime) {
+		t.Errorf("File = {Path:%q Content:%q ModTime:%v}, want the link path with the target's bytes and time %v", f.Path, f.Content, f.ModTime, modTime)
+	}
+}

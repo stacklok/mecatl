@@ -95,3 +95,26 @@ func TestFSSourceDefaultsBlankOriginToExplicit(t *testing.T) {
 		t.Errorf("defs = %+v, want a single explicit-origin def", defs)
 	}
 }
+
+// TestFSSourceDropsFileBytes pins that the long-lived snapshot keeps no file
+// bytes (they can hold secret-shaped headers), while the source it reads
+// from does record them.
+func TestFSSourceDropsFileBytes(t *testing.T) {
+	dir := t.TempDir()
+	writeDef(t, dir, "rev.md", "---\nname: rev\ndescription: Reviewer\n---\n")
+	src := DirSource{Dir: dir}
+
+	direct, _, err := src.Agents(t.Context())
+	if err != nil || len(direct) != 1 || direct[0].File == nil {
+		t.Fatalf("DirSource.Agents = %+v, %v; want one def with its file recorded", direct, err)
+	}
+	snap, _, err := NewFSSource(t.Context(), src)
+	if err != nil {
+		t.Fatalf("NewFSSource: %v", err)
+	}
+	for _, d := range snap.Discovered() {
+		if d.File != nil {
+			t.Errorf("snapshot keeps %q's file bytes; it must drop them", d.Def.Name)
+		}
+	}
+}

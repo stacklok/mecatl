@@ -84,6 +84,11 @@ func BuiltinRevision(buildID string) string {
 
 // builtins returns the built-in definitions. It builds them on each call so
 // no caller can change another's copy.
+//
+// Shortcut: each built-in is a name and a description, and the harness builds
+// its default main agent and anonymous child without them, so their digests
+// cover these stand-ins rather than what runs; removed by #2553 (the harness
+// builds system/main and system/explorer from these definitions).
 func builtins() []tool.AgentDef {
 	return []tool.AgentDef{
 		{Name: BuiltinMain, Description: "The main agent of a session started without a named definition."},
@@ -103,6 +108,12 @@ type Config struct {
 }
 
 // Definition is one loaded definition.
+//
+// Its digests are plain SHA-256 over the definition, which can include an
+// inline MCP server's secret-shaped headers. They reveal no secret that has
+// enough randomness, but anyone who sees a digest and knows the rest of the
+// file can test guesses at a short one. Keep them out of logs and records
+// that people who know the rest of the file can read.
 type Definition struct {
 	// Record is what the broker checks registrations against; pass it to
 	// identitybroker.New.
