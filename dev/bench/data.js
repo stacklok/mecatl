@@ -549897,9 +549897,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794886998355,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9598f7c6675a4e3bfdb9eabcbe89eb91c402bbc4",
+          "message": "feat(server): honor execution capability requests in mecak8s (#2816)\n\nAdmit `execution.template.capabilities` in the shared `Service`\ncreate path instead of refusing every request. A request is honored\nexactly or refused, never narrowed. Malformed names return\n`INVALID_ARGUMENT`. Requests that cannot be honored return\n`FAILED_PRECONDITION` with a reason, via\n`ErrExecutionCapabilityRefused`.\n\nThe request reaches the provider through `EnsureTemplate`, and the\nsession records the admitted set. Without `foreground-command`, the\nsession gets no `Shell` tool and no runner. Resume reuses the recorded\nset without re-admission.\n\n`/clear`, fork and scheduled fires request their source's recorded\nset. On a `--no-shell` deployment, they are refused before anything is\nreserved.\n\nCloses #2712",
+          "timestamp": "2026-11-17T10:17:43+01:00",
+          "tree_id": "4cf23c0028e5ed3f887cb79213e437ccea50c34d",
+          "url": "https://github.com/stacklok/mecatl/commit/9598f7c6675a4e3bfdb9eabcbe89eb91c402bbc4"
+        },
+        "date": 1794907764313,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 776,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32185,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794907760091,
+  "lastUpdate": 1794907765118,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
