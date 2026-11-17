@@ -558,7 +558,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 
 **Configured AS-2 issuers.** No AS-2 issuer configured for `mecatl` names the same server as AS-1's issuer, comparing scheme and host case-insensitively, a default port as equal to none, and ignoring a trailing slash. `mecatl` authenticates to both servers with the same key, so a shared issuer would let a client assertion or an ID-JAG meant for one server be accepted by the other. Mecatl refuses such a configuration at startup.
 
-**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 checks that the instance's session is open and compares its owner with that `sub_id`. It returns the `ag_` identifier, the SPIFFE ID, and the SVID's `exp`. AS-1 puts the identifier in `act.sub` and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
+**How AS-1 runs check 6.** AS-1 does not know Mecatl's instance registry. For client `mecatl`, AS-1 calls its pluggable actor-token validator ([stacklok/toolhive#6899](https://github.com/stacklok/toolhive/issues/6899)). AS-1 passes the SVID, the client, and the grant's user: `sub` and `sub_id` from `RT-A42`'s record. Mecatl's validator runs in the broker. It runs the SVID checks, and check 8 checks that the instance's session is open and compares its owner with that `sub_id`. It returns the instance's agent ID, `spiffe://<trust domain>/agent/<ag_ identifier>`, the SVID's SPIFFE ID for AS-1's audit, and the SVID's `exp`. AS-1 puts the agent ID in `act.sub`, sets `act.iss` to the issuer registered with the validator, the agent trust domain `spiffe://<trust domain>`, and caps the ID-JAG's `exp` at the SVID's `exp`. AS-1 never falls back to its built-in actor-token handling.
 
 **Output.**
 
@@ -581,7 +581,7 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
   "aud": "https://gateway.example.com",
   "resource": "https://gateway.example.com/mcp",
   "client_id": "mecatl",
-  "act": {"iss": "https://broker.example.com/as", "sub": "ag_7hq2x9"},
+  "act": {"iss": "spiffe://agents.example.com", "sub": "spiffe://agents.example.com/agent/ag_7hq2x9"},
   "jti": "jag-pr42-001",
   "iat": 1800000001,
   "exp": 1800000121
@@ -589,7 +589,8 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 ```
 
 - `sub` comes from `RT-A42`'s grant, never from the request.
-- `act.sub` is the instance's `ag_` identifier, created at registration: no SPIFFE path, no definition name, and no colon, so it reads as a plain string rather than a URI. It stays the same across SVID renewals, so the vMCP can bind a session to the instance and audit can correlate its calls. `act.iss` names AS-1, which minted `act`, so the identifier stays attributable to AS-1 inside `V`, whose own `iss` is AS-2. The full SVID stops at AS-1, so internal structure does not cross into the gateway's domain.
+- `act.iss` is the agent trust domain, the namespace in which agent IDs are unique. ToolHive refuses its own issuer as `act.iss`, and AS-2 and the vMCP key agents on (`act.iss`, `act.sub`), so changing it renames every agent. AS-2 lists the trust domain among the actor issuers it accepts from AS-1.
+- `act.sub` is a SPIFFE ID in that trust domain that names the instance only by its `ag_` identifier, created at registration: no definition name and no creation ancestry. A plain `ag_` identifier would sit outside the `spiffe://` namespace that `act.iss` names. It stays the same across SVID renewals, so the vMCP can bind a session to the instance and audit can correlate its calls. The full SVID stops at AS-1, so internal structure does not cross into the gateway's domain.
 - `act` has one level and names the current actor only (RFC 8693 §4.1). RFC 8693 treats prior actors in a nested `act` as informational, so leaving them out removes nothing the gateway enforces. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 - `resource` is signed by AS-1, so AS-2 checks the redemption's `resource` against a claim, not only against a broker parameter.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
@@ -676,7 +677,7 @@ client_assertion=<private_key_jwt for mecatl, aud=https://gateway.example.com>
 {
   "iss": "https://gateway.example.com",
   "sub": "usr-alice-7c1d",
-  "act": {"iss": "https://broker.example.com/as", "sub": "ag_7hq2x9"},
+  "act": {"iss": "spiffe://agents.example.com", "sub": "spiffe://agents.example.com/agent/ag_7hq2x9"},
   "client_id": "mecatl",
   "aud": "https://gateway.example.com/mcp",
   "authorization_details": [{"type": "https://toolhive.dev/mcp_tool_call",
