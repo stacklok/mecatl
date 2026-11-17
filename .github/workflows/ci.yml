@@ -800,7 +800,7 @@ jobs:
             let writable = true;
             try { accessSync(".", constants.W_OK); } catch { writable = false; }
             const forbidden = ["/usr/bin/corepack", "/usr/bin/pnpm", "node_modules/vitest", "node_modules/typescript", "node_modules/esbuild"];
-            const storeTooling = readdirSync("../node_modules/.pnpm").filter((name) => /^(@typescript\+|typescript@|vitest@|esbuild@|vite@)/.test(name));
+            const storeTooling = readdirSync("../node_modules/.pnpm").filter((name) => /^(@typescript\+|typescript@|vitest@|esbuild@|vite@|@hey-api\+|tsx@|@biomejs\+|playwright@|playwright-core@|@playwright\+)/.test(name));
             if (storeTooling.length > 0) console.error("build tooling in the pnpm store: " + storeTooling.join(", "));
             if (process.getuid() === 0 || writable || forbidden.some(existsSync) || storeTooling.length > 0) process.exit(1);
           '
