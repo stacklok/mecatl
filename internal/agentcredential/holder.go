@@ -72,6 +72,10 @@ type root struct {
 	entries map[string]*entry
 }
 
+// renewalTimeout bounds a renewal, which runs apart from any one lookup's
+// context because every lookup of its key shares it.
+const renewalTimeout = 30 * time.Second
+
 // renewal is one in-flight renewal, which concurrent lookups of its key wait
 // for.
 type renewal struct {
@@ -134,6 +138,8 @@ func (h *Holder) Ensure(ctx context.Context, key Key, req identitybroker.Registe
 	if err != nil {
 		return err
 	}
+	// The registration may have taken a while: check it against the time now.
+	now = h.now()
 	if err := checkRegistration(req, reg, held, now); err != nil {
 		return err
 	}
@@ -183,8 +189,9 @@ func newEntry(req identitybroker.RegisterAgentRequest, reg identitybroker.Regist
 // Credential is the MCP broker's lookup. With no entry for key it returns
 // ErrNoCredential: it never opens, reopens, or registers. Past renewAt, or
 // with renew set (after svid_expired), it renews the credential. Renewal is
-// single-flight per key: concurrent lookups wait for the one in flight, or
-// for their context. A renewal is stored only if key's root was not dropped
+// single-flight per key: every lookup, the first included, waits for the one
+// in flight or for its own context, and one lookup's cancellation does not
+// end the renewal. A renewal is stored only if key's root was not dropped
 // and the holder not closed since it started (ErrDropped otherwise). If it
 // fails otherwise, a lookup past half-life gets the held credential while it
 // has not expired; a lookup with renew, made after the broker refused the held
@@ -204,25 +211,27 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 		h.mu.Unlock()
 		return e.credential(), nil
 	}
-	if f := h.renewals[key]; f != nil {
-		h.mu.Unlock()
-		select {
-		case <-f.done:
-			return f.result(renew)
-		case <-ctx.Done():
-			return Credential{}, ctx.Err()
-		}
+	f := h.renewals[key]
+	if f == nil {
+		f = &renewal{done: make(chan struct{})}
+		h.renewals[key] = f
+		go func() {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), renewalTimeout)
+			defer cancel()
+			f.cred, f.err = h.renew(rctx, key, r, e)
+			h.mu.Lock()
+			delete(h.renewals, key)
+			h.mu.Unlock()
+			close(f.done)
+		}()
 	}
-	f := &renewal{done: make(chan struct{})}
-	h.renewals[key] = f
 	h.mu.Unlock()
-
-	f.cred, f.err = h.renew(ctx, key, r, e)
-	h.mu.Lock()
-	delete(h.renewals, key)
-	h.mu.Unlock()
-	close(f.done)
-	return f.result(renew)
+	select {
+	case <-f.done:
+		return f.result(renew)
+	case <-ctx.Done():
+		return Credential{}, ctx.Err()
+	}
 }
 
 // result is a renewal's answer to a lookup: on a failure with an unexpired
@@ -238,9 +247,9 @@ func (f *renewal) result(renew bool) (Credential, error) {
 // key's root and e its entry. A failure returns its error, and the held
 // credential too while it has not expired.
 func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credential, error) {
-	now := h.now()
 	// Shortcut: a credential is renewed by registering again in the held broker session; removed by #2562 (a renew call).
 	reg, err := h.broker.RegisterAgent(ctx, e.req)
+	now := h.now()
 	if err == nil {
 		err = checkRegistration(e.req, reg, e, now)
 	}

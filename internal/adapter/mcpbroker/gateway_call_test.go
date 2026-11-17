@@ -307,6 +307,35 @@ func TestGatewayCallDenialBlocksDispatch(t *testing.T) {
 	if calls := f.g.Calls(); len(calls) != 0 {
 		t.Fatalf("gateway received %d requests after a denial", len(calls))
 	}
+	// The call was claimed before it was authorized; a denied call was not
+	// sent, so its claim is released.
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("claim after a denial: %v", err)
+	}
+}
+
+func TestSendOnceKeysByOperation(t *testing.T) {
+	ctx := t.Context()
+	rec := NewMemorySendOnceRecord(8)
+	if err := rec.Claim(ctx, "root", "op_1", "hash-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Claim(ctx, "root", "op_1", "hash-b"); !errors.Is(err, ErrAlreadySent) {
+		t.Fatalf("claim with other arguments = %v, want ErrAlreadySent", err)
+	}
+	// Only the claim's own arguments release it.
+	if err := rec.Release(ctx, "root", "op_1", "hash-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Claim(ctx, "root", "op_1", "hash-a"); !errors.Is(err, ErrAlreadySent) {
+		t.Fatalf("claim after a release with other arguments = %v, want ErrAlreadySent", err)
+	}
+	if err := rec.Release(ctx, "root", "op_1", "hash-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Claim(ctx, "root", "op_1", "hash-b"); err != nil {
+		t.Fatalf("claim after the release = %v", err)
+	}
 }
 
 func TestGatewayCallLogsTheBrokerRefusal(t *testing.T) {
@@ -986,13 +1015,20 @@ func TestGatewayOperationIDStableAcrossResume(t *testing.T) {
 	f.g.DropAfterRequest("github")
 	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
 	wantRow(t, res, err, outcomeUnknown)
-	// A resumed run reattaches and executes the same call again.
+	// A resumed run reattaches and executes the same call again, once with
+	// the same arguments and once with arguments a hook rewrote: the
+	// operation is the same, so both are refused before authorization, and
+	// the gateway saw one tools/call.
 	f.attachment, _ = attach(t, f.runtime, gatewayTestSession)
-	res, err = f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
-	wantRow(t, res, err, outcomeAlreadySent)
-	reqs := f.auth.calls()
-	if len(reqs) != 2 || reqs[0].OperationID != reqs[1].OperationID {
-		t.Fatalf("AuthorizeCall requests = %+v, want the same operation", reqs)
+	for _, args := range []string{gatewayTestArgs, `{"changed":true}`} {
+		res, err = f.execute(mainAgent(t), t, "call-1", args)
+		wantRow(t, res, err, outcomeAlreadySent)
+	}
+	if n := len(f.auth.calls()); n != 1 {
+		t.Fatalf("AuthorizeCall called %d times, want 1: a refused duplicate gets no gateway token", n)
+	}
+	if n := len(f.toolsCalls()); n != 1 {
+		t.Fatalf("gateway received %d tools/call, want 1", n)
 	}
 }
 
