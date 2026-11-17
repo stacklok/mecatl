@@ -337,9 +337,13 @@ type VerifyCredentialForOwnerRequest struct {
 // VerifiedAgent is the agent a valid credential identifies.
 type VerifiedAgent struct {
 	Agent AgentRef
-	// AgentID is the agent's opaque ag_ identifier, the value AS-1 names the
-	// acting agent by. It never contains a SPIFFE path or definition name.
+	// AgentID is the agent's opaque ag_ identifier, the last segment of
+	// ActorID. It never contains a SPIFFE path or definition name.
 	AgentID string
+	// ActorID is the agent's name in an ID-JAG's act.sub:
+	// spiffe://<trust domain>/agent/<AgentID>, in the broker's agent trust
+	// domain.
+	ActorID string
 	// ExpiresAt is when the credential expires.
 	ExpiresAt time.Time
 }

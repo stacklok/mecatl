@@ -222,7 +222,17 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	case !open:
 		return VerifiedAgent{}, credentialDenied("the broker session is closed")
 	}
-	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
+	return b.verifiedAgent(cred), nil
+}
+
+// verifiedAgent is the agent cred, a verified credential, identifies.
+func (b *Broker) verifiedAgent(cred verifiedCredential) VerifiedAgent {
+	return VerifiedAgent{
+		Agent:     AgentRef{Subject: cred.subject},
+		AgentID:   b.agentID,
+		ActorID:   "spiffe://" + b.issuer.trustDomain + "/agent/" + b.agentID,
+		ExpiresAt: cred.expiresAt,
+	}
 }
 
 // VerifyCredentialForOwner implements CredentialVerifier. After the
@@ -260,5 +270,5 @@ func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentia
 	if !registered || !owned || !current || !open {
 		return VerifiedAgent{}, credentialDenied("the credential is not current for an open broker session of the owner")
 	}
-	return VerifiedAgent{Agent: AgentRef{Subject: cred.subject}, AgentID: b.agentID, ExpiresAt: cred.expiresAt}, nil
+	return b.verifiedAgent(cred), nil
 }

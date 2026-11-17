@@ -34,7 +34,7 @@ type Config struct {
 }
 
 func (c Config) validate() error {
-	if err := validateTrustDomain(c.TrustDomain); err != nil {
+	if err := ValidateTrustDomain(c.TrustDomain); err != nil {
 		return err
 	}
 	if !isToken(c.Audience) {
@@ -46,9 +46,10 @@ func (c Config) validate() error {
 	return nil
 }
 
-// validateTrustDomain applies the SPIFFE-ID trust domain grammar: lowercase
-// letters, digits, '.', '-' and '_', at most 255 bytes.
-func validateTrustDomain(td string) error {
+// ValidateTrustDomain applies the SPIFFE-ID trust domain grammar to td, a
+// trust domain name without the spiffe:// scheme: lowercase letters, digits,
+// '.', '-' and '_', at most 255 bytes.
+func ValidateTrustDomain(td string) error {
 	if td == "" {
 		return errors.New("trust domain is required")
 	}

@@ -82,11 +82,10 @@ func signAssertion(t *testing.T, key *ecdsa.PrivateKey, kid string, claims jwt.M
 // delegateMaxLifetime is the ID-JAG grant lifetime the delegate fixtures cap at.
 const delegateMaxLifetime = time.Hour
 
-// startDelegateAS1 hosts AS-1 on loopback with a delegate client whose keys are
-// a fresh broker key, after edit tweaks the Config and the DelegateClient. It
-// returns the fixture, a client-assertion signer for that key, and the private
-// key for signing raw assertions.
-func startDelegateAS1(t *testing.T, h *identityharness.Harness, edit func(*Config, *DelegateClient)) (*fixture, *identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
+// newDelegate returns the broker's delegate client keyed by a fresh broker
+// key, allowing the test client with delegateMaxLifetime, and a
+// client-assertion signer for that key and the key itself.
+func newDelegate(t *testing.T) (DelegateClient, *identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -100,13 +99,22 @@ func startDelegateAS1(t *testing.T, h *identityharness.Harness, edit func(*Confi
 	if err != nil {
 		t.Fatal(err)
 	}
+	return DelegateClient{
+		ID:                   identitybroker.BrokerClientID,
+		KeySet:               keySet,
+		AllowedSourceClients: []string{testClientID},
+		IDJAGMaxLifetime:     delegateMaxLifetime,
+	}, signer, key
+}
+
+// startDelegateAS1 hosts AS-1 on loopback with a delegate client whose keys are
+// a fresh broker key, after edit tweaks the Config and the DelegateClient. It
+// returns the fixture, a client-assertion signer for that key, and the private
+// key for signing raw assertions.
+func startDelegateAS1(t *testing.T, h *identityharness.Harness, edit func(*Config, *DelegateClient)) (*fixture, *identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
+	t.Helper()
+	d, signer, key := newDelegate(t)
 	f := startAS1(t, h, func(c *Config) {
-		d := DelegateClient{
-			ID:                   identitybroker.BrokerClientID,
-			KeySet:               keySet,
-			AllowedSourceClients: []string{testClientID},
-			IDJAGMaxLifetime:     delegateMaxLifetime,
-		}
 		if edit != nil {
 			edit(c, &d)
 		}

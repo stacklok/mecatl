@@ -125,17 +125,13 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 	var claims struct {
 		JTI   string          `json:"jti"`
 		Exp   json.RawMessage `json:"exp"`
-		SubID *struct {
-			Format  string `json:"format"`
-			Issuer  string `json:"iss"`
-			Subject string `json:"sub"`
-		} `json:"sub_id"`
+		SubID json.RawMessage `json:"sub_id"`
 	}
-	if json.Unmarshal(payload, &claims) != nil || claims.SubID == nil || claims.SubID.Format != "iss_sub" {
+	if json.Unmarshal(payload, &claims) != nil {
 		return accessTokenClaims{}, false
 	}
-	owner := Owner{Issuer: claims.SubID.Issuer, Subject: claims.SubID.Subject}
-	if owner.validate() != nil {
+	owner, err := OwnerFromSubjectIdentifier(claims.SubID)
+	if err != nil {
 		return accessTokenClaims{}, false
 	}
 	out := accessTokenClaims{owner: owner, jti: claims.JTI}
@@ -144,6 +140,30 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 		out.exp = time.Unix(int64(exp), 0)
 	}
 	return out, true
+}
+
+// OwnerFromSubjectIdentifier parses raw, an RFC 9493 subject identifier as
+// JSON, such as an access token's or a grant's sub_id, into the owner it
+// names. Only format iss_sub with a valid issuer and subject is accepted,
+// the rule session open applies. A failure is a CodeInvalidArgument *Error
+// whose text never contains the identifier's values.
+func OwnerFromSubjectIdentifier(raw []byte) (Owner, error) {
+	var id *struct {
+		Format  string `json:"format"`
+		Issuer  string `json:"iss"`
+		Subject string `json:"sub"`
+	}
+	if json.Unmarshal(raw, &id) != nil || id == nil {
+		return Owner{}, invalid("the subject identifier is not a valid JSON object")
+	}
+	if id.Format != "iss_sub" {
+		return Owner{}, invalid("the subject identifier's format is not iss_sub")
+	}
+	owner := Owner{Issuer: id.Issuer, Subject: id.Subject}
+	if err := owner.validate(); err != nil {
+		return Owner{}, err
+	}
+	return owner, nil
 }
 
 // recordConvertedLocked remembers that AS-1 may have converted claims' token,
