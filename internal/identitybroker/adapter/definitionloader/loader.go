@@ -1,8 +1,9 @@
-// Package definitionloader produces the identity broker's definition records:
-// the operator's global agent definitions, parsed with the harness's own
+// Package definitionloader loads the agent definitions the identity broker
+// knows: the operator's global definitions, parsed with the harness's own
 // definition parser, and the built-in definitions each Mecatl release ships.
-// The broker core stays free of file access; this adapter reads the files and
-// returns records for identitybroker.New.
+// Each loaded Definition pairs the record identitybroker.New takes with the
+// accepted definition the harness builds the agent from, so the broker and
+// the harness work from one read. The broker core stays free of file access.
 //
 // Global definitions come only from the operator's explicit directories (the
 // harness's explicit origin). The project and user tiers and remote drivers are
@@ -10,12 +11,20 @@
 // definition has no file bytes to digest.
 //
 // Shortcut: a global definition's revision is its file's modification time,
-// because a plain file has no revision of its own; there is no provenance
-// profile allowlist and no root eligibility. Removed by #2551.
+// because a plain file has no revision of its own, and there is no provenance
+// profile allowlist and no root eligibility; removed by #2551 (revisions from
+// each source's own revision, such as a Git commit or object revision). Until
+// then the revision does not follow the content: a copy that keeps
+// modification times (rsync -a, cp -p, tar) can change the bytes under the same
+// revision, which only the digests reveal; and unchanged bytes get a new
+// revision whenever the file is rewritten, remounted, or checked out again, or
+// differ between replicas, which makes the broker treat them as a different
+// definition.
 package definitionloader
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,6 +45,13 @@ const (
 	SourceGlobal = "global"
 	// SourceSystem is the source of the built-in definitions.
 	SourceSystem = "system"
+
+	// BuiltinMain names the built-in definition of the main agent of a session
+	// started without a named definition: system/main.
+	BuiltinMain = "main"
+	// BuiltinExplorer names the built-in definition of the child agent of a
+	// subagent call that names no definition: system/explorer.
+	BuiltinExplorer = "explorer"
 
 	// ProfileFile is the provenance profile of a global definition read from a
 	// file. Its metadata holds the file's path under the key "path"; its
@@ -66,12 +82,13 @@ func BuiltinRevision(buildID string) string {
 	return DevRevision
 }
 
-// builtins are the built-in definitions, in the form the harness builds an
-// agent from. A session started without a named definition uses system/main;
-// a subagent call that names no definition uses system/explorer.
-var builtins = []tool.AgentDef{
-	{Name: "main", Description: "The main agent of a session started without a named definition."},
-	{Name: "explorer", Description: "The child agent of a subagent call that names no definition."},
+// builtins returns the built-in definitions. It builds them on each call so
+// no caller can change another's copy.
+func builtins() []tool.AgentDef {
+	return []tool.AgentDef{
+		{Name: BuiltinMain, Description: "The main agent of a session started without a named definition."},
+		{Name: BuiltinExplorer, Description: "The child agent of a subagent call that names no definition."},
+	}
 }
 
 // Config selects what Load reads.
@@ -85,6 +102,18 @@ type Config struct {
 	BuildID string
 }
 
+// Definition is one loaded definition.
+type Definition struct {
+	// Record is what the broker checks registrations against; pass it to
+	// identitybroker.New.
+	Record identitybroker.DefinitionRecord
+	// Def is the accepted definition: the value Record's DefinitionDigest
+	// covers, and the one the harness builds the agent from. Building from a
+	// separate read of the source could build a definition the broker never
+	// recorded.
+	Def tool.AgentDef
+}
+
 // Problem reports one definition that was left out or adjusted while loading.
 type Problem struct {
 	// Location is where the definition came from, such as a file path.
@@ -96,27 +125,28 @@ type Problem struct {
 	Dropped bool
 }
 
-// Load returns a record for each built-in definition and each valid global
-// definition, sorted by source and name, with a Problem for each definition it
-// left out or adjusted. A definition the parser rejects, or whose record fails
+// Load returns each built-in definition and each valid global definition,
+// sorted by source and name, with a Problem for each definition it left out or
+// adjusted. A definition the parser rejects, or whose record fails
 // identitybroker.DefinitionRecord.Validate, is left out and loading continues.
 // When two directories define the same name, the earlier directory wins and
 // the later definition is reported. Load fails only when a directory exists
-// but cannot be read.
-func Load(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, []Problem, error) {
+// but cannot be read; it then returns no definitions, built-ins included, and
+// the problems found before the failure.
+func Load(ctx context.Context, cfg Config) ([]Definition, []Problem, error) {
 	var (
-		records  []identitybroker.DefinitionRecord
+		defs     []Definition
 		problems []Problem
 	)
 	revision := BuiltinRevision(cfg.BuildID)
-	for _, def := range builtins {
+	for _, def := range builtins() {
 		rec, err := builtinRecord(def, revision)
 		if err != nil {
 			// The built-ins are fixed; a failure here is a programming error
 			// that every test run would catch.
 			return nil, nil, fmt.Errorf("built-in definition %s/%s: %w", SourceSystem, def.Name, err)
 		}
-		records = append(records, rec)
+		defs = append(defs, Definition{Record: rec, Def: def})
 	}
 
 	// Conventional stays false, so only the explicit directories are resolved:
@@ -139,16 +169,16 @@ func Load(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, [
 			problems = append(problems, Problem{Location: location, Reason: err.Error(), Dropped: true})
 			continue
 		}
-		records = append(records, rec)
+		defs = append(defs, Definition{Record: rec, Def: d.Def})
 	}
 
-	slices.SortFunc(records, func(a, b identitybroker.DefinitionRecord) int {
-		if c := strings.Compare(a.Ref.Source, b.Ref.Source); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Ref.Name, b.Ref.Name)
+	slices.SortFunc(defs, func(a, b Definition) int {
+		return cmp.Or(
+			strings.Compare(a.Record.Ref.Source, b.Record.Ref.Source),
+			strings.Compare(a.Record.Ref.Name, b.Record.Ref.Name),
+		)
 	})
-	return records, problems, nil
+	return defs, problems, nil
 }
 
 func builtinRecord(def tool.AgentDef, revision string) (identitybroker.DefinitionRecord, error) {
@@ -197,8 +227,9 @@ func globalRecord(d agentfs.Discovered) (identitybroker.DefinitionRecord, error)
 // acceptedForm returns the canonical bytes of the definition the harness
 // builds an agent from: its JSON encoding, which has a fixed field order and
 // sorted map keys. Origin is cleared because it records how the definition was
-// admitted, not what it contains. Every other field is included, so a field
-// added to tool.AgentDef changes the digest of a definition that sets it.
+// admitted, not what it contains. tool.AgentDef has no JSON tags, so every
+// field is always encoded: a field added to or renamed in tool.AgentDef changes
+// every definition's digest, not only those that set it.
 func acceptedForm(def tool.AgentDef) ([]byte, error) {
 	def.Origin = ""
 	var buf bytes.Buffer
