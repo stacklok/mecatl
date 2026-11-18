@@ -430156,6 +430156,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795007834971,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "63a9bf86387f420156cc9992dc60e21f958a5b1f",
+          "message": "feat(identitybroker): load agent definition records for the broker (#2829)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T08:44:00-05:00",
+          "tree_id": "bb5bbc41793dc840872929a9bd54506ed0396f5b",
+          "url": "https://github.com/stacklok/mecatl/commit/63a9bf86387f420156cc9992dc60e21f958a5b1f"
+        },
+        "date": 1795010216488,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -560268,6 +560307,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795010211858,
+  "lastUpdate": 1795010217987,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
