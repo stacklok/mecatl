@@ -101,7 +101,7 @@ sequenceDiagram
 
     Note over H,G: (6) Main call: pull_request_list
     H->>B: AuthorizeCall: workload credential, A42, run R41, run owner Alice,<br/>op-list-prs-001, server, tool, argument hash, agentJwtSvid = mainSVID
-    B->>B: Check session, workload, actor, run owner = grant owner, route<br/>(ceiling with the authority work)
+    B->>B: Check session, workload, actor, run owner = grant owner, a gateway routes the server<br/>(ceiling with the authority work)
     B->>A1: (7) RFC 8693: subject_token = RT-A42<br/>actor_token = mainSVID<br/>requested_token_type = id-jag, audience = AS-2<br/>(5) client mecatl, private_key_jwt
     A1->>A1: RT-A42 bound to mecatl, issues id-jag, not revoked or expired<br/>upstream IdP re-checked if due<br/>main's session owned by RT-A42's user, build act (iss = AS-1)
     A1-->>B: J-main
@@ -499,7 +499,7 @@ The request names the tool as the gateway routes it, exactly as the MCP client s
 3. The SVID passes the [SVID checks](#4-agent-instance-jwt-svid).
 4. The run belongs to `A42` and is bound to the SVID's instance. The broker keeps a run record of session, run, instance, owner, and delegation, created the first time the run appears and compared on every later call; two replicas racing to create it keep one and compare against it. A new run naming no delegation is a root run and needs a root instance, one with no parent. A run naming a delegation needs that delegation already [reported](#delegation-report) in `A42`, with this run and the SVID's instance as its receiving run and instance.
 5. The reported run owner equals the run record's owner and the grant's recorded owner, the company identity `(https://login.example.com, alice-204)` the broker stored with `RT-A42`, not AS-1's subject `u-alice-91`. The run owner never selects the grant.
-6. A route to the gateway exists for the tool.
+6. A configured gateway routes the server. The gateway owns the routing from tool to server, which the vMCP checks against `V` ([step (9)](#9-vmcp-decision-and-provider-credential), check 3); per-tool limits are check 7.
 7. Once the authority work is in place, the instance's stored effective ceiling allows this server and tool, with no Cedar evaluation errors.
 
 The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have passed, and obtains a `V` for this call through steps (7) and (8).
@@ -517,7 +517,7 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 | 3, expired | `UNAUTHENTICATED` with `svid_expired` | mecak8s renews and retries once. |
 | 3 otherwise, 4–7 | `PERMISSION_DENIED`, recorded; nothing is dispatched | No; retrying requires authorization again. |
 
-**Why.** User, run, and delegation are not inputs to the ceiling check; the reviewer ceiling gives the same result for PR 43. See [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions). The broker does not check provider connections. It authorizes the session, workload, actor, run, run owner, route, and, with the authority work, the ceiling. AS-2 authorizes the user: the mapping, and in external mode the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions on the request.
+**Why.** User, run, and delegation are not inputs to the ceiling check; the reviewer ceiling gives the same result for PR 43. See [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions). The broker does not check provider connections. It authorizes the session, workload, actor, run, run owner, the server's gateway, and, with the authority work, the ceiling. AS-2 authorizes the user: the mapping, and in external mode the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions on the request.
 
 **Does not prove.** That mecak8s reported the right run or run owner: both are mecak8s reports, checked for consistency with the grant and the reported delegations. That AS-2 can resolve Alice or that a provider connection exists: later steps check those. Neither dispatch nor success.
 
@@ -735,7 +735,7 @@ Until [stacklok/toolhive#7030](https://github.com/stacklok/toolhive/issues/7030)
 
 1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707). A message that belongs to a call this `V` already started, such as a cancellation or an elicitation reply, is accepted after `exp` while the call is open, up to the configured maximum call duration.
 2. The session ID, if present, is bound to the same `iss`, `sub`, `client_id`, `act.iss`, and `act.sub`, and the delegated-access marker.
-3. The request matches `V`'s `authorization_details` entry. For a `tools/call`: the server, the tool, and the [argument hash](#8-as-2-access-token), which the vMCP computes from the request it received before any routing or rewriting. For a `V` issued to list tools: the server and the list method, so a listing `V` cannot start a `tools/call`. `V`'s `jti` has not served a call before; the vMCP records it, with the call it started, until `exp` plus the clock skew or the end of that call, whichever is later, in storage shared by its replicas. That record is what lets a later message for the open call be accepted after `V` expires.
+3. The request matches `V`'s `authorization_details` entry. For a `tools/call`: the tool, the server the tool's route at this gateway resolves to, because a `tools/call` request carries no server field, and the [argument hash](#8-as-2-access-token), which the vMCP computes from the request it received before any routing or rewriting. For a `V` issued to list tools: the server and the list method, so a listing `V` cannot start a `tools/call`. `V`'s `jti` has not served a call before; the vMCP records it, with the call it started, until `exp` plus the clock skew or the end of that call, whichever is later, in storage shared by its replicas. That record is what lets a later message for the open call be accepted after `V` expires.
 4. Its own operation policy allows the tool.
 5. `V` carries the delegated-access marker from [step (8)](#8-as-2-access-token). A token without it gets no delegated credential lookup.
 6. A provider credential exists under **(gateway, native user, routed provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. The provider comes from the tool's route, never from the request. The stored row's owner must equal `V`'s native user.
@@ -863,7 +863,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | The actor check needs an approval | AS-1 | `invalid_request` with `approval_required`, reported as `denied` | Call denied; Mecatl has no per-agent approval flow yet | Nothing |
 | Run bound to another instance, a root run from a child instance, or delegation not reported | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
 | Run owner differs from the grant's recorded owner | Broker | `PERMISSION_DENIED`, recorded | Call denied | Nothing |
-| No route, or ceiling denies the tool | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
+| No gateway routes the server, or ceiling denies the tool | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
 | Inconsistent delegation report | Broker | `PERMISSION_DENIED`, `ALREADY_EXISTS` | Delegated task cannot call tools | Nothing |
 | Session closed or past its hard expiry | Broker | `session_closed`, with its status from error reasons | A new session opens on Alice's next request | Already revoked |
 | Grant revoked by sign out everywhere | Broker | `signed_out`, with its status from error reasons | Run stops; Alice is signed out | Already revoked |
@@ -1027,7 +1027,11 @@ On Okta, Google, and Keycloak both claims carry the same value. On Entra they di
 
 ## Configuration
 
-None of these values is selected. Each bounds a risk the operator should know:
+The broker reads its own configuration file, named by one deployment flag, and validates it itself. The file holds the broker's keys, the agent trust domain, and one entry per gateway: its kind (embedded or external), AS-2's issuer and token endpoint, the vMCP resource, and the servers the gateway routes. mecak8s checks that each routed server is one of its configured MCP servers. The agent trust domain is configured, never defaulted: it is `act.iss` in every ID-JAG, and external approvals name it ([step (7)](#7-id-jag-from-as-1)).
+
+Every signing key, and every secret that protects an authorization server's opaque tokens, such as its HMAC secret, is supplied by the operator, never generated at runtime. Each signing key accepts fallback keys, so it can rotate while verifiers still hold the old key. The broker client's public key set is an operator-supplied file that holds the old and new keys during rotation.
+
+None of the values below is selected. Each bounds a risk the operator should know:
 
 - **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration, which bounds how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
 - **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp` (a `V`'s, at least until the call it started ends). ToolHive fixes the skew it allows on a client assertion at 60 seconds.
