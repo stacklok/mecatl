@@ -433729,6 +433729,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795041654583,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dcda427af386489187d095a470f55332490f4e6c",
+          "message": "feat(release): implement bounded Go module publication (#2865)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T15:34:01-08:00",
+          "tree_id": "1581dc8d3a794d90ea58d2d7bc8add983a223132",
+          "url": "https://github.com/stacklok/mecatl/commit/dcda427af386489187d095a470f55332490f4e6c"
+        },
+        "date": 1795045574293,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13385,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12879,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -564867,6 +564906,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795045571052,
+  "lastUpdate": 1795045575172,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
