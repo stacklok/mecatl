@@ -2301,25 +2301,6 @@ func (r *renderer) collapseMarker(n int) string {
 	return collapseMarkerMark(n, r.marks.toolcalls)
 }
 
-// truncateLinesTailMark is the free-function core of truncateLinesTail. An empty
-// inspection mark leaves a plain line-count marker for previews with no detail view.
-func truncateLinesTailMark(s string, maxLines int, tail, inspectMark string) string {
-	s = terminaltext.Sanitize(strings.TrimRight(s, "\n"))
-	if s == "" {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	kept := lines[:maxLines]
-	marker := tail
-	if marker == "" {
-		marker = collapseMarkerMark(len(lines)-maxLines, inspectMark)
-	}
-	return strings.Join(kept, "\n") + "\n" + lipgloss.NewStyle().Render(marker)
-}
-
 // collapseMarkerMark formats a line-cap marker, optionally linking to inspection.
 func collapseMarkerMark(n int, inspectMark string) string {
 	noun := "lines"

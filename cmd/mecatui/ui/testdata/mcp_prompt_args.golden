@@ -3,20 +3,20 @@
 
 
 
-
-
-                           ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                           ┃                                            ┃
-                           ┃  arguments for code-review                 ┃
-                           ┃                                            ┃
-                           ┃  › path                                    ┃
-                           ┃    > p                                     ┃
-                           ┃                                            ┃
-                           ┃  ↑/↓ field · enter next/submit · esc back  ┃
-                           ┃                                            ┃
-                           ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  arguments for code-review                                                                       ┃
+┃  review                                                                                          ┃
+┃                                                                                                  ┃
+┃  ▶ path                                                                                          ┃
+┃    required value                                                                                ┃
+┃    [Cancel]    [Submit]                                                                          ┃
+┃                                                                                                  ┃
+┃  Required arguments only                                                                         ┃
+┃                                                                                                  ┃
+┃  tab next · shift+tab previous · ↑ previous · ↓ next · enter next · esc back                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

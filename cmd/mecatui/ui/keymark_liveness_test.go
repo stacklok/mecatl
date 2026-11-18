@@ -630,7 +630,9 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	caps := client.Capabilities{MCP: true}
 	render := func(st mcpState) string {
 		p := &st
-		p.deps = surfaceDeps{theme: th, caps: caps, marks: hk}
+		p.deps = surfaceDeps{theme: th, caps: caps, marks: hk, keys: applyKeyOverrides(defaultKeys(), overrideAll())}
+		p.setResources(p.resources)
+		p.setPrompts(p.prompts)
 		body, _ := p.Render(100, 30)
 		return stripANSIstr(body)
 	}
@@ -645,7 +647,7 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	})
 	t.Run("resources list", func(t *testing.T) {
 		got := render(mcpState{view: mcpResources, resources: []client.MCPResource{{Name: "r1", Server: "s"}}})
-		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 read · ctrl+f16 close") {
+		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move") || !strings.Contains(got, "ctrl+f17 read · ctrl+f16 close") {
 			t.Errorf("resources hint should carry live move/read/close: %q", got)
 		}
 		if strings.Contains(got, "↑/↓ move · enter read · esc close") {
@@ -654,14 +656,14 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 	})
 	t.Run("prompts list", func(t *testing.T) {
 		got := render(mcpState{view: mcpPrompts, prompts: []client.MCPPrompt{{Name: "p1", Server: "s"}}})
-		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 select · ctrl+f16 close") {
+		if !strings.Contains(got, "ctrl+f26/ctrl+f27 move") || !strings.Contains(got, "ctrl+f17 select · ctrl+f16 close") {
 			t.Errorf("prompts hint should carry live move/select/close: %q", got)
 		}
 	})
 	t.Run("prompt arguments", func(t *testing.T) {
 		got := render(mcpState{view: mcpPromptArgs, argPrompt: client.MCPPrompt{Name: "p1"}})
-		if !strings.Contains(got, "↑/↓ field · ctrl+f17 next/submit · ctrl+f16 back") {
-			t.Errorf("prompt-args hint should keep fixed arrows and carry live choose/close: %q", got)
+		if !strings.Contains(got, "↑ previous · ↓ next") || !strings.Contains(got, "ctrl+f17 cancel · ctrl+f16 back") {
+			t.Errorf("prompt-args hint should keep fixed arrows and carry live focused action/back: %q", got)
 		}
 		if strings.Contains(got, "enter next/submit") || strings.Contains(got, "esc back") {
 			t.Errorf("prompt-args hint still shows default keyMap chords: %q", got)
