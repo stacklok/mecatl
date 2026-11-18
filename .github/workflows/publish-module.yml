@@ -1,0 +1,95 @@
+# Reusable prepare -> write -> prove unit. Every operation is deliberately stubbed.
+# All future helper code comes from github.sha (the dispatch's trusted main revision),
+# not from source or parent. Never execute candidate code on the writer runner.
+name: Publish one Go module (skeleton)
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: 'Known publishable module directory; absent from versions means pass through'
+        type: string
+        required: true
+      source:
+        description: 'Original reviewed main SHA; implementation source must remain unchanged'
+        type: string
+        required: true
+      versions:
+        description: 'Validated directory/version JSON mapping for the complete request'
+        type: string
+        required: true
+      branch:
+        description: 'Temporary metadata branch; created by the first successful writer'
+        type: string
+        required: true
+      parent:
+        description: 'Expected incoming commit, after preceding modules passed public proof'
+        type: string
+        required: true
+    outputs:
+      head:
+        description: 'Published and publicly verified commit, or unchanged parent when unselected'
+        value: ${{ jobs.prove.outputs.head }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      selected: ${{ steps.prepare.outputs.selected }}
+      metadata: ${{ steps.prepare.outputs.metadata }}
+    steps:
+      - name: Prepare and test this module without write credentials
+        id: prepare
+        # Proposed helper: prepare(module, source, versions, parent).
+        # If selected: edit only this module's go.mod/go.sum, tidy and run standalone
+        # tests against public dependencies. Upload prepared metadata DATA, not code.
+        # If unselected: selected=false; no artifact or candidate execution needed.
+        run: |
+          printf '%s\n' '::error::Module preparation is not implemented.'
+          exit 1
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.selected == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    outputs:
+      head: ${{ steps.publish.outputs.head }}
+    steps:
+      - name: Commit tested metadata and create the immutable module tag
+        id: publish
+        # Proposed helper: publish(module, source, versions, branch, parent, metadata).
+        # Fresh runner, trusted tooling only; download prepare.metadata as DATA.
+        # Verify allowed paths, tested bytes, unchanged source and expected parent;
+        # Git data APIs commit/advance the branch then create the tag at that commit.
+        # Later: repository-scoped App contents:write here ONLY; never PR/admin rights.
+        run: |
+          printf '%s\n' '::error::Module commit and tag creation are not implemented.'
+          exit 1
+
+  prove:
+    needs: [prepare, publish]
+    # A skipped internal writer is expected for an unselected module. Failure or
+    # cancellation must NOT produce a successful head that unlocks the next call.
+    if: >-
+      ${{ !cancelled() && needs.prepare.result == 'success' &&
+          (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      head: ${{ steps.prove.outputs.head }}
+    steps:
+      - name: Verify public consumption, or pass through an unselected module
+        id: prove
+        # Proposed helper: prove(module, versions, head=publish.head).
+        # Selected: fresh cache, public proxy/sumdb, no replacements, consumer smoke;
+        # bounded propagation retries. Output head only AFTER successful proof.
+        # Unselected: output parent without downloading anything.
+        run: |
+          printf '%s\n' '::error::Public module proof/pass-through is not implemented.'
+          exit 1

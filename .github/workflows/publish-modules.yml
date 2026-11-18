@@ -1,0 +1,173 @@
+# Review checkpoint only: preflight deliberately fails; no release helper or token minting.
+# Operator-initiated; an agent may dispatch the approved source/version mapping.
+name: Publish Go modules (skeleton)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Full main commit SHA containing the reviewed implementation'
+        type: string
+        required: true
+      versions:
+        description: 'Explicit JSON mapping of module directories to exact versions'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Serializes execution, not the wait for a human to review the final metadata PR.
+concurrency:
+  group: publish-go-modules
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      source: ${{ steps.preflight.outputs.source }}
+      versions: ${{ steps.preflight.outputs.versions }}
+      branch: ${{ steps.preflight.outputs.branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - name: Validate request and test assembled source
+        id: preflight
+        env:
+          SOURCE: ${{ inputs.source }}
+          VERSIONS: ${{ inputs.versions }}
+        # Proposed helper: preflight --source "$SOURCE" --versions "$VERSIONS"
+        # Validate main reachability, versions, inventory/order and absent tags;
+        # then run source preflight on a separate candidate checkout, without tokens.
+        run: |
+          printf '%s\n' '::error::Review checkpoint only; module publication is not implemented.'
+          exit 1
+
+  # Each successful call returns the branch head AFTER public proof. Calls for
+  # unselected modules succeed and pass their parent through; never skip a call.
+  engine:
+    needs: preflight
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: engine
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.preflight.outputs.source }}
+
+  driver:
+    needs: [preflight, engine]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: contracts/gen/go/mecatl/driver
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.engine.outputs.head }}
+
+  ssefilter:
+    needs: [preflight, driver]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/ssefilter
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.driver.outputs.head }}
+
+  adaptersupport:
+    needs: [preflight, ssefilter]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: internal/adaptersupport
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.ssefilter.outputs.head }}
+
+  oidc:
+    needs: [preflight, adaptersupport]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: authn/oidc
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.adaptersupport.outputs.head }}
+
+  anthropic:
+    needs: [preflight, oidc]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/anthropic
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.oidc.outputs.head }}
+
+  openai:
+    needs: [preflight, anthropic]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/openai
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.anthropic.outputs.head }}
+
+  openaichat:
+    needs: [preflight, openai]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/openaichat
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.openai.outputs.head }}
+
+  adapters:
+    needs: [preflight, openaichat]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: adapters
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.openaichat.outputs.head }}
+
+  reconcile:
+    needs: [preflight, adapters]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      metadata: ${{ steps.reconcile.outputs.metadata }}
+    steps:
+      - name: Prepare remaining consumer pins without write credentials
+        id: reconcile
+        # Proposed helper: reconcile(source, versions, parent=adapters.head).
+        # Update/tidy ALL affected workspace consumers, including root/runtime/test.
+        # Upload only prepared go.mod/go.sum data; output its artifact ID.
+        run: |
+          printf '%s\n' '::error::Consumer reconciliation is not implemented.'
+          exit 1
+
+  adoption-pr:
+    needs: [preflight, adapters, reconcile]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - name: Commit final metadata and open an ordinary PR
+        # Proposed helper: open-pr(source, versions, branch, parent=adapters.head,
+        # metadata=reconcile.metadata). Fresh runner; trusted tooling only.
+        # Later: repository-scoped App contents:write + pull-requests:write here ONLY.
+        # No implementation source changes, no automatic merge, no empty PR.
+        run: |
+          printf '%s\n' '::error::Metadata PR creation is not implemented.'
+          exit 1
