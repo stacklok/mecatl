@@ -390614,6 +390614,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795038596380,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e3ffbc433569a9556d122c4d18f8d4f10e6569d8",
+          "message": "test(identityharness): retire the fake AS-1; identity tests use the real AS-1 (#2867)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T21:43:53Z",
+          "tree_id": "21f03b002b6d0db1638a2c1e225c51cb43b7a197",
+          "url": "https://github.com/stacklok/mecatl/commit/e3ffbc433569a9556d122c4d18f8d4f10e6569d8"
+        },
+        "date": 1795039362519,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -563811,6 +563845,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795039359080,
+  "lastUpdate": 1795039363469,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
