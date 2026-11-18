@@ -7,13 +7,11 @@ metadata as data and never check out or execute candidate code.
 
 import argparse
 import base64
-import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
-import stat
 import subprocess
 import sys
 import tempfile
@@ -171,26 +169,17 @@ def checkout(root, source, parent):
         raise CheckError("parent differs from source outside known dependency metadata")
 
 
-def tree(root):
-    # Include ignored outputs too: a test generating source is not metadata-only.
-    names = run(["git", "ls-files", "-z", "--cached", "--others"], root).split("\0")
-    result = {}
-    for name in filter(None, names):
-        path = root / name
-        if not path.exists() and not path.is_symlink():
-            continue
-        mode = path.lstat().st_mode
-        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
-            raise CheckError(f"unexpected non-file in candidate checkout: {name}")
-        data = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
-        result[name] = (mode, hashlib.sha256(data).digest())
-    return result
-
-
-def unchanged(before, after, allowed=()):
-    if any(before.get(path) != after.get(path)
-           for path in before.keys() | after.keys() if path not in allowed):
-        raise CheckError("candidate execution modified files outside allowed metadata or tested bytes")
+def check_changes(root, allowed=()):
+    # Inspect index and worktree separately, including deletions and mode changes.
+    changed = set()
+    for args in (("diff", "--cached", "HEAD"), ("diff",)):
+        changed.update(filter(None, run(
+            ["git", "-c", "core.fileMode=true", *args, "--no-renames", "--name-only", "-z"], root).split("\0")))
+    changed.update(filter(None, run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"], root).split("\0")))
+    if changed - set(allowed):
+        raise CheckError("candidate execution modified files outside allowed metadata")
+    return changed
 
 
 def check_metadata(original, desired, modules, pins):
@@ -225,18 +214,17 @@ def tidy(root, entry, modules, versions, env, standalone):
     check_metadata(original, desired, modules, pins)
     captured = {str((directory / filename).relative_to(root)): candidate.read_optional(directory / filename)
                 for filename in ("go.mod", "go.sum")}
-    tested = tree(root)
     candidate.go(directory, env, "mod", "tidy", "-diff")
     if standalone:
         candidate.go(directory, env, "build", "-mod=readonly", "./...")
         candidate.go(directory, env, "test", "-mod=readonly", "-count=1", "-timeout=20m", "./...")
-    unchanged(tested, tree(root))
+    if any(candidate.read_optional(root / path) != data for path, data in captured.items()):
+        raise CheckError("candidate execution modified files after metadata was tested")
     return captured
 
 
-def artifact(root, parent, before, captured, destination):
-    after = tree(root)
-    unchanged(before, after, captured)
+def artifact(root, parent, captured, destination):
+    changed = check_changes(root, captured)
     if git(root, "rev-parse", "HEAD") != parent:
         raise CheckError("candidate execution moved HEAD")
     files = {}
@@ -246,10 +234,9 @@ def artifact(root, parent, before, captured, destination):
             raise CheckError(f"metadata must be a nonexecutable regular file: {path}")
         if path.endswith("go.mod") and not target.is_file():
             raise CheckError(f"module metadata was deleted: {path}")
-        actual_hash = after[path][1] if path in after else None
-        if actual_hash != (None if data is None else hashlib.sha256(data).digest()):
+        if candidate.read_optional(target) != data:
             raise CheckError(f"tested metadata bytes changed before artifact capture: {path}")
-        if before.get(path) != after.get(path):
+        if path in changed:
             files[path] = None if data is None else data.decode("utf-8")
     # Create-only, after testing and source-change checks; never clobber candidate files.
     with destination.open("x", encoding="utf-8") as output:
@@ -275,15 +262,14 @@ def preflight(args, versions, env):
     runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
     if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
         raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
-    before = tree(root)
     run(["task", "test:workspace"], root, env)
     command = [sys.executable, str(Path(candidate.__file__).resolve()), "--root", str(root)]
     for path in versions:
         command += ["--module", path]
     run(command, root, env)
-    # Workspace Go commands can generate the ignored workspace checksum file.
-    # It is not source and is never included in a publication metadata artifact.
-    unchanged(before, tree(root), {"go.work.sum"})
+    check_changes(root)
+    if git(root, "rev-parse", "HEAD") != args.source:
+        raise CheckError("candidate execution moved HEAD")
     return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
             "branch": f"module-publication/{runid}-{attempt}"}
 
@@ -292,11 +278,10 @@ def prepare(args, versions, env):
     root = args.root
     checkout(root, args.source, args.parent)
     modules = inventory(root, env)
-    before = tree(root)
     earlier = {path: exact for path, exact in versions.items()
                if ORDER.index(path) < ORDER.index(args.module)}
     captured = tidy(root, modules[args.module], modules, earlier, env, standalone=True)
-    result = artifact(root, args.parent, before, captured, args.metadata)
+    result = artifact(root, args.parent, captured, args.metadata)
     return dict(result, selected="true")
 
 
@@ -304,7 +289,6 @@ def reconcile(args, versions, env):
     root = args.root
     checkout(root, args.source, args.parent)
     modules = inventory(root, env)
-    before = tree(root)
     allowed = set()
     for path in ORDER + ("environment/microvm", ".", "integration/microvm"):
         entry = modules[path]
@@ -314,7 +298,6 @@ def reconcile(args, versions, env):
     # Later consumers (with development replacements) can observe earlier changes.
     # Verify the entire resulting metadata is stable, not just each intermediate tree.
     captured = {path: candidate.read_optional(root / path) for path in allowed}
-    tested = tree(root)
     for path, (_, directory, original) in modules.items():
         if str(Path(path) / "go.mod") in allowed:
             candidate.go(directory, env, "mod", "tidy", "-diff")
@@ -322,8 +305,7 @@ def reconcile(args, versions, env):
             pins = {identity(p): exact for p, exact in versions.items()
                     if identity(p) in candidate.requirements(original)}
             check_metadata(original, desired, modules, pins)
-    unchanged(tested, tree(root))
-    return artifact(root, args.parent, before, captured, args.metadata)
+    return artifact(root, args.parent, captured, args.metadata)
 
 
 def tag_identity(module, exact, head, downloaded, directory, env):
@@ -431,64 +413,8 @@ class GitHub:
                               if entry["type"] != "tree"}
 
     def text(self, entry):
-        if entry["type"] != "blob" or entry["mode"] != "100644" or entry.get("size", 0) > 4 * 1024 * 1024:
-            raise CheckError("metadata must be a bounded nonexecutable regular blob")
         blob = self.call("GET", "git/blobs/" + sha(entry["sha"]))
-        if blob.get("encoding") != "base64" or blob.get("size", 0) > 4 * 1024 * 1024:
-            raise CheckError("invalid metadata blob")
         return base64.b64decode(blob["content"]).decode("utf-8")
-
-
-def module_header(text, directory):
-    """Fail-closed subset of go.mod syntax; no Go execution on a writer.
-
-    Require blocks may change. All other directives, including replacements and
-    future directives, must retain identical tokens. Unsupported quoting fails.
-    """
-    fixed, requirements, block = [], {}, None
-    for line in text.splitlines():
-        line = line.split("//", 1)[0].strip()
-        if not line:
-            continue
-        if any(char in line for char in ('"', "'", "`", "\\", ";")) or "/*" in line or "*/" in line:
-            raise CheckError("unsupported module metadata syntax; review tooling before release")
-        tokens = line.split()
-        if tokens == [")"] and block:
-            block = None
-            continue
-        if not block and len(tokens) == 2 and tokens[1] == "(":
-            block = tokens[0]
-            continue
-        directive, values = (block, tokens) if block else (tokens[0], tokens[1:])
-        if "(" in values or ")" in values:
-            raise CheckError("invalid module directive block")
-        if directive == "require":
-            if len(values) != 2 or values[0] in requirements:
-                raise CheckError("invalid/duplicate module requirement")
-            requirements[values[0]] = values[1]
-        else:
-            fixed.append((directive, tuple(values)))
-    if block or [v for k, v in fixed if k == "module"] != [(identity(directory),)]:
-        raise CheckError("invalid module identity or unterminated block")
-    if directory in ORDER and any(k == "replace" for k, _ in fixed):
-        raise CheckError("publishable module has replacements")
-    return fixed, requirements
-
-
-def validate_mod(before, after, directory, versions, strict=False):
-    fixed, old = module_header(before, directory)
-    desired, new = module_header(after, directory)
-    if fixed != desired:
-        raise CheckError("changed reviewed module/Go/toolchain/replacement directives")
-    for name in old.keys() | new.keys():
-        if name != PREFIX and not name.startswith(PREFIX + "/"):
-            continue
-        sibling = next((p for p in ORDER + CONSUMERS if identity(p) == name), None)
-        if sibling is None or name not in old or name not in new:
-            raise CheckError("new, removed or unknown sibling requirement")
-        exact = versions.get(sibling, old[name])
-        if new[name] != exact and (strict or new[name] != old[name]):
-            raise CheckError("unexpected sibling pin")
 
 
 def notice(message):
@@ -529,41 +455,17 @@ def write_metadata(args, versions, api):
     if not main or not api.ancestor(args.source, main) or not api.ancestor(args.source, args.parent):
         raise CheckError("source must be on main and ancestor of parent")
     _, _, source = api.commit_tree(args.source)
-    commit, base, parent = api.commit_tree(args.parent)
+    _, base, parent = api.commit_tree(args.parent)
     changed = {p for p in source.keys() | parent.keys() if source.get(p) != parent.get(p)}
     if changed - metadata_paths():
         raise CheckError("parent changed reviewed source")
-    # Validate metadata modes even when the artifact has no delta to apply.
-    for path in metadata_paths():
-        for entries in (source, parent):
-            if path in entries:
-                entry = entries[path]
-                if entry["type"] != "blob" or entry["mode"] != "100644":
-                    raise CheckError("metadata must be a nonexecutable regular blob")
-    for path in changed | set(files):
-        for entries in (source, parent):
-            if path in entries:
-                api.text(entries[path])  # size checks also apply to sums
-    for directory in ORDER + CONSUMERS:
-        path = str(Path(directory) / "go.mod")
-        if path not in source or path not in parent:
-            raise CheckError("missing known module metadata")
-        original, current = api.text(source[path]), api.text(parent[path])
-        validate_mod(original, current, directory, versions)
-        if args.command == "open-pr" or directory == args.module:
-            selected = versions if args.command == "open-pr" else {
-                p: v for p, v in versions.items() if ORDER.index(p) < ORDER.index(args.module)}
-            validate_mod(current, files.get(path, current), directory, selected, strict=True)
-    earlier = versions if args.command == "open-pr" else {
-        p: v for p, v in versions.items() if ORDER.index(p) < ORDER.index(args.module)}
-    for directory, exact in earlier.items():
-        tagged = api.ref(f"tags/{directory}/{exact}")
-        if not tagged or not api.ancestor(args.source, tagged) or not api.ancestor(tagged, args.parent):
-            raise CheckError("requested predecessor tag is not an ancestor of parent")
     tip = api.ref("heads/" + args.branch)
-    if tip is None and args.parent != args.source:
-        raise CheckError("release branch absent after first publication")
-    # A deterministic commit permits retrying this individual identical write.
+    if tip != args.parent and not (tip is None and args.parent == args.source):
+        raise CheckError("release branch differs from expected parent; inspect and recover manually")
+    if args.command == "publish":
+        tag = f"tags/{args.module}/{versions[args.module]}"
+        if api.ref(tag) is not None:
+            raise CheckError("requested tag already exists; inspect and recover manually")
     entries = []
     for path, text in sorted(files.items()):
         entry = {"path": path, "mode": "100644", "type": "blob"}
@@ -572,35 +474,18 @@ def write_metadata(args, versions, api):
                 continue
             entry["sha"] = None
         else:
-            if path in parent and api.text(parent[path]) == text:
+            if (path in parent and parent[path]["mode"] == "100644"
+                    and parent[path]["type"] == "blob" and api.text(parent[path]) == text):
                 continue
             entry["content"] = text
         entries.append(entry)
     head = args.parent
     if entries:
         tree = api.call("POST", "git/trees", {"base_tree": base, "tree": entries})["sha"]
-        actor = {"name": "Mecatl module publication", "email": "noreply@stacklok.com",
-                 "date": commit["committer"]["date"]}
-        desired = {
+        head = sha(api.call("POST", "git/commits", {
             "message": "Publish module metadata: " + (args.module if args.command == "publish" else "adoption"),
-            "tree": tree, "parents": [args.parent], "author": actor, "committer": actor}
-        if tip not in (None, args.parent):
-            existing_commit = api.call("GET", "git/commits/" + tip)
-            if (existing_commit["tree"]["sha"] != tree
-                    or [p["sha"] for p in existing_commit["parents"]] != [args.parent]
-                    or any(existing_commit.get(key) != desired[key] for key in ("message", "author", "committer"))):
-                raise CheckError("release branch moved from expected parent")
-            head = tip  # Retry only this identical commit, never adopt other branch movement.
-        else:
-            head = sha(api.call("POST", "git/commits", desired)["sha"])
-            notice("Created metadata commit: " + head)
-    if tip not in (None, args.parent, head):
-        raise CheckError("release branch moved from expected parent")
-    if args.command == "publish":
-        tag = f"tags/{args.module}/{versions[args.module]}"
-        existing = api.ref(tag)
-        if existing is not None and existing != head:
-            raise CheckError("requested tag conflicts with tested commit")
+            "tree": tree, "parents": [args.parent]})["sha"])
+        notice("Created metadata commit: " + head)
     if tip is None:
         api.call("POST", "git/refs", {"ref": "refs/heads/" + args.branch, "sha": args.source})
         notice("Created branch: " + args.branch + " at " + args.source)
@@ -612,11 +497,11 @@ def write_metadata(args, versions, api):
         api.call("PATCH", "git/refs/heads/" + args.branch, {"sha": head, "force": False})
         notice("Advanced branch: " + args.branch + " to " + head)
     if args.command == "publish":
-        if existing is None:
-            api.call("POST", "git/refs", {"ref": "refs/" + tag, "sha": head})
+        api.call("POST", "git/refs", {"ref": "refs/" + tag, "sha": head})
         notice("Published immutable tag: " + tag + " at " + head)
     else:
-        all_on_main = all(api.ancestor(api.ref(f"tags/{p}/{v}"), main) for p, v in versions.items())
+        tags = [api.ref(f"tags/{p}/{v}") for p, v in versions.items()]
+        all_on_main = all(tagged and api.ancestor(tagged, main) for tagged in tags)
         if head == args.parent and all_on_main and api.ancestor(head, main):
             notice("No adoption PR needed: all release commits are already on main")
             return {"head": head}

@@ -114,8 +114,7 @@ class FakeGitHub:
                     entries[entry["path"]] = self.blob(entry["path"], entry["content"], entry["mode"])
             result = {"sha": self.store_tree(entries)}
         elif method == "POST" and path == "git/commits":
-            result = {"sha": self.commit(data["tree"], data["parents"], message=data["message"],
-                                         committer=data["committer"], author=data["author"])}
+            result = {"sha": self.commit(data["tree"], data["parents"], message=data["message"])}
         elif method == "POST" and path == "git/refs":
             name = data["ref"].removeprefix("refs/")
             if name in self.refs or name == self.fail_tag:
@@ -138,13 +137,6 @@ class FakeGitHub:
 
 
 class WriterTests(unittest.TestCase):
-    def test_writer_parser_accepts_current_repository_headers(self):
-        repository = Path(__file__).resolve().parents[2]
-        for directory in p.ORDER + p.CONSUMERS:
-            with self.subTest(directory=directory):
-                text = (repository / directory / "go.mod").read_text()
-                p.validate_mod(text, text, directory, {})
-
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -196,7 +188,7 @@ class WriterTests(unittest.TestCase):
             if desired != text:
                 self.files[path] = desired
 
-    def test_exact_bytes_only_lightweight_tag_and_identical_retry(self):
+    def test_exact_bytes_only_lightweight_tag_and_retry_requires_manual_recovery(self):
         self.prepare_bytes()
         expected = self.api.entries(self.parent).copy()
         self.assertEqual(self.call(), 0, self.logs)
@@ -208,10 +200,15 @@ class WriterTests(unittest.TestCase):
             self.assertEqual(self.api.entries(head)[path], expected[path])
         self.assertEqual(self.api.refs["tags/engine/v0.2.0"], head)
         self.assertEqual(self.api.refs["heads/" + self.branch], head)
-        self.assertEqual(self.call(), 0, self.logs)
-        self.assertEqual(self.head(), head)
         self.assertIn(head, self.summary.read_text())
         self.assertIn("Published immutable tag", self.logs)
+        self.api.calls.clear()
+        self.assertEqual(self.call(), 1, self.logs)
+        self.assertIn("recover manually", self.logs)
+        self.assertEqual(self.output.read_text(), "")
+        self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
+        self.assertEqual(self.api.refs["heads/" + self.branch], head)
+        self.assertEqual(self.api.refs["tags/engine/v0.2.0"], head)
 
     def test_pseudo_versions_fail_before_transport_or_writes(self):
         for value in ("v0.0.0-20260101000000-aaaaaaaaaaaa",
@@ -226,23 +223,22 @@ class WriterTests(unittest.TestCase):
                     self.assertEqual(self.output.read_text(), "")
                     self.assertEqual(self.api.refs, {"heads/main": self.source})
 
+    def test_existing_tag_at_expected_parent_fails_before_writes(self):
+        self.api.refs["tags/engine/v0.2.0"] = self.parent
+        self.assertEqual(self.call(), 1, self.logs)
+        self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
+        self.assertNotIn("heads/" + self.branch, self.api.refs)
+
     def test_no_change_tags_parent(self):
         self.assertEqual(self.call(), 0, self.logs)
         self.assertEqual(self.head(), self.source)
         self.assertFalse(any(path in ("git/trees", "git/commits") for _, path, _ in self.api.calls))
 
-    def test_path_schema_and_directive_tamper_fail_without_writes(self):
-        original = self.api.text(self.source, "engine/go.mod")
+    def test_path_and_schema_tamper_fail_without_writes(self):
         cases = [({"engine/code.go": "bad"}, None), ({"../go.mod": "bad"}, None),
                  ({"provider/openai/go.sum": "bad"}, None), ({"engine/go.mod": None}, None),
                  ({"engine/go.sum": 42}, None), ({}, '{"parent":"x","files":{},"extra":1}'),
                  ({}, '{"parent":"x","files":{},"files":{}}')]
-        for before, after in (("module " + p.identity("engine"), "module attacker.invalid/engine"),
-                              ("go 1.27.3", "go 1.26.0")):
-            cases.append(({"engine/go.mod": original.replace(before, after)}, None))
-        for extra in ("toolchain go1.28.0\n", "replace x => ../x\n", 'module "bad"\n',
-                      f"require {p.identity('provider/openai')} v0.2.0\n"):
-            cases.append(({"engine/go.mod": original + extra}, None))
         for files, raw in cases:
             with self.subTest(files=files, raw=raw):
                 self.files = files
@@ -251,16 +247,61 @@ class WriterTests(unittest.TestCase):
                 self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
                 self.assertEqual(self.output.read_text(), "")
 
-    def test_parent_source_and_modes_are_validated(self):
-        for path, text, mode in (("engine/code.go", "evil", "100644"),
-                                 ("engine/go.mod", "target", "120000"),
-                                 ("engine/go.sum", "sum", "100755"),
-                                 ("go.mod", "module bad\n", "100644")):
-            with self.subTest(path=path):
-                entries = self.api.entries(self.source).copy()
-                entries[path] = self.api.blob(path, text, mode)
-                self.parent = self.api.commit(self.api.store_tree(entries), [self.source])
+    def test_artifact_parent_mismatch_fails_before_transport(self):
+        stale = json.dumps({"parent": "f" * 40, "files": {}})
+        self.assertNotEqual("f" * 40, self.parent)
+        self.assertEqual(self.call(raw=stale), 1, self.logs)
+        self.assertEqual(self.api.calls, [])
+        self.assertEqual(self.output.read_text(), "")
+        self.assertEqual(self.api.refs, {"heads/main": self.source})
+
+    def test_ref_misuse_and_unselected_writer_fail_without_transport(self):
+        for branch in ("main", "module-publication/1-1/extra", "module-publication/01-1",
+                       "module-publication/1-1\nrefs/heads/main"):
+            with self.subTest(branch=branch):
+                self.branch = branch
                 self.assertEqual(self.call(), 1, self.logs)
+                self.assertEqual(self.api.calls, [])
+        self.branch = "module-publication/123-1"
+        self.assertEqual(self.call(module="provider/openai"), 1, self.logs)
+        self.assertEqual(self.api.calls, [])
+
+    def test_incoming_artifact_and_file_size_bounds(self):
+        self.files = {"engine/go.sum": "x" * (4 * 1024 * 1024 + 1)}
+        self.assertEqual(self.call(), 1, self.logs)
+        self.assertEqual(self.api.calls, [])
+        self.assertEqual(self.call(raw=" " * (16 * 1024 * 1024 + 1)), 1, self.logs)
+        self.assertEqual(self.api.calls, [])
+
+    def test_writer_accepts_semantically_surprising_metadata_as_data(self):
+        self.files = {"engine/go.mod": 'module "surprising.invalid/identity"\n'
+                      'go 1.99\ntoolchain go1.99.1\nreplace x => ../x\n'
+                      f'require {p.identity("provider/openai")} v0.99.0\n',
+                      "engine/go.sum": "not even a valid checksum file\n"}
+        self.assertEqual(self.call(), 0, self.logs)
+        for path, text in self.files.items():
+            self.assertEqual(self.api.text(self.head(), path), text)
+            self.assertEqual(self.api.entries(self.head())[path]["mode"], "100644")
+        blobs = [path for method, path, _ in self.api.calls
+                 if method == "GET" and path.startswith("git/blobs/")]
+        self.assertEqual(len(blobs), 1, "only read an existing blob for no-op detection")
+
+    def test_parent_source_code_delta_is_rejected(self):
+        for change in ("contents", "mode", "deletion"):
+            with self.subTest(change=change):
+                entries = self.api.entries(self.source).copy()
+                if change == "deletion":
+                    del entries["engine/code.go"]
+                else:
+                    entries["engine/code.go"] = self.api.blob(
+                        "engine/code.go", "evil" if change == "contents" else "package engine\n",
+                        "100755" if change == "mode" else "100644")
+                self.parent = self.api.commit(self.api.store_tree(entries), [self.source])
+                self.api.refs["heads/" + self.branch] = self.parent
+                self.api.calls.clear()
+                self.assertEqual(self.call(), 1, self.logs)
+                self.assertIn("parent changed reviewed source", self.logs)
+                self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
         self.source = "not-a-full-sha"
         self.assertEqual(self.call(), 1)
 
@@ -284,7 +325,9 @@ class WriterTests(unittest.TestCase):
         self.assertNotIn("tags/engine/v0.2.0", self.api.refs)
         self.api.refs["heads/" + self.branch] = self.source
         self.api.refs["tags/engine/v0.2.0"] = moved
+        self.api.calls.clear()
         self.assertEqual(self.call(), 1)
+        self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
         self.assertEqual(self.api.refs["tags/engine/v0.2.0"], moved)
         self.assertEqual(self.api.refs["heads/" + self.branch], self.source)
 
@@ -293,12 +336,8 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(self.call(), 1)
         self.assertNotIn("heads/" + self.branch, self.api.refs)
 
-    def test_dependencies_and_final_pr_require_all_tags(self):
+    def test_publications_then_final_adoption_pr(self):
         self.versions["provider/openai"] = "v0.2.0"
-        self.prepare_bytes("provider/openai")
-        self.assertEqual(self.call(module="provider/openai"), 1)
-        self.assertEqual(self.call("open-pr"), 1)
-        self.assertFalse(self.api.pulls)
         self.files = {}
         self.assertEqual(self.call(), 0, self.logs)
         engine = self.head()
@@ -315,22 +354,18 @@ class WriterTests(unittest.TestCase):
         self.assertTrue(self.api.ancestor(engine, self.head()))
         self.assertEqual(self.api.text(self.head(), "go.mod"), self.files["go.mod"])
 
-    def test_predecessor_tag_must_be_ancestor_and_pins_must_be_exact(self):
+    def test_writer_does_not_revalidate_predecessor_tags_or_pins(self):
         self.versions["provider/openai"] = "v0.2.0"
         other = self.api.commit(self.api.commits[self.source]["tree"]["sha"], [self.source], message="other")
         self.api.refs["tags/engine/v0.2.0"] = other
-        self.prepare_bytes("provider/openai")
-        self.assertEqual(self.call(module="provider/openai"), 1)
-        self.assertIn("predecessor tag", self.logs)
-        self.api.refs["tags/engine/v0.2.0"] = self.source
-        self.files["provider/openai/go.mod"] = self.api.text(self.parent, "provider/openai/go.mod")
-        self.assertEqual(self.call(module="provider/openai"), 1)
-        self.assertIn("unexpected sibling pin", self.logs)
+        self.files = {"provider/openai/go.mod": self.api.text(self.parent, "provider/openai/go.mod")}
+        self.assertEqual(self.call(module="provider/openai"), 0, self.logs)
+        self.assertEqual(self.head(), self.parent)
+        self.assertFalse(any(path == "git/ref/tags/engine/v0.2.0" for _, path, _ in self.api.calls))
+        del self.api.refs["tags/engine/v0.2.0"]
         self.files = {}
-        self.assertEqual(self.call(module="provider/openai"), 1)
-        self.assertIn("unexpected sibling pin", self.logs)
-        self.assertEqual(self.call("open-pr"), 1)
-        self.assertFalse(self.api.pulls)
+        self.assertEqual(self.call("open-pr"), 0, self.logs)
+        self.assertEqual(len(self.api.pulls), 1)
 
     def test_no_metadata_delta_still_needs_pr_when_release_commit_is_not_main(self):
         self.versions["engine"] = "v0.1.0"
@@ -341,15 +376,17 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(self.call("open-pr"), 0, self.logs)
         self.assertEqual(len(self.api.pulls), 1)
 
-    def test_unchanged_metadata_cannot_be_a_symlink_or_executable(self):
-        for mode in ("100755", "120000"):
-            entries = self.api.entries(self.api.source).copy()
-            entries["engine/go.sum"] = self.api.blob("engine/go.sum", "target", mode)
-            self.source = self.parent = self.api.commit(self.api.store_tree(entries), [])
-            self.api.refs["heads/main"] = self.source
-            self.assertEqual(self.call(), 1)
-            self.assertIn("nonexecutable regular blob", self.logs)
-            self.assertNotIn("tags/engine/v0.2.0", self.api.refs)
+    def test_existing_metadata_modes_are_not_blanket_validated_but_writes_are_regular(self):
+        entries = self.api.entries(self.source).copy()
+        entries["engine/go.sum"] = self.api.blob("engine/go.sum", "target", "120000")
+        entries["go.sum"] = self.api.blob("go.sum", "untouched", "100755")
+        self.parent = self.api.commit(self.api.store_tree(entries), [self.source])
+        self.api.refs["heads/" + self.branch] = self.parent
+        self.files = {"engine/go.sum": "target"}
+        self.assertEqual(self.call(), 0, self.logs)
+        self.assertEqual(self.api.entries(self.head())["engine/go.sum"]["mode"], "100644")
+        self.assertEqual(self.api.entries(self.head())["go.sum"], entries["go.sum"])
+        self.assertFalse(any(path.startswith("git/blobs/") for _, path, _ in self.api.calls))
 
     def test_branch_is_rechecked_before_fast_forward(self):
         self.prepare_bytes()
@@ -400,6 +437,16 @@ class WriterTests(unittest.TestCase):
         self.assertNotIn("fixture-not-a-secret", self.logs)
         self.assertFalse(self.api.pulls)
         self.assertEqual(self.output.read_text(), "")
+        partial = self.api.refs["heads/" + self.branch]
+        self.api.fail_tag = None
+        self.api.calls.clear()
+        self.assertEqual(self.call(module="provider/openai"), 1, self.logs)
+        self.assertIn("recover manually", self.logs)
+        self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
+        self.assertEqual(self.api.refs["heads/" + self.branch], partial)
+        self.assertEqual(self.api.refs["tags/engine/v0.2.0"], engine)
+        self.assertNotIn("tags/provider/openai/v0.2.0", self.api.refs)
+        self.assertFalse(self.api.pulls)
 
     def test_no_pr_only_when_all_commits_on_main_and_no_changes(self):
         self.versions["engine"] = "v0.1.0"

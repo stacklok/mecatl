@@ -213,7 +213,6 @@ class LocalTests(unittest.TestCase):
         self.require("adapters")
         self.commit()
         args = self.args(module="adapters")
-        before = p.tree(self.root)
         result = p.prepare(args, {"engine": "v0.2.0", "adapters": "v0.3.0"}, self.env)
         data = json.loads(args.metadata.read_text())
         self.assertEqual(result["selected"], "true")
@@ -224,7 +223,20 @@ class LocalTests(unittest.TestCase):
             self.assertEqual((self.root / name).read_bytes(), contents.encode())
         mod = p.candidate.parse_mod(self.root, self.env, self.root / "adapters/go.mod")
         self.assertEqual(p.candidate.requirements(mod)[p.identity("engine")][0], "v0.2.0")
-        p.unchanged(before, p.tree(self.root), data["files"])
+        p.check_changes(self.root, data["files"])
+
+    def test_prepare_allows_ignored_test_outputs(self):
+        self.write(".gitignore", "test-output/\n")
+        self.write("engine/output_test.go", 'package fixture\nimport ("os"; "testing")\n'
+                   'func TestOutput(t *testing.T) {\n'
+                   ' if err := os.MkdirAll("../test-output", 0755); err != nil { t.Fatal(err) }\n'
+                   ' if err := os.WriteFile("../test-output/result", []byte("output"), 0644); err != nil { t.Fatal(err) }\n'
+                   '}\n')
+        self.commit()
+        args = self.args(module="engine")
+        p.prepare(args, {"engine": "v0.2.0"}, self.env)
+        self.assertTrue((self.root / "test-output/result").exists())
+        self.assertEqual(json.loads(args.metadata.read_text())["files"], {})
 
     def test_prepare_retains_unselected_dependency_pin_and_no_change_artifact(self):
         self.require("adapters")
@@ -335,6 +347,39 @@ class LocalTests(unittest.TestCase):
                 else:
                     target.write_bytes(before)
 
+    def test_git_checks_reject_index_worktree_deletions_modes_and_untracked(self):
+        target = self.root / "engine/fixture.go"
+        original = target.read_bytes()
+        target.write_text("staged source change\n")
+        self.command("git", "add", "engine/fixture.go")
+        target.write_bytes(original)  # Clean against HEAD, but index is not clean.
+        with self.assertRaisesRegex(p.CheckError, "modified files"):
+            p.check_changes(self.root, p.metadata_paths())
+        self.command("git", "reset", "HEAD", "--", "engine/fixture.go")
+        target.unlink()
+        with self.assertRaisesRegex(p.CheckError, "modified files"):
+            p.check_changes(self.root, p.metadata_paths())
+        target.write_bytes(original)
+        target.chmod(0o755)
+        with self.assertRaisesRegex(p.CheckError, "modified files"):
+            p.check_changes(self.root, p.metadata_paths())
+        target.chmod(0o644)
+        self.write("unexpected\nfile", "untracked\n")
+        with self.assertRaisesRegex(p.CheckError, "modified files"):
+            p.check_changes(self.root, p.metadata_paths())
+
+    def test_prepare_rejects_head_movement(self):
+        original_go = p.candidate.go
+        def move(directory, env, *args):
+            result = original_go(directory, env, *args)
+            if args[0] == "test":
+                self.commit()
+            return result
+        with mock.patch.object(p.candidate, "go", side_effect=move), \
+                self.assertRaisesRegex(p.CheckError, "moved HEAD"):
+            p.prepare(self.args(module="engine"), {"engine": "v0.2.0"}, self.env)
+        self.assertFalse((self.base / "metadata.json").exists())
+
     def test_source_mutation_during_tidy_rejected_before_artifact(self):
         original_go = p.candidate.go
         def tamper(directory, env, *args):
@@ -398,24 +443,23 @@ class LocalTests(unittest.TestCase):
             p.candidate.go(consumer, self.env, "build", "-mod=readonly", "./...")
 
     def test_artifact_rejects_metadata_symlink_and_module_deletion(self):
-        before = p.tree(self.root)
         mod = self.root / "engine/go.mod"
         original = mod.read_bytes()
         mod.unlink()
         with self.assertRaisesRegex(p.CheckError, "deleted"):
-            p.artifact(self.root, self.head, before, {"engine/go.mod": None}, self.base / "metadata.json")
+            p.artifact(self.root, self.head, {"engine/go.mod": None}, self.base / "metadata.json")
         mod.symlink_to(self.root / "go.mod")
         with self.assertRaisesRegex(p.CheckError, "regular file"):
-            p.artifact(self.root, self.head, before, {"engine/go.mod": None}, self.base / "metadata.json")
+            p.artifact(self.root, self.head, {"engine/go.mod": None}, self.base / "metadata.json")
         mod.unlink()
         mod.write_bytes(original)
 
     def test_metadata_mutation_after_tests_cannot_enter_artifact(self):
         original = p.artifact
-        def tamper(root, parent, before, captured, destination):
+        def tamper(root, parent, captured, destination):
             mod = root / "engine/go.mod"
             mod.write_bytes(mod.read_bytes() + b"\n// not the tested bytes\n")
-            return original(root, parent, before, captured, destination)
+            return original(root, parent, captured, destination)
         with mock.patch.object(p, "artifact", side_effect=tamper), \
                 self.assertRaisesRegex(p.CheckError, "tested metadata bytes changed"):
             p.prepare(self.args(module="engine"), {"engine": "v0.2.0"}, self.env)
@@ -431,10 +475,9 @@ class LocalTests(unittest.TestCase):
     def test_sum_deletion_artifact(self):
         self.write("engine/go.sum", "unused sum\n")
         self.commit()
-        before = p.tree(self.root)
         (self.root / "engine/go.sum").unlink()
         args = self.args()
-        p.artifact(self.root, self.head, before, {"engine/go.sum": None}, args.metadata)
+        p.artifact(self.root, self.head, {"engine/go.sum": None}, args.metadata)
         self.assertIsNone(json.loads(args.metadata.read_text())["files"]["engine/go.sum"])
 
     def preflight(self, mutate=None, **env):
@@ -462,10 +505,19 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(result["source"], self.head)
 
     def test_preflight_workspace_sums_are_ephemeral_but_source_changes_fail(self):
+        self.write(".gitignore", "go.work.sum\n")
+        self.commit()
         self.preflight(mutate=lambda: self.write("go.work.sum", "workspace checksum output\n"))
         (self.root / "go.work.sum").unlink()
         with self.assertRaisesRegex(p.CheckError, "modified files"):
             self.preflight(mutate=lambda: self.write("engine/fixture.go", "changed\n"))
+
+    def test_preflight_rejects_clean_head_movement(self):
+        source = self.head
+        with self.assertRaisesRegex(p.CheckError, "moved HEAD"):
+            self.preflight(mutate=lambda: self.command("git", "commit", "--allow-empty", "-m", "moved"))
+        self.assertNotEqual(self.command("git", "rev-parse", "HEAD"), source)
+        self.assertEqual(self.command("git", "status", "--porcelain"), "")
 
     def test_preflight_rejects_tag_and_unvalidated_run_identity(self):
         for value in ("", "1\nbranch=bad", "-1", "refs/x"):

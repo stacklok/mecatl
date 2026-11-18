@@ -95,9 +95,11 @@ jobs:
           retention-days: 7
 
   # Download only the current prepare artifact by ID. Validate parent/source,
-  # paths, directives and branch tip before API-only metadata writes. Create the
-  # branch at source on the first selected write; unchanged metadata tags parent.
-  # Branch updates are fast-forward only, tags create-only; conflicting refs fail.
+  # allowed paths and branch tip before API-only writes of nonexecutable metadata.
+  # Go directive/pin checks belong to preparation; the writer constrains write
+  # authority, not metadata semantics. Create the branch at source on the first
+  # selected write; unchanged metadata tags parent. Updates are fast-forward only,
+  # tags create-only. Existing tags or unexpected branch state require manual recovery.
   publish:
     needs: prepare
     if: needs.prepare.outputs.selected == 'true'
