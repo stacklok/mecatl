@@ -48,6 +48,8 @@ export async function withMockDaemon<T>(
   const args = [
     "serve",
     "--mock",
+    "--toolhive=false",
+    "--websearch=off",
     "--workspace",
     workspace,
     "--ready-file",
