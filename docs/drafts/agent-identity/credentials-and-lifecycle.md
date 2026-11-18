@@ -347,7 +347,7 @@ Broker checks 1 and 2 exist because only mecak8s checks that Alice owns `hostS42
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
 2. Session `A42` is open, bound to that workload, and owned by the reported owner: one session tree has one owner.
-3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance).
+3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance). For an incarnation registered before, check 7 applies instead: the instance keeps the definition revision it registered with, whatever the loader records now.
 4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`.
 5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..`; another name is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
 6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, and up to 8 child levels below the root.
@@ -785,17 +785,17 @@ authorization_details=[{"type": "https://toolhive.dev/exchange_grant",
 
 **Checks, at AS-1:** session-open checks 1 to 5, with `refresh_token` as the listed output. AS-1 caps `expires_at` at its configured maximum for grants that issue refresh tokens, at most 30 days in ToolHive.
 
-**Output.** A schedule grant bound to `mecatl` and Alice, with the echoed `expires_at` as its horizon. The broker stores it under the schedule, with the owner. A horizon that AS-1 capped is shorter than the one Alice asked for, and Alice is notified to renew before it. Presented at the refresh-token grant, the schedule grant returns `invalid_grant`, as `RT-A42` does.
+**Output.** A schedule grant bound to `mecatl` and Alice, with the echoed `expires_at` as its horizon. The broker stores it under the schedule, with the owner and the reference (source, name, and revision) of the definition the schedule runs. Running a newer revision of that definition needs a renewal while Alice is present. A horizon that AS-1 capped is shorter than the one Alice asked for, and Alice is notified to renew before it. Presented at the refresh-token grant, the schedule grant returns `invalid_grant`, as `RT-A42` does.
 
 **Failures.** As session open's. A schedule recorded for another owner fails at the broker with `session_owned`.
 
 **Why.** Setup is the last moment Alice is present, so it is when Mecatl obtains her authority for runs she will not watch.
 
-**Evidence.** AS-1 records the conversion, as at session open. The broker records the schedule, its owner, and the source `jti`.
+**Evidence.** AS-1 records the conversion, as at session open. The broker records the schedule, its owner, its definition reference, and the source `jti`.
 
 ### Scheduled-run session open
 
-**Input.** When the schedule fires, mecak8s calls `OpenSession` with the schedule ID in place of an access token, and the broker allocates a session ID, `A57`, for the run. The broker checks that the owner mecak8s reports for the run equals the owner it recorded with the schedule. It then exchanges the stored schedule grant for a child grant that issues ID-JAGs:
+**Input.** When the schedule fires, mecak8s calls `OpenSession` with the schedule ID in place of an access token, and the broker allocates a session ID, `A57`, for the run. The broker checks that the owner mecak8s reports for the run equals the owner it recorded with the schedule. The run's root instance registers with the definition reference recorded with the schedule; the broker refuses a root registration that names another. It then exchanges the stored schedule grant for a child grant that issues ID-JAGs:
 
 ```text
 POST https://broker.example.com/as/oauth/token
