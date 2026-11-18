@@ -428568,6 +428568,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794996211629,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8cbdcf29c96c7fab58350b31c98ae782a09646b",
+          "message": "feat(executorrpc): serve `FileService` from `mecatl-executor serve` (#2853)\n\nAdd `internal/executorrpc/fileserver`, a gRPC adapter for the executor\n`FileService` over a `Workspace` seam built from `tool.Workspace`,\n`tool.WorkspaceNamespace`, `tool.BoundedWorkspaceReader` and\n`tool.AuthorityResourceResolver`. It imports only `engine`, the\ngenerated contract and gRPC; the `internal-executorrpc` depguard rule\nkeeps `osfs` out, and `cmd/mecatl-executor` plugs `osfs` in on\n`/workspace`.\n\n`CreateFile` and `ReplaceFile` buffer the streamed chunks in memory up\nto `MaxFileBytes` and commit only after the caller closes its stream; a\nstream that fails or is cancelled first writes nothing. Spooling to\ndisk waits for `WorkspaceStreamer`. A lock table that lives as long as\nthe server, keyed by `tool.LedgerKey`, serializes the version check and\nwrite per path. It is held only for the commit, never during an upload,\nand waiting gives up with the call's context. `ReadFile` uses\n`ReadVersionBounded` and streams 3 MiB chunks with the version on the\nlast message.\n\n`serve` registers `FileService` next to `CommandService` and takes\n`-max-file-bytes` for the template's limit. The one-shot Pod exec mode\nis unchanged.\n\nAdd `internal/executorrpc/fileconformance`, which runs the\n`fsconformance` suites over gRPC against `memfs` in the adapter tests\nand against `osfs` through the `serve` wiring.\n\nCloses: #2694",
+          "timestamp": "2026-11-18T10:06:02Z",
+          "tree_id": "6b5361055032350f6a1d2e1c5f1629aeb3ef4e78",
+          "url": "https://github.com/stacklok/mecatl/commit/c8cbdcf29c96c7fab58350b31c98ae782a09646b"
+        },
+        "date": 1794997130435,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -558224,6 +558263,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794997126768,
+  "lastUpdate": 1794997131138,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
