@@ -86,7 +86,7 @@ For both calls, Alice's use of her GitHub account is checked downstream. AS-2 re
 
 ## Authorization, credentials, and dispatch
 
-Local permissions and hooks apply before invocation. mecak8s's MCP client then asks the broker to authorize the call, naming the server, the tool, a hash of the arguments, and the operation ID. The broker authenticates the workload and actor, checks session and execution context including the run owner, verifies the route, and, once the authority work is in place, evaluates the effective server/tool ceiling. A failure stops the call before any exchange. If these checks pass, the broker obtains a `V` bound to that call through AS-1 and AS-2, records its decision, and returns `V` to the MCP client. The MCP client sends the call to vMCP with `V`, discards `V`, and reports the dispatch and outcome to the broker.
+Local permissions and hooks apply before invocation. mecak8s's MCP client then asks the broker to authorize the call, naming the server, the tool, a hash of the arguments, and the operation ID. The broker authenticates the workload and actor, checks session and execution context including the run owner, checks that a configured gateway routes the server, and, once the authority work is in place, evaluates the effective server/tool ceiling. A failure stops the call before any exchange. If these checks pass, the broker obtains a `V` bound to that call through AS-1 and AS-2, records its decision, and returns `V` to the MCP client. The MCP client sends the call to vMCP with `V`, discards `V`, and reports the dispatch and outcome to the broker.
 
 | Outcome | Dispatch behavior |
 | --- | --- |
