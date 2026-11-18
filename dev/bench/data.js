@@ -558073,9 +558073,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794996202356,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8cbdcf29c96c7fab58350b31c98ae782a09646b",
+          "message": "feat(executorrpc): serve `FileService` from `mecatl-executor serve` (#2853)\n\nAdd `internal/executorrpc/fileserver`, a gRPC adapter for the executor\n`FileService` over a `Workspace` seam built from `tool.Workspace`,\n`tool.WorkspaceNamespace`, `tool.BoundedWorkspaceReader` and\n`tool.AuthorityResourceResolver`. It imports only `engine`, the\ngenerated contract and gRPC; the `internal-executorrpc` depguard rule\nkeeps `osfs` out, and `cmd/mecatl-executor` plugs `osfs` in on\n`/workspace`.\n\n`CreateFile` and `ReplaceFile` buffer the streamed chunks in memory up\nto `MaxFileBytes` and commit only after the caller closes its stream; a\nstream that fails or is cancelled first writes nothing. Spooling to\ndisk waits for `WorkspaceStreamer`. A lock table that lives as long as\nthe server, keyed by `tool.LedgerKey`, serializes the version check and\nwrite per path. It is held only for the commit, never during an upload,\nand waiting gives up with the call's context. `ReadFile` uses\n`ReadVersionBounded` and streams 3 MiB chunks with the version on the\nlast message.\n\n`serve` registers `FileService` next to `CommandService` and takes\n`-max-file-bytes` for the template's limit. The one-shot Pod exec mode\nis unchanged.\n\nAdd `internal/executorrpc/fileconformance`, which runs the\n`fsconformance` suites over gRPC against `memfs` in the adapter tests\nand against `osfs` through the `serve` wiring.\n\nCloses: #2694",
+          "timestamp": "2026-11-18T10:06:02Z",
+          "tree_id": "6b5361055032350f6a1d2e1c5f1629aeb3ef4e78",
+          "url": "https://github.com/stacklok/mecatl/commit/c8cbdcf29c96c7fab58350b31c98ae782a09646b"
+        },
+        "date": 1794997121704,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 780,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32200,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794997117306,
+  "lastUpdate": 1794997122578,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
