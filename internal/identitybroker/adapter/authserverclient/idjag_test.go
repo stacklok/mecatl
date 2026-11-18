@@ -2,6 +2,9 @@ package authserverclient_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -24,27 +30,57 @@ const (
 	tokenTypeJAG  = "urn:ietf:params:oauth:token-type:id-jag"
 )
 
-// trustSVID has the harness's AS-1 accept testSVID for Alice's grants and
-// issue ID-JAGs for audience and resource.
-func (f *fixture) trustSVID(audience, resource string) {
-	f.h.AS1.AddIDJAGTarget(audience, resource)
-	f.h.AS1.SetActorValidator(func(_ context.Context, owner identityharness.Owner, actor string) (string, time.Time, error) {
-		if actor != testSVID || owner != f.h.Owner(identityharness.Alice) {
-			return "", time.Time{}, identityharness.ErrActorDenied
-		}
-		return testAgentID, time.Now().Add(time.Hour), nil
-	})
+// testActTrustDomain is the agent trust domain of the real AS-1's ID-JAGs.
+const testActTrustDomain = "agents.test"
+
+// idjagAS1 is the real AS-1 issuing ID-JAGs, the broker's client for it
+// behind faults, and a grant held for Alice whose agent presents actor.
+type idjagAS1 struct {
+	a      *as1servertest.AS1
+	faults *identityharness.FaultTransport
+	client *authserverclient.Client
+	// access is Alice's access token, and grant the refresh token it was
+	// exchanged for.
+	access, grant identitybroker.Token
+	actor         string
 }
 
-// aliceGrant opens a session for Alice through c and returns the grant's
-// refresh token.
-func (f *fixture) aliceGrant(t *testing.T, c *authserverclient.Client) identitybroker.Token {
+// startIDJAGAS1 starts the real AS-1 issuing ID-JAGs for as2Issuer and
+// as2Resource, checking actor tokens with realAS1Verifier, and opens a grant
+// for Alice there.
+func startIDJAGAS1(t *testing.T, as2Issuer, as2Resource string) *idjagAS1 {
 	t.Helper()
-	res, err := c.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: identitybroker.NewToken(f.aliceToken()), Grant: sessionGrant(time.Time{})})
+	h := identityharness.New(t, identityharness.Options{})
+	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(testActTrustDomain, as2Issuer, as2Resource))
+	x := &idjagAS1{a: a, actor: actorJWT(t, identitybroker.ActorIssuer(testActTrustDomain)+"/session/s1/agent/main")}
+	alice := h.Owner(identityharness.Alice)
+	if err := a.Server.UseCredentialVerifier(realAS1Verifier{alice: identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject}, actor: x.actor}); err != nil {
+		t.Fatal(err)
+	}
+	hc := a.HTTPClient()
+	x.faults = identityharness.NewFaultTransport(hc.Transport, a.Server.TokenEndpoint())
+	hc.Transport = x.faults
+	var err error
+	if x.client, err = authserverclient.New(authserverclient.Config{
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), Assertions: a.Signer, HTTPClient: hc,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	x.access = a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
+	exchanged, err := x.client.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: x.access, Grant: sessionGrant(time.Time{})})
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	return res.RefreshToken
+	x.grant = exchanged.RefreshToken
+	return x
+}
+
+// request is the ID-JAG request for Alice's agent at as2Issuer and
+// as2Resource.
+func (x *idjagAS1) request(as2Issuer, as2Resource string) identitybroker.IDJAGRequest {
+	req := idjagRequest(x.grant, as2Issuer, as2Resource)
+	req.ActorToken = identitybroker.NewToken(x.actor)
+	return req
 }
 
 func idjagRequest(grant identitybroker.Token, audience, resource string) identitybroker.IDJAGRequest {
@@ -54,14 +90,54 @@ func idjagRequest(grant identitybroker.Token, audience, resource string) identit
 	}
 }
 
-// TestIssueIDJAGAgainstHarness runs the exchange at the harness's AS-1, which
-// refuses any form other than design step (7)'s.
-func TestIssueIDJAGAgainstHarness(t *testing.T) {
-	f := newFixture(t)
-	f.trustSVID(testAS2Issuer, testVMCP)
-	c := f.client(t, &recorder{}, nil)
-	grant := f.aliceGrant(t, c)
-	res, err := c.IssueIDJAG(t.Context(), idjagRequest(grant, testAS2Issuer, testVMCP))
+// realAS1Verifier accepts actor as Alice's agent testAgentID of trust domain
+// agents.test and denies everything else, standing in for the broker's
+// CredentialVerifier at the real AS-1.
+type realAS1Verifier struct {
+	alice identitybroker.Owner
+	actor string
+}
+
+func (realAS1Verifier) VerifyCredential(context.Context, identitybroker.VerifyCredentialRequest) (identitybroker.VerifiedAgent, error) {
+	return identitybroker.VerifiedAgent{}, errors.New("realAS1Verifier: VerifyCredential is not AS-1's check")
+}
+
+func (v realAS1Verifier) VerifyCredentialForOwner(_ context.Context, req identitybroker.VerifyCredentialForOwnerRequest) (identitybroker.VerifiedAgent, error) {
+	if req.Owner != v.alice || req.Credential.Value() != v.actor {
+		return identitybroker.VerifiedAgent{}, identitybroker.ReasonError(identitybroker.ReasonDenied, "not the test agent")
+	}
+	actIssuer := identitybroker.ActorIssuer(testActTrustDomain)
+	return identitybroker.VerifiedAgent{
+		Agent: identitybroker.AgentRef{Subject: actIssuer + "/session/s1/agent/main"}, AgentID: testAgentID,
+		ActorID: actIssuer + "/agent/" + testAgentID, ExpiresAt: time.Now().Add(time.Hour),
+	}, nil
+}
+
+// actorJWT is a JWT standing in for an agent's SVID; realAS1Verifier compares
+// it byte for byte.
+func actorJWT(t *testing.T, sub string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"sub": sub, "aud": "mecatl-broker", "exp": time.Now().Add(time.Hour).Unix(),
+	}).SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
+// TestIssueIDJAGAgainstRealAS1 runs the exchange at the real AS-1, which
+// checks the actor token with the bound verifier and refuses any form other
+// than design step (7)'s.
+func TestIssueIDJAGAgainstRealAS1(t *testing.T) {
+	x := startIDJAGAS1(t, testAS2Issuer, testVMCP)
+	c := x.client
+	req := x.request(testAS2Issuer, testVMCP)
+	res, err := c.IssueIDJAG(t.Context(), req)
 	if err != nil {
 		t.Fatalf("IssueIDJAG: %v", err)
 	}
@@ -69,25 +145,35 @@ func TestIssueIDJAGAgainstHarness(t *testing.T) {
 		t.Fatalf("ID-JAG typ = %v, want oauth-id-jag+jwt", typ)
 	}
 	got := claims(t, res.IDJAG)
+	actIssuer := identitybroker.ActorIssuer(testActTrustDomain)
 	if got["client_id"] != identitybroker.BrokerClientID || got["aud"] != testAS2Issuer || got["resource"] != testVMCP ||
-		got["sub"] != f.h.AS1.Subject(identityharness.Alice) ||
-		!reflect.DeepEqual(got["act"], map[string]any{"iss": f.h.AS1.Issuer(), "sub": testAgentID}) {
+		got["iss"] != x.a.Issuer() || got["sub"] != as1servertest.Subject(t, x.access) ||
+		!reflect.DeepEqual(got["act"], map[string]any{"iss": actIssuer, "sub": actIssuer + "/agent/" + testAgentID}) {
 		t.Fatalf("ID-JAG claims = %v", got)
 	}
-	issued := f.h.AS1.IDJAGsIssued()
-	if len(issued) != 1 || issued[0].Operation != "op-pr42-001" || issued[0].JTI != got["jti"] {
-		t.Fatalf("AS-1 issued %+v, want one ID-JAG for the operation", issued)
+	// Exactly one ID-JAG was issued, the one returned, for the operation the
+	// request named.
+	var issued []identityharness.GrantRequest
+	for _, r := range x.faults.Requests() {
+		if r.Kind == identityharness.KindIDJAG {
+			issued = append(issued, r)
+		}
+	}
+	if len(issued) != 1 || issued[0].IssuedToken != res.IDJAG.Value() || claims(t, identitybroker.NewToken(issued[0].IssuedToken))["jti"] != got["jti"] ||
+		issued[0].Operation != "op-pr42-001" {
+		t.Fatalf("AS-1 answered %d ID-JAG exchanges, want one issuing the returned ID-JAG for op-pr42-001", len(issued))
 	}
 
 	// AS-1's refusals are returned as refusals.
-	req := idjagRequest(grant, testAS2Issuer, testVMCP)
-	req.ActorToken = identitybroker.NewToken("svid-other")
+	req.ActorToken = identitybroker.NewToken(actorJWT(t, actIssuer+"/session/s1/agent/other"))
 	_, err = c.IssueIDJAG(t.Context(), req)
 	var refusal *identitybroker.ServerRefusal
 	if !errors.As(err, &refusal) || refusal.Code != "invalid_request" || refusal.Reason != "denied" {
 		t.Fatalf("IssueIDJAG with another actor = %v, want invalid_request denied", err)
 	}
-	_, err = c.IssueIDJAG(t.Context(), idjagRequest(grant, "https://other.example", testVMCP))
+	req.ActorToken = identitybroker.NewToken(x.actor)
+	req.Audience = "https://other.example"
+	_, err = c.IssueIDJAG(t.Context(), req)
 	if !errors.As(err, &refusal) || refusal.Code != "invalid_target" || !identitybroker.IsConfigurationFault(err) {
 		t.Fatalf("IssueIDJAG for another audience = %v, want invalid_target", err)
 	}

@@ -125,6 +125,18 @@ func as2Resource(issuer string) string {
 	return issuer + "/mcp"
 }
 
+// AS2Endpoints returns the issuer and vMCP resource NewToolHiveProcess gives
+// AS-2 when it sets AS-2 up for callbackURL, which it does only with a
+// protected profile and a broker client. It fails when callbackURL is not the
+// canonical HTTPS URL protected profiles require.
+func AS2Endpoints(callbackURL string) (issuer, resource string, err error) {
+	issuer, err = toolHiveIssuer(callbackURL, true)
+	if err != nil {
+		return "", "", err
+	}
+	return issuer, as2Resource(issuer), nil
+}
+
 // as2RunConfig writes the broker client's key set to a file and returns AS-2's
 // additions to the embedded authorization server's RunConfig, with a function
 // that removes the file once ToolHive has read it, at construction. trust is

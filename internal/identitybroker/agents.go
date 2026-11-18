@@ -230,10 +230,14 @@ func (b *Broker) verifiedAgent(cred verifiedCredential) VerifiedAgent {
 	return VerifiedAgent{
 		Agent:     AgentRef{Subject: cred.subject},
 		AgentID:   b.agentID,
-		ActorID:   "spiffe://" + b.issuer.trustDomain + "/agent/" + b.agentID,
+		ActorID:   ActorIssuer(b.issuer.trustDomain) + "/agent/" + b.agentID,
 		ExpiresAt: cred.expiresAt,
 	}
 }
+
+// ActorIssuer is the act.iss naming the agents of trustDomain; changing it
+// renames every agent.
+func ActorIssuer(trustDomain string) string { return "spiffe://" + trustDomain }
 
 // VerifyCredentialForOwner implements CredentialVerifier. After the
 // credential's own checks, its subject must be a registered instance whose

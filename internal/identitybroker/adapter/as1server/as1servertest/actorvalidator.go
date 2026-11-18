@@ -14,6 +14,7 @@ import (
 // identityharness.ErrActorExpired, any other refusal
 // identityharness.ErrActorDenied, and anything else an outage. It lives here,
 // not in the harness, because the harness never imports the broker.
+// Shortcut: only tests of revocation reasons run the harness's AS-1, as the real AS-1 sends none yet; removed by #2568 (AS-1 revocation reasons).
 func HarnessActorValidator(v identitybroker.CredentialVerifier) identityharness.ActorValidator {
 	return func(ctx context.Context, owner identityharness.Owner, actor string) (string, time.Time, error) {
 		got, err := v.VerifyCredentialForOwner(ctx, identitybroker.VerifyCredentialForOwnerRequest{

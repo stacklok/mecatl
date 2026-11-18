@@ -87,10 +87,13 @@ type GrantRequest struct {
 	// Code and Reason are the server's OAuth error code and the reason code
 	// that starts its error_description, empty when absent.
 	Code, Reason string
-	// ClientAssertion and Assertion are the request's client_assertion and
-	// assertion; IssuedToken is the access_token of a success response, even
-	// a lost one.
-	ClientAssertion, Assertion, IssuedToken string
+	// ClientAssertion, Assertion, and ActorToken are the request's
+	// client_assertion, assertion, and actor_token; IssuedToken is the
+	// access_token of a success response, even a lost one.
+	ClientAssertion, Assertion, ActorToken, IssuedToken string
+	// Operation is the request's mecatl_operation, the call's operation ID
+	// an ID-JAG exchange names.
+	Operation string
 }
 
 // FailNext answers the next request of kind with answer without forwarding
@@ -185,7 +188,10 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	form, _ := url.ParseQuery(string(body))
-	rec := GrantRequest{Kind: grantKind(form), ClientAssertion: form.Get("client_assertion"), Assertion: form.Get("assertion")}
+	rec := GrantRequest{
+		Kind: grantKind(form), ClientAssertion: form.Get("client_assertion"), Assertion: form.Get("assertion"),
+		ActorToken: form.Get("actor_token"), Operation: form.Get("mecatl_operation"),
+	}
 	q := f.pop(rec.Kind)
 	rec.Fault = q.fault
 	if q.fault == FaultDuplicate {
@@ -209,7 +215,7 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		_ = resp.Body.Close()
 		return nil, errConnectionClosed
 	case FaultDuplicate:
-		dup := GrantRequest{Kind: rec.Kind, Fault: FaultDuplicate, ClientAssertion: rec.ClientAssertion, Assertion: rec.Assertion}
+		dup := GrantRequest{Kind: rec.Kind, Fault: FaultDuplicate, ClientAssertion: rec.ClientAssertion, Assertion: rec.Assertion, ActorToken: rec.ActorToken, Operation: rec.Operation}
 		if again, err := f.forward(req, body, &dup); err == nil {
 			_ = again.Body.Close()
 		}

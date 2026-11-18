@@ -95,6 +95,7 @@ import (
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/openai"
@@ -980,6 +981,11 @@ type Config struct {
 	// identityBrokerConfig replaces the real identity broker's interim
 	// configuration in tests.
 	identityBrokerConfig *identitybroker.Config
+	// identityBrokerAS2Transport wraps the identity broker's in-process
+	// transport to AS-2, so tests can observe the ID-JAGs it redeems. It is
+	// test-only and no production path sets it: it sees every ID-JAG
+	// redeemed.
+	identityBrokerAS2Transport func(http.RoundTripper) http.RoundTripper
 	// IdentityBrokerGatewayServers gives the real identity broker a gateway
 	// routing these servers, whose AS-2 Build binds once the MCP broker has
 	// started. It is test-only: production leaves it nil, which configures no
@@ -1580,6 +1586,9 @@ type Built struct {
 	// broker.
 	identityBrokerCore     *identitybroker.Broker
 	identityBrokerRecorder *identitybroker.MemoryRecorder
+	// identityBrokerHostedAS1Server is the hosted AS-1 the identity broker
+	// uses, for tests; nil without one.
+	identityBrokerHostedAS1Server *as1server.Server
 	// identityBrokerAS2 is the MCP gateway's authorization server as the
 	// identity broker's AS-2; nil when startup set none up. Close releases it
 	// with the MCP broker.
@@ -2319,8 +2328,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
 
 	// The identity broker is released after the MCP broker, on startup failure
-	// and on shutdown.
-	ib, err := buildIdentityBroker(ctx, cfg)
+	// and on shutdown. A hosted AS-1 issues the gateway's ID-JAGs for the AS-2
+	// the MCP broker will set up.
+	idjagTarget := deriveGatewayIDJAGTarget(cfg, brokerDeclaration, brokerSelected)
+	ib, err := buildIdentityBroker(ctx, cfg, idjagTarget)
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -2350,7 +2361,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		var identity mcpBrokerIdentity
+		identity := mcpBrokerIdentity{idjagTarget: idjagTarget}
 		if ib.client != nil {
 			if identity.clientKeySet, err = json.Marshal(ib.client.JWKS()); err != nil {
 				err = fmt.Errorf("encode the broker client key set: %w", err)
@@ -3136,7 +3147,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerHostedAS1Server: ib.hostedServer, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

@@ -206,6 +206,13 @@ func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 	if as2 == nil || as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestResource {
 		t.Fatalf("AS-2 = %+v", as2)
 	}
+	// AS2Endpoints names the same AS-2 before construction.
+	if issuer, resource, err := AS2Endpoints(as2TestCallbackURL); err != nil || issuer != as2.Issuer || resource != as2.Resource {
+		t.Fatalf("AS2Endpoints = %q, %q, %v; want AS-2's %q and %q", issuer, resource, err, as2.Issuer, as2.Resource)
+	}
+	if _, _, err := AS2Endpoints("http://broker.example/callback"); !errors.Is(err, ErrInvalidCatalogue) {
+		t.Fatalf("AS2Endpoints for an http callback = %v, want ErrInvalidCatalogue", err)
+	}
 	if got := []string(spy.client.GetAudience()); !reflect.DeepEqual(got, []string{as2TestResource}) {
 		t.Fatalf("login client audience = %v, want the vMCP resource", got)
 	}

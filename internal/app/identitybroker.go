@@ -126,8 +126,19 @@ type identityBrokerAS2 struct {
 	HTTPClient *http.Client
 }
 
+// gatewayIDJAGTarget is the AS-2 a hosted AS-1 issues the gateway's ID-JAGs
+// for: the issuer and vMCP resource the bundled MCP broker gives AS-2, derived
+// before either is built.
+type gatewayIDJAGTarget struct {
+	Issuer, Resource string
+}
+
 // errAS2IssuerIsAS1s refuses an AS-2 that would share AS-1's issuer.
 var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-2) would have the same issuer as AS-1")
+
+// errAS2IsNotIDJAGTarget refuses an AS-2 other than the one AS-1 issues the
+// gateway's ID-JAGs for.
+var errAS2IsNotIDJAGTarget = errors.New("the MCP gateway's authorization server (AS-2) is not the one AS-1 issues ID-JAGs for")
 
 // errGatewayIsNotAS2Resource refuses gateway calls sent to an endpoint other
 // than the resource AS-2 issues their tokens for.
@@ -177,6 +188,9 @@ type identityBrokerParts struct {
 	service identitybroker.Service
 	// hosted is the hosted AS-1; nil when none is configured.
 	hosted *IdentityBrokerAS1Server
+	// hostedServer is the hosted AS-1 itself, for tests; nil when none is
+	// configured.
+	hostedServer *as1server.Server
 	// client signs the broker's client assertions; nil for an injected core.
 	client *identitybroker.ClientAssertionSigner
 	// core is the real broker; nil for an injected test core.
@@ -223,8 +237,9 @@ func (p identityBrokerParts) bindAS2(as2 *identityBrokerAS2) (unbind func(), err
 //
 // With a hosted AS-1 and no test override, session open converts users' access
 // tokens at that AS-1 in process: buildBrokerWithHostedAS1 creates the broker
-// client key first and registers it there as the confidential delegate.
-func buildIdentityBroker(ctx context.Context, cfg Config) (identityBrokerParts, error) {
+// client key first and registers it there as the confidential delegate, which
+// may obtain ID-JAGs for target when it is set.
+func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
 	if !cfg.IdentityBroker {
 		if cfg.IdentityBrokerHostedAS1 != nil {
 			return identityBrokerParts{}, errIdentityBrokerAS1WithoutBroker
@@ -239,7 +254,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identityBrokerParts, 
 	// replaces the core or sets IdentityBrokerAS1 explicitly keeps the paths
 	// below.
 	if cfg.identityBrokerCore == nil && cfg.IdentityBrokerAS1 == nil && cfg.IdentityBrokerHostedAS1 != nil {
-		return buildBrokerWithHostedAS1(ctx, cfg)
+		return buildBrokerWithHostedAS1(ctx, cfg, target)
 	}
 	core := cfg.identityBrokerCore
 	var parts identityBrokerParts
@@ -272,7 +287,9 @@ func buildIdentityBroker(ctx context.Context, cfg Config) (identityBrokerParts, 
 // AS-1 are both enabled: it creates the broker client key, hosts AS-1 with that
 // key as the confidential delegate client identitybroker.BrokerClientID, and
 // builds the broker with its session open pointed at that AS-1 in process.
-func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identityBrokerParts, error) {
+// With target, the delegate also obtains per-call ID-JAGs for it there, whose
+// actor tokens AS-1 checks with the broker's CredentialVerifier.
+func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
 	as1 := cfg.IdentityBrokerHostedAS1
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -290,12 +307,21 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identityBrokerPa
 	for i, c := range as1.PublicClients {
 		sources[i] = c.ID
 	}
-	server, err := buildHostedAS1(ctx, as1, &as1server.DelegateClient{
+	delegate := &as1server.DelegateClient{
 		ID:                   identitybroker.BrokerClientID,
 		KeySet:               keySet,
 		AllowedSourceClients: sources,
 		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
-	})
+	}
+	if target != nil {
+		// Shortcut: AS-1 issues ID-JAGs only for the AS-2 the test-only gateway servers configure, so production configures no target and no actor profile; removed by #2533 and #2538.
+		delegate.IDJAG = &as1server.IDJAGIssuance{
+			ActIssuer: identitybroker.ActorIssuer(identityBrokerConfig(cfg).TrustDomain),
+			// Lifetime stays zero, ToolHive's default of a minute.
+			Targets: []as1server.IDJAGTarget{{Issuer: target.Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{target.Resource}}},
+		}
+	}
+	server, err := buildHostedAS1(ctx, as1, delegate)
 	if err != nil {
 		return identityBrokerParts{}, err
 	}
@@ -305,6 +331,9 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identityBrokerPa
 	// and its assertions.
 	cfg.IdentityBrokerAS1 = &IdentityBrokerAS1{
 		Issuer: server.Issuer(), TokenEndpoint: server.TokenEndpoint(), HTTPClient: httpClient, ClientKey: clientKey,
+	}
+	if delegate.IDJAG != nil {
+		cfg.IdentityBrokerAS1.ActorTokens = server
 	}
 	broker, err := newIdentityBroker(cfg)
 	if err != nil {
@@ -319,6 +348,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config) (identityBrokerPa
 	}
 	parts.service = identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)
 	parts.hosted = newHostedAS1Server(server)
+	parts.hostedServer = server
 	return parts, nil
 }
 
@@ -396,11 +426,22 @@ type IdentityBrokerAS1 struct {
 	// assertions at AS-1, for a test whose AS-1 checks them against a moved
 	// clock. Nil selects time.Now.
 	AssertionNow func() time.Time
-	// UseCredentialVerifier receives the built broker's credential verifier,
-	// so a test's AS-1 can validate actor tokens with it before issuing an
-	// ID-JAG. It is test-only; production leaves it nil.
-	// Shortcut: a test AS-1 validates actor tokens through this hook, as ToolHive v0.65.0 does not issue ID-JAGs from a grant (stacklok/toolhive PR #7130 and #6899 add it) and only the harness AS-1 does; removed by #2654 (AS-1 issues per-call ID-JAGs).
-	UseCredentialVerifier func(identitybroker.CredentialVerifier)
+	// ActorTokens is AS-1's actor-token check, bound to the broker's
+	// CredentialVerifier once the broker is built; nil when AS-1 issues no
+	// ID-JAGs. It applies only to an AS-1 running in this process, which can
+	// call the broker. A failed bind fails startup.
+	ActorTokens interface {
+		UseCredentialVerifier(identitybroker.CredentialVerifier) error
+	}
+}
+
+// identityBrokerConfig is the identity broker's configuration: the interim
+// one, or a test's replacement.
+func identityBrokerConfig(cfg Config) identitybroker.Config {
+	if cfg.identityBrokerConfig != nil {
+		return *cfg.identityBrokerConfig
+	}
+	return interimIdentityBrokerConfig
 }
 
 // newIdentityBroker constructs the real identity broker with the interim
@@ -416,10 +457,7 @@ type IdentityBrokerAS1 struct {
 // would refuse the broker after a restart, while in-process servers register
 // it again at each build.
 func newIdentityBroker(cfg Config) (identityBroker, error) {
-	config := interimIdentityBrokerConfig
-	if cfg.identityBrokerConfig != nil {
-		config = *cfg.identityBrokerConfig
-	}
+	config := identityBrokerConfig(cfg)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
@@ -466,8 +504,10 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 	if err != nil {
 		return identityBroker{}, err
 	}
-	if as1 != nil && as1.UseCredentialVerifier != nil {
-		as1.UseCredentialVerifier(core)
+	if as1 != nil && as1.ActorTokens != nil {
+		if err := as1.ActorTokens.UseCredentialVerifier(core); err != nil {
+			return identityBroker{}, fmt.Errorf("bind AS-1's actor-token check: %w", err)
+		}
 	}
 	return identityBroker{core: core, client: client, recorder: recorder, gateway: gateway, gatewayServers: gatewayServers}, nil
 }
