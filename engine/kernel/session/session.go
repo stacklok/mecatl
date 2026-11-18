@@ -267,6 +267,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	v.commits = append(v.commits, entry)
 	v.records = append(v.records, staged...)
 	v.runs = append(v.runs, runs...)
+	v.finalRequests = append(v.finalRequests, admission.stagedRequests...)
 	v.inputs = append(v.inputs, inputs...)
 	v.lifecycle = admission.candidate
 	v.head = ref

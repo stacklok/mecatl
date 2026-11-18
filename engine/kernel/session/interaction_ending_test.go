@@ -315,7 +315,8 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 		t.Run(fmt.Sprint(wrong), func(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			pending := s.state.view.lifecycle.pending
-			capture := CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("safe")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}
+			capture := CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("safe")}}
+			report := UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
 			if wrong {
 				capture.RequestID++
 			}
@@ -337,11 +338,13 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 				return
 			}
 			interactionCheck(t, err)
-			*capture.Usage.Input = 7
-			capture.Usage.Raw.Data[0] = 0
+			_, err = b.AddUsage(nil, &pending, UsagePurposeMain, report)
+			interactionCheck(t, err)
+			*report.Buckets[0].Counters.Input = 7
+			report.Raw.Data[0] = 0
 			_, err = s.SubmitCommit(context.Background(), b)
 			interactionCheck(t, err)
-			v, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).RunEnded()
+			v, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 2).RunEnded()
 			if !ok {
 				t.Fatal("ending")
 			}
@@ -349,18 +352,17 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 			if !present || captureView.RequestID() != pending {
 				t.Fatal("capture evidence missing")
 			}
-			usage, usagePresent := captureView.Usage()
-			raw, rawPresent := usage.Raw()
-			input, inputPresent := usage.Input()
+			usageRecord, usagePresent := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).Usage()
+			raw, rawPresent := usageRecord.Report().Raw()
+			input, inputPresent := usageRecord.Report().Buckets().At(0).Counters().Input()
 			if !usagePresent || !rawPresent || !inputPresent || input != 0 || raw.Data().Copy()[0] != 0xff {
 				t.Fatal("capture evidence lost/aliased")
 			}
 			data := raw.Data().Copy()
 			data[0] = 1
-			again, _ := v.Capture()
-			againUsage, _ := again.Usage()
-			againInput, _ := againUsage.Input()
-			againRaw, _ := againUsage.Raw()
+			againUsage, _ := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).Usage()
+			againInput, _ := againUsage.Report().Buckets().At(0).Counters().Input()
+			againRaw, _ := againUsage.Report().Raw()
 			if againInput != 0 || againRaw.Data().Copy()[0] != 0xff || s.state.view.lifecycle.pending != pending {
 				t.Fatal("capture export mutated fact or resolved request")
 			}

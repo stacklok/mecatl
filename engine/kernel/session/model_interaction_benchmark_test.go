@@ -50,15 +50,15 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 		submitBatch(t, s, b)
 		return id
 	}
-	usage := &session.InvocationUsage{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)),
+	usage := session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4))}}, {SelectedModel: new(string(check))}},
 		Raw: &session.OpaqueProviderData{Producer: "producer", Format: "usage", Version: 19, Data: parameters}}
 	evidence := &session.ObservedEvidence{Detail: new(string(check)), Correlation: new("correlation")}
 	first := request(nil)
 	b = beginBatch(t, s)
-	mustBatch(t, b.AddInvocationFailure(first, session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new("failure"), Usage: usage, Evidence: evidence}))
+	mustBatch(t, b.AddInvocationFailure(first, session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new("failure"), Evidence: evidence}))
 	submitBatch(t, s, b)
 	second := request(&first)
-	response := session.ModelResponse{Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Usage: usage, Evidence: evidence,
+	response := session.ModelResponse{Terminal: session.ResponseTerminalOther, ProviderStopReason: new("stop"), Evidence: evidence,
 		Private: &session.OpaqueProviderData{Producer: "producer", Format: "private", Version: 19, Data: parameters}}
 	for range count {
 		response.Items = append(response.Items,
@@ -82,7 +82,11 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	pending := request(nil)
 	b = beginBatch(t, s)
 	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("capture"),
-		Capture: &session.CaptureFailureEvidence{RequestID: pending.RunRelative(), Usage: usage, Evidence: evidence}}))
+		Capture: &session.CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: evidence}}))
+	for _, id := range []session.ModelRequestID{first, second, pending} {
+		_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, usage)
+		mustBatch(t, err)
+	}
 	submitBatch(t, s, b)
 	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
 	mustBatch(t, err)
@@ -147,7 +151,8 @@ func inspectInteractionProvider(v session.OpaqueProviderDataView, format string,
 	visits.bytes += inspectInteractionBytes(v.Data(), 0xa5, exports)
 }
 
-func inspectInteractionUsage(v session.InvocationUsageView, present, exports bool, visits *interactionTraversal) {
+func inspectInteractionUsage(report session.UsageReportView, present, exports bool, visits *interactionTraversal) {
+	v := report.Buckets().At(0).Counters()
 	if !present {
 		panic("usage presence")
 	}
@@ -161,7 +166,7 @@ func inspectInteractionUsage(v session.InvocationUsageView, present, exports boo
 	}
 	visits.usages++
 	visits.counters += 5
-	raw, ok := v.Raw()
+	raw, ok := report.Raw()
 	if !ok {
 		panic("raw presence")
 	}
@@ -189,6 +194,14 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 	var visits interactionTraversal
 	for i := 0; i < snap.RecordCount(); i++ {
 		record := snap.RecordAt(i)
+		if usage, ok := record.Usage(); ok {
+			definition, present := usage.Definition()
+			request, correlated := definition.RequestID()
+			if !present || !correlated || request.RunID().HistoryID() != snap.HistoryID() || definition.Purpose() != session.UsagePurposeMain {
+				panic("usage scope")
+			}
+			inspectInteractionUsage(usage.Report(), true, exports, &visits)
+		}
 		if v, ok := record.ModelRequest(); ok {
 			visits.requests++
 			source, present := v.Source()
@@ -217,9 +230,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 			if v.RequestID() != request.ID() || v.Class() != session.InvocationFailureTransport || !present || text != "failure" {
 				panic("failure scalars")
 			}
-			u, up := v.Usage()
 			e, ep := v.Evidence()
-			inspectInteractionUsage(u, up, exports, &visits)
 			inspectInteractionEvidence(e, ep, &visits)
 		}
 		if v, ok := record.ModelResponse(); ok {
@@ -229,9 +240,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 			if v.RequestID() != request.ID() || v.Terminal() != session.ResponseTerminalOther || !present || text != "stop" || v.Items().Len() != 3*v.CallCount() {
 				panic("response scalars")
 			}
-			u, up := v.Usage()
 			e, ep := v.Evidence()
-			inspectInteractionUsage(u, up, exports, &visits)
 			inspectInteractionEvidence(e, ep, &visits)
 			private, ok := v.Private()
 			if !ok {
@@ -328,9 +337,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 				if v.Reason() != session.RunEndedCaptureFailed || !textOK || text != "capture" || capture.RequestID() != request.ID() || capture.RequestID().RunID() != v.RunID() {
 					panic("capture scope/scalars")
 				}
-				u, up := capture.Usage()
 				e, ep := capture.Evidence()
-				inspectInteractionUsage(u, up, exports, &visits)
 				inspectInteractionEvidence(e, ep, &visits)
 			} else if v.Reason() != session.RunEndedLimit || !v.BulkToolCloseout() || textOK {
 				panic("minimal ending")

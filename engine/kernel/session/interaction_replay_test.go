@@ -118,7 +118,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, e)
 						prior := b.admission
 						err = add(b)
-						if err != nil && (b.admission != prior || len(b.records) != 0) {
+						if err != nil && (!reflect.DeepEqual(b.admission, prior) || len(b.records) != 0) {
 							t.Fatal("rejection consumed ordinal/state")
 						}
 						interactionCheck(t, b.Discard())
@@ -216,7 +216,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 }
 
 func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
-	for _, kind := range []string{sessionformat.KindModelRequest, sessionformat.KindModelResponse, sessionformat.KindInvocationFailure, sessionformat.KindRunEnded, "session.future"} {
+	for _, kind := range []string{sessionformat.KindModelRequest, sessionformat.KindModelResponse, sessionformat.KindUsage, sessionformat.KindInvocationFailure, sessionformat.KindRunEnded, "session.future"} {
 		for _, path := range []string{"decode", "apply", "load"} {
 			t.Run(kind+"/"+path, func(t *testing.T) {
 				s := interactionFixture(t, "pending")

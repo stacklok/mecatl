@@ -105,6 +105,15 @@ func (v RecordView) ToolDisposition() (ToolDispositionView, bool) {
 	return ToolDispositionView{scope: v.scope, value: &v.record.toolDisposition}, true
 }
 
+// Usage returns a scoped immutable accounting record only for the usage kind.
+// A replacement has no Definition; this accessor performs no historical join.
+func (v RecordView) Usage() (UsageView, bool) {
+	if v.Kind() != sessionformat.KindUsage {
+		return UsageView{}, false
+	}
+	return UsageView{scope: v.scope, value: &v.record.usage}, true
+}
+
 // InvocationFailure returns an immutable observed-failure handle for that kind.
 func (v RecordView) InvocationFailure() (InvocationFailureView, bool) {
 	if v.record == nil || v.record.value.Kind != sessionformat.KindInvocationFailure {

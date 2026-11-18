@@ -19,7 +19,7 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				s := interactionFixture(t, "pending")
 				pending := s.state.view.lifecycle.pending
 				before := detachedSessionState(s.state)
-				response := ModelResponse{Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Output: new(int64(0))}}
+				response := ModelResponse{Terminal: ResponseTerminalNormal}
 				if oversized == "content" {
 					response.Items = []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new(strings.Repeat("x", s.policy.PayloadLimits.MaxStringBytes+1))}}}}}
 				} else {
@@ -34,12 +34,14 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 				if !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("capture rejection resolved request")
 				}
-				ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("observed")}, Usage: response.Usage}}
+				ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("capture exceeded local bounds"), Capture: &CaptureFailureEvidence{RequestID: pending.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("observed")}}}
 				if !detailedFits {
 					minimal := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed}, pending.runID, s.policy.PayloadLimits))
 					s.policy.SoftMaxPayloadBytes = s.state.payloadBytes + uint64(len(minimal.value.Payload))
 				}
 				b, err = s.BeginCommit()
+				interactionCheck(t, err)
+				_, err = b.AddUsage(nil, &pending, UsagePurposeMain, UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Output: new(int64(0))}}}})
 				interactionCheck(t, err)
 				interactionCheck(t, b.AddRunEnded(pending.runID, ending))
 				_, err = s.SubmitCommit(context.Background(), b)
@@ -53,7 +55,11 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 					interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.EndRun(RunEndedCaptureFailed)) })
 				}
 				snap := s.Snapshot()
-				if snap.RecordCount() != before.records+1 || s.state.view.lifecycle.pending != pending {
+				additional := 1
+				if detailedFits {
+					additional++
+				}
+				if snap.RecordCount() != before.records+additional || s.state.view.lifecycle.pending != pending {
 					t.Fatal("fallback accepted response subset or resolved pending request")
 				}
 				v, ok := snap.RecordAt(snap.RecordCount() - 1).RunEnded()
@@ -65,9 +71,9 @@ func TestInteractionOversizeCaptureFallback(t *testing.T) {
 					t.Fatal("capture presence")
 				}
 				if detailedFits {
-					usage, usagePresent := capture.Usage()
+					usageRecord, usagePresent := snap.RecordAt(snap.RecordCount() - 2).Usage()
 					evidence, evidencePresent := capture.Evidence()
-					output, outputPresent := usage.Output()
+					output, outputPresent := usageRecord.Report().Buckets().At(0).Counters().Output()
 					correlation, correlationPresent := evidence.Correlation()
 					if capture.RequestID() != pending || !usagePresent || !evidencePresent || !outputPresent || output != 0 || !correlationPresent || correlation != "observed" {
 						t.Fatal("optional evidence lost")

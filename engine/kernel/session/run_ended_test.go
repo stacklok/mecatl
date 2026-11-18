@@ -37,12 +37,16 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 	input, output := int64(0), int64(1)
 	data := []byte{0xff, 0}
 	interactionSubmit(t, s, func(b *SessionCommit) {
+		usageRecord, err := b.AddUsage(nil, &pending, UsagePurposeMain, UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: &input, Output: &output}}}, Raw: &OpaqueProviderData{Producer: "producer", Format: "format", Version: 2, Data: data}})
+		interactionCheck(t, err)
+		if usageRecord == (UsageID{}) {
+			t.Fatal("missing usage identity")
+		}
 		interactionCheck(t, b.AddRunEnded(pending.runID, RunEnded{
 			Reason: RunEndedCaptureFailed,
 			Capture: &CaptureFailureEvidence{
 				RequestID: pending.RunRelative(),
 				Evidence:  &ObservedEvidence{Detail: new(""), Correlation: new("correlation")},
-				Usage:     &InvocationUsage{Input: &input, Output: &output, Raw: &OpaqueProviderData{Producer: "producer", Format: "format", Version: 2, Data: data}},
 			},
 		}))
 	})
@@ -65,10 +69,11 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 	if correlation, ok := evidence.Correlation(); !ok || correlation != "correlation" {
 		t.Fatal("correlation")
 	}
-	usage, ok := capture.Usage()
+	usageRecord, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 2).Usage()
 	if !ok {
 		t.Fatal("missing usage")
 	}
+	usage := usageRecord.Report().Buckets().At(0).Counters()
 	if got, ok := usage.Input(); !ok || got != 0 {
 		t.Fatal("input presence")
 	}
@@ -78,7 +83,7 @@ func TestCaptureFailureEvidenceViewScopePresenceAndOwnership(t *testing.T) {
 	if _, ok := usage.CacheRead(); ok {
 		t.Fatal("absent cache read")
 	}
-	raw, ok := usage.Raw()
+	raw, ok := usageRecord.Report().Raw()
 	if !ok || raw.Producer() != "producer" || raw.Format() != "format" || raw.Version() != 2 || !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("raw usage")
 	}

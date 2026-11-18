@@ -1,21 +1,23 @@
 //go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session/format -emit cbor,clone,equal -out zz_cbor_generated.go
 
-// Package format owns the isolated session's mutable persistence DTOs and
-// payload-local validation. Generated CBOR operations enforce canonical encoding
-// and explicit codec limits. Keep borrowed values stable during operations.
-// The package has no aggregate, I/O, or default resource policy. Public composite
-// Validate methods recursively check children, without operational bounds. Scalar
-// validators check immediate invariants. Generated traversal bounds and validates
-// children before invoking each parent's immediate codec hook;
-// it does not invoke recursive public validators.
+// Package format defines mutable persistence DTOs and payload-local validation
+// for isolated kernel sessions. The enclosing history record supplies each
+// payload's kind and schema version.
+//
+// Occurrence IDs and their references store relative components; field comments
+// define their enclosing history or run scope. Payloads omit the enclosing history
+// identity. The session aggregate checks membership and cross-record legality;
+// payload validity alone establishes neither acceptance nor execution authority.
+//
+// Public Validate methods check payload contracts, including child values.
+// Generated CBOR methods implement canonical encoding; kernel/codec helpers apply
+// explicit per-operation resource limits. This package supplies no default
+// resource policy.
 //
 // Assignment shares mutable storage. Generated Clone detaches it; Equal compares
 // exact values, treating nil and empty slices alike but preserving pointer presence.
-// Generated reads own their storage and leave receivers unchanged on failure.
-//
-// Occurrences and references are nonzero local ordinals. History scope belongs to
-// the root history envelope and verified ancestry, never these payloads. Local
-// validity proves neither lifecycle legality nor history membership or acceptance.
+// Generated reads own decoded storage and leave receivers unchanged on failure.
+// Inputs must remain stable for the duration of an operation.
 package format
 
 // Version is the supported version of all session payload schemas.
@@ -44,6 +46,8 @@ const (
 	KindModelRequest = "session.model_request"
 	// KindModelResponse identifies a complete terminal response.
 	KindModelResponse = "session.model_response"
+	// KindUsage identifies a complete usage report with first-record definition.
+	KindUsage = "session.usage"
 	// KindInvocationFailure identifies an observed invocation failure.
 	KindInvocationFailure = "session.invocation_failure"
 	// KindToolInvocation identifies effective committed tool intent.

@@ -370,7 +370,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 							n := len(b.records)
 							err = b.add(r, nil)
 							if err != nil {
-								if prior != b.admission || n != len(b.records) {
+								if !reflect.DeepEqual(prior, b.admission) || n != len(b.records) {
 									t.Fatal("failed addition mutated candidate")
 								}
 								break
@@ -423,7 +423,7 @@ func TestInteractionOverflowAndMaterializationAgreement(t *testing.T) {
 			case "effective frontier":
 				err = b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Source: ContentSource{Description: "prepared"}}}}})
 			}
-			if !errors.Is(err, codec.ErrLimitExceeded) || b.admission != before || len(b.records) != 0 {
+			if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(b.admission, before) || len(b.records) != 0 {
 				t.Fatalf("overflow changed candidate: %v", err)
 			}
 			interactionCheck(t, b.Discard())

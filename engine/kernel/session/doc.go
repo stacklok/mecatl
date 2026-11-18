@@ -1,37 +1,37 @@
 //go:generate go -C ../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/session -emit view -out zz_views_generated.go
 
-// Package session interprets accepted history as lifecycle and retained context
-// for the isolated kernel. It validates and submits ordered batches through a
-// bound History; it does not execute work or resolve retained references.
+// Package session interprets accepted history as lifecycle state and retained
+// context for the isolated kernel. It owns session admission and reconstruction;
+// it does not execute model requests or tool calls, or resolve content references.
 //
-// Payloads are mutable DTOs defined in session/format. Payload-local validation
-// is separate from aggregate lifecycle legality. Accepted views reconstruct
-// scoped identities from verified history ancestry; identity reconstruction alone
-// proves neither allocation nor membership.
+// Payloads are mutable DTOs defined in session/format. That package validates
+// individual payloads; this package checks history membership and cross-record
+// legality. Occurrence IDs carry their enclosing history or run scope, but
+// reconstructing an ID alone establishes neither membership nor authority.
 //
-// [SessionCommit] collects provisional facts for ordered, atomic acceptance through
-// [Session.SubmitCommit]. [Load] reconstructs accepted state from stored history.
-// See [SessionCommit] and [Policy] for admission and resource contracts.
+// # Authoring and reconstruction
 //
-// RootInstructions retains the harness root operating contract. UserInstructions
-// retains prepared SOUL.md/persona and applicable AGENTS.md or CLAUDE.md guidance.
-// Both use intended placement and authority, not producer, file, or provider
-// message role; upstream owns their trust and framing. Dynamically triggered guidance
-// enters chronological EffectiveInput with attribution rather than replacing
-// standing instructions. Each whole collection has unique InstructionBlock keys;
-// identical contents under distinct keys are valid. Keys are bookkeeping only,
-// stable by producer convention, not trust, precedence, refresh logic, or logical
-// request content. Slice order remains authoritative; replacements are not patches.
-// Load retains accepted facts and never re-reads a ContentSource file.
+// [New] binds a [Session] to one history and an explicit [Policy].
+// [Session.BeginCommit] opens a [SessionCommit] for ordered provisional facts;
+// [Session.SubmitCommit] submits the batch atomically. [Load] reconstructs accepted
+// state from stored history. SessionCommit and Policy document admission, resource
+// limits, and submission failure handling.
 //
-// Session operations must be caller-serialized. Captured [Snapshot], [CommitView]
-// and child views support concurrent readers independently of the session owner.
-// Views retain immutable backing for their lifetime, potentially including the
-// enclosing record. Snapshot and commit-view capture and direct navigation take
-// O(1) time without copying payloads; derived lookups document their own costs.
-// Byte getters borrow through views.Bytes; Copy detaches only the selected leaf.
-// Scalar and presence reads never clone sibling payloads. Zero views are safe;
-// optional children and scalars report presence separately, preserving explicit
-// zero and empty values. Sequences are ordered, repeatable, and pinned to captured
-// backing and bounds. [RecordView.MutableClone] exports a detached transport DTO.
+// # Inspection and ownership
+//
+// [Snapshot] pins accepted state. [CommitView] pins a batch's accepted prefix and
+// provisional additions; inspection does not accept those additions. Both expose
+// chronological records and typed views. Derived inspections, including
+// [Snapshot.Usages], document their own scanning and allocation costs.
+//
+// Callers serialize Session operations and keep inputs stable during calls.
+// Captured views support concurrent readers independently of the session owner
+// and remain pinned across later additions. They retain immutable backing for
+// their lifetime; snapshot and commit-view capture do not copy payloads.
+//
+// Scalar and presence reads borrow backing without cloning sibling payloads.
+// Byte getters return views.Bytes; Copy detaches the selected leaf. Optional
+// values distinguish absence from explicit zero or empty values. View methods
+// document zero values and indexing bounds; MutableClone methods detach the
+// selected DTO and its children.
 package session

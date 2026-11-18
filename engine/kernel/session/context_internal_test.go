@@ -39,10 +39,10 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	oversizeResponse := ModelResponse{Items: make([]ResponseItem, limits.MaxArrayElements+1)}
 	privateResponse := ModelResponse{Private: &OpaqueProviderData{Data: settings}}
 	evidenceResponse := ModelResponse{Evidence: &ObservedEvidence{Correlation: &oversizeText}}
-	usageResponse := ModelResponse{Usage: &InvocationUsage{Raw: &OpaqueProviderData{Data: settings}}}
+	usage := sessionformat.Usage{ID: 1, Report: UsageReport{State: UsageReportActive, Raw: &OpaqueProviderData{Data: settings}}}
 	nestedResponse := ModelResponse{Items: []ResponseItem{{Content: &ResponseContent{Parts: parts}}}}
-	failure := InvocationFailure{Usage: usageResponse.Usage}
-	ending := RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID.RunRelative(), Usage: usageResponse.Usage}}
+	failure := InvocationFailure{Evidence: evidenceResponse.Evidence}
+	ending := RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID.RunRelative(), Evidence: evidenceResponse.Evidence}}
 	request := identifiedRequest{ID: requestID, ModelRequest: ModelRequest{Recipe: ConstructionRecipe{Parameters: settings}}}
 	for _, makeRecord := range []func() (*materializedRecord, error){
 		func() (*materializedRecord, error) {
@@ -79,7 +79,7 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 		func() (*materializedRecord, error) {
 			return newModelResponseRecord(evidenceResponse, requestID, limits)
 		},
-		func() (*materializedRecord, error) { return newModelResponseRecord(usageResponse, requestID, limits) },
+		func() (*materializedRecord, error) { return newUsageRecord(usage, limits) },
 		func() (*materializedRecord, error) { return newModelResponseRecord(nestedResponse, requestID, limits) },
 		func() (*materializedRecord, error) { return newInvocationFailureRecord(failure, requestID, limits) },
 		func() (*materializedRecord, error) { return newRunEndedRecord(ending, input.runID, limits) },
@@ -114,10 +114,10 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 	}
 	requestID := ModelRequestID{runID: input.runID, requestOrdinal: 1}
 	request := identifiedRequest{ID: requestID, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Parameters: []byte{0xff}, Check: []byte{0}}, RetryOf: new(requestID.RunRelative())}}
-	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(3)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}
-	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
-	failure := InvocationFailure{Class: InvocationFailureTransport, Usage: usage, Evidence: response.Evidence, Explanation: new("")}
-	ending := RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID.RunRelative(), Evidence: response.Evidence, Usage: usage}}
+	usage := sessionformat.Usage{ID: 1, Definition: &UsageDefinition{Purpose: UsagePurposeMain}, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0)), Output: new(int64(3))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}
+	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: content}}, {Call: &RequestedCall{Name: "", Arguments: []byte{0xff}}}}, Evidence: &ObservedEvidence{Correlation: new("")}, Private: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{0xff}}}
+	failure := InvocationFailure{Class: InvocationFailureTransport, Evidence: response.Evidence, Explanation: new("")}
+	ending := RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: requestID.RunRelative(), Evidence: response.Evidence}}
 	storedRequest := request.ModelRequest
 	storedRequest.RunID, storedRequest.ID = input.runID.ordinal, requestID.requestOrdinal
 	storedResponse := response
@@ -137,6 +137,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 		make  func(codec.Limits) (*materializedRecord, error)
 		check func(codec.Limits) ([]byte, error)
 	}{
+		{"usage", func(l codec.Limits) (*materializedRecord, error) { return newUsageRecord(usage, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(usage, l) }},
 		{"request", func(l codec.Limits) (*materializedRecord, error) { return makeRequestRecord(request, l) }, func(l codec.Limits) ([]byte, error) { return codec.Encode(storedRequest, l) }},
 		{"response", func(l codec.Limits) (*materializedRecord, error) {
 			return newModelResponseRecord(response, requestID, l)
@@ -166,6 +167,8 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 			}
 			want := materializedRecord{value: original.format()}
 			switch tc.name {
+			case "usage":
+				want.usage = usage
 			case "request":
 				want.request = storedRequest
 			case "response":

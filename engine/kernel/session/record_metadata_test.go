@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 func internalTestHistory(t testing.TB, limits codec.Limits) *history.History {
@@ -107,7 +108,10 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	id := requestID(run.historyID, run.ordinal, 2)
 	retry := requestID(run.historyID, run.ordinal, 1)
 	request := identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: new(retry.RunRelative())}}
-	ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("retained correlation")}, Usage: &InvocationUsage{Input: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}}
+	ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("retained correlation")}}}
+	report := sessionformat.Usage{ID: 1, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}
+	wantUsage := report.Clone()
+	u := interactionRecord(t)(newUsageRecord(report, limits))
 	wantRequest, wantEnding := request.Clone(), ending.Clone()
 	wantRequest.RunID, wantRequest.ID = run.ordinal, id.requestOrdinal
 	wantEnding.RunID = run.ordinal
@@ -118,12 +122,15 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	*request.RetryOf = id.RunRelative()
 	*ending.Explanation = "changed"
 	*ending.Capture.Evidence.Correlation = "changed"
-	*ending.Capture.Usage.Input = 99
-	ending.Capture.Usage.Raw.Data[0] = 0
+	*report.Report.Buckets[0].Counters.Input = 99
+	report.Report.Raw.Data[0] = 0
+	if !u.usage.Equal(wantUsage) {
+		t.Fatal("usage materialization borrowed caller storage")
+	}
 	if !r.request.Equal(wantRequest) || !e.ended.Equal(wantEnding) {
 		t.Fatal("proposal backing lost full values or retained caller storage")
 	}
-	for _, original := range []*materializedRecord{r, e} {
+	for _, original := range []*materializedRecord{r, e, u} {
 		dto := original.format()
 		decoded, err := decodeMaterialized(dto, limits)
 		if err != nil {

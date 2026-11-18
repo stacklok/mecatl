@@ -17,8 +17,14 @@ state only after storage acceptance. Immutable snapshots pin accepted state;
 and its proposed records for inspection and request construction. Proposed records
 remain provisional after capture and confer neither acceptance nor execution
 authority. Loading reconstructs accepted state without resolving references or
-executing work. The [session example](session/example_test.go) shows submission,
-snapshot access, and reconstruction.
+executing work. Independent model-usage facts retain fixed correlation and complete
+replaceable reports without changing execution state. `Snapshot.Usages` explicitly
+joins first definitions and latest reports across the whole snapshot, including
+withdrawn identities and late reports for ended runs. This is best-effort showback,
+not proof of spend or complete coverage. The [session example](session/example_test.go)
+shows submission, snapshot access, and reconstruction; the
+[usage example](modelrequest/usage_example_test.go) shows accounting corrections,
+withdrawal/restoration, and a coverage-aware subtotal rebuilt from storage.
 
 [`modelrequest`](modelrequest/doc.go) constructs immutable provider-neutral logical
 requests from a pinned session source and reconstructs accepted commitments from
@@ -54,9 +60,11 @@ task generate:data:check
 
 ## Focused checks
 
-Run the focused offline checks from the repository root:
+Run the accounting/construction examples and regressions, or the broader kernel
+checks, from the repository root:
 
 ```sh
+go -C engine test ./kernel/session ./kernel/modelrequest -run 'Usage|Example'
 cd engine && go test -race ./id ./kernel/... ./arch ./adapter/history/...
 ```
 

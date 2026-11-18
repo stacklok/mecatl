@@ -45,6 +45,7 @@ func detachedSessionState(state sessionState) sessionState {
 		v.records[i] = &owned
 	}
 	v.runs = slices.Clone(v.runs)
+	v.finalRequests = slices.Clone(v.finalRequests)
 	v.inputs = slices.Clone(v.inputs)
 	v.commits = slices.Clone(v.commits)
 	return state

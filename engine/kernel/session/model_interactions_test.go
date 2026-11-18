@@ -24,16 +24,16 @@ func TestModelInteractionValuesCloneAndRelativeReferences(t *testing.T) {
 		t.Fatal("relative reference changed")
 	}
 
-	zero, empty := int64(0), ""
-	response := session.ModelResponse{RunID: 1, RequestID: 2, Terminal: session.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Usage: &session.InvocationUsage{Input: &zero}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
+	empty := ""
+	response := session.ModelResponse{RunID: 1, RequestID: 2, Terminal: session.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []session.ResponseItem{{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Text: &empty}}}}, {Call: &session.RequestedCall{Name: "", Arguments: []byte("not json")}}}, Private: &session.OpaqueProviderData{Producer: "provider", Format: "raw", Version: 1, Data: []byte{1}}}
 	mustBatch(t, response.Validate())
 	clone := response.Clone()
 	response.Items[1].Call.Arguments[0] = 'N'
 	response.Private.Data[0] = 2
-	if !bytes.Equal(clone.Items[1].Call.Arguments, []byte("not json")) || clone.Private.Data[0] != 1 || clone.Usage.Input == response.Usage.Input {
+	if !bytes.Equal(clone.Items[1].Call.Arguments, []byte("not json")) || clone.Private.Data[0] != 1 {
 		t.Fatal("response clone aliases mutable storage")
 	}
-	if clone.Usage.Input == nil || *clone.Usage.Input != 0 || clone.ProviderStopReason == nil || *clone.ProviderStopReason != "" {
+	if clone.ProviderStopReason == nil || *clone.ProviderStopReason != "" {
 		t.Fatal("zero or explicit empty was lost")
 	}
 }

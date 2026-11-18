@@ -18,14 +18,14 @@ func TestContentPartValidationLayers(t *testing.T) {
 	}
 }
 
-func TestInvocationUsageValidationLayers(t *testing.T) {
-	v := InvocationUsage{Raw: &OpaqueProviderData{}}
+func TestUsageReportValidationLayers(t *testing.T) {
+	v := UsageReport{State: UsageReportActive, Raw: &OpaqueProviderData{}}
 	if v.validateLocal() != nil || v.Validate() == nil {
-		t.Fatal("immediate counter check must not validate raw evidence; public validation must")
+		t.Fatal("immediate state check must not validate raw evidence; public validation must")
 	}
-	v.Input = new(int64(-1))
-	if err := v.Validate(); err == nil || err.Error() != "usage count must be nonnegative" {
-		t.Fatalf("public counter error must precede malformed raw metadata: %v", err)
+	v.State = "invalid"
+	if v.Validate() == nil {
+		t.Fatal("public validation accepted an invalid state")
 	}
 }
 
@@ -68,9 +68,9 @@ func TestCanonicalPayloadValidationLayers(t *testing.T) {
 		{"effective", (EffectiveInput{RunID: 1, Inputs: []InputItem{{}}}).validateLocal, (EffectiveInput{RunID: 1, Inputs: []InputItem{{}}}).Validate},
 		{"catalog", (ToolCatalog{Tools: []ToolDefinition{{Name: "name"}}}).validateLocal, (ToolCatalog{Tools: []ToolDefinition{{Name: "name"}}}).Validate},
 		{"request", (ModelRequest{RunID: 1, ID: 1}).validateLocal, (ModelRequest{RunID: 1, ID: 1}).Validate},
-		{"response", (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Input: new(int64(-1))}}).validateLocal, (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Usage: &InvocationUsage{Input: new(int64(-1))}}).Validate},
+		{"response", (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Evidence: &ObservedEvidence{Detail: new("\xff")}}).validateLocal, (ModelResponse{RunID: 1, RequestID: 1, Terminal: ResponseTerminalNormal, Evidence: &ObservedEvidence{Detail: new("\xff")}}).Validate},
 		{"failure", (InvocationFailure{RunID: 1, RequestID: 1, Class: InvocationFailureOther, Evidence: &ObservedEvidence{Detail: new("\xff")}}).validateLocal, (InvocationFailure{RunID: 1, RequestID: 1, Class: InvocationFailureOther, Evidence: &ObservedEvidence{Detail: new("\xff")}}).Validate},
-		{"capture", (CaptureFailureEvidence{RequestID: 1, Usage: &InvocationUsage{Raw: &OpaqueProviderData{}}}).validateLocal, (CaptureFailureEvidence{RequestID: 1, Usage: &InvocationUsage{Raw: &OpaqueProviderData{}}}).Validate},
+		{"capture", (CaptureFailureEvidence{RequestID: 1, Evidence: &ObservedEvidence{Detail: new("\xff")}}).validateLocal, (CaptureFailureEvidence{RequestID: 1, Evidence: &ObservedEvidence{Detail: new("\xff")}}).Validate},
 		{"ending", (RunEnded{RunID: 1, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{}}).validateLocal, (RunEnded{RunID: 1, Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{}}).Validate},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestSharedPayloadCodecBoundsPrecedeParentValidation(t *testing.T) {
 	part := ContentPart{Text: new(""), Media: media}
 	content := ResponseContent{Kind: "unknown", Parts: []ContentPart{{Media: media}}}
 	item := ResponseItem{Call: &RequestedCall{Arguments: make([]byte, 5)}, Content: &ResponseContent{Kind: ResponseContentOutput}}
-	usage := InvocationUsage{Input: new(int64(-1)), Raw: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: make([]byte, 5)}}
+	usage := UsageReport{State: "invalid", Raw: &OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: make([]byte, 5)}}
 	for _, tc := range []struct {
 		name   string
 		value  codec.Marshaler
@@ -101,7 +101,7 @@ func TestSharedPayloadCodecBoundsPrecedeParentValidation(t *testing.T) {
 		{"part", part, func(b []byte) error { _, err := codec.Decode[ContentPart](b, l); return err }},
 		{"content", content, func(b []byte) error { _, err := codec.Decode[ResponseContent](b, l); return err }},
 		{"item", item, func(b []byte) error { _, err := codec.Decode[ResponseItem](b, l); return err }},
-		{"usage", usage, func(b []byte) error { _, err := codec.Decode[InvocationUsage](b, l); return err }},
+		{"usage", usage, func(b []byte) error { _, err := codec.Decode[UsageReport](b, l); return err }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if out, err := codec.Encode(tc.value, l); out != nil || !errors.Is(err, codec.ErrLimitExceeded) {

@@ -20,7 +20,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/short=%t/%s", name, short, path), func(t *testing.T) {
 					s := interactionFixture(t, "pending")
 					id := s.state.view.lifecycle.pending
-					response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Usage: &InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0)), Raw: &OpaqueProviderData{Producer: "p", Format: "u", Version: 1, Data: make([]byte, 128)}}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
+					response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(string(make([]byte, 120))), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("")}, Private: &OpaqueProviderData{Producer: "p", Format: "private", Version: 1, Data: make([]byte, 128)}, Items: []ResponseItem{{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/x", Source: MediaSourceInline, InlineData: make([]byte, 128)}}}}}}}
 					for range 8 {
 						response.Items = append(response.Items, ResponseItem{Call: &RequestedCall{Arguments: []byte{0xff}}})
 					}

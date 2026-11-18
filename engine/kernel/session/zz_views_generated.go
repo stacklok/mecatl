@@ -9,7 +9,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: 10aa61bfe39d630303e90f35d588489d155fb995f99651d102a6683a71944c7b.
+// Selected view layouts, source policy and documentation fingerprint: b810502949e67679cb0ea9781ecaffe3acd0384ae11b11aebf3701bdb3951a78.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -123,7 +123,6 @@ func (v AttributedInputView) Source() ContentSourceView {
 var _ = (*struct {
 	RequestID uint64                        "cbor:\"q\" view:\"manual\""
 	Evidence  *dtogenType0.ObservedEvidence "cbor:\"e,omitempty\""
-	Usage     *dtogenType0.InvocationUsage  "cbor:\"u,omitempty\""
 })((*dtogenType0.CaptureFailureEvidence)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -154,26 +153,6 @@ func (v CaptureFailureEvidenceView) Evidence() (ObservedEvidenceView, bool) {
 		return ObservedEvidenceView{}, false
 	}
 	return dtogenViewObservedEvidenceView(v.value.Evidence), true
-}
-
-// Usage reads Usage in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// CaptureFailureEvidence is ending-owned evidence for an accepted pending request
-// whose complete response could not be captured. It has no response body or private
-// envelope. Assignment shares nested storage; Clone detaches it. RequestID is
-// interpreted within the explicit destination run without origin provenance.
-//
-// Usage is optional provider-reported usage for the uncaptured response. Nil
-// omits it; codec traversal validates local counters and opaque metadata.
-func (v CaptureFailureEvidenceView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return dtogenViewInvocationUsageView(v.value.Usage), true
 }
 
 // Backing contract for ConstructionRecipeView.
@@ -608,7 +587,6 @@ var _ = (*struct {
 	Class       dtogenType0.InvocationFailureClass "cbor:\"c\""
 	Explanation *string                            "cbor:\"e,omitempty\""
 	Evidence    *dtogenType0.ObservedEvidence      "cbor:\"v,omitempty\""
-	Usage       *dtogenType0.InvocationUsage       "cbor:\"u,omitempty\""
 })((*dtogenType0.InvocationFailure)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -681,180 +659,6 @@ func (v InvocationFailureView) Evidence() (ObservedEvidenceView, bool) {
 		return ObservedEvidenceView{}, false
 	}
 	return dtogenViewObservedEvidenceView(v.value.Evidence), true
-}
-
-// Usage reads Usage in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationFailure records an observed invocation or delivery failure without
-// constructing a provider response or asserting no remote processing. Assignment
-// shares nested storage; Clone detaches it. Session authoring supplies the full
-// destination request separately and requires RunID and RequestID zero. Validate
-// requires the fully populated persisted shape.
-//
-// Usage is optional provider-reported usage. Nil omits it; codec traversal
-// validates local counters and optional opaque metadata.
-func (v InvocationFailureView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return dtogenViewInvocationUsageView(v.value.Usage), true
-}
-
-// Backing contract for InvocationUsageView.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-// dtogenViewInvocationUsageView borrows stable backing; it neither freezes nor synchronizes access.
-func dtogenViewInvocationUsageView(value *dtogenType0.InvocationUsage) InvocationUsageView {
-	return InvocationUsageView{value: value}
-}
-
-var _ = (*struct {
-	Input      *int64                          "cbor:\"i,omitempty\""
-	Output     *int64                          "cbor:\"o,omitempty\""
-	CacheRead  *int64                          "cbor:\"r,omitempty\""
-	CacheWrite *int64                          "cbor:\"w,omitempty\""
-	Reasoning  *int64                          "cbor:\"n,omitempty\""
-	Raw        *dtogenType0.OpaqueProviderData "cbor:\"x,omitempty\""
-})((*dtogenType0.InvocationUsage)(nil))
-
-// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
-// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
-// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
-func (v InvocationUsageView) MutableClone() dtogenType0.InvocationUsage {
-	if v.value == nil {
-		return dtogenType0.InvocationUsage{}
-	}
-	return v.value.Clone()
-}
-
-// Input reads Input in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// Input is an optional nonnegative provider-reported inclusive input count.
-func (v InvocationUsageView) Input() (int64, bool) {
-	if v.value == nil || v.value.Input == nil {
-		return *new(int64), false
-	}
-	return *v.value.Input, true
-}
-
-// Output reads Output in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// Output is an optional nonnegative provider-reported inclusive output count.
-func (v InvocationUsageView) Output() (int64, bool) {
-	if v.value == nil || v.value.Output == nil {
-		return *new(int64), false
-	}
-	return *v.value.Output, true
-}
-
-// CacheRead reads CacheRead in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// CacheRead is an optional nonnegative input-cache-read breakdown, not extra spend.
-func (v InvocationUsageView) CacheRead() (int64, bool) {
-	if v.value == nil || v.value.CacheRead == nil {
-		return *new(int64), false
-	}
-	return *v.value.CacheRead, true
-}
-
-// CacheWrite reads CacheWrite in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// CacheWrite is an optional nonnegative input-cache-write breakdown, not extra spend.
-func (v InvocationUsageView) CacheWrite() (int64, bool) {
-	if v.value == nil || v.value.CacheWrite == nil {
-		return *new(int64), false
-	}
-	return *v.value.CacheWrite, true
-}
-
-// Reasoning reads Reasoning in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The receiver retains stable backing for its lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// Reasoning is an optional nonnegative reasoning breakdown, not extra spend.
-func (v InvocationUsageView) Reasoning() (int64, bool) {
-	if v.value == nil || v.value.Reasoning == nil {
-		return *new(int64), false
-	}
-	return *v.value.Reasoning, true
-}
-
-// Raw reads Raw in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-// Raw is optional usage-only producer evidence. It is absent when nil and must
-// not contain a response body; codec traversal validates its local metadata.
-func (v InvocationUsageView) Raw() (OpaqueProviderDataView, bool) {
-	if v.value == nil || v.value.Raw == nil {
-		return OpaqueProviderDataView{}, false
-	}
-	return dtogenViewOpaqueProviderDataView(v.value.Raw), true
 }
 
 // Backing contract for MediaView.
@@ -1286,7 +1090,6 @@ var _ = (*struct {
 	ProviderStopReason *string                           "cbor:\"p,omitempty\""
 	Items              []dtogenType0.ResponseItem        "cbor:\"i\""
 	Evidence           *dtogenType0.ObservedEvidence     "cbor:\"e,omitempty\""
-	Usage              *dtogenType0.InvocationUsage      "cbor:\"u,omitempty\""
 	Private            *dtogenType0.OpaqueProviderData   "cbor:\"x,omitempty\""
 })((*dtogenType0.ModelResponse)(nil))
 
@@ -1379,26 +1182,6 @@ func (v ModelResponseView) Evidence() (ObservedEvidenceView, bool) {
 		return ObservedEvidenceView{}, false
 	}
 	return dtogenViewObservedEvidenceView(v.value.Evidence), true
-}
-
-// Usage reads Usage in O(1) without copying sibling payloads.
-// A zero view or nil field returns zero, false; present zero/empty values return true.
-// The returned child borrows backing, which must remain stable for every derived view's lifetime.
-// Access neither freezes nor synchronizes backing.
-//
-// Source contract (DTO semantics, not a mutable accessor):
-// ModelResponse is an atomic terminal provider response. Private is one
-// response-wide envelope, not per-item provider identity. Assignment shares nested
-// storage; Clone detaches it. Session authoring supplies the destination request
-// separately and requires RunID and RequestID zero. Validate checks persisted IDs.
-//
-// Usage is optional provider-reported usage. Nil omits it; traversal validates
-// its local counters and optional opaque metadata.
-func (v ModelResponseView) Usage() (InvocationUsageView, bool) {
-	if v.value == nil || v.value.Usage == nil {
-		return InvocationUsageView{}, false
-	}
-	return dtogenViewInvocationUsageView(v.value.Usage), true
 }
 
 // Private reads Private in O(1) without copying sibling payloads.
@@ -3135,6 +2918,446 @@ func (v ToolReturnedView) Output() ToolOutputView {
 		return ToolOutputView{}
 	}
 	return dtogenViewToolOutputView(&v.value.Output)
+}
+
+// Backing contract for UsageBucketView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageBucket is one producer-asserted disjoint measurement. Identical selected
+// labels may occur in multiple buckets; labels do not prove overlap or uniqueness.
+// Its zero Go value is valid unknown consumption, not numerical zero; counter-only
+// and selection-only buckets are valid. Assignment shares nested pointers; Clone
+// detaches them.
+//
+// Attribution is provisional: only selected logical route and model are retained.
+// Observed serving identity and charging-service attribution may be added when
+// concrete producers establish useful reporting semantics; neither is inferred
+// from the selected values.
+// dtogenViewUsageBucketView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewUsageBucketView(value *dtogenType0.UsageBucket) UsageBucketView {
+	return UsageBucketView{value: value}
+}
+
+var _ = (*struct {
+	SelectedRoute *string                   "cbor:\"r,omitempty\""
+	SelectedModel *string                   "cbor:\"m,omitempty\""
+	Counters      dtogenType0.UsageCounters "cbor:\"c\""
+})((*dtogenType0.UsageBucket)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UsageBucketView) MutableClone() dtogenType0.UsageBucket {
+	if v.value == nil {
+		return dtogenType0.UsageBucket{}
+	}
+	return v.value.Clone()
+}
+
+// SelectedRoute reads SelectedRoute in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageBucket is one producer-asserted disjoint measurement. Identical selected
+// labels may occur in multiple buckets; labels do not prove overlap or uniqueness.
+// Its zero Go value is valid unknown consumption, not numerical zero; counter-only
+// and selection-only buckets are valid. Assignment shares nested pointers; Clone
+// detaches them.
+//
+// Attribution is provisional: only selected logical route and model are retained.
+// Observed serving identity and charging-service attribution may be added when
+// concrete producers establish useful reporting semantics; neither is inferred
+// from the selected values.
+//
+// SelectedRoute is an optional exact nonempty UTF-8 configured logical
+// provider/route, interpreted relative to the producing harness configuration.
+// Nil means unknown. It is not a global upstream identity or resolved on Load.
+func (v UsageBucketView) SelectedRoute() (string, bool) {
+	if v.value == nil || v.value.SelectedRoute == nil {
+		return *new(string), false
+	}
+	return *v.value.SelectedRoute, true
+}
+
+// SelectedModel reads SelectedModel in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageBucket is one producer-asserted disjoint measurement. Identical selected
+// labels may occur in multiple buckets; labels do not prove overlap or uniqueness.
+// Its zero Go value is valid unknown consumption, not numerical zero; counter-only
+// and selection-only buckets are valid. Assignment shares nested pointers; Clone
+// detaches them.
+//
+// Attribution is provisional: only selected logical route and model are retained.
+// Observed serving identity and charging-service attribution may be added when
+// concrete producers establish useful reporting semantics; neither is inferred
+// from the selected values.
+//
+// SelectedModel is an optional exact nonempty UTF-8 declared model. Nil means
+// unknown. It is not a verified upstream model identity or resolved on Load.
+func (v UsageBucketView) SelectedModel() (string, bool) {
+	if v.value == nil || v.value.SelectedModel == nil {
+		return *new(string), false
+	}
+	return *v.value.SelectedModel, true
+}
+
+// Counters reads Counters in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageBucket is one producer-asserted disjoint measurement. Identical selected
+// labels may occur in multiple buckets; labels do not prove overlap or uniqueness.
+// Its zero Go value is valid unknown consumption, not numerical zero; counter-only
+// and selection-only buckets are valid. Assignment shares nested pointers; Clone
+// detaches them.
+//
+// Attribution is provisional: only selected logical route and model are retained.
+// Observed serving identity and charging-service attribution may be added when
+// concrete producers establish useful reporting semantics; neither is inferred
+// from the selected values.
+//
+// Counters are optional measurements; absent totals are never inferred from
+// breakdowns. The zero Go value means all counts unknown, not reported zero
+// consumption.
+func (v UsageBucketView) Counters() UsageCountersView {
+	if v.value == nil {
+		return UsageCountersView{}
+	}
+	return dtogenViewUsageCountersView(&v.value.Counters)
+}
+
+// Backing contract for UsageCountersView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+// dtogenViewUsageCountersView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewUsageCountersView(value *dtogenType0.UsageCounters) UsageCountersView {
+	return UsageCountersView{value: value}
+}
+
+var _ = (*struct {
+	Input      *int64 "cbor:\"i,omitempty\""
+	Output     *int64 "cbor:\"o,omitempty\""
+	CacheRead  *int64 "cbor:\"r,omitempty\""
+	CacheWrite *int64 "cbor:\"w,omitempty\""
+	Reasoning  *int64 "cbor:\"n,omitempty\""
+})((*dtogenType0.UsageCounters)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UsageCountersView) MutableClone() dtogenType0.UsageCounters {
+	if v.value == nil {
+		return dtogenType0.UsageCounters{}
+	}
+	return v.value.Clone()
+}
+
+// Input reads Input in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+//
+// Input is optional inclusive input tokens; nil is unknown, not zero.
+func (v UsageCountersView) Input() (int64, bool) {
+	if v.value == nil || v.value.Input == nil {
+		return *new(int64), false
+	}
+	return *v.value.Input, true
+}
+
+// Output reads Output in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+//
+// Output is optional inclusive output tokens; nil is unknown, not zero.
+func (v UsageCountersView) Output() (int64, bool) {
+	if v.value == nil || v.value.Output == nil {
+		return *new(int64), false
+	}
+	return *v.value.Output, true
+}
+
+// CacheRead reads CacheRead in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+//
+// CacheRead is an optional input-cache-read breakdown, not additional tokens.
+func (v UsageCountersView) CacheRead() (int64, bool) {
+	if v.value == nil || v.value.CacheRead == nil {
+		return *new(int64), false
+	}
+	return *v.value.CacheRead, true
+}
+
+// CacheWrite reads CacheWrite in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+//
+// CacheWrite is an optional input-cache-write breakdown, not additional tokens.
+func (v UsageCountersView) CacheWrite() (int64, bool) {
+	if v.value == nil || v.value.CacheWrite == nil {
+		return *new(int64), false
+	}
+	return *v.value.CacheWrite, true
+}
+
+// Reasoning reads Reasoning in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageCounters contains exactly five optional nonnegative token counts. Input
+// and Output are inclusive; cache and reasoning breakdowns are not added again.
+// No accounting equations, estimates, totals, prices or spend are inferred.
+// Nil differs from reported zero. Assignment shares pointers; Clone detaches them.
+// Its zero Go value means all counts unknown, not numerical zero.
+//
+// Reasoning is an optional reasoning breakdown, not additional tokens.
+func (v UsageCountersView) Reasoning() (int64, bool) {
+	if v.value == nil || v.value.Reasoning == nil {
+		return *new(int64), false
+	}
+	return *v.value.Reasoning, true
+}
+
+// Backing contract for UsageDefinitionView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageDefinition is immutable first-record metadata. Correlations omit enclosing
+// history scope and assert association, not unique ownership or complete coverage.
+// Assignment shares optional components; Clone detaches them. Zero is invalid.
+var _ = (*struct {
+	Purpose   string  "cbor:\"p\""
+	RunID     *uint64 "cbor:\"r,omitempty\" view:\"manual\""
+	RequestID *uint64 "cbor:\"q,omitempty\" view:\"manual\""
+})((*dtogenType0.UsageDefinition)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UsageDefinitionView) MutableClone() dtogenType0.UsageDefinition {
+	if v.value == nil {
+		return dtogenType0.UsageDefinition{}
+	}
+	return v.value.Clone()
+}
+
+// Purpose reads Purpose in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageDefinition is immutable first-record metadata. Correlations omit enclosing
+// history scope and assert association, not unique ownership or complete coverage.
+// Assignment shares optional components; Clone detaches them. Zero is invalid.
+//
+// Purpose is required nonempty exact UTF-8, open beyond the established
+// UsagePurpose constants. No trimming, fallback, or normalization is applied.
+func (v UsageDefinitionView) Purpose() string {
+	if v.value == nil {
+		return *new(string)
+	}
+	return v.value.Purpose
+}
+
+// Backing contract for UsageReportView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageReport is a complete cumulative observation, never a delta or field patch.
+// Latest accepted chronological replacement wins, even if counts decrease or an
+// old observation is republished. Missing fields are not filled from prior reports.
+// Measurements are best-effort showback: neither a verified bill nor a guarantee
+// of complete work/attempt coverage. Assignment shares storage; Clone detaches it.
+// Zero Go value is invalid because State is required; active with no buckets or raw
+// evidence is valid unknown usage.
+// dtogenViewUsageReportView borrows stable backing; it neither freezes nor synchronizes access.
+func dtogenViewUsageReportView(value *dtogenType0.UsageReport) UsageReportView {
+	return UsageReportView{value: value}
+}
+
+var _ = (*struct {
+	State   dtogenType0.UsageReportState    "cbor:\"s\""
+	Buckets []dtogenType0.UsageBucket       "cbor:\"b\""
+	Raw     *dtogenType0.OpaqueProviderData "cbor:\"x,omitempty\""
+})((*dtogenType0.UsageReport)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UsageReportView) MutableClone() dtogenType0.UsageReport {
+	if v.value == nil {
+		return dtogenType0.UsageReport{}
+	}
+	return v.value.Clone()
+}
+
+// State reads State in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The receiver retains stable backing for its lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageReport is a complete cumulative observation, never a delta or field patch.
+// Latest accepted chronological replacement wins, even if counts decrease or an
+// old observation is republished. Missing fields are not filled from prior reports.
+// Measurements are best-effort showback: neither a verified bill nor a guarantee
+// of complete work/attempt coverage. Assignment shares storage; Clone detaches it.
+// Zero Go value is invalid because State is required; active with no buckets or raw
+// evidence is valid unknown usage.
+//
+// State is required active or withdrawn. Withdrawal requires no buckets or Raw.
+func (v UsageReportView) State() dtogenType0.UsageReportState {
+	if v.value == nil {
+		return *new(dtogenType0.UsageReportState)
+	}
+	return v.value.State
+}
+
+// Buckets reads Buckets in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The collection borrows stable backing and adapts elements lazily; derived views retain it.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageReport is a complete cumulative observation, never a delta or field patch.
+// Latest accepted chronological replacement wins, even if counts decrease or an
+// old observation is republished. Missing fields are not filled from prior reports.
+// Measurements are best-effort showback: neither a verified bill nor a guarantee
+// of complete work/attempt coverage. Assignment shares storage; Clone detaches it.
+// Zero Go value is invalid because State is required; active with no buckets or raw
+// evidence is valid unknown usage.
+//
+// Buckets are producer-ordered, asserted mutually disjoint consumption. Nil
+// and empty are equivalent no normalized measurements; no summing, merging,
+// deduplication or overlap proof is performed within or across usage IDs.
+func (v UsageReportView) Buckets() dtogenViews.SliceView[dtogenType0.UsageBucket, UsageBucketView] {
+	if v.value == nil {
+		return dtogenViews.SliceView[dtogenType0.UsageBucket, UsageBucketView]{}
+	}
+	return dtogenViews.BorrowSliceView(v.value.Buckets, dtogenViewUsageBucketView)
+}
+
+// Raw reads Raw in O(1) without copying sibling payloads.
+// A zero view or nil field returns zero, false; present zero/empty values return true.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// UsageReport is a complete cumulative observation, never a delta or field patch.
+// Latest accepted chronological replacement wins, even if counts decrease or an
+// old observation is republished. Missing fields are not filled from prior reports.
+// Measurements are best-effort showback: neither a verified bill nor a guarantee
+// of complete work/attempt coverage. Assignment shares storage; Clone detaches it.
+// Zero Go value is invalid because State is required; active with no buckets or raw
+// evidence is valid unknown usage.
+//
+// Raw is optional report-wide usage-only opaque evidence spanning any buckets.
+// Nil is absent. Producers must exclude response bodies, prompts, credentials
+// and unreleased content. Validation checks metadata, not the opaque schema or
+// disclosure safety; retention never implies automatic disclosure or replay.
+func (v UsageReportView) Raw() (OpaqueProviderDataView, bool) {
+	if v.value == nil || v.value.Raw == nil {
+		return OpaqueProviderDataView{}, false
+	}
+	return dtogenViewOpaqueProviderDataView(v.value.Raw), true
+}
+
+// Backing contract for UsageView.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Go value is invalid because it lacks a positive ID and a valid report state.
+// Explicitly reported zero token counts are valid and distinct from absent counts.
+// The first record alone carries Definition and must be active; later records omit
+// Definition. That first-record rule is aggregate policy; local validation cannot
+// prove it. Accepted chronological order determines the latest replacement, never
+// a delta, merge, or timestamp. Reports may repeat or decrease counters. Assignment
+// shares nested storage; Clone detaches it. Local validation cannot prove allocation
+// or membership; those checks belong to aggregate admission.
+var _ = (*struct {
+	ID         uint64                       "cbor:\"o\" view:\"manual\""
+	Definition *dtogenType0.UsageDefinition "cbor:\"d,omitempty\" view:\"manual\""
+	Report     dtogenType0.UsageReport      "cbor:\"r\""
+})((*dtogenType0.Usage)(nil))
+
+// MutableClone returns a deeply detached mutable copy of the backing DTO payload.
+// It uses the DTO owner's declared Clone capability and preserves DTO identity fields, but omits enclosing view scope and identity.
+// A zero view returns a zero DTO. Work and allocation are proportional only to this payload, not enclosing or sibling state.
+func (v UsageView) MutableClone() dtogenType0.Usage {
+	if v.value == nil {
+		return dtogenType0.Usage{}
+	}
+	return v.value.Clone()
+}
+
+// Report reads Report in O(1) without copying sibling payloads.
+// A zero view returns zero.
+// The returned child borrows backing, which must remain stable for every derived view's lifetime.
+// Access neither freezes nor synchronizes backing.
+//
+// Source contract (DTO semantics, not a mutable accessor):
+// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Go value is invalid because it lacks a positive ID and a valid report state.
+// Explicitly reported zero token counts are valid and distinct from absent counts.
+// The first record alone carries Definition and must be active; later records omit
+// Definition. That first-record rule is aggregate policy; local validation cannot
+// prove it. Accepted chronological order determines the latest replacement, never
+// a delta, merge, or timestamp. Reports may repeat or decrease counters. Assignment
+// shares nested storage; Clone detaches it. Local validation cannot prove allocation
+// or membership; those checks belong to aggregate admission.
+//
+// Report is the required complete replacement, including explicit state.
+func (v UsageView) Report() UsageReportView {
+	if v.value == nil {
+		return UsageReportView{}
+	}
+	return dtogenViewUsageReportView(&v.value.Report)
 }
 
 // Backing contract for UserInputView.

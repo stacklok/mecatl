@@ -167,9 +167,6 @@ type ModelResponse struct {
 	// Evidence is optional diagnostic observation. Nil omits it; traversal validates
 	// only its local UTF-8 contract, not disclosure safety or remote effects.
 	Evidence *ObservedEvidence `cbor:"e,omitempty"`
-	// Usage is optional provider-reported usage. Nil omits it; traversal validates
-	// its local counters and optional opaque metadata.
-	Usage *InvocationUsage `cbor:"u,omitempty"`
 	// Private is optional response-wide opaque provider data, not per-item identity.
 	// Nil omits it; traversal validates metadata but does not interpret its bytes.
 	Private *OpaqueProviderData `cbor:"x,omitempty"`
@@ -188,11 +185,6 @@ func (v ModelResponse) Validate() error {
 	}
 	if v.Evidence != nil {
 		if err := v.Evidence.Validate(); err != nil {
-			return err
-		}
-	}
-	if v.Usage != nil {
-		if err := v.Usage.Validate(); err != nil {
 			return err
 		}
 	}

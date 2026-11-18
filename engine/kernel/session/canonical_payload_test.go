@@ -169,11 +169,14 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	canonicalSubmit(t, s, b)
 
 	failure := sessionformat.InvocationFailure{Class: sessionformat.InvocationFailureTimeout, Explanation: new("original failure"),
-		Evidence: &sessionformat.ObservedEvidence{Detail: new(""), Correlation: new("failure correlation")},
-		Usage:    &sessionformat.InvocationUsage{Input: new(int64(0)), Raw: &sessionformat.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 1}}}}
+		Evidence: &sessionformat.ObservedEvidence{Detail: new(""), Correlation: new("failure correlation")}}
+	failureUsage := session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Input: new(int64(0))}}}, Raw: &session.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 1}}}
 	originalFailure := failure.Clone()
 	b = canonicalBegin(t, s)
 	canonicalOK(t, b.AddInvocationFailure(first, failure))
+	wantFailureUsage := sessionformat.Usage{ID: 1, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.HistoryRelative()), RequestID: new(first.RunRelative())}, Report: failureUsage.Clone()}
+	_, err = b.AddUsage(nil, &first, session.UsagePurposeMain, failureUsage)
+	canonicalOK(t, err)
 	if !failure.Equal(originalFailure) {
 		t.Fatal("failure addition mutated caller value")
 	}
@@ -182,8 +185,8 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	*failure.Explanation = "changed"
 	*failure.Evidence.Detail = "changed"
 	*failure.Evidence.Correlation = "changed"
-	*failure.Usage.Input = 99
-	clear(failure.Usage.Raw.Data)
+	*failureUsage.Buckets[0].Counters.Input = 99
+	clear(failureUsage.Raw.Data)
 	canonicalSubmit(t, s, b)
 
 	retry := canonicalRequest(s)
@@ -211,11 +214,14 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 				{Text: new("response text")}, {Media: &sessionformat.Media{Kind: sessionformat.MediaKindDocument, Source: sessionformat.MediaSourceInline, MIMEType: "application/octet-stream", InlineData: []byte{0xfd, 3}}}}}},
 			{Call: &sessionformat.RequestedCall{Name: "tool", Arguments: []byte{0xff, 4}}}},
 		Evidence: &sessionformat.ObservedEvidence{Detail: new("response detail"), Correlation: new("")},
-		Usage:    &sessionformat.InvocationUsage{Output: new(int64(0)), Raw: &sessionformat.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xfc, 5}}},
 		Private:  &sessionformat.OpaqueProviderData{Producer: "p", Format: "private", Version: 2, Data: []byte{0xfb, 6}}}
+	responseUsage := session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Output: new(int64(0))}}}, Raw: &session.OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xfc, 5}}}
 	originalResponse := response.Clone()
 	b = canonicalBegin(t, s)
 	canonicalOK(t, b.AddModelResponse(second, response))
+	wantResponseUsage := sessionformat.Usage{ID: 2, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.HistoryRelative()), RequestID: new(second.RunRelative())}, Report: responseUsage.Clone()}
+	_, err = b.AddUsage(nil, &second, session.UsagePurposeMain, responseUsage)
+	canonicalOK(t, err)
 	if !response.Equal(originalResponse) {
 		t.Fatal("response addition mutated caller value")
 	}
@@ -227,8 +233,8 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	clear(response.Items[1].Call.Arguments)
 	*response.Evidence.Detail = "changed"
 	*response.Evidence.Correlation = "changed"
-	*response.Usage.Output = 99
-	clear(response.Usage.Raw.Data)
+	*responseUsage.Buckets[0].Counters.Output = 99
+	clear(responseUsage.Raw.Data)
 	clear(response.Private.Data)
 	canonicalOK(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	canonicalSubmit(t, s, b)
@@ -241,8 +247,10 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	}{
 		{sessionformat.KindModelRequest, wantRequest},
 		{sessionformat.KindInvocationFailure, wantFailure},
+		{sessionformat.KindUsage, wantFailureUsage},
 		{sessionformat.KindModelRequest, wantRetry},
 		{sessionformat.KindModelResponse, wantResponse},
+		{sessionformat.KindUsage, wantResponseUsage},
 	}
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		for i, expected := range want {
@@ -258,14 +266,14 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 				t.Fatal("interaction record exposed retained payload bytes")
 			}
 		}
-		requestView, ok := snapshot.RecordAt(5).ModelRequest()
+		requestView, ok := snapshot.RecordAt(6).ModelRequest()
 		if !ok || requestView.ID() != second {
 			t.Fatal("retry identity lost")
 		}
 		if previous, ok := requestView.RetryOf(); !ok || previous != first {
 			t.Fatal("relative retry did not reconstruct destination scope")
 		}
-		responseView, ok := snapshot.RecordAt(6).ModelResponse()
+		responseView, ok := snapshot.RecordAt(7).ModelResponse()
 		if !ok || responseView.RequestID() != second || responseView.CallAt(0).ID().RequestID() != second {
 			t.Fatal("response/call identity lost")
 		}
@@ -318,7 +326,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	}
 	canonicalSubmit(t, s, b)
 	b = canonicalBegin(t, s)
-	canonicalOK(t, b.AddInvocationFailure(first, sessionformat.InvocationFailure{Class: sessionformat.InvocationFailureTimeout, Usage: &sessionformat.InvocationUsage{Input: new(int64(0))}}))
+	canonicalOK(t, b.AddInvocationFailure(first, sessionformat.InvocationFailure{Class: sessionformat.InvocationFailureTimeout}))
 	canonicalSubmit(t, s, b)
 	foreignRequest, err := session.NewModelRequestID(foreignRun, first.RunRelative())
 	canonicalOK(t, err)
