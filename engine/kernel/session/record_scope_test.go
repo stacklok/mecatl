@@ -95,7 +95,7 @@ func TestIdleContextReplacementHistoryScope(t *testing.T) {
 					if err := replace(invalid.scope); !errors.Is(err, invalid.want) {
 						t.Fatalf("invalid idle replacement: %v; want %v", err, invalid.want)
 					}
-					if len(b.records) != count || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+					if len(b.records) != count || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 						t.Fatal("invalid replacement changed batch or accepted state")
 					}
 				}
@@ -197,7 +197,7 @@ func TestForeignOutcomeAndEndingHistoryScope(t *testing.T) {
 				if err := add(invalid.id); !errors.Is(err, invalid.want) {
 					t.Fatalf("invalid outcome/ending identity: %v; want %v", err, invalid.want)
 				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("invalid outcome/ending changed batch or accepted state")
 				}
 			}
@@ -205,7 +205,7 @@ func TestForeignOutcomeAndEndingHistoryScope(t *testing.T) {
 				if err := add(requestID(foreign, 1, 0)); !errors.Is(err, codec.ErrInvalidData) {
 					t.Fatalf("invalid request ordinal in foreign history: %v", err)
 				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("invalid request ordinal changed batch or accepted state")
 				}
 			}
@@ -268,7 +268,7 @@ func TestPublicRunAuthoringScope(t *testing.T) {
 				if err := add(owner); !errors.Is(err, want) {
 					t.Fatalf("invalid run ownership: %v; want %v", err, want)
 				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("failed authoring changed batch or accepted state")
 				}
 			}
@@ -338,7 +338,7 @@ func TestPublicOwnerCheckPrecedesOversizedPayload(t *testing.T) {
 				if err := add(b, invalid.scope); !errors.Is(err, invalid.want) {
 					t.Fatalf("owner/payload precedence: %v; want %v", err, invalid.want)
 				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("failed owner/payload validation changed batch or accepted state")
 				}
 			}
@@ -388,7 +388,7 @@ func TestPublicOwnerCheckPrecedesPayloadValidation(t *testing.T) {
 				if err := add(b, invalid.scope); !errors.Is(err, invalid.want) {
 					t.Fatalf("owner/payload precedence: %v; want %v", err, invalid.want)
 				}
-				if len(b.records) != 0 || b.admission != admission || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
+				if len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 					t.Fatal("failed owner/payload validation changed batch or accepted state")
 				}
 			}

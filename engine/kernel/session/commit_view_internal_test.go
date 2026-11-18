@@ -64,7 +64,7 @@ func TestModelRequestCaptureFreshness(t *testing.T) {
 				t.Fatalf("attachment = %v; want %v", err, want)
 			}
 			if want != nil {
-				if id != (ModelRequestID{}) || b.admission != before || len(b.records) != count {
+				if id != (ModelRequestID{}) || !reflect.DeepEqual(b.admission, before) || len(b.records) != count {
 					t.Fatal("failed capture attachment changed batch")
 				}
 				id, err = b.AddModelRequest(run, captureCommit(t, b), payload)
@@ -198,7 +198,7 @@ func TestModelRequestRetryCannotUsePrecedingRun(t *testing.T) {
 	v := captureCommit(t, b)
 	payload := ModelRequest{Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}, RetryOf: new(uint64(1))}
 	before, count := b.admission, len(b.records)
-	if id, err := b.AddModelRequest(run, v, payload); id != (ModelRequestID{}) || !errors.Is(err, ErrTransition) || b.admission != before || len(b.records) != count {
+	if id, err := b.AddModelRequest(run, v, payload); id != (ModelRequestID{}) || !errors.Is(err, ErrTransition) || !reflect.DeepEqual(b.admission, before) || len(b.records) != count {
 		t.Fatalf("old-run retry consumed identity or admitted: %v", err)
 	}
 	payload.RetryOf = nil

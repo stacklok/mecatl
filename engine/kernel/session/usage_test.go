@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -151,6 +152,129 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 	}
 }
 
+func TestUsageRequestCountsAcrossRuns(t *testing.T) {
+	s := interactionFixture(t, "pending")
+	first := interactionRequest(s, 1).ID
+	old := s.Snapshot()
+	b := beginBatch(t, s)
+	mustBatch(t, b.AddModelResponse(first, ModelResponse{Terminal: ResponseTerminalNormal}))
+	second, err := b.AddModelRequest(first.RunID(), captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 1).Recipe})
+	mustBatch(t, err)
+	mustBatch(t, b.EndRun(RunEndedInterrupted))
+	empty := batchRun(t, b)
+	mustBatch(t, b.EndRun(RunEndedInterrupted))
+	latest := batchRun(t, b)
+	request, err := b.AddModelRequest(latest, captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 1).Recipe})
+	mustBatch(t, err)
+	before := b.admission
+	if _, err := b.StartRun(); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(before, b.admission) {
+		t.Fatalf("failed successor changed staged counts: %v", err)
+	}
+	mustBatch(t, b.EndRun(RunEndedInterrupted))
+	for _, id := range []ModelRequestID{first, second, request} {
+		_, err := b.AddUsage(nil, &id, UsagePurposeMain, UsageReport{State: UsageReportActive})
+		mustBatch(t, err)
+	}
+	for _, id := range []ModelRequestID{requestID(empty.historyID, empty.ordinal, 1), requestID(first.runID.historyID, first.runID.ordinal, 3), requestID(latest.historyID, latest.ordinal, 2)} {
+		before := b.admission
+		if _, err := b.AddUsage(nil, &id, UsagePurposeMain, UsageReport{State: UsageReportActive}); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(before, b.admission) {
+			t.Fatalf("absent request changed admission: %v", err)
+		}
+	}
+	submitBatch(t, s, b)
+	if !reflect.DeepEqual(s.Snapshot().finalRequests, []uint64{2, 0}) || old.lifecycle.requests != 1 || len(old.finalRequests) != 0 {
+		t.Fatal("final counts or retained latest count changed")
+	}
+	interactionReplay(t, s)
+	pinned := s.Snapshot()
+	b = beginBatch(t, s)
+	batchRun(t, b)
+	// Run 1 now resolves in the accepted counts; run 3 is newly superseded.
+	for _, id := range []ModelRequestID{second, request} {
+		_, err := b.AddUsage(nil, &id, UsagePurposeMain, UsageReport{State: UsageReportActive})
+		mustBatch(t, err)
+	}
+	submitBatch(t, s, b)
+	if !reflect.DeepEqual(s.Snapshot().finalRequests, []uint64{2, 0, 1}) || !reflect.DeepEqual(pinned.finalRequests, []uint64{2, 0}) || pinned.lifecycle.requests != 1 {
+		t.Fatal("publication changed pinned request membership")
+	}
+	interactionReplay(t, s)
+}
+
+func TestUsageRequestCountAdmissionOwnership(t *testing.T) {
+	s := interactionFixture(t, "ended")
+	b := beginBatch(t, s)
+	run := batchRun(t, b)
+	submitBatch(t, s, b)
+	// Give accepted counts spare capacity with sentinels: neither independent
+	// admission may use it for speculative successor counts.
+	backing := []uint64{1, 99, 98}
+	s.state.view.finalRequests = backing[:1]
+	pinned := s.Snapshot()
+	left, right := newAdmission(pinned), newAdmission(pinned)
+	req := interactionRequest(s, 1)
+	req.ID.runID = run
+	mustBatch(t, right.admit(run.historyID, interactionRecord(t)(makeRequestRecord(req, s.policy.PayloadLimits))))
+	ended := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, run, s.policy.PayloadLimits))
+	started := startRecord(t, 3)
+	for _, a := range []*admissionContext{&left, &right} {
+		mustBatch(t, a.admit(run.historyID, ended))
+		mustBatch(t, a.admit(run.historyID, started))
+	}
+	if !reflect.DeepEqual(backing, []uint64{1, 99, 98}) || !reflect.DeepEqual(left.stagedRequests, []uint64{0}) || !reflect.DeepEqual(right.stagedRequests, []uint64{1}) {
+		t.Fatal("independent candidates shared mutable request counts")
+	}
+	usage := interactionRecord(t)(newUsageRecord(sessionformat.Usage{ID: 1, Definition: &UsageDefinition{Purpose: UsagePurposeMain, RunID: new(run.ordinal), RequestID: new(uint64(1))}, Report: UsageReport{State: UsageReportActive}}, s.policy.PayloadLimits))
+	before := left
+	before.acceptedRequests = slices.Clone(left.acceptedRequests)
+	before.stagedRequests = slices.Clone(left.stagedRequests)
+	if err := left.admit(run.historyID, usage); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(left, before) {
+		t.Fatalf("independent request leaked into candidate: %v", err)
+	}
+	mustBatch(t, right.admit(run.historyID, usage))
+	if pinned.lifecycle.requests != 0 || len(pinned.finalRequests) != 1 {
+		t.Fatal("speculation changed retained snapshot")
+	}
+}
+
+func TestUsageRequestCountsDiscardAndRejectedSubmitStayUnpublished(t *testing.T) {
+	s := interactionFixture(t, "pending")
+	first := interactionRequest(s, 1).ID
+	pinned := s.Snapshot()
+	before := detachedSessionState(s.state)
+
+	b := beginBatch(t, s)
+	mustBatch(t, b.EndRun(RunEndedInterrupted))
+	batchRun(t, b)
+	if !reflect.DeepEqual(b.admission.stagedRequests, []uint64{1}) {
+		t.Fatal("successor did not stage preceding request count")
+	}
+	mustBatch(t, b.Discard())
+	if !reflect.DeepEqual(before, detachedSessionState(s.state)) || !reflect.DeepEqual(pinned, s.Snapshot()) {
+		t.Fatal("discard published staged request count")
+	}
+
+	b = beginBatch(t, s)
+	mustBatch(t, b.EndRun(RunEndedInterrupted))
+	batchRun(t, b)
+	policy := s.policy
+	s.policy.SoftMaxRetainedRecords = s.state.records
+	if _, err := s.SubmitCommit(t.Context(), b); !errors.Is(err, codec.ErrLimitExceeded) {
+		t.Fatalf("staged successor submission = %v, want capacity rejection", err)
+	}
+	if !reflect.DeepEqual(before, detachedSessionState(s.state)) || !reflect.DeepEqual(pinned, s.Snapshot()) {
+		t.Fatal("rejected submission published staged request count")
+	}
+
+	s.policy = policy
+	b = beginBatch(t, s)
+	if _, err := b.AddUsage(nil, &first, UsagePurposeMain, UsageReport{State: UsageReportActive}); err != nil {
+		t.Fatalf("accepted request membership changed after rejected work: %v", err)
+	}
+	submitBatch(t, s, b)
+	interactionReplay(t, s)
+}
+
 func TestUsageHasNoExecutionEffects(t *testing.T) {
 	for _, stage := range []string{"idle", "unbound", "active", "pending", "calls", "ended"} {
 		t.Run(stage, func(t *testing.T) {
@@ -205,7 +329,7 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 			before := b.admission
 			count := len(b.records)
 			id, err := b.AddUsage(tc.run, tc.request, "", malformed)
-			if id != (UsageID{}) || !errors.Is(err, tc.want) || b.admission != before || len(b.records) != count {
+			if id != (UsageID{}) || !errors.Is(err, tc.want) || !reflect.DeepEqual(b.admission, before) || len(b.records) != count {
 				t.Fatalf("identity-before-payload/atomicity: %v", err)
 			}
 		})
@@ -215,7 +339,7 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 		request *ModelRequestID
 	}{{&missingRun, nil}, {nil, &validRequest}} {
 		before := b.admission
-		if id, err := b.AddUsage(tc.run, tc.request, UsagePurposeMain, UsageReport{State: UsageReportActive}); id != (UsageID{}) || !errors.Is(err, ErrTransition) || b.admission != before {
+		if id, err := b.AddUsage(tc.run, tc.request, UsagePurposeMain, UsageReport{State: UsageReportActive}); id != (UsageID{}) || !errors.Is(err, ErrTransition) || !reflect.DeepEqual(b.admission, before) {
 			t.Fatalf("missing correlation: %v", err)
 		}
 	}
@@ -246,7 +370,7 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 		{id, UsageReport{}, codec.ErrInvalidData},
 		{id, malformed, codec.ErrLimitExceeded},
 	} {
-		if err := b.ReplaceUsage(tc.id, tc.report); !errors.Is(err, tc.want) || b.admission != before {
+		if err := b.ReplaceUsage(tc.id, tc.report); !errors.Is(err, tc.want) || !reflect.DeepEqual(b.admission, before) {
 			t.Fatalf("invalid replacement: %v", err)
 		}
 	}
@@ -295,12 +419,12 @@ func TestUsageIdentityExhaustion(t *testing.T) {
 		t.Fatal("last identity")
 	}
 	before := b.admission
-	if id, err := b.AddUsage(nil, nil, UsagePurposeMain, UsageReport{State: UsageReportActive}); id != (UsageID{}) || !errors.Is(err, codec.ErrLimitExceeded) || b.admission != before {
+	if id, err := b.AddUsage(nil, nil, UsagePurposeMain, UsageReport{State: UsageReportActive}); id != (UsageID{}) || !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(b.admission, before) {
 		t.Fatalf("exhaustion consumed state: %v", err)
 	}
 	mustBatch(t, b.ReplaceUsage(last, UsageReport{State: UsageReportWithdrawn}))
 	// A replacement requires no prefix scan, even at the largest internal ID.
-	if err := b.admission.admitUsage(sessionformat.Usage{ID: math.MaxUint64, Report: UsageReport{State: UsageReportActive}}, nil); err != nil {
+	if err := b.admission.admitUsage(sessionformat.Usage{ID: math.MaxUint64, Report: UsageReport{State: UsageReportActive}}); err != nil {
 		t.Fatal(err)
 	}
 	mustBatch(t, b.Discard())
@@ -361,7 +485,7 @@ func TestUsageSharedAdmissionRejectsTamperedReplay(t *testing.T) {
 					mustBatch(t, b.add(records[1], nil))
 					admission := b.admission
 					err = b.add(records[2], nil)
-					if b.admission != admission || len(b.records) != 2 {
+					if !reflect.DeepEqual(b.admission, admission) || len(b.records) != 2 {
 						t.Fatal("rejected addition changed staged prefix")
 					}
 					mustBatch(t, b.Discard())

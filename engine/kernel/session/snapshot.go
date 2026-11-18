@@ -15,10 +15,14 @@ import (
 // appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
 // GC owns their lifetime. Indexed methods panic outside [0, count).
 type Snapshot struct {
-	historyID        historyid.HistoryID
-	head             history.CommitRef
-	lifecycle        lifecycleState
-	records          []*materializedRecord
+	historyID historyid.HistoryID
+	head      history.CommitRef
+	lifecycle lifecycleState
+	records   []*materializedRecord
+	// finalRequests is the final request count for each superseded run, indexed by
+	// run ordinal minus one. The latest run's count remains in lifecycle.requests,
+	// including after end.
+	finalRequests    []uint64
 	runs             []runEntry
 	inputs           []int
 	commits          []commitEntry

@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -36,7 +37,7 @@ func TestModelRequestCanonicalPayloadFailurePrecedence(t *testing.T) {
 			if id != (ModelRequestID{}) || !errors.Is(err, tc.want) {
 				t.Fatalf("failed request: %v, %v; want zero, %v", id, err, tc.want)
 			}
-			if b.admission != before || len(b.records) != 0 {
+			if !reflect.DeepEqual(b.admission, before) || len(b.records) != 0 {
 				t.Fatal("failed payload changed admission or retained a record")
 			}
 		})

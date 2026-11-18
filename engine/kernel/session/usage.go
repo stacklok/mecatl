@@ -116,10 +116,10 @@ func newUsageRecord(v sessionformat.Usage, limits codec.Limits) (*materializedRe
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindUsage, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// admitUsage checks contiguous first definitions and prefix-only correlation.
-// Replacements use only the allocation scalar: copied admission never owns a
-// mutable registry or scans earlier reports to rediscover fixed metadata.
-func (a *admissionContext) admitUsage(v sessionformat.Usage, prefixes [][]*materializedRecord) error {
+// admitUsage checks contiguous first definitions and preceding correlation in O(1).
+// Request ordinals are contiguous per run: superseded runs have final counts,
+// and the latest run retains its candidate count even after ending.
+func (a *admissionContext) admitUsage(v sessionformat.Usage) error {
 	s := &a.candidate
 	if !s.created {
 		return ErrTransition
@@ -142,19 +142,16 @@ func (a *admissionContext) admitUsage(v sessionformat.Usage, prefixes [][]*mater
 		return ErrTransition
 	}
 	if d.RequestID != nil {
-		found := false
-		for _, prefix := range prefixes {
-			for _, r := range prefix {
-				if r.value.Kind == sessionformat.KindModelRequest && r.request.RunID == *d.RunID && r.request.ID == *d.RequestID {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
+		requests := s.requests
+		if *d.RunID < s.runs {
+			index := *d.RunID - 1
+			if index < uint64(len(a.acceptedRequests)) {
+				requests = a.acceptedRequests[index]
+			} else {
+				requests = a.stagedRequests[index-uint64(len(a.acceptedRequests))]
 			}
 		}
-		if !found {
+		if *d.RequestID == 0 || *d.RequestID > requests {
 			return ErrTransition
 		}
 	}

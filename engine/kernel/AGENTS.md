@@ -99,5 +99,10 @@ patterns here as they emerge; keep unrelated legacy cleanup out of scope.
 - Prefer the simplest bounded implementation. An inexpensive sizing pass can be
   clearer than buffer-growth machinery; optimize demonstrated costs, not the
   number of loops in isolation.
+- Keep append-side bookkeeping amortized O(1) per record, excluding work for a
+  newly supplied payload, and total O(n) where practical; justify O(n log n)
+  alternatives. Builders, preflight, and replay must not repeatedly scan or copy
+  whole history. Read-side scans are allowed when documented. Existing active-tool
+  call-slice copying is a documented exception; its optimization is separate work.
 
 See [README.md](README.md) for the implemented scope and focused checks.

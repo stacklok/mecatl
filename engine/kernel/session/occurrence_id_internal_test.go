@@ -108,7 +108,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 					if path == "builder" {
 						prior, count := b.admission, len(b.records)
 						err = b.AddEffectiveInput(run, v)
-						if b.admission != prior || len(b.records) != count {
+						if !reflect.DeepEqual(b.admission, prior) || len(b.records) != count {
 							t.Fatal("extreme reference addition changed batch")
 						}
 						interactionCheck(t, b.Discard())

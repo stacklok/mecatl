@@ -9,63 +9,119 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// lifecycleState contains admission scalars and immutable active tool state.
-// Historical facts remain in immutable records when an ending or successor changes these.
+// lifecycleState is the compact reconstructed lifecycle state, not history: immutable
+// records remain the source for historical facts. Its zero value is an uncreated,
+// idle session with no retained counts. Ending a run preserves every field except
+// activeRun; starting its successor resets only the run-local fields named below.
 type lifecycleState struct {
-	created                       bool
-	activeRun                     RunID
-	usages                        uint64 // History-wide; never reset at run boundaries.
-	runs, inputs, requests        uint64
-	binding                       bool
-	frontier, accounted, captured uint64 // Admitted contributions, last outcome coverage, pending request coverage.
-	pending                       ModelRequestID
-	calls                         uint64 // Calls without individual dispositions in tools; retained on bulk end.
-	tools                         *activeToolResponse
+	// created is true exactly after a Created fact has been admitted. It is not an
+	// assertion that a Session was constructed or that a model binding is present.
+	created bool
+
+	// binding records that at least one ModelBinding replacement has been admitted.
+	// Its presence permits requests and persists across run boundaries.
+	binding bool
+
+	// activeRun is the current scoped run, or zero while idle. endRun clears only
+	// this field, so the just-ended run's local state remains available for later
+	// correlation until a successor start resets it.
+	activeRun RunID
+
+	// runs is the history-wide number of admitted RunStarted facts. A successful
+	// start allocates exactly its next ordinal by incrementing this count.
+	runs uint64
+
+	// usages is the history-wide number of first-defined Usage identities. Adding a
+	// definition increments it once; replacing a report neither allocates nor changes it.
+	usages uint64
+
+	// inputs and requests are the last-admitted user-input and model-request
+	// ordinals in the latest run, including after it ends. Each next identity uses
+	// its count plus one; a successor start resets both to zero. Final request
+	// counts for superseded runs live separately in Snapshot.finalRequests.
+	inputs   uint64
+	requests uint64
+
+	// frontier counts structural input contributions admitted in this run; accounted
+	// is the coverage of the latest admitted outcome; captured is the frontier saved
+	// when the pending request was admitted. These are not token, spend, model-
+	// comprehension, or fulfillment measurements. An authored user input advances
+	// frontier even when empty; an effective-input record advances it only when it
+	// has contributions. An outcome assigns accounted from captured, so it cannot
+	// cover later input. A successor start resets all three.
+	frontier  uint64
+	accounted uint64
+	captured  uint64
+
+	// pending is the active request awaiting its outcome, or zero. It is cleared by
+	// an outcome, but a noncompleted ending may retain it until the next start resets
+	// run-local state. Completed endings require it to be zero.
+	pending ModelRequestID
+
+	// calls is the number of unsettled calls in tools. It is retained by a bulk
+	// ending, cleared by a later outcome or successor start, and must be zero for an
+	// ordinary ending.
+	calls uint64
+
+	// tools is immutable pairing state for the latest outcome's calls. It may remain
+	// after a bulk ending; a later outcome or successor start discards it. It is nil
+	// when that response had no calls or no current response pairing is retained.
+	tools *activeToolResponse
 }
 
-// admissionContext pins accepted prerequisites and head independently of the
-// ordered candidate. Next-request preparation and coverage use that candidate;
-// execution outcomes, tool prerequisites and retries still require accepted facts.
-// Callers copy this context before admitting an addition, so a rejected fact
-// consumes neither state nor IDs.
+// admissionContext holds a pinned accepted head and source beside an evolving
+// ordered candidate. source and head supply prerequisites that must already be
+// accepted, including execution outcomes and retries; candidate permits earlier
+// same-batch preparation and usage correlation before commitment. Builders copy it
+// before each addition, while preflight and replay use a disposable instance.
+// admit returns an error without changing the context.
 //
-// frontier is the admitted contribution coverage; a request captures the preceding
-// candidate frontier, and its outcome accounts that captured value. For example, input
-// advances frontier, a request captures it, an outcome accounts it, then later
-// input advances frontier again: the older outcome cannot justify a completed end.
-// This coverage is structural lifecycle bookkeeping, not evidence that a model
-// understood input, that work was fulfilled, or that usage was billed. An empty
-// authored submission advances frontier; an empty effective contribution does not.
-// Input gating is a chosen admission policy: pending outcomes or unresolved calls
-// prevent new input. Queues and steering live above this boundary. Only execution
-// and retry prerequisites require accepted facts; next-request preparation may
-// precede its commitment in the same batch.
-// Those choices differ from structural integrity, which requires valid scoped
-// identity, membership, and fact pairing. Policy separately controls capacity.
-// Noncompleted endings may retain pending model coverage; only explicit bulk
-// endings may leave calls without individual dispositions. Ending local ownership
-// does not assert that external processing or spend has ceased.
-// Ordinary writes must fit soft limits and reserve each actual minimal emergency
-// ending at the resulting candidate under both the hard Session policy and the
-// History policy; replay uses only hard retained limits.
+// acceptedRequests is a read-only snapshot of final request counts for superseded
+// runs. stagedRequests privately accumulates corresponding counts for candidate
+// successors, append-only after the accepted prefix. Together they make usage-to-
+// request correlation O(1): latest-run counts come from candidate.requests and older
+// runs index their retained final count. Appending staged successor counts is amortized
+// O(1). Snapshot.finalRequests retains a count for every superseded run;
+// lifecycleState.requests retains the latest count even after end.
+// Shallow copies may share existing slice backing only as an immutable prefix; they
+// append after all checks pass and make no promise that independently advanced
+// copies can safely branch and mutate a shared future.
+//
+// Input gating is admission policy: pending outcomes or unsettled calls prevent new
+// input. Structural integrity separately requires valid scoped identity, membership,
+// and fact pairing; capacity policy separately reserves each actual minimal emergency
+// ending after ordinary writes. Noncompleted endings may retain pending coverage, and
+// only explicit bulk endings may retain unsettled calls; neither asserts that external
+// processing or spend has ceased.
 type admissionContext struct {
-	head      history.CommitRef
-	source    lifecycleState
+	// head is the accepted history head against which request source anchors match.
+	head history.CommitRef
+
+	// source is accepted lifecycle state, never advanced during this admission.
+	source lifecycleState
+
+	// candidate is lifecycle state after the ordered candidate facts admitted so far.
 	candidate lifecycleState
+
+	// acceptedRequests is the immutable accepted prefix of superseded-run counts.
+	acceptedRequests []uint64
+
+	// stagedRequests holds candidate-only successors' final counts for publication.
+	stagedRequests []uint64
 }
 
 func newAdmission(v Snapshot) admissionContext {
-	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle}
+	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle, acceptedRequests: v.finalRequests}
 }
 
 // admit validates a complete locally valid fact in explicit history scope against
 // the pinned source and ordered candidate. On success it mutates only the
-// receiver's candidate; on error it leaves the entire context unchanged, including
-// its pinned accepted source and head. Prefixes borrow only preceding accepted
-// and earlier candidate records for first-report correlation; admission never
-// mutates their backing. It establishes neither persistence, storage
-// acceptance, nor publication. Outcomes account only their captured frontier.
-func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord, prefixes ...[]*materializedRecord) error {
+// receiver's candidate and staged counts; on error the entire context is unchanged.
+// Staged request counts never share accepted backing; successful successor starts
+// append only beyond the preceding staged length. It establishes neither
+// persistence, storage acceptance, nor publication. Outcomes account only their
+// captured frontier.
+func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord) error {
 	s := &a.candidate
 	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
@@ -77,7 +133,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 		}
 		s.created = true
 	case sessionformat.KindRunStarted:
-		return s.startRun(scope, r.started)
+		return a.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
 		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
 	case sessionformat.KindRootInstructions, sessionformat.KindUserInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
@@ -106,7 +162,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 	case sessionformat.KindInvocationFailure:
 		return a.admitOutcome(requestID(scope, r.failure.RunID, r.failure.RequestID), 0)
 	case sessionformat.KindUsage:
-		return a.admitUsage(r.usage, prefixes)
+		return a.admitUsage(r.usage)
 	case sessionformat.KindRunEnded:
 		return a.endRun(scope, r.ended)
 	default:
@@ -115,10 +171,15 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 	return nil
 }
 
-// startRun resets only active-run counters after proving the next run identity.
-func (s *lifecycleState) startRun(scope historyid.HistoryID, v sessionformat.RunStarted) error {
+// startRun proves the next run identity, retains the preceding run's final request
+// count if any, and resets only run-local state. Failure changes neither state nor counts.
+func (a *admissionContext) startRun(scope historyid.HistoryID, v sessionformat.RunStarted) error {
+	s := &a.candidate
 	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || v.ID != s.runs+1 {
 		return ErrTransition
+	}
+	if s.runs != 0 {
+		a.stagedRequests = append(a.stagedRequests, s.requests)
 	}
 	s.runs++
 	s.activeRun = RunID{historyID: scope, ordinal: v.ID}
@@ -237,11 +298,11 @@ func (s lifecycleState) inputEligible() bool {
 // enclosing scope to the same pinned-source admission used by additions and replay.
 func (s *Session) preflight(records []*materializedRecord, ref history.CommitRef, payloadBytes uint64) error {
 	a := newAdmission(s.state.view)
-	for i, r := range records {
+	for _, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := a.admit(s.state.view.historyID, r, s.state.view.records, records[:i]); err != nil {
+		if err := a.admit(s.state.view.historyID, r); err != nil {
 			return err
 		}
 	}

@@ -212,7 +212,7 @@ func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 		t.Fatal(err)
 	}
 	admission := b.admission
-	if err := b.add(nil, nil); !errors.Is(err, codec.ErrInvalidData) || len(b.records) != 0 || b.admission != admission {
+	if err := b.add(nil, nil); !errors.Is(err, codec.ErrInvalidData) || len(b.records) != 0 || !reflect.DeepEqual(b.admission, admission) {
 		t.Fatalf("nil addition changed batch: %v", err)
 	}
 	if _, err := s.prepareEnding(RunEndedInterrupted); !errors.Is(err, ErrBatch) {

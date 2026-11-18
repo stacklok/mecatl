@@ -118,7 +118,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, e)
 						prior := b.admission
 						err = add(b)
-						if err != nil && (b.admission != prior || len(b.records) != 0) {
+						if err != nil && (!reflect.DeepEqual(b.admission, prior) || len(b.records) != 0) {
 							t.Fatal("rejection consumed ordinal/state")
 						}
 						interactionCheck(t, b.Discard())
