@@ -1,7 +1,8 @@
 # Identity broker + hosted AS-1 overlay for the disposable mecatl-idbroker Kind
 # profile. Layer it after values-kind.yaml only through
 # deploy/mecak8s-idbroker/Taskfile.yml, which creates every Secret named here
-# (mecak8s-tls, fixture-ca, as1-signing-key, dex-as1-client) and Dex.
+# (mecak8s-tls, fixture-ca, identity-broker-agent-issuer, identity-broker-client,
+# as1-signing-key, dex-as1-client) and Dex.
 #
 # The Service ports equal the Kind host ports, so the in-cluster names and the
 # host aliases from `task mecak8s-idbroker:hosts-add` are the same URLs.
@@ -10,6 +11,9 @@ image:
 
 replicaCount: 1
 extraArgs: [--no-shell]
+# The identity broker refuses a workspace: its key files are in the pod's
+# filesystem. Sessions are file-less.
+workspace: ""
 
 service:
   type: NodePort
@@ -36,14 +40,27 @@ oidc:
 
 identityBroker:
   enabled: true
+  # .test names: this profile is disposable, never a real deployment.
+  trustDomain: agents.mecatl-idbroker.test
+  audience: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/identity-broker
+  keys:
+    agentIssuer:
+      secretName: identity-broker-agent-issuer
+      key: key.pem
+    brokerClient:
+      secretName: identity-broker-client
+      key: key.pem
+      keySet:
+        secretName: identity-broker-client
+        key: jwks.json
+    as1Signing:
+      secretName: as1-signing-key
+      key: signing-key.pem
   # Dex's sub is the same for a user across Dex clients.
   subjectClaim: sub
   as1:
     issuer: https://mecak8s-mecak8s.mecatl-idbroker.svc.cluster.local:18091/as1
     tuiClientID: mecatui
-    signingKey:
-      secretName: as1-signing-key
-      key: signing-key.pem
     upstream:
       issuer: https://dex.mecatl-idbroker.svc.cluster.local:5557
       clientID: mecak8s-as1

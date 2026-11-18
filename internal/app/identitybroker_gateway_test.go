@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -47,9 +49,9 @@ type gatewayBuild struct {
 const gatewayTestServer = "calendar"
 
 // wantAct is the act claim of an ID-JAG, and of the gateway token AS-2
-// redeems it for, naming agentID of the interim trust domain.
+// redeems it for, naming agentID of the test trust domain.
 func wantAct(agentID string) map[string]any {
-	actIssuer := identitybroker.ActorIssuer(interimIdentityBrokerConfig.TrustDomain)
+	actIssuer := identitybroker.ActorIssuer(brokerconfigtest.TrustDomain)
 	return map[string]any{"iss": actIssuer, "sub": actIssuer + "/agent/" + agentID}
 }
 
@@ -60,7 +62,7 @@ func wantAct(agentID string) map[string]any {
 func buildWithRealAS1(t *testing.T, trustAS1 bool, edit func(*Config)) *gatewayBuild {
 	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
-	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(interimIdentityBrokerConfig.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
+	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(brokerconfigtest.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
 	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at
 	// her first sign-in, so she signs in before the build.
 	access := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
@@ -68,10 +70,12 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, edit func(*Config)) *gatewayB
 	faults := identityharness.NewFaultTransport(as1HTTP.Transport, a.Server.TokenEndpoint())
 	as1HTTP.Transport = faults
 	cfg := Config{
-		Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true,
+		UseMock: true, NoSoul: true, NoShell: true,
 		IdentityBroker: true, MCPAuthority: protectedBrokerAuthority(),
+		// The file's broker client key is the one AS-1 registered.
+		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: a.Key}).Path,
 		IdentityBrokerAS1: &IdentityBrokerAS1{
-			Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: as1HTTP, ClientKey: a.Key, ActorTokens: a.Server,
+			Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: as1HTTP, ActorTokens: a.Server,
 		},
 	}
 	if trustAS1 {
@@ -594,8 +598,8 @@ func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
 	t.Cleanup(func() { _ = ln.Close() })
 	hb := &hostedBuild{h: h, issuer: "https://" + ln.Addr().String() + "/as1"}
 	hb.cfg = Config{
-		Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true,
-		IdentityBroker: true, IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
+		UseMock: true, NoSoul: true, NoShell: true,
+		IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
 		MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: gatewayServers,
 		identityBrokerAS2Transport: func(next http.RoundTripper) http.RoundTripper {
 			hb.as2 = identityharness.NewFaultTransport(next, as2TestIssuer+"/oauth/token")
@@ -708,9 +712,9 @@ func (f *failingActorTokens) UseCredentialVerifier(identitybroker.CredentialVeri
 func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 	t.Run("refused", func(t *testing.T) {
 		check := &failingActorTokens{}
-		as1 := unusedAS1("https://as1.example", nil)
+		as1 := unusedAS1("https://as1.example")
 		as1.ActorTokens = check
-		built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerAS1: as1})
+		built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t), IdentityBrokerAS1: as1})
 		if err == nil {
 			built.Close()
 			t.Fatal("Build succeeded with an actor-token check that refuses the verifier")
@@ -720,9 +724,9 @@ func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 		}
 	})
 	t.Run("already bound", func(t *testing.T) {
-		a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), as1servertest.IssueIDJAGs(interimIdentityBrokerConfig.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
-		cfg := Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true,
-			IdentityBrokerAS1: &IdentityBrokerAS1{Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key, ActorTokens: a.Server}}
+		a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), as1servertest.IssueIDJAGs(brokerconfigtest.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
+		cfg := Config{UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: a.Key}).Path,
+			IdentityBrokerAS1: &IdentityBrokerAS1{Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ActorTokens: a.Server}}
 		built, err := buildIsolated(t, t.Context(), cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -743,21 +747,14 @@ func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 // broker refuses to start when the AS-2 it set up is not the one AS-1 issues
 // the gateway's ID-JAGs for.
 func TestBuildMCPBrokerRefusesAS2OtherThanTheIDJAGTarget(t *testing.T) {
-	signer, err := identitybroker.NewClientAssertionSigner(newBrokerClientKey(t), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keySet, err := json.Marshal(signer.JWKS())
-	if err != nil {
-		t.Fatal(err)
-	}
+	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), newBrokerClientKey(t))
 	declaration, _ := protectedBrokerAuthority().Broker()
 	for name, target := range map[string]gatewayIDJAGTarget{
 		"another issuer":   {Issuer: "https://other.example/v1/mcp/broker", Resource: as2TestIssuer + "/mcp"},
 		"another resource": {Issuer: as2TestIssuer, Resource: "https://other.example/mcp"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySet: keySet, idjagTarget: &target})
+			parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, idjagTarget: &target})
 			if err == nil {
 				parts.close()
 				t.Fatal("buildMCPBroker set up an AS-2 AS-1 issues no ID-JAGs for")
@@ -768,7 +765,7 @@ func TestBuildMCPBrokerRefusesAS2OtherThanTheIDJAGTarget(t *testing.T) {
 		})
 	}
 	want := gatewayIDJAGTarget{Issuer: as2TestIssuer, Resource: as2TestIssuer + "/mcp"}
-	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySet: keySet, idjagTarget: &want})
+	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, idjagTarget: &want})
 	if err != nil {
 		t.Fatalf("buildMCPBroker with the matching target: %v", err)
 	}

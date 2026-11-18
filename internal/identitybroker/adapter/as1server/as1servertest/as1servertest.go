@@ -14,7 +14,6 @@ package as1servertest
 
 import (
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +32,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -85,18 +86,12 @@ type AS1 struct {
 // fails then if Faults still holds queued faults.
 func Start(t testing.TB, h *identityharness.Harness, edit func(*as1server.Config, *as1server.DelegateClient)) *AS1 {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("as1servertest: broker key: %v", err)
-	}
+	key := brokerconfigtest.NewKey(t)
 	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
 	if err != nil {
 		t.Fatalf("as1servertest: assertion signer: %v", err)
 	}
-	keySet, err := json.Marshal(signer.JWKS())
-	if err != nil {
-		t.Fatalf("as1servertest: broker key set: %v", err)
-	}
+	keySetFile := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "broker-client-jwks.json"), key)
 	// The listener exists before the server so the issuer names it.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -107,7 +102,7 @@ func Start(t testing.TB, h *identityharness.Harness, edit func(*as1server.Config
 	cfg := config(t, h, issuer)
 	delegate := as1server.DelegateClient{
 		ID:                   identitybroker.BrokerClientID,
-		KeySet:               keySet,
+		KeySetFile:           keySetFile,
 		AllowedSourceClients: []string{PublicClientID},
 		IDJAGMaxLifetime:     IDJAGMaxLifetime,
 	}
@@ -377,10 +372,7 @@ func (a *AS1) Forge(t testing.TB, token identitybroker.Token, f Forgery) identit
 	t.Helper()
 	var key *ecdsa.PrivateKey
 	if f.ForeignKey {
-		var err error
-		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
-			t.Fatalf("as1servertest: foreign key: %v", err)
-		}
+		key = brokerconfigtest.NewKey(t)
 	} else {
 		if a.signingKeyFile == "" {
 			t.Fatal("as1servertest: AS-1 has no signing key file")

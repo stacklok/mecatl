@@ -58,6 +58,9 @@ type Broker struct {
 	config      Config
 	definitions map[DefinitionRef]DefinitionRecord
 	issuer      credentialIssuer
+	// issuerFallbacks are WithAgentIssuerFallbacks' keys, which New adds to
+	// issuer.
+	issuerFallbacks []crypto.PublicKey
 	// agentID is the shared agent identity's ag_ identifier, generated for
 	// this process.
 	agentID string
@@ -97,7 +100,7 @@ type Broker struct {
 // Options add optional collaborators, such as WithAuthServer, and are
 // validated after they are applied.
 func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, opts ...Option) (*Broker, error) {
-	if err := config.validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
 	signer, pub, err := checkSigner(signer)
@@ -121,6 +124,9 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if err := b.issuer.addFallbacks(b.issuerFallbacks); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
 	}
 	if err := b.configureGateway(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
@@ -161,21 +167,31 @@ func checkSigner(signer crypto.Signer) (crypto.Signer, *ecdsa.PublicKey, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok || ecPub == nil || ecPub.Curve != elliptic.P256() {
-		return nil, nil, fmt.Errorf("only ECDSA P-256 (ES256) signers are supported, got public key type %T", pub)
-	}
 	// The signer's public key is caller-owned memory: copy it, so caller
 	// mutation cannot change the key credentials verify against.
+	dup, err := copyP256Public(pub)
+	if err != nil {
+		return nil, nil, fmt.Errorf("only ECDSA P-256 (ES256) signers are supported: %w", err)
+	}
+	return signer, dup, nil
+}
+
+// copyP256Public returns an independent copy of pub, which must be an ECDSA
+// P-256 public key.
+func copyP256Public(pub crypto.PublicKey) (*ecdsa.PublicKey, error) {
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok || ecPub == nil || ecPub.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("public key type %T is not ECDSA P-256", pub)
+	}
 	point, err := ecPub.Bytes()
 	if err != nil {
-		return nil, nil, fmt.Errorf("ecdsa public key: %w", err)
+		return nil, fmt.Errorf("ecdsa public key: %w", err)
 	}
 	dup, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ecdsa public key: %w", err)
+		return nil, fmt.Errorf("ecdsa public key: %w", err)
 	}
-	return signer, dup, nil
+	return dup, nil
 }
 
 // copyP256Key returns an independent copy of key. The copy derives its public

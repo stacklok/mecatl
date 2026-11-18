@@ -41,6 +41,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -91,14 +92,22 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		runCmd(ctx, "kubectl", "label", "namespace", as1Namespace,
 			"pod-security.kubernetes.io/enforce=restricted", "pod-security.kubernetes.io/warn=restricted", "--overwrite")
 
-		ginkgo.By("generating the test CA, server certificates, AS-1 signing key, and Dex client secret")
+		ginkgo.By("generating the test CA, server certificates, identity broker keys, and Dex client secret")
 		pki := newAS1PKI()
 		dexCert, dexKey := pki.serverPair(as1DexName, as1DexName+"."+as1Namespace, as1DexName+"."+as1Namespace+".svc", as1DexHost)
 		as1Cert, as1Key := pki.serverPair(as1Release, as1Release+"."+as1Namespace, as1Release+"."+as1Namespace+".svc", as1Host)
 		var err error
 		signingKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		signingDER, err := x509.MarshalECPrivateKey(signingKey)
+		agentIssuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		brokerClientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		// The broker client's key set names its key by RFC 7638 thumbprint, as
+		// the broker's own signer does.
+		brokerClient, err := identitybroker.NewClientAssertionSigner(brokerClientKey, 0)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		brokerClientKeySet, err := json.Marshal(brokerClient.JWKS())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		clientSecret := rand.Text()
 
@@ -106,7 +115,9 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 			"config.yaml": []byte(as1DexConfig(clientSecret)), "tls.crt": dexCert, "tls.key": dexKey,
 		})
 		applySecretIn(ctx, as1Namespace, as1Release+"-tls", map[string][]byte{"tls.crt": as1Cert, "tls.key": as1Key})
-		applySecretIn(ctx, as1Namespace, as1Release+"-signing", map[string][]byte{"signing-key.pem": pemBlock("EC PRIVATE KEY", signingDER)})
+		applySecretIn(ctx, as1Namespace, as1Release+"-signing", map[string][]byte{"signing-key.pem": ecKeyPEM(signingKey)})
+		applySecretIn(ctx, as1Namespace, as1Release+"-agent-issuer", map[string][]byte{"key.pem": ecKeyPEM(agentIssuerKey)})
+		applySecretIn(ctx, as1Namespace, as1Release+"-broker-client", map[string][]byte{"key.pem": ecKeyPEM(brokerClientKey), "jwks.json": brokerClientKeySet})
 		applySecretIn(ctx, as1Namespace, as1Release+"-upstream", map[string][]byte{"client-secret": []byte(clientSecret)})
 		applySecretIn(ctx, as1Namespace, as1Release+"-upstream-ca", map[string][]byte{"ca.crt": pki.caPEM})
 
@@ -342,9 +353,9 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		gomega.Expect(status).To(gomega.Equal(http.StatusCreated),
 			"an access token AS-1 issued before the restart was refused after it; the signing key comes from the Secret")
 		expectAS1Owner(reqCtx, client, beforeRestart, sessionID, subID)
-		// The restart dropped AS-1's state and the broker's key, so that open
-		// converted at the new AS-1 with the new key; a second open with the same
-		// token proves it did.
+		// The restart dropped AS-1's state, so that open converted at the new
+		// AS-1, with the broker client key from its Secret; a second open with
+		// the same token proves it did.
 		expectAS1SessionOpenRefused(reqCtx, client, beforeRestart, "bearer_rejected")
 
 		status, raw := as1Do(reqCtx, client, http.MethodPost, as1Issuer+"/oauth/token", "", url.Values{
@@ -374,9 +385,16 @@ func installAS1Release(ctx context.Context) {
 		"extraArgs[0]=--no-shell",
 		"tls.secretName=" + as1Release + "-tls",
 		"oidc.ownerIdentity=sub_id", "oidc.audience=" + as1Audience, "oidc.resource=" + as1Resource,
+		// The identity broker refuses values-kind.yaml's workspace beside its
+		// key files.
+		"workspace=",
+		"identityBroker.trustDomain=agents.mecatl-e2e.test", "identityBroker.audience=" + as1Resource + "/identity-broker",
+		"identityBroker.keys.agentIssuer.secretName=" + as1Release + "-agent-issuer", "identityBroker.keys.agentIssuer.key=key.pem",
+		"identityBroker.keys.brokerClient.secretName=" + as1Release + "-broker-client", "identityBroker.keys.brokerClient.key=key.pem",
+		"identityBroker.keys.brokerClient.keySet.secretName=" + as1Release + "-broker-client", "identityBroker.keys.brokerClient.keySet.key=jwks.json",
+		"identityBroker.keys.as1Signing.secretName=" + as1Release + "-signing", "identityBroker.keys.as1Signing.key=signing-key.pem",
 		"identityBroker.subjectClaim=sub",
 		"identityBroker.as1.issuer=" + as1Issuer, "identityBroker.as1.tuiClientID=" + as1TUIClient,
-		"identityBroker.as1.signingKey.secretName=" + as1Release + "-signing", "identityBroker.as1.signingKey.key=signing-key.pem",
 		"identityBroker.as1.upstream.issuer=" + as1DexIssuer, "identityBroker.as1.upstream.clientID=" + as1DexClientID,
 		"identityBroker.as1.upstream.clientSecret.secretName=" + as1Release + "-upstream", "identityBroker.as1.upstream.clientSecret.key=client-secret",
 		"identityBroker.as1.upstream.caSecret.secretName=" + as1Release + "-upstream-ca", "identityBroker.as1.upstream.caSecret.key=ca.crt",
@@ -989,4 +1007,13 @@ spec:
 
 func pemBlock(typ string, der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: der})
+}
+
+// ecKeyPEM is key as a SEC 1 PEM private key, a form the identity broker and
+// AS-1 read.
+func ecKeyPEM(key *ecdsa.PrivateKey) []byte {
+	ginkgo.GinkgoHelper()
+	der, err := x509.MarshalECPrivateKey(key)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return pemBlock("EC PRIVATE KEY", der)
 }

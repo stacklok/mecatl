@@ -289,8 +289,11 @@ tasks:
           rm -f "$archive"
 
   # secrets-apply creates the profile's generated Secrets without putting a
-  # value on a command line, and keeps existing ones so re-running does not
-  # rotate AS-1's signing key.
+  # secret value on a command line, and keeps existing ones so re-running does
+  # not rotate the identity broker's keys. identity-broker-client holds the
+  # broker client key and its public JWK Set, which broker-client-key-set.sh
+  # derives with the key's RFC 7638 thumbprint as its kid, as the broker checks
+  # at startup.
   secrets-apply:
     internal: true
     preconditions:
@@ -303,13 +306,23 @@ tasks:
           trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
           k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}}'
           $k get secret as1-signing-key >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic as1-signing-key --from-file=signing-key.pem=/dev/stdin >/dev/null
+          $k get secret identity-broker-agent-issuer >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic identity-broker-agent-issuer --from-file=key.pem=/dev/stdin >/dev/null
+          if ! $k get secret identity-broker-client >/dev/null 2>&1; then
+            key=$(openssl ecparam -name prime256v1 -genkey -noout)
+            keyset=$(printf '%s\n' "$key" | deploy/mecak8s-idbroker/broker-client-key-set.sh)
+            jwks=$(printf '%s' "$keyset" | openssl base64 -A)
+            # The private key goes through stdin only; the key set is public. A
+            # failed patch fails setup, which deletes the cluster.
+            printf '%s\n' "$key" | $k create secret generic identity-broker-client --from-file=key.pem=/dev/stdin >/dev/null
+            $k patch secret identity-broker-client --type=merge -p "{\"data\":{\"jwks.json\":\"$jwks\"}}" >/dev/null
+          fi
           $k get secret dex-as1-client >/dev/null 2>&1 || openssl rand -hex 32 | tr -d '\n' | $k create secret generic dex-as1-client --from-file=client-secret=/dev/stdin >/dev/null
           if [ -n "${OPENROUTER_API_KEY:-}" ]; then
             printf '%s' "$OPENROUTER_API_KEY" | $k create secret generic {{.PROVIDER_SECRET}} --from-file=OPENROUTER_API_KEY=/dev/stdin --dry-run=client -o yaml | $k apply -f - >/dev/null
           else
             $k delete secret {{.PROVIDER_SECRET}} --ignore-not-found
           fi
-          echo 'Secrets present: as1-signing-key dex-as1-client (values not printed)'
+          echo 'Secrets present: as1-signing-key identity-broker-agent-issuer identity-broker-client dex-as1-client (values not printed)'
 
   dex-apply:
     internal: true

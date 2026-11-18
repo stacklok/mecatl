@@ -8,6 +8,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -87,24 +91,56 @@ const delegateMaxLifetime = time.Hour
 // client-assertion signer for that key and the key itself.
 func newDelegate(t *testing.T) (DelegateClient, *identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := brokerconfigtest.NewKey(t)
 	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keySet, err := json.Marshal(signer.JWKS())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return DelegateClient{
 		ID:                   identitybroker.BrokerClientID,
-		KeySet:               keySet,
+		KeySetFile:           brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), key),
 		AllowedSourceClients: []string{testClientID},
 		IDJAGMaxLifetime:     delegateMaxLifetime,
 	}, signer, key
+}
+
+// TestDelegateKeySetFileIsCheckedBeforeConstruction: New refuses a delegate
+// key set file that is relative, absent, not a JWK Set, or holds no key, in
+// validation, before it builds anything, and without the file's contents.
+func TestDelegateKeySetFileIsCheckedBeforeConstruction(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for name, test := range map[string]struct{ file, want string }{
+		"relative":       {file: "jwks.json", want: "is not an absolute path"},
+		"absent":         {file: filepath.Join(dir, "absent.json"), want: "no such file"},
+		"not a JWK Set":  {file: write("array.json", `["secret-shaped"]`), want: "is not a JSON JWK Set"},
+		"malformed JSON": {file: write("malformed.json", `{"keys":`), want: "is not a JSON JWK Set"},
+		"empty JWK Set":  {file: write("empty.json", `{"keys":[]}`), want: "holds no key"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _, _ := newDelegate(t)
+			d.KeySetFile = test.file
+			cfg := Config{
+				Issuer: "https://as1.mecatl.test/as1", Audience: testAudience,
+				PublicClients: []PublicClient{{ID: testClientID, RedirectURIs: []string{testRedirect}}},
+				Upstream:      UpstreamConfig{Issuer: "https://idp.example", ClientID: "mecatl-as1"},
+				Delegate:      &d,
+			}
+			_, err := cfg.validate()
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validate = %v, want ErrInvalidConfig containing %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), "secret-shaped") {
+				t.Errorf("validate = %v, which contains the file's contents", err)
+			}
+		})
+	}
 }
 
 // startDelegateAS1 hosts AS-1 on loopback with a delegate client whose keys are

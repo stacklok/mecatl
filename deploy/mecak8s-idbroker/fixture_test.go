@@ -1,14 +1,20 @@
 package mecak8s_idbroker
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 )
 
 // The profile's names, ports, and identities live in four files that must
@@ -347,6 +353,62 @@ func TestTaskfileStaysOnItsCluster(t *testing.T) {
 	}
 }
 
+// TestBrokerClientKeySetScript runs the key-set script on a key openssl
+// generates as secrets-apply does, and has the identity broker's own loader
+// accept the pair: the key set must hold the key under its RFC 7638
+// thumbprint kid.
+func TestBrokerClientKeySetScript(t *testing.T) {
+	const script = "deploy/mecak8s-idbroker/broker-client-key-set.sh"
+	if secrets := taskCommands(t, loadTaskfile(t), "secrets-apply"); !strings.Contains(secrets, `printf '%s\n' "$key" | `+script) {
+		t.Fatalf("secrets-apply does not derive the key set with %s:\n%s", script, secrets)
+	}
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl is required to run the key-set script")
+	}
+	key, err := exec.Command("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout").Output()
+	if err != nil {
+		t.Fatalf("openssl ecparam: %v", err)
+	}
+	cmd := exec.Command("sh", "broker-client-key-set.sh")
+	cmd.Stdin = bytes.NewReader(key)
+	keySet, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("%s: %v", script, err)
+	}
+	dir := t.TempDir()
+	write := func(name string, content []byte) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	config, err := json.Marshal(map[string]any{
+		"trust_domain": "agents.mecatl-idbroker.test", "audience": "https://broker.mecatl-idbroker.test",
+		"keys": map[string]any{
+			"agent_issuer":  map[string]string{"key_file": brokerconfigtest.WriteKey(t, filepath.Join(dir, "agent.pem"), brokerconfigtest.NewKey(t))},
+			"broker_client": map[string]string{"key_file": write("client.pem", key), "key_set_file": write("jwks.json", keySet)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := brokerconfig.Load(write("identity-broker.json", config), brokerconfig.Host{}); err != nil {
+		t.Fatalf("the identity broker refuses the script's key set: %v", err)
+	}
+
+	// A key of another curve is refused rather than given a wrong key set.
+	other, err := exec.Command("openssl", "ecparam", "-name", "secp384r1", "-genkey", "-noout").Output()
+	if err != nil {
+		t.Fatalf("openssl ecparam: %v", err)
+	}
+	cmd = exec.Command("sh", "broker-client-key-set.sh")
+	cmd.Stdin = bytes.NewReader(other)
+	if out, err := cmd.Output(); err == nil {
+		t.Fatalf("%s accepted a P-384 key: %s", script, out)
+	}
+}
+
 // TestChartRenders renders the overlay as kind-setup installs it, with the
 // mock default and with the real-provider overlay.
 func TestChartRenders(t *testing.T) {
@@ -386,7 +448,10 @@ func TestChartRenders(t *testing.T) {
 		`"--identity-broker-as1-issuer=` + issuer + `"`,
 		`"--identity-broker-as1-upstream-issuer=https://` + tf.Vars["DEX_HOST"] + `:5557"`,
 		`"--identity-broker-as1-upstream-client-id=mecak8s-as1"`,
-		`"--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/signing-key.pem"`,
+		"- --identity-broker-config=/etc/mecatl-identity-broker/identity-broker.json",
+		`"trust_domain": "agents.mecatl-idbroker.test"`,
+		`"key_set_file": "/var/run/secrets/identity-broker/broker-client-key-set/jwks.json"`,
+		`path: "as1-signing/signing-key.pem"`,
 		`"--identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/tls.crt"`,
 		"- --identity-broker-as1-upstream-allow-private-addresses", `"--identity-broker-subject-claim=sub"`,
 		`"--tls-cert=/var/run/secrets/tls/tls.crt"`,
@@ -395,7 +460,8 @@ func TestChartRenders(t *testing.T) {
 			t.Errorf("rendered profile missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"--oidc-allow-private-https-issuer", "--oidc-jwks-uri", "OPENROUTER_API_KEY", "--allow-unsafe"} {
+	// No --workspace: the identity broker refuses one beside its key files.
+	for _, forbidden := range []string{"--oidc-allow-private-https-issuer", "--oidc-jwks-uri", "OPENROUTER_API_KEY", "--allow-unsafe", "--workspace"} {
 		if strings.Contains(mock, forbidden) {
 			t.Errorf("rendered profile contains %q", forbidden)
 		}

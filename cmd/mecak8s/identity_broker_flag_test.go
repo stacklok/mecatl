@@ -21,17 +21,18 @@ import (
 func TestIdentityBrokerRequiresOwnerIdentitySubID(t *testing.T) {
 	oidc := []string{"--mock", "--oidc-issuer=https://as1.example", "--oidc-audience=mecatl"}
 	owner := []string{"--oidc-owner-identity=sub_id", "--oidc-accepted-client-ids=mecatui,studio"}
+	broker := brokerArgs
 	join := slices.Concat[[]string]
 	for _, c := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "broker with OIDC and owner identity sub_id", args: join([]string{"--enable-identity-broker"}, oidc, owner)},
-		{name: "broker without OIDC", args: []string{"--mock", "--enable-identity-broker"}},
+		{name: "broker with OIDC and owner identity sub_id", args: join(broker, oidc, owner)},
+		{name: "broker without OIDC", args: join([]string{"--mock"}, broker)},
 		{name: "OIDC without broker", args: oidc},
-		{name: "broker with OIDC but no owner identity", args: join([]string{"--enable-identity-broker"}, oidc), want: "requires --oidc-owner-identity=sub_id"},
-		{name: "broker with OIDC and empty owner identity", args: join([]string{"--enable-identity-broker", "--oidc-owner-identity="}, oidc), want: "requires --oidc-owner-identity=sub_id"},
+		{name: "broker with OIDC but no owner identity", args: join(broker, oidc), want: "requires --oidc-owner-identity=sub_id"},
+		{name: "broker with OIDC and empty owner identity", args: join(broker, []string{"--oidc-owner-identity="}, oidc), want: "requires --oidc-owner-identity=sub_id"},
 		{name: "unknown owner identity", args: join(oidc, []string{"--oidc-owner-identity=upstream_subject"}), want: "accepted values: sub_id"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -74,9 +75,13 @@ func TestOwnerIdentityMisconfigurationRefusesStartup(t *testing.T) {
 	}
 }
 
+// brokerArgs enable the identity broker with its configuration file, which
+// flag parsing does not read.
+var brokerArgs = []string{"--enable-identity-broker", "--identity-broker-config=/etc/mecatl/identity-broker.json"}
+
 // as1Args host AS-1 with every required companion flag.
 var as1Args = []string{
-	"--mock", "--enable-identity-broker",
+	"--mock", "--enable-identity-broker", "--identity-broker-config=/etc/mecatl/identity-broker.json",
 	"--identity-broker-as1-issuer=https://mecatl.example/as1",
 	"--identity-broker-as1-tui-client-id=mecatui",
 	"--identity-broker-as1-upstream-issuer=https://idp.example",
@@ -105,9 +110,8 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "matching explicit caller identity", args: with(
 			"--oidc-issuer=https://mecatl.example/as1", "--oidc-client-id=mecatui",
 			"--oidc-accepted-client-ids=studio,mecatui",
-			"--identity-broker-subject-claim=oid", "--identity-broker-as1-signing-key-file=/keys/as1.pem",
+			"--identity-broker-subject-claim=oid",
 			"--identity-broker-as1-upstream-client-secret-file=/secrets/as1")},
-		{name: "signing key without issuer", args: []string{"--mock", "--identity-broker-as1-signing-key-file=/keys/as1.pem"}, want: "require --identity-broker-as1-issuer"},
 		{name: "TUI client without issuer", args: []string{"--mock", "--identity-broker-as1-tui-client-id=mecatui"}, want: "require --identity-broker-as1-issuer"},
 		{name: "upstream issuer without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-issuer=https://idp.example"}, want: "require --identity-broker-as1-issuer"},
 		{name: "upstream client without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-client-id=x"}, want: "require --identity-broker-as1-issuer"},
@@ -115,7 +119,9 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 		{name: "subject claim without issuer", args: []string{"--mock", "--identity-broker-subject-claim=oid"}, want: "require --identity-broker-as1-issuer"},
 		{name: "upstream CA without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-ca-file=/ca.pem"}, want: "require --identity-broker-as1-issuer"},
 		{name: "upstream private addresses without issuer", args: []string{"--mock", "--identity-broker-as1-upstream-allow-private-addresses"}, want: "require --identity-broker-as1-issuer"},
-		{name: "without the broker", args: without("--enable-identity-broker"), want: "requires --enable-identity-broker"},
+		{name: "without the broker", args: without("--enable-identity-broker", "--identity-broker-config"), want: "requires --enable-identity-broker"},
+		{name: "without the broker configuration file", args: without("--identity-broker-config"), want: "--enable-identity-broker and --identity-broker-config require each other"},
+		{name: "the removed AS-1 signing key flag", args: with("--identity-broker-as1-signing-key-file=/keys/as1.pem"), want: "flag provided but not defined"},
 		{name: "without the TUI client", args: without("--identity-broker-as1-tui-client-id"), want: "requires --identity-broker-as1-tui-client-id"},
 		{name: "without the upstream issuer", args: without("--identity-broker-as1-upstream-issuer"), want: "requires --identity-broker-as1-tui-client-id"},
 		{name: "without the upstream client", args: without("--identity-broker-as1-upstream-client-id"), want: "requires --identity-broker-as1-tui-client-id"},
@@ -167,14 +173,14 @@ func TestIdentityBrokerAS1FlagRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "sub" || got.SigningKeyFile != "" || got.UpstreamClientSecretFile != "" {
+	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "sub" || got.UpstreamClientSecretFile != "" {
 		t.Fatalf("IdentityBrokerHostedAS1 defaults = %+v, want the explicit subject claim sub and no files", got)
 	}
-	cfg, err = parseFlags(with("--identity-broker-subject-claim=oid", "--identity-broker-as1-signing-key-file=/keys/as1.pem", "--identity-broker-as1-upstream-client-secret-file=/secrets/as1"))
+	cfg, err = parseFlags(with("--identity-broker-subject-claim=oid", "--identity-broker-as1-upstream-client-secret-file=/secrets/as1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "oid" || got.SigningKeyFile != "/keys/as1.pem" || got.UpstreamClientSecretFile != "/secrets/as1" {
+	if got := appConfig(cfg, nil, observability{}).IdentityBrokerHostedAS1; got.SubjectClaim != "oid" || got.UpstreamClientSecretFile != "/secrets/as1" {
 		t.Fatalf("IdentityBrokerHostedAS1 = %+v, want the configured subject claim and files", got)
 	}
 	for _, c := range []struct {
@@ -245,21 +251,68 @@ func TestNewAuthenticatorFetchesThroughTheHostedAS1(t *testing.T) {
 	}
 }
 
-func TestIdentityBrokerFlagMapsToConfig(t *testing.T) {
+// TestIdentityBrokerRefusesALocalWorkspace pins that the broker, whose keys
+// are files in this process's filesystem, never starts beside a workspace
+// sessions' file tools could read them from.
+func TestIdentityBrokerRefusesALocalWorkspace(t *testing.T) {
+	broker := slices.Concat([]string{"--mock"}, brokerArgs)
 	for _, c := range []struct {
+		name string
 		args []string
-		want bool
+		want string
 	}{
-		{[]string{"--mock"}, false},
-		{[]string{"--mock", "--enable-identity-broker"}, true},
-		{[]string{"--mock", "--enable-identity-broker=false"}, false},
+		{name: "broker with a workspace", args: slices.Concat(broker, []string{"--workspace=/srv/work"}), want: "--enable-identity-broker cannot be used with --workspace"},
+		{name: "broker without a workspace", args: broker},
+		{name: "broker with the Redis filesystem", args: slices.Concat(broker, []string{"--redis-filesystem", "--redis-url=redis://redis:6379"})},
+		{name: "workspace without the broker", args: []string{"--mock", "--workspace=/srv/work"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := parseFlags(c.args)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("parseFlags(%v): %v", c.args, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("parseFlags(%v) = %v, want error containing %q", c.args, err, c.want)
+			}
+			for _, alternative := range []string{"--redis-filesystem", "Kubernetes execution"} {
+				if !strings.Contains(err.Error(), alternative) {
+					t.Errorf("parseFlags(%v) = %v, want it to name %s", c.args, err, alternative)
+				}
+			}
+		})
+	}
+}
+
+func TestIdentityBrokerFlagMapsToConfig(t *testing.T) {
+	const file = "/etc/mecatl/identity-broker.json"
+	for _, c := range []struct {
+		args     []string
+		want     bool
+		wantFile string
+	}{
+		{[]string{"--mock"}, false, ""},
+		{[]string{"--mock", "--enable-identity-broker", "--identity-broker-config=" + file}, true, file},
+		{[]string{"--mock", "--enable-identity-broker=false"}, false, ""},
 	} {
 		cfg, err := parseFlags(c.args)
 		if err != nil {
 			t.Fatalf("parseFlags(%v): %v", c.args, err)
 		}
-		if got := appConfig(cfg, nil, observability{}); got.IdentityBroker != c.want || got.IdentityBrokerHostedAS1 != nil {
-			t.Errorf("parseFlags(%v): IdentityBroker = %v, IdentityBrokerHostedAS1 = %+v; want %v and none", c.args, got.IdentityBroker, got.IdentityBrokerHostedAS1, c.want)
+		if got := appConfig(cfg, nil, observability{}); got.IdentityBroker != c.want || got.IdentityBrokerConfigFile != c.wantFile || got.IdentityBrokerHostedAS1 != nil {
+			t.Errorf("parseFlags(%v): IdentityBroker = %v, IdentityBrokerConfigFile = %q, IdentityBrokerHostedAS1 = %+v; want %v, %q, and none",
+				c.args, got.IdentityBroker, got.IdentityBrokerConfigFile, got.IdentityBrokerHostedAS1, c.want, c.wantFile)
+		}
+	}
+	for _, args := range [][]string{
+		{"--mock", "--enable-identity-broker"},
+		{"--mock", "--identity-broker-config=" + file},
+		{"--mock", "--enable-identity-broker", "--identity-broker-config="},
+	} {
+		if _, err := parseFlags(args); err == nil || !strings.Contains(err.Error(), "--enable-identity-broker and --identity-broker-config require each other") {
+			t.Errorf("parseFlags(%v) = %v, want the two flags required together", args, err)
 		}
 	}
 }

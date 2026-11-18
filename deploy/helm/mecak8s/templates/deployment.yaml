@@ -52,7 +52,10 @@ spec:
       {{- if $mcpSettings }}
       {{- $_ := set $chartAnnotations "checksum/mcp-profile" (include "mecak8s.mcpOAuthSettings" . | sha256sum) }}
       {{- end }}
-      {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" "checksum/mcp-profile" "checksum/telemetry-installation-id" }}
+      {{- if .Values.identityBroker.enabled }}
+      {{- $_ := set $chartAnnotations "checksum/identity-broker-config" (include "mecak8s.identityBrokerConfig" . | sha256sum) }}
+      {{- end }}
+      {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" "checksum/mcp-profile" "checksum/identity-broker-config" "checksum/telemetry-installation-id" }}
       {{- if or $userAnnotations $chartAnnotations }}
       annotations:
         {{- with $userAnnotations }}
@@ -212,6 +215,7 @@ spec:
             {{- end }}
             {{- if .Values.identityBroker.enabled }}
             - --enable-identity-broker
+            - --identity-broker-config=/etc/mecatl-identity-broker/identity-broker.json
             {{- with .Values.identityBroker.as1 }}
             {{- if .issuer }}
             - {{ printf "--identity-broker-as1-issuer=%s" .issuer | quote }}
@@ -220,9 +224,6 @@ spec:
             - {{ printf "--identity-broker-as1-upstream-client-id=%s" .upstream.clientID | quote }}
             {{- if .upstream.clientSecret.secretName }}
             - {{ printf "--identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/%s" .upstream.clientSecret.key | quote }}
-            {{- end }}
-            {{- if .signingKey.secretName }}
-            - {{ printf "--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/%s" .signingKey.key | quote }}
             {{- end }}
             {{- if .upstream.caSecret.secretName }}
             - {{ printf "--identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/%s" .upstream.caSecret.key | quote }}
@@ -351,8 +352,9 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
-            {{- if .Values.identityBroker.as1.signingKey.secretName }}
-            - {name: as1-signing-key, mountPath: /var/run/secrets/as1-signing-key, readOnly: true}
+            {{- if .Values.identityBroker.enabled }}
+            - {name: identity-broker-config, mountPath: /etc/mecatl-identity-broker, readOnly: true}
+            - {name: identity-broker-keys, mountPath: {{ include "mecak8s.identityBrokerKeyDir" . }}, readOnly: true}
             {{- end }}
             {{- if .Values.identityBroker.as1.upstream.clientSecret.secretName }}
             - {name: as1-upstream-client-secret, mountPath: /var/run/secrets/as1-upstream-client-secret, readOnly: true}
@@ -411,14 +413,24 @@ spec:
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
         {{- end }}
-        {{- with .Values.identityBroker.as1.signingKey }}
-        {{- if .secretName }}
-        - name: as1-signing-key
-          secret:
-            secretName: {{ .secretName }}
+        {{- with .Values.identityBroker }}
+        {{- if .enabled }}
+        - name: identity-broker-config
+          configMap:
+            name: {{ include "mecak8s.fullname" $ }}-identity-broker
+        # One directory per role, matching the paths identity-broker.json names.
+        - name: identity-broker-keys
+          projected:
             defaultMode: 0440
-            items:
-              - {key: {{ .key | quote }}, path: {{ .key | quote }}}
+            sources:
+              {{- range $dir, $ref := dict "agent-issuer" .keys.agentIssuer "broker-client" .keys.brokerClient "broker-client-key-set" .keys.brokerClient.keySet "as1-signing" .keys.as1Signing }}
+              {{- if $ref.secretName }}
+              - secret:
+                  name: {{ $ref.secretName }}
+                  items:
+                    - {key: {{ $ref.key | quote }}, path: {{ printf "%s/%s" $dir $ref.key | quote }}}
+              {{- end }}
+              {{- end }}
         {{- end }}
         {{- end }}
         {{- with .Values.identityBroker.as1.upstream.clientSecret }}
