@@ -387392,6 +387392,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794998142335,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2c0ecb36fec8732d28bd447f447a0f5f90142f22",
+          "message": "feat(executor): enable each executor service by its own flag (#2859)\n\n`mecatl-executor serve` now registers only the services enabled by\n`-files` and `-commands`. Both flags default to off, and starting\nwith neither is an error. Without `-commands` the server skips\n`EnableCommandExecution`, the command supervisor, and the orphan\nreaper. A file-only executor has no code path that starts a process,\nand a `CommandService` call returns `Unimplemented`.\n\nServer construction moves into `newExecutorServer`, so the file-only\ncase is tested over bufconn on every OS.\n\nCloses: #2696",
+          "timestamp": "2026-11-18T11:38:22Z",
+          "tree_id": "1b5f9f3808dbb809bb211746c666b54446c607d4",
+          "url": "https://github.com/stacklok/mecatl/commit/2c0ecb36fec8732d28bd447f447a0f5f90142f22"
+        },
+        "date": 1795002655283,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -559212,6 +559246,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795002651700,
+  "lastUpdate": 1795002655872,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
