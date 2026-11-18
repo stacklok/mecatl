@@ -85,9 +85,14 @@ reject() {
     printf 'FAIL: %s (wrong failure)\n' "$label" >&2; cat "$work/result" >&2; exit 1
   fi
 }
-prospective() { "$@" --prospective-main "$merge" --pr-head "$head"; }
+prospective() { "$@" --prospective-main "$merge" --pr-base "$main" --pr-head "$head"; }
 
 prospective accept 'release-branch tags in prospective main'
+# Main can advance after GitHub constructs the event's test merge.
+advanced_main=$(commit advanced-main -p "$main")
+git -C "$repo" update-ref refs/remotes/origin/main "$advanced_main"
+prospective accept 'main advanced since prospective merge creation'
+git -C "$repo" update-ref refs/remotes/origin/main "$main"
 reject 'release-branch tags before adoption' 'not on origin/main'
 # Both the direct adapters tag check and nested manifest checks enforce ancestry.
 manifest adapters/go.mod github.com/stacklok/mecatl/adapters
@@ -108,24 +113,31 @@ done
 git -C "$repo" update-ref refs/remotes/origin/main "$main"
 git -C "$repo" update-ref HEAD "$merge"
 
-reject 'missing PR head' 'prospective main must' --prospective-main "$merge"
-reject 'missing prospective main' 'prospective main must' --pr-head "$head"
-reject 'wrong reviewed PR head' 'prospective main must' --prospective-main "$merge" --pr-head "$adapters"
-reject 'revision expression' 'requires a full commit SHA' --prospective-main HEAD --pr-head "$head"
+reject 'missing PR head' 'prospective main must' --prospective-main "$merge" --pr-base "$main"
+reject 'missing PR base' 'prospective main must' --prospective-main "$merge" --pr-head "$head"
+reject 'missing prospective main' 'prospective main must' --pr-base "$main" --pr-head "$head"
+reject 'wrong reviewed PR head' 'prospective main must' --prospective-main "$merge" --pr-base "$main" --pr-head "$adapters"
+reject 'wrong reviewed PR base' 'prospective main must' --prospective-main "$merge" --pr-base "$base" --pr-head "$head"
+reject 'revision expression' 'requires a full commit SHA' --prospective-main HEAD --pr-base "$main" --pr-head "$head"
+reject 'base revision expression' 'requires a full commit SHA' --prospective-main "$merge" --pr-base HEAD --pr-head "$head"
+reject 'head revision expression' 'requires a full commit SHA' --prospective-main "$merge" --pr-base "$main" --pr-head HEAD
 reject 'missing CLI value' 'missing value' --pr-head
 reject 'unknown option' 'unknown argument' --base "$base"
-# A merge must use the fetched main as its FIRST parent, not an arbitrary base.
+# The FIRST parent must match the event's base, not an arbitrary main ancestor.
 wrong_base=$(commit wrong-base -p "$base" -p "$head")
 reversed=$(commit reversed-parents -p "$head" -p "$main")
 octopus=$(commit octopus -p "$main" -p "$head" -p "$base")
 for forged in "$head" "$wrong_base" "$reversed" "$octopus"; do
   git -C "$repo" update-ref HEAD "$forged"
-  reject 'forged prospective merge' 'prospective main must' --prospective-main "$forged" --pr-head "$head"
+  reject 'forged prospective merge' 'prospective main must' --prospective-main "$forged" --pr-base "$main" --pr-head "$head"
 done
-reject 'prospective merge not checked out' 'prospective main must' --prospective-main "$merge" --pr-head "$head"
+reject 'prospective merge not checked out' 'prospective main must' --prospective-main "$merge" --pr-base "$main" --pr-head "$head"
 git -C "$repo" update-ref HEAD "$merge"
 git -C "$repo" update-ref refs/remotes/origin/main "$base"
-prospective reject 'stale main identity' 'prospective main must'
+prospective reject 'main does not contain event base' 'prospective main must'
+unrelated=$(commit unrelated-main)
+git -C "$repo" update-ref refs/remotes/origin/main "$unrelated"
+prospective reject 'main history unrelated to event base' 'prospective main must'
 git -C "$repo" update-ref refs/remotes/origin/main "$main"
 
 # A pseudo-version on the PR branch is still forbidden even in a valid merge.

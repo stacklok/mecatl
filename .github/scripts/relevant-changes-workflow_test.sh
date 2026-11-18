@@ -126,7 +126,7 @@ grep -Fq 'sh .github/scripts/check-module-publication_test.sh' <<<"$build_block"
   || fail 'Build must run the offline publication controls'
 grep -Fq 'git fetch --unshallow --tags origin +refs/heads/main:refs/remotes/origin/main' <<<"$build_block" \
   || fail 'Build must fetch actual main ancestry and nested tags before checking pins'
-for binding in 'EVENT_NAME: ${{ github.event_name }}' 'PROSPECTIVE_MAIN: ${{ github.sha }}' 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'; do
+for binding in 'EVENT_NAME: ${{ github.event_name }}' 'PROSPECTIVE_MAIN: ${{ github.sha }}' 'PR_BASE: ${{ github.event.pull_request.base.sha }}' 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'; do
   grep -Fq "$binding" <<<"$build_block" || fail "publication caller must bind $binding as data"
 done
 if grep -Eq '^          ref:' <<<"$build_block"; then
@@ -160,18 +160,19 @@ for event in pull_request push; do
   calls="$publication_work/$event.calls"
   # These strings are intentionally NOT evaluated by the test shell.
   prospective='$(touch injected-merge)'
+  pr_base='$(touch injected-base)'
   pr_head='"; touch injected-head; #'
   if ! (cd "$publication_work" && PATH="$publication_work/bin:$PATH" CALLS="$calls" \
-    EVENT_NAME="$event" PROSPECTIVE_MAIN="$prospective" PR_HEAD="$pr_head" bash run.sh); then
+    EVENT_NAME="$event" PROSPECTIVE_MAIN="$prospective" PR_BASE="$pr_base" PR_HEAD="$pr_head" bash run.sh); then
     fail "publication caller failed for $event"
   fi
   printf 'fetch\ncontrols\nchecker\n' > "$publication_work/expected"
   if [[ "$event" == pull_request ]]; then
-    printf '<%s>\n' --prospective-main "$prospective" --pr-head "$pr_head" >> "$publication_work/expected"
+    printf '<%s>\n' --prospective-main "$prospective" --pr-base "$pr_base" --pr-head "$pr_head" >> "$publication_work/expected"
   fi
   cmp -s "$publication_work/expected" "$calls" || fail "wrong publication arguments for $event"
 done
-if [[ -e "$publication_work/injected-merge" || -e "$publication_work/injected-head" ]]; then
+if [[ -e "$publication_work/injected-merge" || -e "$publication_work/injected-base" || -e "$publication_work/injected-head" ]]; then
   fail 'publication caller evaluated untrusted env as shell code'
 fi
 
