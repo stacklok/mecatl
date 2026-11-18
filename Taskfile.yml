@@ -45,6 +45,7 @@ vars:
   GO_MODULES:
     - '.'
     - engine
+    - agentdef
     - internal/adaptersupport
     - contracts/gen/go/mecatl/driver
     - adapters
@@ -107,6 +108,9 @@ tasks:
       - cd internal/adaptersupport && go build ./...
       - cd contracts/gen/go/mecatl/driver && go build ./...
       - cd adapters && go build ./...
+      # agentdef is the agent definition format shared by the identity broker
+      # and the harness; it imports nothing from Mecatl.
+      - cd agentdef && go build ./...
       # authn/oidc is the opt-in caller-identity adapter module,
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
@@ -1131,6 +1135,7 @@ tasks:
       - 'cd internal/adaptersupport && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd contracts/gen/go/mecatl/driver && "$GOLANGCI_LINT" run --config ../../../../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd adapters && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd agentdef && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
       # authn/oidc and environment/microvm are separate opt-in adapter modules,
       # sharing the root config.
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
@@ -1170,6 +1175,7 @@ tasks:
       # module boundary, so its scan is a second invocation against engine/go.mod.
       # No allowlist: the engine library's closure is clean and must stay clean.
       - cmd: set -o pipefail; cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
+      - cmd: set -o pipefail; cd agentdef && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
       # Opt-in OIDC and microVM modules: independently scan their sensitive closures.
       - cmd: set -o pipefail; cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
       - cmd: set -o pipefail; cd environment/microvm && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -format json ./... | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
@@ -1191,6 +1197,7 @@ tasks:
     cmds:
       - '"$GOLANGCI_LINT" run --allow-parallel-runners --fix ./...'
       - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd agentdef && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
@@ -1274,6 +1281,7 @@ tasks:
       - cd internal/adaptersupport && GOWORK=off go mod tidy
       - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
       - cd adapters && GOWORK=off go mod tidy
+      - cd agentdef && GOWORK=off go mod tidy
       # OIDC resolves its published engine baseline independently of the workspace.
       - cd authn/oidc && GOWORK=off go mod tidy
       # The microVM runtime is isolated in its own module; its tools-tag anchor

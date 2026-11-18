@@ -54,7 +54,8 @@ on the Go toolchain version that `go.work` declares.
   `grpcdriver` remote store client.
 - **Smaller modules** isolate narrow dependencies: `authn/oidc`,
   `environment/microvm`, `internal/adaptersupport`, the driver contracts, and the
-  `integration/microvm` test harness.
+  `integration/microvm` test harness. `agentdef` holds the agent definition format,
+  so the identity broker reads definitions without importing the engine.
 
 ### How the direction is enforced
 

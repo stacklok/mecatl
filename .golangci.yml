@@ -984,17 +984,32 @@ linters:
         # The identity broker's adapters (network, transport) live under
         # internal/identitybroker/adapter so the whole broker can move into its
         # own service as one tree. They depend on the broker core and the
-        # standard library, never on the rest of Mecatl.
+        # standard library, never on the rest of Mecatl; the definition loader
+        # below also uses the separately published engine module's
+        # agent-definition parser.
         internal-identitybroker-adapter:
           list-mode: strict
           files:
             - '**/internal/identitybroker/adapter/**.go'
             - '!**/internal/identitybroker/adapter/as1server/**.go'
+            - '!**/internal/identitybroker/adapter/definitionloader/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/internal/identitybroker$
             - github.com/golang-jwt/jwt/v5$
+        # The definition loader parses agent definitions with the shared
+        # agentdef format module, which imports nothing from Mecatl, so the
+        # broker still moves into its own service as one tree.
+        internal-identitybroker-adapter-definitionloader:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/adapter/definitionloader/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/internal/identitybroker$
+            - github.com/stacklok/mecatl/agentdef$
         # AS-1 is hosted on ToolHive's embedded authorization server; only the
         # authorization server packages it constructs are allowed.
         internal-identitybroker-adapter-as1server:
@@ -1151,6 +1166,18 @@ linters:
           deny:
             - pkg: os
               desc: 'agent (application loop) must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
+        # --- agentdef agent definition format module ----------------------------
+        # The definition format shared by the identity broker and the harness.
+        # It imports nothing from Mecatl, so neither side depends on the other
+        # through it; only the standard library and the YAML parser.
+        agentdef:
+          list-mode: strict
+          files:
+            - '**/agentdef/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/goccy/go-yaml
         # --- authn/oidc opt-in caller-identity module ---------------------------
         # Production verification depends only on stdlib, the narrow engine
         # principal projection, and ToolHive's authn and networking packages (the

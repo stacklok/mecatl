@@ -17,6 +17,24 @@ const DigestSHA256 = "sha256"
 // within the 2,048 bytes SPIFFE-ID section 2.3 advises against exceeding.
 const MaxSegmentBytes = 63
 
+// Definition sources and built-in names. They become segments of agent SPIFFE
+// IDs, so they are part of the registration contract, not details of the
+// loader that produces the records.
+const (
+	// SourceGlobal is the source of the operator's global definitions.
+	SourceGlobal = "global"
+	// SourceSystem is the source of the built-in definitions each Mecatl
+	// release ships.
+	SourceSystem = "system"
+
+	// BuiltinMain names the built-in definition of the main agent of a session
+	// started without a named definition: system/main.
+	BuiltinMain = "main"
+	// BuiltinExplorer names the built-in definition of the child agent of a
+	// subagent call that names no definition: system/explorer.
+	BuiltinExplorer = "explorer"
+)
+
 // DefinitionRef identifies one agent definition: the configured source it was
 // loaded from, its name within that source, and the selected source revision.
 // Two references are equal only when all three fields are byte-identical, so

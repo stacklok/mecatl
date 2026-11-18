@@ -1021,6 +1021,9 @@ jobs:
           (cd contracts/gen/go/mecatl/driver && go build ./...)
           (cd adapters && go build ./...)
 
+      - name: go build (agentdef module)
+        run: cd agentdef && go build ./...
+
       - name: go build (OIDC authn module)
         run: cd authn/oidc && go build ./...
 
@@ -1396,6 +1399,9 @@ jobs:
           (cd contracts/gen/go/mecatl/driver && golangci-lint run --config ../../../../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
           (cd adapters && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
+      - name: golangci-lint (agentdef module)
+        run: cd agentdef && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
       - name: golangci-lint (OIDC authn module)
         run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
@@ -1687,6 +1693,13 @@ jobs:
         run: |
           set -o pipefail
           cd engine && govulncheck -format json ./... \
+            | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
+
+      - name: govulncheck (agentdef module — strict, no allowlist)
+        shell: bash
+        run: |
+          set -o pipefail
+          cd agentdef && govulncheck -format json ./... \
             | go run ../.github/scripts/govulncheck-gate.go # v1.8.0
 
       - name: govulncheck (OIDC authn module — strict, no allowlist)
