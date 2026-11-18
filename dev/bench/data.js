@@ -389540,6 +389540,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795017777880,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b997c27e6f4405e2de090bc15488a0752ef52ec",
+          "message": "feat(identitybroker): issue the gateway's ID-JAGs at the hosted AS-1 (#2856)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T16:14:14Z",
+          "tree_id": "fca3fa9f7e8472b6e2972f84a1af73e9db282fe4",
+          "url": "https://github.com/stacklok/mecatl/commit/9b997c27e6f4405e2de090bc15488a0752ef52ec"
+        },
+        "date": 1795019204949,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -562278,6 +562312,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795019201494,
+  "lastUpdate": 1795019205737,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
