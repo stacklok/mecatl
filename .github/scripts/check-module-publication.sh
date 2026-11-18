@@ -13,11 +13,10 @@ actual_main=$(git rev-parse refs/remotes/origin/main)
 tag_main=$actual_main
 tag_main_name=origin/main
 prospective_main=
-pr_base=
 pr_head=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --prospective-main|--pr-base|--pr-head)
+    --prospective-main|--pr-head)
       [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; exit 1; }
       case "$2" in
         *[!0-9a-f]*|'') echo "$1 requires a full commit SHA" >&2; exit 1 ;;
@@ -25,19 +24,21 @@ while [ "$#" -gt 0 ]; do
       [ "${#2}" -eq 40 ] || { echo "$1 requires a full commit SHA" >&2; exit 1; }
       case "$1" in
         --prospective-main) prospective_main=$2 ;;
-        --pr-base) pr_base=$2 ;;
         --pr-head) pr_head=$2 ;;
       esac
       shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
-if [ -n "$prospective_main$pr_base$pr_head" ]; then
-  [ -n "$prospective_main" ] && [ -n "$pr_base" ] && [ -n "$pr_head" ] &&
+if [ -n "$prospective_main$pr_head" ]; then
+  # The event merge SHA is authoritative; base.sha may lag a regenerated merge.
+  [ -n "$prospective_main" ] && [ -n "$pr_head" ] &&
     [ "$(git rev-parse HEAD)" = "$prospective_main" ] &&
-    [ "$(git show -s --format=%P "$prospective_main")" = "$pr_base $pr_head" ] &&
-    git merge-base --is-ancestor "$pr_base" "$actual_main" || {
-    echo 'prospective main must be the checked-out two-parent merge of reviewed PR base and head, with base on fetched origin/main' >&2
+    parents=$(git show -s --format=%P "$prospective_main") &&
+    merge_base=${parents%% *} &&
+    [ "$parents" = "$merge_base $pr_head" ] &&
+    git merge-base --is-ancestor "$merge_base" "$actual_main" || {
+    echo 'prospective main must be the checked-out two-parent merge of fetched main history and reviewed PR head' >&2
     exit 1
   }
   tag_main=$prospective_main

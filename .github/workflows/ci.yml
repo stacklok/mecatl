@@ -1047,14 +1047,13 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PROSPECTIVE_MAIN: ${{ github.sha }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           git fetch --unshallow --tags origin +refs/heads/main:refs/remotes/origin/main
           sh .github/scripts/check-module-publication_test.sh
           if [ "$EVENT_NAME" = pull_request ]; then
-            # Validate the event's fixed parents; fetched main may have advanced.
-            sh .github/scripts/check-module-publication.sh --prospective-main "$PROSPECTIVE_MAIN" --pr-base "$PR_BASE" --pr-head "$PR_HEAD"
+            # The merge commit identifies its base; event base.sha can lag behind it.
+            sh .github/scripts/check-module-publication.sh --prospective-main "$PROSPECTIVE_MAIN" --pr-head "$PR_HEAD"
           else
             sh .github/scripts/check-module-publication.sh
           fi
