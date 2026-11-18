@@ -188,6 +188,9 @@ type identityBrokerParts struct {
 	service identitybroker.Service
 	// hosted is the hosted AS-1; nil when none is configured.
 	hosted *IdentityBrokerAS1Server
+	// hostedServer is the hosted AS-1 itself, for tests; nil when none is
+	// configured.
+	hostedServer *as1server.Server
 	// client signs the broker's client assertions; nil for an injected core.
 	client *identitybroker.ClientAssertionSigner
 	// core is the real broker; nil for an injected test core.
@@ -345,6 +348,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayID
 	}
 	parts.service = identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)
 	parts.hosted = newHostedAS1Server(server)
+	parts.hostedServer = server
 	return parts, nil
 }
 

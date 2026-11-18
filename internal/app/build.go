@@ -95,6 +95,7 @@ import (
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/openai"
@@ -1585,6 +1586,9 @@ type Built struct {
 	// broker.
 	identityBrokerCore     *identitybroker.Broker
 	identityBrokerRecorder *identitybroker.MemoryRecorder
+	// identityBrokerHostedAS1Server is the hosted AS-1 the identity broker
+	// uses, for tests; nil without one.
+	identityBrokerHostedAS1Server *as1server.Server
 	// identityBrokerAS2 is the MCP gateway's authorization server as the
 	// identity broker's AS-2; nil when startup set none up. Close releases it
 	// with the MCP broker.
@@ -3143,7 +3147,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerHostedAS1Server: ib.hostedServer, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

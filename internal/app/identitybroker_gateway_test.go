@@ -534,6 +534,8 @@ func TestGatewayInProcessClientRefusesOtherURLs(t *testing.T) {
 // the redemption.
 func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	hb := buildWithHostedAS1(t, []string{gatewayTestServer})
+	// The hosted AS-1 issues ID-JAGs, and startup bound its actor-token check.
+	wantBindRefused(t, hb.built, "already bound")
 	g := hb.signIn(t)
 	s, cred, _ := g.open(t)
 	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
@@ -573,6 +575,7 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 // broker's transport to AS-2.
 type hostedBuild struct {
 	h      *identityharness.Harness
+	cfg    Config
 	built  *Built
 	issuer string
 	as2    *identityharness.FaultTransport
@@ -590,7 +593,7 @@ func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	hb := &hostedBuild{h: h, issuer: "https://" + ln.Addr().String() + "/as1"}
-	hb.built, err = buildIsolated(t, t.Context(), Config{
+	hb.cfg = Config{
 		Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true,
 		IdentityBroker: true, IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
 		MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: gatewayServers,
@@ -598,7 +601,8 @@ func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
 			hb.as2 = identityharness.NewFaultTransport(next, as2TestIssuer+"/oauth/token")
 			return hb.as2
 		},
-	})
+	}
+	hb.built, err = buildIsolated(t, t.Context(), hb.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,14 +629,18 @@ func (hb *hostedBuild) signIn(t *testing.T) *gatewayBuild {
 
 // TestHostedAS1IssuesNoIDJAGsInProduction builds the hosted AS-1 path
 // without the test-only gateway servers, as production does: startup derives
-// no ID-JAG target, and a call in a session holding a grant is denied without
-// an ID-JAG or a redemption.
+// no ID-JAG target, the hosted AS-1 has no ID-JAG issuance (it refuses a
+// verifier because no delegate client issues ID-JAGs, where one with issuance
+// refuses only a second bind), and a call in a session holding a grant is
+// denied without an ID-JAG or a redemption.
 func TestHostedAS1IssuesNoIDJAGsInProduction(t *testing.T) {
-	declaration, selected := protectedBrokerAuthority().Broker()
-	if target := deriveGatewayIDJAGTarget(Config{}, declaration, selected); target != nil {
+	hb := buildWithHostedAS1(t, nil)
+	declaration, selected := hb.cfg.MCPAuthority.Broker()
+	if target := deriveGatewayIDJAGTarget(hb.cfg, declaration, selected); target != nil {
 		t.Fatalf("production derives ID-JAG target %+v, want none", target)
 	}
-	g := buildWithHostedAS1(t, nil).signIn(t)
+	wantBindRefused(t, hb.built, "no delegate client issues ID-JAGs")
+	g := hb.signIn(t)
 	s, cred, _ := g.open(t)
 	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
 	wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
@@ -669,6 +677,17 @@ func TestDeriveGatewayIDJAGTarget(t *testing.T) {
 		if got := deriveGatewayIDJAGTarget(tc.cfg, tc.declaration, tc.selected); got != nil {
 			t.Errorf("%s: target = %+v, want none", name, got)
 		}
+	}
+}
+
+// wantBindRefused fails t unless the built hosted AS-1 refuses another
+// verifier for the reason want: "no delegate client issues ID-JAGs" when it
+// has no ID-JAG issuance, "already bound" when startup bound its check.
+func wantBindRefused(t *testing.T, built *Built, want string) {
+	t.Helper()
+	err := built.identityBrokerHostedAS1Server.UseCredentialVerifier(built.identityBrokerCore)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("hosted AS-1 UseCredentialVerifier = %v, want refused as %q", err, want)
 	}
 }
 
@@ -712,6 +731,10 @@ func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 		if built, err = buildIsolated(t, t.Context(), cfg); err == nil {
 			built.Close()
 			t.Fatal("a second Build bound AS-1's actor-token check again")
+		}
+		// Only the bind, not another startup step, may be what failed.
+		if !strings.Contains(err.Error(), "bind AS-1's actor-token check") || !strings.Contains(err.Error(), "already bound") {
+			t.Fatalf("second Build error = %v, want the bind refused as already bound", err)
 		}
 	})
 }
