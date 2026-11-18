@@ -4,7 +4,10 @@
 // Mecatl API audience that carry the company identity as the RFC 9493 sub_id
 // claim. Its clients are the configured public clients, which sign in with
 // PKCE, and optionally one confidential delegate client, the identity
-// broker's, which exchanges their access tokens for refresh tokens.
+// broker's, which exchanges their access tokens for refresh tokens. When
+// configured, the delegate client also exchanges those refresh tokens for
+// per-call ID-JAGs, whose actor tokens the identity broker's
+// CredentialVerifier checks.
 //
 // The server keeps its own in-memory storage, so pending sign-ins and refresh
 // tokens do not survive a restart, and caps the sign-ins pending there. Its
@@ -32,6 +35,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
 	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
+	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
@@ -107,6 +111,9 @@ type Server struct {
 	issuer   *url.URL
 	routes   []string
 	handler  http.Handler
+	// actors checks ID-JAG requests' actor tokens; nil when the delegate
+	// client issues no ID-JAGs.
+	actors *actorValidator
 	// release releases the authorization server, then its storage, once.
 	release func() error
 }
@@ -181,15 +188,24 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 			KeyDir: filepath.Dir(cfg.SigningKeyFile), SigningKeyFile: filepath.Base(cfg.SigningKeyFile),
 		}
 	}
-	// ToolHive borrows store on success and failure; AS-1 closes it.
-	auth, err := runner.NewEmbeddedAuthServerWithStorage(ctx, runConfig, store,
+	runOpts := []runner.EmbeddedAuthServerOption{
 		runner.WithSubjectIdentifierAudiences([]string{cfg.Audience}),
-		runner.WithAccessTokenType(accessTokenType))
+		runner.WithAccessTokenType(accessTokenType),
+	}
+	var actors *actorValidator
+	if cfg.Delegate != nil && cfg.Delegate.IDJAG != nil {
+		actors = &actorValidator{clientID: cfg.Delegate.ID, actIssuer: cfg.Delegate.IDJAG.ActIssuer}
+		runOpts = append(runOpts, runner.WithActorTokenValidators(map[string]tokenexchange.ActorValidatorRegistration{
+			actorValidatorName: {Validator: actors, ActIssuer: actors.actIssuer},
+		}))
+	}
+	// ToolHive borrows store on success and failure; AS-1 closes it.
+	auth, err := runner.NewEmbeddedAuthServerWithStorage(ctx, runConfig, store, runOpts...)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
 	}
-	s := &Server{issuerID: cfg.Issuer, issuer: issuer, release: sync.OnceValue(func() error {
+	s := &Server{issuerID: cfg.Issuer, issuer: issuer, actors: actors, release: sync.OnceValue(func() error {
 		return errors.Join(auth.Close(), store.Close())
 	})}
 	s.routes, s.handler = signInRoutes(issuer, auth.Handler())

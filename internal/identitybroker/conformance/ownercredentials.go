@@ -53,9 +53,7 @@ func runOwnerCredentials(t *testing.T, factory Factory) {
 		if got.Agent != f.reg.Agent || !got.ExpiresAt.Equal(f.reg.ExpiresAt) {
 			t.Fatalf("VerifyCredentialForOwner = %+v, want agent %+v expiring at %v", got, f.reg.Agent, f.reg.ExpiresAt)
 		}
-		if !strings.HasPrefix(got.AgentID, "ag_") || strings.Contains(got.AgentID, "/") || strings.Contains(got.AgentID, "main") {
-			t.Fatalf("agent ID %q is not an opaque ag_ identifier", got.AgentID)
-		}
+		wantAgentNames(t, got)
 		session, err := f.core.VerifyCredential(ctx, identitybroker.VerifyCredentialRequest{SessionID: f.session.ID, Credential: f.reg.Credential})
 		if err != nil || session != got {
 			t.Fatalf("the session-keyed form = %+v, %v, want %+v", session, err, got)

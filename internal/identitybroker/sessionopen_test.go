@@ -1597,3 +1597,50 @@ func TestSessionOpenOversizedAnswers(t *testing.T) {
 		}
 	})
 }
+
+func TestOwnerFromSubjectIdentifier(t *testing.T) {
+	const iss, sub = "https://login.example.com", "alice-204"
+	if got, err := identitybroker.OwnerFromSubjectIdentifier([]byte(`{"format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `"}`)); err != nil ||
+		got != (identitybroker.Owner{Issuer: iss, Subject: sub}) {
+		t.Fatalf("OwnerFromSubjectIdentifier = %+v, %v; want the owner", got, err)
+	}
+	// A differently cased member never stands in for sub, whichever comes
+	// last, so this parser and authn/oidc's agree on the owner.
+	for _, raw := range []string{
+		`{"format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `","Sub":"mallory-1"}`,
+		`{"format":"iss_sub","iss":"` + iss + `","Sub":"mallory-1","sub":"` + sub + `"}`,
+	} {
+		if got, err := identitybroker.OwnerFromSubjectIdentifier([]byte(raw)); err != nil || got != (identitybroker.Owner{Issuer: iss, Subject: sub}) {
+			t.Fatalf("OwnerFromSubjectIdentifier(%s) = %+v, %v; want the exact sub member's owner", raw, got, err)
+		}
+	}
+	for name, raw := range map[string]string{
+		"another format":   `{"format":"email","email":"alice@example.com","iss":"` + iss + `","sub":"` + sub + `"}`,
+		"no format":        `{"iss":"` + iss + `","sub":"` + sub + `"}`,
+		"no issuer":        `{"format":"iss_sub","sub":"` + sub + `"}`,
+		"no subject":       `{"format":"iss_sub","iss":"` + iss + `"}`,
+		"a space":          `{"format":"iss_sub","iss":"` + iss + `","sub":"alice 204"}`,
+		"a control":        `{"format":"iss_sub","iss":"` + iss + `","sub":"alice\u0007"}`,
+		"a non-string":     `{"format":"iss_sub","iss":"` + iss + `","sub":204}`,
+		"not JSON":         `iss_sub ` + iss + ` ` + sub,
+		"a string":         `"` + sub + `"`,
+		"null":             `null`,
+		"empty":            ``,
+		"an empty object":  `{}`,
+		"trailing garbage": `{"format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `"}x`,
+		"a cased format":   `{"Format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `"}`,
+		"a cased issuer":   `{"format":"iss_sub","ISS":"` + iss + `","sub":"` + sub + `"}`,
+		"a cased subject":  `{"format":"iss_sub","iss":"` + iss + `","Sub":"` + sub + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := identitybroker.OwnerFromSubjectIdentifier([]byte(raw))
+			var e *identitybroker.Error
+			if !errors.As(err, &e) || e.Code != identitybroker.CodeInvalidArgument || got != (identitybroker.Owner{}) {
+				t.Fatalf("OwnerFromSubjectIdentifier = %+v, %v; want a zero owner and INVALID_ARGUMENT", got, err)
+			}
+			if strings.Contains(err.Error(), "alice") || strings.Contains(err.Error(), "login.example.com") {
+				t.Fatalf("error %q discloses the identifier", err)
+			}
+		})
+	}
+}

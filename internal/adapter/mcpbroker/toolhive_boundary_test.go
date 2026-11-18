@@ -31,6 +31,9 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		"internal/identitybroker/adapter/as1server/as1server.go": true,
 		// The identity broker's delegate client at AS-1 (#2607).
 		"internal/identitybroker/adapter/as1server/delegate.go": true,
+		// AS-1's actor-token validator, which implements ToolHive's
+		// interface with the broker's CredentialVerifier (#2654).
+		"internal/identitybroker/adapter/as1server/actorvalidator.go": true,
 	}
 	const toolHiveModule = "github.com/stacklok/toolhive"
 	if err := filepath.WalkDir(root, func(sourcePath string, entry fs.DirEntry, walkErr error) error {

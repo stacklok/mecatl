@@ -88,6 +88,9 @@ func TestBrokerAgentIDIsRandomPerProcess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("VerifyCredential: %v", err)
 		}
+		if want := "spiffe://agents.example.com/agent/" + got.AgentID; got.ActorID != want {
+			t.Fatalf("actor ID %q, want %q in the configured trust domain", got.ActorID, want)
+		}
 		return got.AgentID
 	}
 	if a, b := agentID(), agentID(); a == b {

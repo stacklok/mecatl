@@ -30,6 +30,20 @@ func (c *clock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// wantAgentNames fails t unless got's AgentID is an opaque ag_ identifier
+// and its ActorID is spiffe://<trust domain>/agent/<AgentID>, in the trust
+// domain of the agent's credential subject.
+func wantAgentNames(t *testing.T, got identitybroker.VerifiedAgent) {
+	t.Helper()
+	if !strings.HasPrefix(got.AgentID, "ag_") || strings.Contains(got.AgentID, "/") || strings.Contains(got.AgentID, "main") {
+		t.Fatalf("agent ID %q is not an opaque ag_ identifier", got.AgentID)
+	}
+	td, _, _ := strings.Cut(strings.TrimPrefix(got.Agent.Subject, "spiffe://"), "/")
+	if want := "spiffe://" + td + "/agent/" + got.AgentID; got.ActorID != want {
+		t.Fatalf("actor ID %q, want %q", got.ActorID, want)
+	}
+}
+
 // runCredentials checks the credentials registration issues with the
 // CredentialVerifier's session-keyed form, the broker's per-operation check.
 //
@@ -72,9 +86,7 @@ func runCredentials(t *testing.T, factory Factory) {
 		if got.Agent != f.reg.Agent || !got.ExpiresAt.Equal(f.reg.ExpiresAt) {
 			t.Fatalf("VerifyCredential = %+v, want agent %+v expiring at %v", got, f.reg.Agent, f.reg.ExpiresAt)
 		}
-		if !strings.HasPrefix(got.AgentID, "ag_") || strings.Contains(got.AgentID, "/") || strings.Contains(got.AgentID, "main") {
-			t.Fatalf("agent ID %q is not an opaque ag_ identifier", got.AgentID)
-		}
+		wantAgentNames(t, got)
 	})
 
 	t.Run("agents share the ag_ identifier but not their instance", func(t *testing.T) {
