@@ -248,7 +248,7 @@ func TestIdentityBrokerOwnsSessionsAgainstRealAS1(t *testing.T) {
 		"expired":        a.ExpiredAccessToken(t, issued).Value(),
 		"typ JWT":        forge(typ("JWT")),
 		"no typ":         forge(typ("")),
-		"alg none":       unsignedToken(t, a.Issuer(), as1servertest.Audience), // toolhive-core's fixed algorithm allowlist rejects this
+		"alg none":       unsignedToken(t, issued.Value()), // toolhive-core's fixed algorithm allowlist rejects this
 		"other client":   forge(claim("client_id", "rogue")),
 		"no sub_id":      forge(claim("sub_id", nil)),
 		"sub_id format":  forge(claim("sub_id", map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice})),
@@ -1089,15 +1089,15 @@ func apiRequest(t *testing.T, method, url, token, body string) (int, string, str
 	return resp.StatusCode, string(raw), resp.Header.Get("WWW-Authenticate")
 }
 
-// unsignedToken is an otherwise well-formed AS-1 access token with alg none.
-func unsignedToken(t *testing.T, issuer, audience string) string {
+// unsignedToken is issued, an AS-1 access token, with its claims and typ
+// unchanged but unsigned with alg none.
+func unsignedToken(t *testing.T, issued string) string {
 	t.Helper()
-	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
-		"iss": issuer, "sub": "u-alice", "aud": audience, "client_id": identityharness.DefaultClientID,
-		"sub_id": map[string]string{"format": "iss_sub", "iss": "https://login.example.com", "sub": identityharness.Alice},
-		"iat":    now.Unix(), "exp": now.Add(time.Minute).Unix(),
-	})
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(issued, claims); err != nil {
+		t.Fatalf("parse the issued access token: %v", err)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
 	token.Header["typ"] = "at+jwt"
 	signed, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if err != nil {

@@ -104,9 +104,10 @@ func aliceSignsIn(t *testing.T, a *as1servertest.AS1) string {
 // revocationStub stands in for an RFC 7009 revocation endpoint, which the
 // real AS-1 does not serve until stacklok/toolhive#6966. It authenticates
 // the broker client by private_key_jwt only: a jwt-bearer client assertion
-// signed with ES256 by the registered key under its kid. The assertion's
-// claims are not checked here; TestSessionOpenAuthenticatesWithTheBrokerKey
-// checks them at the real AS-1. It records each token it revokes.
+// signed with ES256 by the registered key under its kid, whose iss and sub
+// are the broker client ID, whose one aud is the stub's issuer, and which
+// carries an unexpired exp and a jti. It does not track jti replay. It
+// records each token it revokes.
 type revocationStub struct {
 	issuer   string
 	endpoint string
@@ -168,13 +169,20 @@ func (s *revocationStub) authenticated(r *http.Request) bool {
 		(form.Has("client_id") && form.Get("client_id") != identitybroker.BrokerClientID) {
 		return false
 	}
-	_, err := jwt.Parse(form.Get("client_assertion"), func(token *jwt.Token) (any, error) {
+	claims := jwt.MapClaims{}
+	_, err := jwt.ParseWithClaims(form.Get("client_assertion"), claims, func(token *jwt.Token) (any, error) {
 		if token.Header["kid"] != s.kid {
 			return nil, jwt.ErrTokenUnverifiable
 		}
 		return s.key, nil
-	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithoutClaimsValidation())
-	return err == nil
+	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithExpirationRequired(),
+		jwt.WithIssuer(identitybroker.BrokerClientID), jwt.WithSubject(identitybroker.BrokerClientID))
+	if err != nil {
+		return false
+	}
+	aud, err := claims.GetAudience()
+	jti, _ := claims["jti"].(string)
+	return err == nil && len(aud) == 1 && aud[0] == s.issuer && jti != ""
 }
 
 func (s *revocationStub) revocations() []url.Values {

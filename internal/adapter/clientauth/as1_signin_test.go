@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
@@ -233,10 +235,13 @@ func (f *as1Fixture) assertNoResource(t *testing.T, wantRefreshes int) {
 
 // TestLoginWithoutIdentityBrokerSignInOmitsResource is the default: without the
 // server's request, no leg (authorization, code exchange, refresh) sends
-// resource, and AS-1 still issues tokens for the audience.
+// resource, and AS-1 still issues tokens for the audience: it grants its sole
+// allowed audience on a code exchange without resource and carries it forward
+// on refresh.
 func TestLoginWithoutIdentityBrokerSignInOmitsResource(t *testing.T) {
 	f := newAS1Fixture(t)
 	initial := f.login(t, false)
+	assertAudience(t, "issued access token", initial.AccessToken, as1servertest.Audience)
 	c := credentials(t)
 	if _, err := c.Save(t.Context(), f.identity, initial, nil); err != nil {
 		t.Fatal(err)
@@ -250,13 +255,27 @@ func TestLoginWithoutIdentityBrokerSignInOmitsResource(t *testing.T) {
 		t.Fatalf("NewRefreshSource: %v", err)
 	}
 	defer func() { _ = s.Close() }()
-	if _, err := s.Refresh(t.Context()); err != nil {
+	refreshed, err := s.Refresh(t.Context())
+	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
+	assertAudience(t, "refreshed access token", refreshed, as1servertest.Audience)
 	if len(f.authorizeURLs) != 1 {
 		t.Fatalf("authorization requests = %d, want 1", len(f.authorizeURLs))
 	}
 	f.assertNoResource(t, 1)
+}
+
+// assertAudience fails unless the access token's aud is exactly want.
+func assertAudience(t *testing.T, what, token, want string) {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {
+		t.Fatalf("%s: parse: %v", what, err)
+	}
+	if aud, err := claims.GetAudience(); err != nil || len(aud) != 1 || aud[0] != want {
+		t.Errorf("%s aud = %v (err %v), want [%s]", what, aud, err, want)
+	}
 }
 
 // TestRefreshAfterReloadUsesTheSavedIdentityBrokerSignIn drives the restart path

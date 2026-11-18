@@ -150,21 +150,36 @@ func ReadSigningKey(t testing.TB, file string) *ecdsa.PrivateKey {
 
 // ResignAccessToken returns token, a JWT signed with the key WriteSigningKey
 // wrote to keyFile, with its claims changed by edit and signed again with that
-// key under the same header, so its issuer verifies it and judges it by the
-// changed claims.
+// key under the same header with alg ES256, so its issuer verifies it and
+// judges it by the changed claims.
 func ResignAccessToken(t testing.TB, keyFile, token string, edit func(jwt.MapClaims)) string {
 	t.Helper()
-	claims := jwt.MapClaims{}
-	parsed, _, err := jwt.NewParser().ParseUnverified(token, claims)
+	return ResignToken(t, ReadSigningKey(t, keyFile), token, edit, nil)
+}
+
+// ResignToken returns token, a JWT, with its claims changed by claims and its
+// JOSE header by header, either of which may be nil, signed again with key.
+// The header keeps token's other parameters, such as kid and typ, but its alg
+// is ES256, the key's, unless header changes it.
+func ResignToken(t testing.TB, key *ecdsa.PrivateKey, token string, claims func(jwt.MapClaims), header func(map[string]any)) string {
+	t.Helper()
+	edited := jwt.MapClaims{}
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, edited)
 	if err != nil {
-		t.Fatalf("identityharness: parse access token: %v", err)
+		t.Fatalf("identityharness: parse token: %v", err)
 	}
-	edit(claims)
-	resigned := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	if claims != nil {
+		claims(edited)
+	}
+	resigned := jwt.NewWithClaims(jwt.SigningMethodES256, edited)
 	resigned.Header = maps.Clone(parsed.Header)
-	signed, err := resigned.SignedString(ReadSigningKey(t, keyFile))
+	resigned.Header["alg"] = jwt.SigningMethodES256.Alg()
+	if header != nil {
+		header(resigned.Header)
+	}
+	signed, err := resigned.SignedString(key)
 	if err != nil {
-		t.Fatalf("identityharness: sign access token: %v", err)
+		t.Fatalf("identityharness: sign token: %v", err)
 	}
 	return signed
 }

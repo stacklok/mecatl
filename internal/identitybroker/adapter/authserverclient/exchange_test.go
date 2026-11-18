@@ -21,7 +21,11 @@ func sessionGrant(expiresAt time.Time) identitybroker.ExchangeGrant {
 }
 
 func TestExchangeConvertsAtAS1(t *testing.T) {
-	for name, expiresAt := range map[string]time.Duration{"no expires_at": 0, "expires_at": as1servertest.IDJAGMaxLifetime / 2} {
+	for name, expiresAt := range map[string]time.Duration{
+		"no expires_at":                0,
+		"expires_at":                   as1servertest.IDJAGMaxLifetime / 2,
+		"expires_at above the maximum": as1servertest.IDJAGMaxLifetime + time.Hour,
+	} {
 		t.Run(name, func(t *testing.T) {
 			a := startAS1(t)
 			c := as1Client(t, a, &recorder{}, nil)
@@ -42,14 +46,14 @@ func TestExchangeConvertsAtAS1(t *testing.T) {
 			if g.Type != identitybroker.ExchangeGrantType || !slices.Equal(g.IssuableTokenTypes, []string{identitybroker.TokenTypeIDJAG}) {
 				t.Fatalf("echo = %+v, want the exchange grant for id-jag", g)
 			}
-			if expiresAt != 0 {
+			if expiresAt != 0 && expiresAt <= as1servertest.IDJAGMaxLifetime {
 				if !g.ExpiresAt.Equal(req.Grant.ExpiresAt) {
 					t.Fatalf("echoed expiry %v, want the requested %v", g.ExpiresAt, req.Grant.ExpiresAt)
 				}
 				return
 			}
-			// No expires_at: AS-1 applies its maximum to its wall clock, in
-			// whole seconds.
+			// No expires_at, or one past the maximum: AS-1 applies its maximum
+			// to its wall clock, in whole seconds.
 			earliest, latest := before.Add(as1servertest.IDJAGMaxLifetime).Truncate(time.Second), after.Add(as1servertest.IDJAGMaxLifetime+time.Second)
 			if g.ExpiresAt.Before(earliest) || g.ExpiresAt.After(latest) {
 				t.Fatalf("echoed expiry %v, want AS-1's maximum, between %v and %v", g.ExpiresAt, earliest, latest)

@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -376,22 +375,9 @@ type Forgery struct {
 // wrote, as Start's does.
 func (a *AS1) Forge(t testing.TB, token identitybroker.Token, f Forgery) identitybroker.Token {
 	t.Helper()
-	claims := jwt.MapClaims{}
-	parsed, _, err := jwt.NewParser().ParseUnverified(token.Value(), claims)
-	if err != nil {
-		t.Fatalf("as1servertest: parse token to forge: %v", err)
-	}
-	if f.Claims != nil {
-		f.Claims(claims)
-	}
-	forged := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	forged.Header = maps.Clone(parsed.Header)
-	forged.Header["alg"] = jwt.SigningMethodES256.Alg()
-	if f.Header != nil {
-		f.Header(forged.Header)
-	}
 	var key *ecdsa.PrivateKey
 	if f.ForeignKey {
+		var err error
 		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
 			t.Fatalf("as1servertest: foreign key: %v", err)
 		}
@@ -401,9 +387,5 @@ func (a *AS1) Forge(t testing.TB, token identitybroker.Token, f Forgery) identit
 		}
 		key = identityharness.ReadSigningKey(t, a.signingKeyFile)
 	}
-	signed, err := forged.SignedString(key)
-	if err != nil {
-		t.Fatalf("as1servertest: sign forged token: %v", err)
-	}
-	return identitybroker.NewToken(signed)
+	return identitybroker.NewToken(identityharness.ResignToken(t, key, token.Value(), f.Claims, f.Header))
 }

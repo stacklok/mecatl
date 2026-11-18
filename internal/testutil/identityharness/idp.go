@@ -85,15 +85,6 @@ func (p *IdP) Issuer() string { return p.server.URL }
 // oid claim, as Entra ID does. It differs from subject.
 func OID(subject string) string { return "oid-" + subject }
 
-// AddUser lets the IdP sign in subject.
-func (p *IdP) AddUser(subject string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !slices.Contains(p.users, subject) {
-		p.users = append(p.users, subject)
-	}
-}
-
 // RegisterClient registers a confidential OIDC client that authenticates to
 // the token endpoint with client_secret_basic or client_secret_post. A test
 // running a real AS-1 registers it this way (Harness.RegisterAS1Upstream).

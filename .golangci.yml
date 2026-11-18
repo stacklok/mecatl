@@ -1290,8 +1290,8 @@ linters:
         # as1server.Server.RevokeGrant revokes in AS-1's storage, past AS-1's
         # handler, client authentication, and ownership checks. It exists so
         # tests can see AS-1 answer revoked; production revokes through
-        # AS-1's RFC 7009 route (stacklok/toolhive#6966). Tests and
-        # as1servertest are excluded below.
+        # AS-1's RFC 7009 route (stacklok/toolhive#6966). Tests are
+        # excluded below.
         - pattern: '\.RevokeGrant\b'
           msg: 'RevokeGrant is test-only: it bypasses AS-1''s handler and client authentication. Production revokes through AS-1''s RFC 7009 route (stacklok/toolhive#6966).'
     goconst:
@@ -1467,12 +1467,6 @@ linters:
       - linters:
           - forbidigo
         path: (.+)_test\.go
-      # as1servertest is the real-AS-1 test fixture; it may revoke in AS-1's
-      # storage for the tests that use it.
-      - linters:
-          - forbidigo
-        path: internal/identitybroker/adapter/as1server/as1servertest/
-        text: RevokeGrant
       # SessionID and ToolSpec are deliberate, frozen domain names from the WP1
       # ports that other packages depend on. revive flags them as "stutter"
       # (session.SessionID / tool.ToolSpec) but renaming would break the public
