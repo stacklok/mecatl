@@ -5,6 +5,7 @@ rely on them for how Mecatl works.
 
 | File | Author | Summary | Decide by (keep, move to an issue, or delete) |
 |---|---|---|---|
+| [module-publication.md](module-publication.md) | Mecatl | Pointer to the canonical Go module publication procedure; the draft records pre-rollout approval only. | Keep as an approval record. |
 | [agent-identity/README.md](agent-identity/README.md) | Juan Antonio Osorio | Proposed broker-centered agent identity, authority, audit, and credential lifecycle. | **2026-11-06** |
 | [agent-identity-outbound.md](agent-identity-outbound.md) | Juan Antonio Osorio | Historical companion to the former identity model: how the harness reaches tools and gateways on the outbound hop. | **2026-11-06** |
 | [cloud-native-harness-kit.md](cloud-native-harness-kit.md) | Juan Antonio Osorio | Positioning definition of the cloud-native harness kit and where its responsibility ends. | **2026-11-06** |

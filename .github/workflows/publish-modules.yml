@@ -1,6 +1,6 @@
-# Review checkpoint only: preflight deliberately fails; no release helper or token minting.
-# Operator-initiated; an agent may dispatch the approved source/version mapping.
-name: Publish Go modules (skeleton)
+# Operator-initiated; an agent may dispatch an explicitly approved source/version map.
+# Partial publication stops for manual inspection. Humans adopt with a MERGE COMMIT.
+name: Publish Go modules
 
 on:
   workflow_dispatch:
@@ -37,17 +37,27 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           path: tooling
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - name: Refresh main and tags without persisted credentials
+        run: git -C candidate fetch --force origin main --tags
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: tooling/go.work
+          cache: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
       - name: Validate request and test assembled source
         id: preflight
         env:
           SOURCE: ${{ inputs.source }}
           VERSIONS: ${{ inputs.versions }}
-        # Proposed helper: preflight --source "$SOURCE" --versions "$VERSIONS"
-        # Validate main reachability, versions, inventory/order and absent tags;
-        # then run source preflight on a separate candidate checkout, without tokens.
-        run: |
-          printf '%s\n' '::error::Review checkpoint only; module publication is not implemented.'
-          exit 1
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
 
   # Each successful call returns the branch head AFTER public proof. Calls for
   # unselected modules succeed and pass their parent through; never skip a call.
@@ -146,28 +156,96 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
-      metadata: ${{ steps.reconcile.outputs.metadata }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      SOURCE: ${{ needs.preflight.outputs.source }}
+      VERSIONS: ${{ needs.preflight.outputs.versions }}
+      PARENT: ${{ needs.adapters.outputs.head }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.adapters.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - name: Refresh main and tags without persisted credentials
+        run: git -C candidate fetch --force origin main --tags
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: tooling/go.work
+          cache: false
       - name: Prepare remaining consumer pins without write credentials
-        id: reconcile
-        # Proposed helper: reconcile(source, versions, parent=adapters.head).
-        # Update/tidy ALL affected workspace consumers, including root/runtime/test.
-        # Upload only prepared go.mod/go.sum data; output its artifact ID.
-        run: |
-          printf '%s\n' '::error::Consumer reconciliation is not implemented.'
-          exit 1
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py reconcile
+          --source "$SOURCE" --versions "$VERSIONS" --parent "$PARENT"
+          --root "$GITHUB_WORKSPACE/candidate" --metadata "$RUNNER_TEMP/metadata.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: module-metadata-adoption
+          path: ${{ runner.temp }}/metadata.json
+          if-no-files-found: error
+          retention-days: 7
 
   adoption-pr:
     needs: [preflight, adapters, reconcile]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
+    env:
+      SOURCE: ${{ needs.preflight.outputs.source }}
+      VERSIONS: ${{ needs.preflight.outputs.versions }}
+      PARENT: ${{ needs.adapters.outputs.head }}
+      BRANCH: ${{ needs.preflight.outputs.branch }}
     steps:
-      - name: Commit final metadata and open an ordinary PR
-        # Proposed helper: open-pr(source, versions, branch, parent=adapters.head,
-        # metadata=reconcile.metadata). Fresh runner; trusted tooling only.
-        # Later: repository-scoped App contents:write + pull-requests:write here ONLY.
-        # No implementation source changes, no automatic merge, no empty PR.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.reconcile.outputs.artifact }}
+          path: ${{ runner.temp }}/prepared
+          merge-multiple: true
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Commit final metadata and open an ordinary PR for HUMAN MERGE COMMIT
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        # Never squash/rebase: tagged commits must become ancestors of main.
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py open-pr
+          --source "$SOURCE" --versions "$VERSIONS" --parent "$PARENT"
+          --branch "$BRANCH" --metadata "$RUNNER_TEMP/prepared/metadata.json"
+
+  summary:
+    needs: [preflight, engine, driver, ssefilter, adaptersupport, oidc, anthropic, openai, openaichat, adapters, reconcile, adoption-pr]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Best-effort request and job results (writer jobs report each created ref immediately)
+        env:
+          SOURCE: ${{ inputs.source }}
+          VERSIONS: ${{ inputs.versions }}
+          BRANCH: module-publication/${{ github.run_id }}-${{ github.run_attempt }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          printf '%s\n' '::error::Metadata PR creation is not implemented.'
-          exit 1
+          {
+            printf 'Source: %s\nVersions: %s\nBranch: %s\n' "$SOURCE" "$VERSIONS" "$BRANCH"
+            printf 'Job results:\n%s\n' "$RESULTS"
+            printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
+          } >> "$GITHUB_STEP_SUMMARY"
