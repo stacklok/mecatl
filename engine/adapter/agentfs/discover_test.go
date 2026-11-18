@@ -9,7 +9,32 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/stacklok/mecatl/agentdef"
+	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// The caps the parse tests check: the port's canonical caps, which agentdef
+// enforces when it parses.
+const (
+	maxDescriptionBytes = tool.MaxAgentDescriptionBytes
+	maxPromptBodyBytes  = tool.MaxAgentBodyBytes
+)
+
+// TestCapsMatchAgentdef pins that the caps agentdef enforces equal the port's
+// canonical caps, which the remote-driver client enforces too, so every
+// source caps a definition the same way.
+func TestCapsMatchAgentdef(t *testing.T) {
+	if agentdef.MaxDescriptionBytes != tool.MaxAgentDescriptionBytes {
+		t.Errorf("agentdef.MaxDescriptionBytes = %d, tool.MaxAgentDescriptionBytes = %d", agentdef.MaxDescriptionBytes, tool.MaxAgentDescriptionBytes)
+	}
+	if agentdef.MaxBodyBytes != tool.MaxAgentBodyBytes {
+		t.Errorf("agentdef.MaxBodyBytes = %d, tool.MaxAgentBodyBytes = %d", agentdef.MaxBodyBytes, tool.MaxAgentBodyBytes)
+	}
+	if AgentFileExt != agentdef.FileExt {
+		t.Errorf("AgentFileExt = %q, agentdef.FileExt = %q", AgentFileExt, agentdef.FileExt)
+	}
+}
 
 // writeDef writes a <name>.md file into dir, creating dir if needed.
 func writeDef(t *testing.T, dir, file, content string) string {
@@ -412,7 +437,7 @@ func TestDirSourceSkipErrorFatalClassification(t *testing.T) {
 
 // TestParseAgentDefTruncatesOnRuneBoundary locks the rune-safe truncation
 // contract: a multi-byte rune straddling the cap is NOT split mid-rune (no
-// mojibake), and the result stays within the byte cap. TruncateRunes backs
+// mojibake), and the result stays within the byte cap. agentdef's rune-safe truncation backs
 // both the description and body truncation.
 func TestParseAgentDefTruncatesOnRuneBoundary(t *testing.T) {
 	// "世" is 3 bytes (U+4E16). Build a body that overshoots the cap by an amount

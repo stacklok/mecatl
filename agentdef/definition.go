@@ -7,9 +7,8 @@
 // two "---" lines, then a markdown body. Parse reads the bytes of one file.
 // Finding files, and deciding which locations count, is the caller's job.
 //
-// The engine's agentfs adapter still has its own copy of this parser, until it
-// is switched over to this package. Until then both must read every file the
-// same way; a parity test in the root module (internal/app) checks it.
+// The engine's agentfs adapter parses with this package too, so the harness and
+// the broker read every file the same way.
 package agentdef
 
 import "strings"

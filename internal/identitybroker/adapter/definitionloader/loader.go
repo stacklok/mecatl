@@ -15,8 +15,8 @@
 // the user tier, where the broker does not see them.
 //
 // Until the harness builds agents from the broker's records (#2548), the
-// harness reads the same files separately, with the engine's own copy of the
-// agentdef parser.
+// harness reads the same files separately, with the same agentdef parser
+// through the engine's agentfs adapter.
 //
 // Shortcut: a global definition's revision is its file's modification time,
 // because a plain file has no revision of its own, and there is no provenance

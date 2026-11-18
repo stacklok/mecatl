@@ -18,8 +18,8 @@ within this repository are:
 
 | Module | Same-repository dependencies |
 | --- | --- |
-| `engine` | None |
 | `agentdef` | None |
+| `engine` | `agentdef` |
 | `provider/ssefilter` | None |
 | `provider/anthropic` | `engine` |
 | `provider/openai`, `provider/openaichat` | `engine`, `provider/ssefilter` |

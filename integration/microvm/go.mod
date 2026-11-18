@@ -217,6 +217,7 @@ require (
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
 	github.com/stacklok/mecatl/adapters v0.1.1 // indirect
+	github.com/stacklok/mecatl/agentdef v0.1.0 // indirect
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1 // indirect
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1 // indirect
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000 // indirect
