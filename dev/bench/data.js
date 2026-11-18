@@ -557562,9 +557562,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794961267411,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4f7016aac77494a7dc82aa434e10be034d4e855",
+          "message": "feat(contracts): stream file content in the executor FileService (#2832)\n\n`ReadFile` now streams its response and `CreateFile` and `ReplaceFile`\nstream their requests, in chunks of at most 3 MiB. Every client, proxy,\nand server keeps gRPC's default 4 MiB message limit, and the protocol\nsets no file size limit.\n\nA write's first message carries the context, path, and expected\nversion. The server spools chunks to a temporary file and renames it\ninto place only after the client closes its side of the stream, so an\ninterrupted write leaves nothing behind. A read's last message carries\nthe version, which covers exactly the bytes sent.\n\nThe agent tools keep the whole-file `Workspace` methods. An optional\n`WorkspaceStreamer` extension for unbuffered transfers, which fails\nsoft when a workspace lacks it, is documented in\n`docs/drafts/kubernetes-execution/executor-protocol.md` and left to a\nfollow-up.\n\nThis is a breaking change to `mecatl.executor.v1`; nothing implements\nor calls `FileService` yet.\n\nCloses #2770",
+          "timestamp": "2026-11-18T10:49:58+01:00",
+          "tree_id": "bc0e24b504f355269080c689bea8d35b43e4781c",
+          "url": "https://github.com/stacklok/mecatl/commit/e4f7016aac77494a7dc82aa434e10be034d4e855"
+        },
+        "date": 1794996202356,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 780.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32198,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794996197472,
+  "lastUpdate": 1794996203246,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
