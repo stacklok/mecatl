@@ -13,14 +13,12 @@ option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor
 
 // FileService serves Workspace and WorkspaceNamespace on workspace-relative paths.
 service FileService {
-  // Whole files travel in one message, up to executionenv.MaxFileBytes (5 MiB),
-  // above gRPC's 4 MiB default, so both ends must raise the message limit.
-  // File transfer will likely need review, for example chunked streaming.
-  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  // Chunking: docs/drafts/kubernetes-execution/executor-protocol.md#file-content.
+  rpc ReadFile(ReadFileRequest) returns (stream ReadFileResponse);
   rpc StatFile(StatFileRequest) returns (StatFileResponse);
   // Create-only.
-  rpc CreateFile(CreateFileRequest) returns (CreateFileResponse);
-  rpc ReplaceFile(ReplaceFileRequest) returns (ReplaceFileResponse);
+  rpc CreateFile(stream CreateFileRequest) returns (CreateFileResponse);
+  rpc ReplaceFile(stream ReplaceFileRequest) returns (ReplaceFileResponse);
   rpc ReadDir(ReadDirRequest) returns (ReadDirResponse);
   rpc RemoveFile(RemoveFileRequest) returns (RemoveFileResponse);
   rpc RenameFile(RenameFileRequest) returns (RenameFileResponse);
@@ -52,6 +50,7 @@ message ReadFileRequest {
 
 message ReadFileResponse {
   bytes data = 1;
+  // Last message only; covers exactly the data sent.
   FileVersion version = 2;
 }
 
