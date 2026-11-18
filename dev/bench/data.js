@@ -433332,6 +433332,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795039366852,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e21ee50b901c0515bd83e3435d98fca973094f13",
+          "message": "feat(mecatui): pilot explicit Tool calls mouse actions (#2873)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T22:28:24Z",
+          "tree_id": "50d5d278755bd495c46c328b1ab77969c84555e1",
+          "url": "https://github.com/stacklok/mecatl/commit/e21ee50b901c0515bd83e3435d98fca973094f13"
+        },
+        "date": 1795041654583,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13385.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -564356,6 +564395,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795041650992,
+  "lastUpdate": 1795041655531,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
