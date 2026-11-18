@@ -45,6 +45,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/agentdef"
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -52,13 +53,20 @@ import (
 
 const (
 	// ProfileFile is the provenance profile of a global definition read from a
-	// file. Its metadata holds the file's path under the key "path"; its
-	// revision is the file's modification time in UTC, RFC 3339 with
-	// nanoseconds.
+	// file. Its metadata holds the file's path under the key "path" and the
+	// canonical form version under MetadataDefinitionForm; its revision is the
+	// file's modification time in UTC, RFC 3339 with nanoseconds.
 	ProfileFile = "file/v1"
-	// ProfileRelease is the provenance profile of a built-in definition. It
-	// has no metadata; its revision is BuiltinRevision of the build.
+	// ProfileRelease is the provenance profile of a built-in definition. Its
+	// metadata holds the canonical form version under MetadataDefinitionForm;
+	// its revision is BuiltinRevision of the build.
 	ProfileRelease = "mecatl-release/v1"
+
+	// MetadataDefinitionForm is the provenance metadata key that names the
+	// canonical form DefinitionDigest covers (agentdef.FormVersion), so a
+	// change of form is visible in the record rather than only as a new
+	// digest.
+	MetadataDefinitionForm = "definition-form"
 
 	// DevRevision is the built-in definitions' revision in any build that is
 	// not published, such as a local, dirty, or untagged build.
@@ -127,9 +135,10 @@ type Problem struct {
 // left out or adjusted.
 //
 // It reads every <name>.md file directly in each configured directory and
-// parses it with agentdef.Parse. A file that cannot be read or parsed, whose
-// definition has no canonical form (agentdef.Canonical), or whose record fails
-// identitybroker.DefinitionRecord.Validate is left out and loading continues.
+// parses it with agentdef.Parse. A file that cannot be read or parsed, that is
+// not valid UTF-8, whose definition has no digest (agentdef.Digest), or whose
+// record fails identitybroker.DefinitionRecord.Validate is left out and
+// loading continues.
 // The first file to define a name wins it: directories in the order given, and
 // files in name order within one. Each later file is reported. A winner left
 // out for a bad record still holds the name, as it does in the harness, so no
@@ -271,17 +280,17 @@ func readFile(path string) ([]byte, time.Time, error) {
 }
 
 func builtinRecord(def agentdef.Definition, revision string) (identitybroker.DefinitionRecord, error) {
-	form, err := agentdef.Canonical(def)
+	digest, err := definitionDigest(def)
 	if err != nil {
 		return identitybroker.DefinitionRecord{}, err
 	}
 	// A built-in has no source file: the bytes it is built from are its
 	// canonical form, so both digests are the same.
-	digest := sha256Digest(form)
 	rec := identitybroker.DefinitionRecord{
 		Ref: identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: def.Name, Revision: revision},
 		Provenance: identitybroker.Provenance{
 			Profile:          ProfileRelease,
+			Metadata:         map[string]string{MetadataDefinitionForm: agentdef.FormVersion},
 			SourceDigest:     digest,
 			DefinitionDigest: digest,
 		},
@@ -291,10 +300,17 @@ func builtinRecord(def agentdef.Definition, revision string) (identitybroker.Def
 
 // globalRecord builds the record of a definition read from a file. Its
 // SourceDigest covers the bytes read; its DefinitionDigest covers the
-// definition's canonical form (agentdef.Canonical, agentdef.FormVersion), so
-// reformatting the file changes only SourceDigest.
+// definition (agentdef.Digest), so reformatting the file changes only
+// SourceDigest.
 func globalRecord(f file) (identitybroker.DefinitionRecord, error) {
-	form, err := agentdef.Canonical(f.def)
+	// The YAML parser reads an invalid byte in the frontmatter as U+FFFD, so
+	// two different files could parse to one definition. The parser itself
+	// accepts them, as the harness's copy does, so the whole file is checked
+	// here.
+	if !utf8.Valid(f.content) {
+		return identitybroker.DefinitionRecord{}, fmt.Errorf("definition %q is not valid UTF-8", f.def.Name)
+	}
+	digest, err := definitionDigest(f.def)
 	if err != nil {
 		return identitybroker.DefinitionRecord{}, fmt.Errorf("definition %q: %w", f.def.Name, err)
 	}
@@ -306,12 +322,21 @@ func globalRecord(f file) (identitybroker.DefinitionRecord, error) {
 		},
 		Provenance: identitybroker.Provenance{
 			Profile:          ProfileFile,
-			Metadata:         map[string]string{"path": f.path},
+			Metadata:         map[string]string{"path": f.path, MetadataDefinitionForm: agentdef.FormVersion},
 			SourceDigest:     sha256Digest(f.content),
-			DefinitionDigest: sha256Digest(form),
+			DefinitionDigest: digest,
 		},
 	}
 	return rec, rec.Validate()
+}
+
+// definitionDigest returns the agentdef digest of d as a broker digest.
+func definitionDigest(d agentdef.Definition) (identitybroker.Digest, error) {
+	value, err := agentdef.Digest(d)
+	if err != nil {
+		return identitybroker.Digest{}, err
+	}
+	return identitybroker.Digest{Algorithm: agentdef.DigestAlgorithm, Value: value}, nil
 }
 
 // fileRevision is a global definition's revision: its file's modification

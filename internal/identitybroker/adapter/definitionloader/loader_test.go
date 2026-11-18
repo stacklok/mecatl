@@ -70,8 +70,8 @@ func TestLoadBuiltins(t *testing.T) {
 				continue
 			}
 			p := rec.Provenance
-			if p.Profile != definitionloader.ProfileRelease || len(p.Metadata) != 0 {
-				t.Errorf("%s provenance profile %q metadata %v, want %q and none", rec.Ref.Name, p.Profile, p.Metadata, definitionloader.ProfileRelease)
+			if p.Profile != definitionloader.ProfileRelease || len(p.Metadata) != 1 || p.Metadata[definitionloader.MetadataDefinitionForm] != wantForm {
+				t.Errorf("%s provenance profile %q metadata %v, want %q with form %q only", rec.Ref.Name, p.Profile, p.Metadata, definitionloader.ProfileRelease, wantForm)
 			}
 			wantDigest := sha256Value(digest)
 			if p.SourceDigest != wantDigest || p.DefinitionDigest != wantDigest {
@@ -103,8 +103,8 @@ func TestLoadGlobalDefinition(t *testing.T) {
 		t.Errorf("revision = %q, want the file's modification time in UTC, %q", rec.Ref.Revision, want)
 	}
 	p := rec.Provenance
-	if p.Profile != definitionloader.ProfileFile || len(p.Metadata) != 1 || p.Metadata["path"] != path {
-		t.Errorf("provenance profile %q metadata %v, want %q with path %q", p.Profile, p.Metadata, definitionloader.ProfileFile, path)
+	if p.Profile != definitionloader.ProfileFile || len(p.Metadata) != 2 || p.Metadata["path"] != path || p.Metadata[definitionloader.MetadataDefinitionForm] != wantForm {
+		t.Errorf("provenance profile %q metadata %v, want %q with path %q and form %q", p.Profile, p.Metadata, definitionloader.ProfileFile, path, wantForm)
 	}
 	if want := digestOf(content); p.SourceDigest != want {
 		t.Errorf("source digest = %+v, want the digest of the bytes read, %+v", p.SourceDigest, want)
@@ -173,25 +173,86 @@ func TestLoadSkipsAndReportsBadDefinitions(t *testing.T) {
 	}
 }
 
-// TestLoadDropsNonUTF8Definition plants a body with an invalid byte. It has no
-// canonical form: JSON would encode it as U+FFFD, so two different files could
-// share a DefinitionDigest. The definition is left out instead.
+// TestLoadDropsNonUTF8Definition plants an invalid byte in each part of a
+// file. In the frontmatter, the YAML parser reads it as U+FFFD; in the body,
+// JSON would encode it so. Either way two different files could share a
+// DefinitionDigest, so the definition is left out instead. A file holding a
+// literal U+FFFD is valid UTF-8 and loads.
 func TestLoadDropsNonUTF8Definition(t *testing.T) {
 	t.Parallel()
+	for name, content := range map[string]string{
+		"body":         "---\nname: bad\ndescription: x\n---\na\xffb\n",
+		"model":        "---\nname: bad\ndescription: x\nmodel: a\xffb\n---\n",
+		"hook command": "---\nname: bad\ndescription: x\nhooks:\n  Stop: a\xfeb\n---\n",
+		"header name":  "---\nname: bad\ndescription: x\nmcpServers:\n  - name: s\n    url: https://x\n    headers:\n      K\xff: v\n---\n",
+		"unknown key":  "---\nname: bad\ndescription: x\nfuture: a\xffb\n---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := writeDef(t, dir, "bad.md", content)
+			recs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if n := countGlobal(recs, "bad"); n != 0 {
+				t.Errorf("loaded global/bad from a file that is not valid UTF-8")
+			}
+			if !hasProblemAt(problems, path, true) {
+				t.Errorf("problems = %+v, want %s reported as dropped", problems, path)
+			}
+		})
+	}
+
 	dir := t.TempDir()
-	path := writeDef(t, dir, "bad.md", "---\nname: bad\ndescription: x\n---\na\xffb\n")
+	writeDef(t, dir, "ok.md", "---\nname: ok\ndescription: x\nmodel: a\uFFFDb\n---\n")
+	recs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("Load = problems %v, err %v; want none", problems, err)
+	}
+	find(t, recs, identitybroker.SourceGlobal, "ok")
+}
+
+// TestLoadReportsUnreadableFiles plants entries that are named like
+// definitions but cannot be read as files: a dangling symlink and a symlink to
+// a directory. Each is reported as dropped at its path, and loading continues.
+// A symlink to a definition file loads, with the target's bytes.
+func TestLoadReportsUnreadableFiles(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs extra privileges on Windows")
+	}
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	writeDef(t, dir, "good.md", "---\nname: good\ndescription: x\n---\n")
+	dangling := filepath.Join(dir, "dangling.md")
+	if err := os.Symlink(filepath.Join(elsewhere, "missing.md"), dangling); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	toDir := filepath.Join(dir, "todir.md")
+	if err := os.Symlink(elsewhere, toDir); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	content := "---\nname: linked\ndescription: x\n---\n"
+	target := writeDef(t, elsewhere, "target.md", content)
+	if err := os.Symlink(target, filepath.Join(dir, "linked.md")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
 
 	recs, problems, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	for _, rec := range recs {
-		if rec.Ref.Source == identitybroker.SourceGlobal {
-			t.Errorf("loaded %+v from a file that is not valid UTF-8", rec.Ref)
+	find(t, recs, identitybroker.SourceGlobal, "good")
+	if find(t, recs, identitybroker.SourceGlobal, "linked").Provenance.SourceDigest != digestOf(content) {
+		t.Error("a symlinked definition's SourceDigest does not cover its target's bytes")
+	}
+	for _, path := range []string{dangling, toDir} {
+		if !hasProblemAt(problems, path, true) {
+			t.Errorf("problems = %+v, want %s reported as dropped", problems, path)
 		}
 	}
-	if !hasProblemAt(problems, path, true) {
-		t.Errorf("problems = %+v, want %s reported as dropped", problems, path)
+	if len(problems) != 2 {
+		t.Errorf("problems = %+v, want only the two unreadable entries", problems)
 	}
 }
 
@@ -215,7 +276,9 @@ func TestLoadReportsAdjustedDefinition(t *testing.T) {
 	if hasProblemAt(problems, path, true) {
 		t.Errorf("problems = %+v, report %s as dropped though it loaded", problems, path)
 	}
-	want := agentdef.TruncateRunes(long, agentdef.MaxDescriptionBytes)
+	// The parser cuts an ASCII description to the cap and ends it with a
+	// three-byte ellipsis.
+	want := long[:agentdef.MaxDescriptionBytes-len("…")] + "…"
 	if rec.Provenance.DefinitionDigest != digestOf(`{"name":"long","description":"`+want+`"}`) {
 		t.Error("DefinitionDigest does not cover the parser's truncated description")
 	}
@@ -470,6 +533,11 @@ func TestLoadStopsWhenCanceled(t *testing.T) {
 		t.Errorf("Load = %d records, err %v; want none and context.Canceled", len(recs), err)
 	}
 }
+
+// wantForm pins the canonical form version records name. The pinned digests
+// in these tests are of this form, so changing agentdef.FormVersion must
+// change them too.
+const wantForm = "agentdef-canonical/v1"
 
 func writeDef(t *testing.T, dir, file, content string) string {
 	t.Helper()

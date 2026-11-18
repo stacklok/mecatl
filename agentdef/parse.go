@@ -25,7 +25,7 @@ import (
 // Tool names are not checked: an unknown tool name is the caller's concern,
 // against a concrete tool catalog.
 func Parse(raw []byte) (Definition, []string, error) {
-	fmText, body, ok := SplitFrontmatter(string(raw))
+	fmText, body, ok := splitFrontmatter(string(raw))
 	if !ok {
 		return Definition{}, nil, errors.New("missing YAML frontmatter (expected a leading '---' delimited block)")
 	}
@@ -47,7 +47,7 @@ func Parse(raw []byte) (Definition, []string, error) {
 		notes = append(notes, fmt.Sprintf(
 			"description is %d bytes; truncated to the always-in-context cap of %d bytes",
 			len(desc), MaxDescriptionBytes))
-		desc = TruncateRunes(desc, MaxDescriptionBytes)
+		desc = truncateRunes(desc, MaxDescriptionBytes)
 	}
 
 	trimmedBody := strings.TrimSpace(body)
@@ -55,7 +55,7 @@ func Parse(raw []byte) (Definition, []string, error) {
 		notes = append(notes, fmt.Sprintf(
 			"body is %d bytes; truncated to the prompt-body cap of %d bytes (it is in-context every turn)",
 			len(trimmedBody), MaxBodyBytes))
-		trimmedBody = TruncateRunes(trimmedBody, MaxBodyBytes)
+		trimmedBody = truncateRunes(trimmedBody, MaxBodyBytes)
 	}
 
 	// A skipped mcpServers entry is an adjustment: the definition is kept,
@@ -87,7 +87,7 @@ func Parse(raw []byte) (Definition, []string, error) {
 		Color:           strings.TrimSpace(fm.Color),
 		Skills:          []string(fm.Skills),
 		MCPServers:      fm.MCPServers.servers,
-		Hooks:           NormalizeHooks(fm.Hooks),
+		Hooks:           normalizeHooks(fm.Hooks),
 		Memory:          mem,
 		Body:            trimmedBody,
 	}, notes, nil
@@ -233,7 +233,7 @@ func (l *mcpServerList) appendMapping(m rawMCPMapping) {
 			"mcpServers entry %q skipped: only the streamable-HTTP transport is supported (stdio/command/non-HTTP transports are rejected)", name))
 		return
 	}
-	l.servers = append(l.servers, MCPServer{Name: name, URL: url, Headers: NormalizeHeaders(m.Headers)})
+	l.servers = append(l.servers, MCPServer{Name: name, URL: url, Headers: normalizeHeaders(m.Headers)})
 }
 
 // isNonHTTPTransport reports whether a type or transport value names a
@@ -247,10 +247,10 @@ func isNonHTTPTransport(v string) bool {
 	}
 }
 
-// NormalizeHeaders trims keys and values and drops empty ones. It returns nil
+// normalizeHeaders trims keys and values and drops empty ones. It returns nil
 // for a map left empty, so a server with no headers has nil Headers. The
 // values can be secrets: never log them.
-func NormalizeHeaders(in map[string]string) map[string]string {
+func normalizeHeaders(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -269,9 +269,9 @@ func NormalizeHeaders(in map[string]string) map[string]string {
 	return out
 }
 
-// NormalizeHooks trims each phase and command and drops empty ones. It returns
+// normalizeHooks trims each phase and command and drops empty ones. It returns
 // nil for a map left empty. It does not check phase names.
-func NormalizeHooks(in map[string]string) map[string]string {
+func normalizeHooks(in map[string]string) map[string]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -375,12 +375,12 @@ func frontmatterParseError(err error) string {
 	return "malformed YAML frontmatter"
 }
 
-// SplitFrontmatter separates a leading frontmatter block from the body. The
+// splitFrontmatter separates a leading frontmatter block from the body. The
 // block starts with a "---" line at the very start and ends at the next line
 // that is exactly "---". It returns the block without the delimiters, the
 // body, and whether a well-formed block was found. A leading UTF-8 byte order
 // mark is ignored and CRLF line endings are read as LF.
-func SplitFrontmatter(s string) (fm, body string, ok bool) {
+func splitFrontmatter(s string) (fm, body string, ok bool) {
 	s = strings.TrimPrefix(s, "\ufeff")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	if !strings.HasPrefix(s, "---\n") && s != "---" {
@@ -412,9 +412,9 @@ func indexClosingDelim(s string) int {
 	return -1
 }
 
-// TruncateRunes trims s to at most maxBytes on a rune boundary, ending in a
+// truncateRunes trims s to at most maxBytes on a rune boundary, ending in a
 // single-character ellipsis ("…"). A string that fits is returned unchanged.
-func TruncateRunes(s string, maxBytes int) string {
+func truncateRunes(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}

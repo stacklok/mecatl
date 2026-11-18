@@ -1,6 +1,8 @@
 package agentdef
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -93,5 +95,24 @@ func TestCanonicalRejectsInvalidUTF8(t *testing.T) {
 				t.Errorf("error quotes the value: %v", err)
 			}
 		})
+	}
+}
+
+// TestDigest pins the digest rule: lowercase hexadecimal SHA-256 of the
+// canonical form, failing when the form does.
+func TestDigest(t *testing.T) {
+	got, err := Digest(Definition{Name: "n", Description: "d"})
+	if err != nil {
+		t.Fatalf("Digest: %v", err)
+	}
+	sum := sha256.Sum256([]byte(`{"name":"n","description":"d"}`))
+	if want := hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("Digest = %s, want %s", got, want)
+	}
+	if DigestAlgorithm != "sha256" {
+		t.Errorf("DigestAlgorithm = %q, want sha256", DigestAlgorithm)
+	}
+	if _, err := Digest(Definition{Name: "n", Description: "x\xffy"}); err == nil {
+		t.Error("Digest of a definition with invalid UTF-8 succeeded")
 	}
 }

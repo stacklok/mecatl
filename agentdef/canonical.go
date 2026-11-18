@@ -2,6 +2,8 @@ package agentdef
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"unicode/utf8"
@@ -9,8 +11,24 @@ import (
 
 // FormVersion names the canonical form Canonical produces. Any change to that
 // form, such as a new encoding rule or a renamed key, changes digests of
-// definitions that did not change, so it needs a new version.
+// definitions that did not change, so it needs a new version. A consumer that
+// records a digest should record this version with it.
 const FormVersion = "agentdef-canonical/v1"
+
+// DigestAlgorithm names the algorithm Digest uses.
+const DigestAlgorithm = "sha256"
+
+// Digest returns the digest of the definition d: the lowercase hexadecimal
+// SHA-256 of Canonical(d). It is the digest of the accepted definition, so two
+// readers of the same file get the same value; it fails when Canonical does.
+func Digest(d Definition) (string, error) {
+	form, err := Canonical(d)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(form)
+	return hex.EncodeToString(sum[:]), nil
+}
 
 // Canonical returns the canonical bytes of d: the input of a digest of the
 // accepted definition, so two definitions have the same digest exactly when
