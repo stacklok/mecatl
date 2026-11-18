@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 )
 
 var brokerAlice = &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
@@ -47,8 +50,8 @@ type recordingBroker struct {
 	beforeRegister func(identitybroker.RegisterAgentRequest)
 	// otherAgent makes RegisterAgent return another agent than registered.
 	otherAgent bool
-	// renamedAgent makes RegisterAgent return another agent whose SPIFFE ID
-	// still ends in the registered incarnation.
+	// renamedAgent makes RegisterAgent return another well-formed agent, with
+	// a credential naming it.
 	renamedAgent bool
 	// registerErr, when set, makes RegisterAgent fail with it.
 	registerErr error
@@ -75,7 +78,7 @@ func newRecordingBroker(opts ...identitybroker.Option) *recordingBroker {
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
-	}, nil, key, opts...)
+	}, conformance.Definitions(), key, opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -172,7 +175,8 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 		reg.Agent.Subject += "-other"
 	}
 	if err == nil && renamed {
-		reg.Agent.Subject = strings.Replace(reg.Agent.Subject, "/shared/", "/renamed/", 1)
+		reg.Agent.Subject = reg.Agent.Subject[:strings.LastIndex(reg.Agent.Subject, "/")+1] + "ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+		reg.Credential = unsignedCredential(reg.Agent.Subject)
 	}
 	if err == nil && edit != nil {
 		edit(&reg)
@@ -243,8 +247,8 @@ func newIdentityBrokerService(t *testing.T, broker identitybroker.Service, llm *
 	cfg := server.Config{
 		Engine:         eng,
 		Store:          store,
-		IdentityBroker: broker,
-		Now:            func() time.Time { return time.Unix(0, 0) },
+		IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(),
+		Now: func() time.Time { return time.Unix(0, 0) },
 	}
 	for _, f := range configure {
 		f(&cfg)
@@ -625,7 +629,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			svc, err := server.NewService(server.Config{
 				Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
 				PlacementProvider: delegationPlacementProvider{binding: server.PlacementBinding{Environment: env, Ref: ref}},
-				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker,
+				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -657,4 +661,12 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			wantRegistered(t, broker, wantBrokerSession(t, broker, source), source)
 		})
 	}
+}
+
+// unsignedCredential returns an unsigned JWT naming subject: a credential
+// the holder accepts as naming that agent, which no broker issued.
+func unsignedCredential(subject string) identitybroker.Token {
+	enc := base64.RawURLEncoding
+	claims, _ := json.Marshal(map[string]string{"sub": subject})
+	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
 }

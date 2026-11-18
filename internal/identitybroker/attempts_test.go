@@ -82,7 +82,7 @@ func TestMemoryAttemptsMatchTheCall(t *testing.T) {
 }
 
 func TestAttemptsAreDroppedWhenTheSessionCloses(t *testing.T) {
-	b, err := New(testConfig(), nil, testKey(t, "attempts"))
+	b, err := New(testConfig(), testDefinitions(), testKey(t, "attempts"))
 	if err != nil {
 		t.Fatal(err)
 	}

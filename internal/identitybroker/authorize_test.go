@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 )
 
 const (
@@ -1189,7 +1190,7 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 	}
 	child, err := f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
 		SessionID: f.s.ID, HostSessionID: "hostS-child", Owner: testOwner,
-		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: identitybroker.DefinitionRef{Name: "child"},
+		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: conformance.MainDefinition,
 		Parent: main.Agent,
 	})
 	if err != nil {

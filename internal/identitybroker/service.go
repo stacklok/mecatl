@@ -29,18 +29,23 @@ import (
 //     session's owner with CodePermissionDenied: one session tree has one
 //     owner. It also refuses, with CodePermissionDenied, an agent with no
 //     parent whose host session or incarnation is not the broker session's
-//     root host session or incarnation, and an agent whose parent is not
-//     registered to the session.
+//     root host session or incarnation, an agent whose parent is not
+//     registered to the session, and a new agent whose definition reference
+//     is not exactly one the broker loaded.
 //   - Registering the same incarnation again returns the same agent with a
 //     fresh credential, so a lost response or an expiring credential is
 //     handled by registering again. Registering it into a new broker session
 //     moves it there, keeping its identity. A registration of the same
-//     incarnation with a different owner, host session, or parent fails with
-//     CodeAlreadyExists and changes nothing.
+//     incarnation with a different owner, host session, definition
+//     reference, or parent fails with CodeAlreadyExists and changes nothing.
+//     An agent registering again is not checked against the definitions
+//     loaded now: it keeps the definition it registered with.
 //   - A failed registration leaves any earlier registration as it was.
 //   - Agents with different incarnations are different agents. An agent's
-//     subject is a SPIFFE ID ending in "/inst/" and its incarnation, so the
-//     caller can check that the agent returned is the one it registered.
+//     subject is its SPIFFE ID, spiffe://<trust domain>/agent/<ag_
+//     identifier>, which carries no definition name, incarnation, or
+//     ancestry; CheckRegistration checks that form, and a caller holding an
+//     earlier registration of the incarnation checks the agent is the same.
 //   - A broker session ID the broker never issued is refused with
 //     CodePermissionDenied.
 //   - Invalid requests fail with CodeInvalidArgument.
@@ -223,8 +228,8 @@ func (r CloseSessionRequest) Validate() error {
 }
 
 // AgentRef refers to a registered agent instance by its canonical subject,
-// which the caller checks matches the instance it registered. The zero value
-// refers to no agent.
+// its SPIFFE ID, which the caller checks with CheckRegistration. The zero
+// value refers to no agent.
 type AgentRef struct {
 	Subject string
 }
@@ -244,14 +249,15 @@ type RegisterAgentRequest struct {
 	Owner Owner
 	// Incarnation is the agent instance's incarnation, which the harness
 	// allocates and persists: its host session's incarnation. With no Parent
-	// it must equal the broker session's incarnation. It becomes a segment of
-	// the agent's SPIFFE ID, so it must be a Mecatl incarnation: inc_ and 26
-	// lowercase base32 characters, or legacy_ and 64 hex characters.
+	// it must equal the broker session's incarnation. The broker keys agents
+	// by it. It must be a Mecatl incarnation: inc_ and 26 lowercase base32
+	// characters, or legacy_ and 64 hex characters.
 	Incarnation string
-	// Definition is the definition the instance runs. Name is required. Source
-	// and Revision are checked when set but may be empty for now, because
-	// Mecatl sessions know their definition only by name; requiring them will
-	// be addressed later.
+	// Definition is the definition the instance runs. Name is required, and a
+	// new instance's reference must be exactly one the broker loaded, so it
+	// registers only with Source and Revision set. Source and Revision may
+	// still be empty in a request, which the broker then refuses as not
+	// loaded, until sessions record their exact reference (#2548).
 	Definition DefinitionRef
 	// Parent is the registered instance that created this one; zero for a
 	// session's main agent.

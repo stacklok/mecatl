@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 )
 
 // hookedOpenBroker runs afterOpen after each OpenSession the broker answered.
@@ -48,7 +49,7 @@ func newSavedSuccessorFixture(t *testing.T) savedSuccessorFixture {
 	var next atomic.Int32
 	svc, err := NewService(Config{
 		Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/owned",
-		IdentityBroker: broker, Now: time.Now,
+		IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(), Now: time.Now,
 		NewID: func() session.SessionID { return ids[next.Add(1)-1] },
 	})
 	if err != nil {

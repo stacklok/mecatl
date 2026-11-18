@@ -11,9 +11,10 @@
 // signing capability, and already-loaded definition records, and returns a Broker
 // holding an independently owned snapshot of them, and no broker sessions. The
 // broker signs agent credentials (JWT-SVIDs) with the signer and verifies them
-// itself, for Mecatl's calls and for AS-1. Every agent has the shared agent
-// identity: one ag_ identifier generated per process, and a SPIFFE ID under one
-// shared path that differs only by incarnation. The snapshot holds only
+// itself, for Mecatl's calls and for AS-1. Each agent instance has its own
+// identity: an opaque ag_ identifier given when it first registers, and the
+// SPIFFE ID spiffe://<trust domain>/agent/<ag_ identifier>. A new instance's
+// definition must be one in the snapshot. The snapshot holds only
 // definitions the broker loads itself, operator-loaded global definitions and
 // system built-ins; repository definitions never enter it.
 //
@@ -58,9 +59,6 @@ type Broker struct {
 	config      Config
 	definitions map[DefinitionRef]DefinitionRecord
 	issuer      credentialIssuer
-	// agentID is the shared agent identity's ag_ identifier, generated for
-	// this process.
-	agentID string
 	// as1 converts access tokens at session open; nil when the broker only
 	// pairs sessions.
 	as1 AuthServer
@@ -116,7 +114,6 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 		config:      config,
 		definitions: snapshot,
 		issuer:      issuer,
-		agentID:     newAgentID(),
 		sessions:    newSessionTable(),
 	}
 	for _, opt := range opts {

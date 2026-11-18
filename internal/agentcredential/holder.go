@@ -7,7 +7,6 @@ package agentcredential
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -104,9 +103,9 @@ func New(broker identitybroker.Service, now func() time.Time) *Holder {
 
 // Ensure is the run-entry path. It registers the agent with req unless the
 // held entry has the same incarnation and broker session and is before
-// renewAt. A registration must return an unexpired credential for an agent
-// whose ID ends in the incarnation and that, with a credential held for the
-// same incarnation, is the held agent; otherwise Ensure returns ErrExpired or
+// renewAt. A registration must return an unexpired credential that
+// identitybroker.CheckRegistration accepts, for an agent that, with a
+// credential held for the same incarnation, is the held agent; otherwise Ensure returns ErrExpired or
 // ErrOtherAgent and keeps what it held. admit is called, without the holder's
 // lock, only once such a registration succeeded, and its error is returned
 // unchanged; the registration is then stored only if key's root was not
@@ -140,7 +139,7 @@ func (h *Holder) Ensure(ctx context.Context, key Key, req identitybroker.Registe
 	}
 	// The registration may have taken a while: check it against the time now.
 	now = h.now()
-	if err := checkRegistration(req, reg, held, now); err != nil {
+	if err := checkRegistration(reg, held, now); err != nil {
 		return err
 	}
 	if err := admit(); err != nil {
@@ -155,28 +154,25 @@ func (h *Holder) Ensure(ctx context.Context, key Key, req identitybroker.Registe
 	return nil
 }
 
-// checkRegistration applies run entry's checks to reg, registered with req.
+// checkRegistration applies run entry's checks to reg.
 // held, if not nil, is the entry held for the same incarnation.
-func checkRegistration(req identitybroker.RegisterAgentRequest, reg identitybroker.Registration, held *entry, now time.Time) error {
+func checkRegistration(reg identitybroker.Registration, held *entry, now time.Time) error {
 	// The in-process broker never returns an expired credential; this guards a
 	// remote broker, whose credential would otherwise be renewed at no point.
 	if !reg.ExpiresAt.After(now) {
 		return ErrExpired
 	}
 	// A mismatch keeps the held credential, so every later registration fails
-	// the same way until the root is dropped. That is deliberate: in this
-	// phase the ID is built from the incarnation, so it changes only if the
+	// the same way until the root is dropped. That is deliberate: an
+	// incarnation keeps its agent ID for good, so the ID changes only if the
 	// broker misbehaves, and dropping the held agent would let the next
 	// registration accept the wrong one. While the broker runs in process, a
-	// legitimate change, such as another trust domain or per-agent identities,
-	// comes with a restart, which clears what is held; a remote broker can
-	// change without one. The comparison lasts only while this process holds
-	// the credential; across a restart, release, or lease loss the suffix
-	// check is the guarantee, as the holder does not know the broker's trust
-	// domain to predict the full ID. The suffix check is enough only while
-	// agent IDs end in .../shared/inst/<incarnation>; per-agent IDs need a
-	// full-ID match that the broker package owns.
-	if !strings.HasSuffix(reg.Agent.Subject, "/inst/"+req.Incarnation) || (held != nil && reg.Agent != held.reg.Agent) {
+	// legitimate change, such as another trust domain, comes with a restart,
+	// which clears what is held; a remote broker can change without one. The
+	// comparison lasts only while this process holds the credential. Agent IDs
+	// are opaque, so across a restart, release, or lease loss nothing ties the
+	// returned agent to the incarnation but the broker's own check.
+	if identitybroker.CheckRegistration(reg) != nil || (held != nil && reg.Agent != held.reg.Agent) {
 		return ErrOtherAgent
 	}
 	return nil
@@ -251,7 +247,7 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credent
 	reg, err := h.broker.RegisterAgent(ctx, e.req)
 	now := h.now()
 	if err == nil {
-		err = checkRegistration(e.req, reg, e, now)
+		err = checkRegistration(reg, e, now)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

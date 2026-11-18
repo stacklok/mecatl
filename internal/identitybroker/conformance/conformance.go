@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -30,8 +31,33 @@ type Implementation interface {
 }
 
 // Factory returns a fresh, empty implementation for one test, which reads
-// the time from now. Each implementation it returns has its own signing key.
+// the time from now and has loaded exactly the records Definitions returns.
+// Each implementation it returns has its own signing key.
 type Factory func(t *testing.T, now func() time.Time) Implementation
+
+// The definitions the contract registers agents with, all in Definitions. An
+// implementation's own tests may register with them too; nothing modifies
+// them.
+var (
+	MainDefinition     = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"}
+	ReviewerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "code-reviewer", Revision: "r1"}
+)
+
+// Definitions returns the definition records an implementation under test
+// loads: the built-in main and a global code reviewer. Each call returns new
+// records.
+func Definitions() []identitybroker.DefinitionRecord {
+	record := func(ref identitybroker.DefinitionRef) identitybroker.DefinitionRecord {
+		source := sha256.Sum256([]byte("source " + ref.Name))
+		accepted := sha256.Sum256([]byte("definition " + ref.Name))
+		return identitybroker.DefinitionRecord{Ref: ref, Provenance: identitybroker.Provenance{
+			Profile:          "conformance/v1",
+			SourceDigest:     identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(source[:])},
+			DefinitionDigest: identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(accepted[:])},
+		}}
+	}
+	return []identitybroker.DefinitionRecord{record(MainDefinition), record(ReviewerDefinition)}
+}
 
 // coreFactory returns an implementation on the real clock.
 type coreFactory func(t *testing.T) identitybroker.Core
@@ -93,7 +119,7 @@ func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentReque
 		HostSessionID: s.HostSessionID,
 		Owner:         s.Owner,
 		Incarnation:   s.Incarnation,
-		Definition:    identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"},
+		Definition:    MainDefinition,
 	}
 }
 

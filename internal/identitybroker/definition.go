@@ -12,14 +12,14 @@ import (
 // DigestSHA256 is the only digest algorithm this package accepts.
 const DigestSHA256 = "sha256"
 
-// MaxSegmentBytes bounds DefinitionRef.Source and DefinitionRef.Name. Both
-// become segments of agent SPIFFE IDs, and the cap keeps the longest planned ID
-// within the 2,048 bytes SPIFFE-ID section 2.3 advises against exceeding.
+// MaxSegmentBytes bounds DefinitionRef.Source and DefinitionRef.Name, the
+// registration cap on a definition category and name (design registration
+// check 6).
 const MaxSegmentBytes = 63
 
-// Definition sources and built-in names. They become segments of agent SPIFFE
-// IDs, so they are part of the registration contract, not details of the
-// loader that produces the records.
+// Definition sources and built-in names. Registrations name them, so they are
+// part of the registration contract, not details of the loader that produces
+// the records.
 const (
 	// SourceGlobal is the source of the operator's global definitions.
 	SourceGlobal = "global"
@@ -42,8 +42,8 @@ const (
 // different definitions. DefinitionRef is comparable and is the snapshot key.
 type DefinitionRef struct {
 	// Source identifies where the definition came from, such as "global" for
-	// operator-loaded definitions or "system" for built-ins. It becomes the
-	// definition category segment of agent SPIFFE IDs.
+	// operator-loaded definitions or "system" for built-ins: the definition
+	// category. Agent SPIFFE IDs do not carry it.
 	Source string
 	// Name is the definition name within the source, such as "code-reviewer".
 	Name string
@@ -192,7 +192,8 @@ func invalidIncarnation(s string) error {
 	return invalid(fmt.Sprintf("incarnation %q must be inc_ and 26 lowercase base32 characters, or legacy_ and 64 hex characters", s))
 }
 
-// isSegment reports whether s is a SPIFFE-path-safe segment of at most
+// isSegment reports whether s is a definition category or name the
+// registration rules accept: a SPIFFE-path-safe segment of at most
 // MaxSegmentBytes.
 func isSegment(s string) bool { return isPathSegment(s, MaxSegmentBytes) }
 

@@ -14,9 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 )
 
 // identityBrokerWorkload is the workload name the identity broker records until
@@ -164,8 +167,8 @@ func sameIssuer(a, b string) bool {
 
 // effectivePort is u's port, or its scheme's default when it names none.
 func effectivePort(u *url.URL) string {
-	if port := u.Port(); port != "" {
-		return port
+	if p := u.Port(); p != "" {
+		return p
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "https":
@@ -195,6 +198,9 @@ type identityBrokerParts struct {
 	client *identitybroker.ClientAssertionSigner
 	// core is the real broker; nil for an injected test core.
 	core *identitybroker.Broker
+	// definitions are the definition records core loaded; nil for an
+	// injected core.
+	definitions []identitybroker.DefinitionRecord
 	// recorder holds the core's decision and ID-JAG records; nil for an
 	// injected core.
 	recorder *identitybroker.MemoryRecorder
@@ -259,7 +265,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 	core := cfg.identityBrokerCore
 	var parts identityBrokerParts
 	if core == nil {
-		broker, err := newIdentityBroker(cfg)
+		broker, err := newIdentityBroker(ctx, cfg)
 		if err != nil {
 			return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
 		}
@@ -335,7 +341,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayID
 	if delegate.IDJAG != nil {
 		cfg.IdentityBrokerAS1.ActorTokens = server
 	}
-	broker, err := newIdentityBroker(cfg)
+	broker, err := newIdentityBroker(ctx, cfg)
 	if err != nil {
 		_ = server.Close()
 		return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
@@ -394,10 +400,12 @@ func releaseServerThen(server *as1server.Server, next func()) func() {
 // authenticates there with the signer; without one, which is a deployment
 // that hosts no AS-1, nothing calls AS-1 or AS-2.
 type identityBroker struct {
-	core     *identitybroker.Broker
-	client   *identitybroker.ClientAssertionSigner
-	recorder *identitybroker.MemoryRecorder
-	gateway  bool
+	core *identitybroker.Broker
+	// definitions are the records core loaded.
+	definitions []identitybroker.DefinitionRecord
+	client      *identitybroker.ClientAssertionSigner
+	recorder    *identitybroker.MemoryRecorder
+	gateway     bool
 	// gatewayServers are the servers the gateway routes.
 	gatewayServers []string
 }
@@ -405,7 +413,7 @@ type identityBroker struct {
 // parts returns the identity broker's parts that b holds; the caller adds
 // the service, the hosted AS-1, and release.
 func (b identityBroker) parts() identityBrokerParts {
-	return identityBrokerParts{client: b.client, core: b.core, recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers}
+	return identityBrokerParts{client: b.client, core: b.core, definitions: b.definitions, recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers}
 }
 
 // IdentityBrokerAS1 is the AS-1 the identity broker converts access tokens
@@ -446,7 +454,10 @@ func identityBrokerConfig(cfg Config) identitybroker.Config {
 
 // newIdentityBroker constructs the real identity broker with the interim
 // configuration and, one key per role, an agent issuer key and a broker
-// client key generated for this process. It loads no definitions yet. With
+// client key generated for this process. It loads the built-in definitions
+// and the operator's global definitions from cfg.AgentsDirs, the directories
+// the harness reads first; a directory that cannot be read fails startup, and
+// each definition left out or adjusted is logged. With
 // cfg.IdentityBrokerAS1, session open converts access tokens at that AS-1,
 // authenticating with the broker client key, and calls get their ID-JAGs
 // there; a gateway is configured only then, and only when a test sets
@@ -456,8 +467,12 @@ func identityBrokerConfig(cfg Config) identitybroker.Config {
 // key replaces it (#2538): an external server registered with its JWKS inline
 // would refuse the broker after a restart, while in-process servers register
 // it again at each build.
-func newIdentityBroker(cfg Config) (identityBroker, error) {
+func newIdentityBroker(ctx context.Context, cfg Config) (identityBroker, error) {
 	config := identityBrokerConfig(cfg)
+	definitions, err := loadIdentityBrokerDefinitions(ctx, cfg)
+	if err != nil {
+		return identityBroker{}, err
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
@@ -500,7 +515,7 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 			gateway, gatewayServers = true, append([]string(nil), cfg.IdentityBrokerGatewayServers...)
 		}
 	}
-	core, err := identitybroker.New(config, nil, key, opts...)
+	core, err := identitybroker.New(config, definitions, key, opts...)
 	if err != nil {
 		return identityBroker{}, err
 	}
@@ -509,5 +524,25 @@ func newIdentityBroker(cfg Config) (identityBroker, error) {
 			return identityBroker{}, fmt.Errorf("bind AS-1's actor-token check: %w", err)
 		}
 	}
-	return identityBroker{core: core, client: client, recorder: recorder, gateway: gateway, gatewayServers: gatewayServers}, nil
+	return identityBroker{core: core, definitions: definitions, client: client, recorder: recorder, gateway: gateway, gatewayServers: gatewayServers}, nil
+}
+
+// loadIdentityBrokerDefinitions loads the identity broker's definition
+// records: the built-ins of this build and the global definitions in
+// cfg.AgentsDirs. A definition left out or adjusted is logged, without its
+// contents; a directory that cannot be read fails the load.
+func loadIdentityBrokerDefinitions(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, error) {
+	records, problems, err := definitionloader.Load(ctx, definitionloader.Config{Dirs: cfg.AgentsDirs, BuildID: buildinfo.BuildID})
+	for _, p := range problems {
+		outcome := "definition adjusted and loaded"
+		if p.Dropped {
+			outcome = "definition left out"
+		}
+		cfg.diag().Log(ctx, port.LevelWarn, "identity broker definition problem",
+			"location", p.Location, "reason", p.Reason, "outcome", outcome)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load identity broker definitions: %w", err)
+	}
+	return records, nil
 }

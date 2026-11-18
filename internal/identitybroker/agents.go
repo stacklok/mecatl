@@ -10,12 +10,13 @@ import (
 // broker sessions: registering an instance into a new session moves its
 // record there, and the record outlives the session it was registered to.
 //
-// Every instance has the shared agent identity: the same ag_ identifier, and
-// a SPIFFE ID under one shared path that differs only by incarnation, so a
-// credential still names the one instance it was issued to and the session it
-// is registered to can be checked. Registering an instance again must keep its
-// owner, host session, and parent; its definition is not compared yet.
+// Each instance has its own ag_ identifier, given when its incarnation first
+// registers and never reassigned, and its SPIFFE ID is
+// spiffe://<trust domain>/agent/<ag_ identifier>: it carries no definition
+// name, incarnation, or ancestry, which the record keeps. Registering an
+// instance again must keep its owner, host session, definition, and parent.
 type agentRecord struct {
+	agentID       string
 	sessionID     string
 	hostSessionID string
 	owner         Owner
@@ -29,6 +30,13 @@ type agentRecord struct {
 	// together the two were issued. Expired entries are dropped when the
 	// instance registers again.
 	credentials map[[sha256.Size]byte]time.Time
+}
+
+// agentIdentity is an instance's ag_ identifier and the SPIFFE ID built from
+// it. The zero value is no identity.
+type agentIdentity struct {
+	id      string
+	subject string
 }
 
 // maxIssuedCredentials bounds agentRecord.credentials, so repeated
@@ -55,61 +63,107 @@ func credentialHash(credential Token) [sha256.Size]byte {
 	return sha256.Sum256([]byte(credential.Value()))
 }
 
+// registerAttempts bounds RegisterAgent's attempts. An attempt fails only when
+// another registration gave the same incarnation its identity while this one
+// was signing, and identities are never reassigned, so the second attempt
+// signs for the identity the first recorded.
+const registerAttempts = 2
+
 // RegisterAgent implements Core. It checks the session, the owner, the root
-// host session or parent, and an earlier registration of the instance, issues
-// the credential, and only then records the instance in the session, so a
-// failure changes nothing. The definition is accepted as reported, without a
-// root eligibility check, because the broker loads no definitions yet.
+// host session or parent, and the definition or an earlier registration of
+// the instance, issues the credential, and only then records the instance in
+// the session, so a failure changes nothing. A new instance's definition must
+// be one the broker loaded; an instance registered before keeps the
+// definition it registered with, whatever the broker loaded since.
+//
+// Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
 func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Registration{}, err
 	}
-	subject := b.issuer.subject(req.Incarnation)
 	t := b.sessions
-	if _, err := t.checkRegistration(workload, subject, req); err != nil {
-		return Registration{}, err
-	}
+	for range registerAttempts {
+		identity, err := b.registrationIdentity(workload, req)
+		if err != nil {
+			return Registration{}, err
+		}
 
-	// Sign outside the lock: a remote signer may be slow.
-	credential, expiresAt, err := b.issuer.issue(subject, t.now())
-	if err != nil {
-		// The signer's error is not passed on: from a key service it can name
-		// keys or endpoints, and the broker has no log of its own.
-		return Registration{}, NewError(CodeInternal, "", "the agent credential could not be issued")
-	}
+		// Sign outside the lock: a remote signer may be slow.
+		credential, expiresAt, err := b.issuer.issue(identity.subject, t.now())
+		if err != nil {
+			// The signer's error is not passed on: from a key service it can
+			// name keys or endpoints, and the broker has no log of its own.
+			return Registration{}, NewError(CodeInternal, "", "the agent credential could not be issued")
+		}
 
-	// Check again under the lock that records the instance: the session or
-	// the instance may have changed while signing.
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	s, err := t.checkRegistrationLocked(workload, subject, req)
-	if err != nil {
-		return Registration{}, err
+		reg, retry, err := b.recordRegistration(workload, req, identity, credential, expiresAt)
+		if err != nil || !retry {
+			return reg, err
+		}
 	}
-	t.recordLocked(subject, s.ID, req, credential, expiresAt)
-	return Registration{Agent: AgentRef{Subject: subject}, Credential: credential, ExpiresAt: expiresAt}, nil
+	return Registration{}, NewError(CodeAborted, "", "the agent registration raced another registration of the same agent")
 }
 
-// recordLocked records a registration of subject in session sessionID, with
+// registrationIdentity checks req under t.mu and returns the identity to sign
+// for: the instance's own if it registered before, otherwise a new one.
+func (b *Broker) registrationIdentity(workload Workload, req RegisterAgentRequest) (agentIdentity, error) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, identity, err := b.checkRegistrationLocked(workload, req)
+	if err != nil || identity != (agentIdentity{}) {
+		return identity, err
+	}
+	id := newAgentID()
+	return agentIdentity{id: id, subject: b.issuer.subject(id)}, nil
+}
+
+// recordRegistration checks req again under t.mu, since the session or the
+// instance may have changed while signing, and records the registration with
+// identity. It reports retry, recording nothing, when identity is no longer
+// the one to record: another registration gave the incarnation an identity
+// first, or a new identity is already taken.
+func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest, identity agentIdentity, credential Token, expiresAt time.Time) (reg Registration, retry bool, err error) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s, recorded, err := b.checkRegistrationLocked(workload, req)
+	if err != nil {
+		return Registration{}, false, err
+	}
+	if recorded != identity {
+		if recorded != (agentIdentity{}) {
+			return Registration{}, true, nil
+		}
+		if _, taken := t.agents[identity.subject]; taken {
+			return Registration{}, true, nil
+		}
+	}
+	t.recordLocked(identity, s.ID, req, credential, expiresAt)
+	return Registration{Agent: AgentRef{Subject: identity.subject}, Credential: credential, ExpiresAt: expiresAt}, false, nil
+}
+
+// recordLocked records a registration of identity in session sessionID, with
 // the credential just issued, which always verifies afterwards. The caller
 // holds t.mu.
-func (t *sessionTable) recordLocked(subject, sessionID string, req RegisterAgentRequest, credential Token, expiresAt time.Time) {
-	rec, ok := t.agents[subject]
+func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, req RegisterAgentRequest, credential Token, expiresAt time.Time) {
+	rec, ok := t.agents[identity.subject]
 	switch {
 	case !ok:
 		rec = &agentRecord{
+			agentID:       identity.id,
 			hostSessionID: req.HostSessionID,
 			owner:         req.Owner,
 			incarnation:   req.Incarnation,
 			definition:    req.Definition,
 			parent:        req.Parent,
 		}
-		t.agents[subject] = rec
+		t.agents[identity.subject] = rec
+		t.incarnations[req.Incarnation] = identity.subject
 	case rec.sessionID == sessionID:
 		// Registering again in the same session keeps the credentials issued
 		// there, dropping expired ones and, past maxIssuedCredentials, the
-		// earliest to expire. Its definition stays the first one reported,
-		// since a later one is not compared yet.
+		// earliest to expire.
 		rec.pruneCredentials(t.now())
 	}
 	if !ok || rec.sessionID != sessionID {
@@ -134,42 +188,47 @@ func (r *agentRecord) pruneCredentials(now time.Time) {
 	}
 }
 
-// checkRegistration is checkRegistrationLocked under t.mu.
-func (t *sessionTable) checkRegistration(workload Workload, subject string, req RegisterAgentRequest) (Session, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.checkRegistrationLocked(workload, subject, req)
-}
-
 // checkRegistrationLocked returns the usable session for req after the
-// owner, root host session, parent, and re-registration checks. An instance
-// registered before, in any session, must keep its owner, host session, and
-// parent; only its broker session may change. The caller holds t.mu.
-func (t *sessionTable) checkRegistrationLocked(workload Workload, subject string, req RegisterAgentRequest) (Session, error) {
+// owner, root host session or parent, and definition or re-registration
+// checks, and the identity of the instance if its incarnation registered
+// before. An instance registered before, in any session, must keep its owner,
+// host session, definition, and parent, and is not checked against the
+// definitions loaded now (design check 7 replaces check 3); only its broker
+// session may change. A new instance's definition must be one the broker
+// loaded (check 3). The caller holds t.mu.
+func (b *Broker) checkRegistrationLocked(workload Workload, req RegisterAgentRequest) (Session, agentIdentity, error) {
+	t := b.sessions
 	s, err := t.usableLocked(workload, req.SessionID)
 	if err != nil {
-		return Session{}, err
+		return Session{}, agentIdentity{}, err
 	}
 	if req.Owner != s.Owner {
-		return Session{}, NewError(CodePermissionDenied, "", "the registration's owner is not the broker session's owner")
+		return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "the registration's owner is not the broker session's owner")
 	}
 	if req.Parent.IsZero() {
 		if req.HostSessionID != s.HostSessionID {
-			return Session{}, NewError(CodePermissionDenied, "", "an agent with no parent must run in the broker session's root host session")
+			return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "an agent with no parent must run in the broker session's root host session")
 		}
 		// The main agent's incarnation is its host session's, so a stale one
 		// (from an earlier session under the same host session ID) cannot
 		// move that session's agent and identity into this one.
 		if req.Incarnation != s.Incarnation {
-			return Session{}, NewError(CodePermissionDenied, "", "an agent with no parent must have the root host session's incarnation")
+			return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "an agent with no parent must have the root host session's incarnation")
 		}
 	} else if parent, ok := t.agents[req.Parent.Subject]; !ok || parent.sessionID != s.ID {
-		return Session{}, NewError(CodePermissionDenied, "", "the parent agent is not registered to the broker session")
+		return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "the parent agent is not registered to the broker session")
 	}
-	if rec, ok := t.agents[subject]; ok && (rec.owner != req.Owner || rec.hostSessionID != req.HostSessionID || rec.parent != req.Parent) {
-		return Session{}, NewError(CodeAlreadyExists, "", "the agent is registered with a different owner, host session, or parent")
+	if subject, ok := t.incarnations[req.Incarnation]; ok {
+		rec := t.agents[subject]
+		if rec.owner != req.Owner || rec.hostSessionID != req.HostSessionID || rec.definition != req.Definition || rec.parent != req.Parent {
+			return Session{}, agentIdentity{}, NewError(CodeAlreadyExists, "", "the agent is registered with a different owner, host session, definition, or parent")
+		}
+		return s, agentIdentity{id: rec.agentID, subject: subject}, nil
 	}
-	return s, nil
+	if _, ok := b.definitions[req.Definition]; !ok {
+		return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "the definition is not one the broker loaded")
+	}
+	return s, agentIdentity{}, nil
 }
 
 var _ CredentialVerifier = (*Broker)(nil)
@@ -196,8 +255,10 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	rec, registered := t.agents[cred.subject]
 	bound := registered && rec.sessionID == req.SessionID
 	var current bool
+	var agentID string
 	if bound {
 		_, current = rec.credentials[credentialHash(req.Credential)]
+		agentID = rec.agentID
 	}
 	// A missing session record counts as closed, with no closing reason.
 	var closed Reason
@@ -222,15 +283,17 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	case !open:
 		return VerifiedAgent{}, credentialDenied("the broker session is closed")
 	}
-	return b.verifiedAgent(cred), nil
+	return verifiedAgent(cred, agentID), nil
 }
 
-// verifiedAgent is the agent cred, a verified credential, identifies.
-func (b *Broker) verifiedAgent(cred verifiedCredential) VerifiedAgent {
+// verifiedAgent is the agent cred, a verified credential, identifies:
+// the registered instance with ag_ identifier agentID, whose SPIFFE ID is
+// cred's subject and becomes act.sub.
+func verifiedAgent(cred verifiedCredential, agentID string) VerifiedAgent {
 	return VerifiedAgent{
 		Agent:     AgentRef{Subject: cred.subject},
-		AgentID:   b.agentID,
-		ActorID:   ActorIssuer(b.issuer.trustDomain) + "/agent/" + b.agentID,
+		AgentID:   agentID,
+		ActorID:   cred.subject,
 		ExpiresAt: cred.expiresAt,
 	}
 }
@@ -262,7 +325,9 @@ func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentia
 	t.mu.Lock()
 	rec, registered := t.agents[cred.subject]
 	var current, open, owned bool
+	var agentID string
 	if registered {
+		agentID = rec.agentID
 		_, current = rec.credentials[credentialHash(req.Credential)]
 		if s, ok := t.byID[rec.sessionID]; ok {
 			t.expireLocked(s)
@@ -274,5 +339,5 @@ func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentia
 	if !registered || !owned || !current || !open {
 		return VerifiedAgent{}, credentialDenied("the credential is not current for an open broker session of the owner")
 	}
-	return b.verifiedAgent(cred), nil
+	return verifiedAgent(cred, agentID), nil
 }

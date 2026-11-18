@@ -347,3 +347,15 @@ func TestDefinitionLookupReturnsIndependentCopy(t *testing.T) {
 		t.Errorf("lookup mutation reached the broker: %+v", again)
 	}
 }
+
+// testMainRef and testDeployerRef are the definitions the package's tests
+// register agents with; testDefinitions loads both.
+var (
+	testMainRef     = DefinitionRef{Source: SourceSystem, Name: BuiltinMain, Revision: "3f2c9a1"}
+	testDeployerRef = DefinitionRef{Source: SourceGlobal, Name: "deployer", Revision: "3f2c9a1"}
+)
+
+// testDefinitions returns the records of testMainRef and testDeployerRef.
+func testDefinitions() []DefinitionRecord {
+	return []DefinitionRecord{testRecord(testMainRef.Source, testMainRef.Name), testRecord(testDeployerRef.Source, testDeployerRef.Name)}
+}

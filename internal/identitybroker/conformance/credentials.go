@@ -89,7 +89,7 @@ func runCredentials(t *testing.T, factory Factory) {
 		wantAgentNames(t, got)
 	})
 
-	t.Run("agents share the ag_ identifier but not their instance", func(t *testing.T) {
+	t.Run("each agent has its own ag_ identifier, which names it as the actor", func(t *testing.T) {
 		f := setup(t)
 		other := mustOpen(t, f.svc, openRequest("hostS43", alice))
 		otherReg := mustRegisterAt(t, f.svc, registerRequest(other), f.clock.Now)
@@ -98,8 +98,13 @@ func runCredentials(t *testing.T, factory Factory) {
 		if errA != nil || errB != nil {
 			t.Fatalf("VerifyCredential: %v, %v", errA, errB)
 		}
-		if a.AgentID != b.AgentID || a.Agent == b.Agent {
-			t.Fatalf("agents = %+v and %+v, want one ag_ identifier and two instances", a, b)
+		if a.AgentID == b.AgentID || a.Agent == b.Agent {
+			t.Fatalf("agents = %+v and %+v, want two ag_ identifiers and two instances", a, b)
+		}
+		for _, got := range []identitybroker.VerifiedAgent{a, b} {
+			if !strings.HasSuffix(got.Agent.Subject, "/agent/"+got.AgentID) || got.ActorID != got.Agent.Subject {
+				t.Fatalf("verified agent %+v: want its SPIFFE ID, ending in /agent/<ag_ identifier>, as subject and actor", got)
+			}
 		}
 	})
 

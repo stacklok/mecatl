@@ -2,8 +2,13 @@ package agentcredential_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,12 +74,37 @@ func (b *fakeBroker) requests() []identitybroker.RegisterAgentRequest {
 	return append([]identitybroker.RegisterAgentRequest(nil), b.reqs...)
 }
 
-func registration(inc, credential string, expiresAt time.Time) identitybroker.Registration {
+// registration is the fake broker's answer for incarnation inc: an agent ID
+// the fake derives from inc, standing in for the one a broker gives it, and a
+// credential naming that agent, labelled label (see label).
+func registration(inc, label string, expiresAt time.Time) identitybroker.Registration {
+	sum := sha256.Sum256([]byte(inc))
+	subject := "spiffe://agents.example.com/agent/ag_" + strings.ToLower(base32.StdEncoding.EncodeToString(sum[:]))[:26]
 	return identitybroker.Registration{
-		Agent:      identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/" + inc},
-		Credential: identitybroker.NewToken(credential),
+		Agent:      identitybroker.AgentRef{Subject: subject},
+		Credential: credential(subject, label),
 		ExpiresAt:  expiresAt,
 	}
+}
+
+// credential returns an unsigned JWT naming subject, labelled label. The
+// holder reads a credential's sub without verifying it.
+func credential(subject, label string) identitybroker.Token {
+	enc := base64.RawURLEncoding
+	claims, _ := json.Marshal(map[string]string{"sub": subject, "jti": label})
+	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
+}
+
+// label returns the label credential gave tok.
+func label(tok identitybroker.Token) string {
+	parts := strings.Split(tok.Value(), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims map[string]string
+	_ = json.Unmarshal(raw, &claims)
+	return claims["jti"]
 }
 
 func request(brokerSession string) identitybroker.RegisterAgentRequest {
@@ -121,8 +151,8 @@ func TestHolderRenewsPastHalfLifetime(t *testing.T) {
 
 	c.Advance(4 * time.Minute)
 	got, err := h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-1" || got.BrokerSessionID != "bs_1" {
-		t.Fatalf("Credential before half its lifetime = %q in %q, %v; want credential-1 in bs_1", got.Token.Value(), got.BrokerSessionID, err)
+	if err != nil || label(got.Token) != "credential-1" || got.BrokerSessionID != "bs_1" {
+		t.Fatalf("Credential before half its lifetime = %q in %q, %v; want credential-1 in bs_1", label(got.Token), got.BrokerSessionID, err)
 	}
 	// Run entry before renewAt in the same broker session does not register.
 	mustEnsure(t, h, "bs_1")
@@ -132,8 +162,8 @@ func TestHolderRenewsPastHalfLifetime(t *testing.T) {
 
 	c.Advance(2 * time.Minute)
 	got, err = h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential past half its lifetime = %q, %v; want the renewed credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential past half its lifetime = %q, %v; want the renewed credential-2", label(got.Token), err)
 	}
 	reqs := b.requests()
 	if len(reqs) != 2 || reqs[1] != request("bs_1") {
@@ -148,8 +178,8 @@ func TestHolderRenewsOnSVIDExpired(t *testing.T) {
 	h, b, c := newHolder(t)
 	mustEnsure(t, h, "bs_1")
 	got, err := h.Credential(t.Context(), key, true)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential with renew = %q, %v; want the renewed credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential with renew = %q, %v; want the renewed credential-2", label(got.Token), err)
 	}
 
 	// A failed renewal after the broker refused the held credential returns
@@ -165,8 +195,8 @@ func TestHolderRenewsOnSVIDExpired(t *testing.T) {
 	// it has not expired...
 	c.Advance(6 * time.Minute)
 	got, err = h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential with a failed renewal = %q, %v; want the held credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential with a failed renewal = %q, %v; want the held credential-2", label(got.Token), err)
 	}
 	// ...and the broker's error once it has.
 	c.Advance(10 * time.Minute)
@@ -220,8 +250,8 @@ func TestHolderRenewalIsSingleFlight(t *testing.T) {
 	close(release)
 	for range callers {
 		r := <-results
-		if r.err != nil || r.cred.Token.Value() != "credential-blocked" {
-			t.Fatalf("Credential = %q, %v; want the one renewal's credential", r.cred.Token.Value(), r.err)
+		if r.err != nil || label(r.cred.Token) != "credential-blocked" {
+			t.Fatalf("Credential = %q, %v; want the one renewal's credential", label(r.cred.Token), r.err)
 		}
 	}
 	if n := len(b.requests()); n != 2 {
@@ -270,8 +300,8 @@ func TestHolderRenewalOutlivesTheFirstLookupsCancellation(t *testing.T) {
 		t.Fatal("the shared renewal was cancelled with the first lookup")
 	}
 	close(release)
-	if got := <-second; got.Token.Value() != "credential-renewed" {
-		t.Fatalf("waiting lookup = %q, want the renewed credential", got.Token.Value())
+	if got := <-second; label(got.Token) != "credential-renewed" {
+		t.Fatalf("waiting lookup = %q, want the renewed credential", label(got.Token))
 	}
 }
 
@@ -298,7 +328,7 @@ func TestHolderChecksARegistrationAgainstTheTimeItReturns(t *testing.T) {
 	if _, err := h.Credential(t.Context(), key, true); !errors.Is(err, agentcredential.ErrExpired) {
 		t.Fatalf("renewal with a credential that expired during registration = %v, want ErrExpired", err)
 	}
-	if held, _ := h.Held(key); held.Token.Value() == "late" {
+	if held, _ := h.Held(key); label(held.Token) == "late" {
 		t.Fatal("an expired renewal replaced the held credential")
 	}
 }
@@ -375,9 +405,18 @@ func TestHolderRefusesOtherAgentAndExpired(t *testing.T) {
 			return reg, nil
 		})
 	}
-	answer(registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "other", c.Now().Add(10*time.Minute)))
+	malformed := registration(incarnation, "malformed", c.Now().Add(10*time.Minute))
+	malformed.Agent.Subject = "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incarnation
+	malformed.Credential = credential(malformed.Agent.Subject, "malformed")
+	answer(malformed)
 	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
-		t.Fatalf("Ensure returning another incarnation's agent = %v, want ErrOtherAgent", err)
+		t.Fatalf("Ensure returning an agent ID of another form = %v, want ErrOtherAgent", err)
+	}
+	misnamed := registration(incarnation, "misnamed", c.Now().Add(10*time.Minute))
+	misnamed.Credential = registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "misnamed", c.Now().Add(10*time.Minute)).Credential
+	answer(misnamed)
+	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
+		t.Fatalf("Ensure returning a credential for another agent = %v, want ErrOtherAgent", err)
 	}
 	answer(registration(incarnation, "expired", c.Now()))
 	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrExpired) {
@@ -390,9 +429,8 @@ func TestHolderRefusesOtherAgentAndExpired(t *testing.T) {
 	b.setRegister(nil)
 	mustEnsure(t, h, "bs_1")
 	held, _ := h.Held(key)
-	// Same suffix, another agent: the held agent is kept.
-	other := registration(incarnation, "other", c.Now().Add(10*time.Minute))
-	other.Agent.Subject = "spiffe://elsewhere.example.com/mecatl/agent/shared/inst/" + incarnation
+	// A well-formed registration of another agent: the held agent is kept.
+	other := registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "other", c.Now().Add(10*time.Minute))
 	answer(other)
 	if err := h.Ensure(t.Context(), key, request("bs_2"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
 		t.Fatalf("Ensure returning another agent than the held one = %v, want ErrOtherAgent", err)

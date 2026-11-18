@@ -26,10 +26,9 @@ const credentialClockSkew = 30 * time.Second
 // es256 is the only algorithm agent credentials use.
 const es256 = "ES256"
 
-// sharedAgentPath is the SPIFFE ID path prefix of the shared agent identity,
-// before /inst/<incarnation>. Its single segment cannot be read as the
-// <source>/<name> pair of a per-definition identity.
-const sharedAgentPath = "/mecatl/agent/shared"
+// agentPath is the SPIFFE ID path of agent instances, before
+// /<ag_ identifier>.
+const agentPath = "/agent"
 
 // credentialIssuer signs and verifies agent credentials: JWT-SVIDs carrying
 // only sub, aud, and exp, with alg and kid in the header.
@@ -58,10 +57,10 @@ func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicK
 	}, nil
 }
 
-// subject returns the SPIFFE ID of the shared agent identity's instance with
-// incarnation, which the caller has validated as a path segment.
-func (c credentialIssuer) subject(incarnation string) string {
-	return "spiffe://" + c.trustDomain + sharedAgentPath + "/inst/" + incarnation
+// subject returns the SPIFFE ID of the agent instance with ag_ identifier
+// agentID.
+func (c credentialIssuer) subject(agentID string) string {
+	return ActorIssuer(c.trustDomain) + agentPath + "/" + agentID
 }
 
 // issue returns a credential for subject that expires a lifetime after now,
@@ -190,4 +189,41 @@ func publicJWK(pub *ecdsa.PublicKey) (JWK, error) {
 // as broker session IDs.
 func newAgentID() string {
 	return "ag_" + strings.ToLower(rand.Text())
+}
+
+// isAgentID reports whether s has the form newAgentID returns: ag_ and 26
+// lowercase base32 characters.
+func isAgentID(s string) bool {
+	rest, ok := strings.CutPrefix(s, "ag_")
+	if !ok || len(rest) != 26 {
+		return false
+	}
+	for _, c := range rest {
+		if (c < 'a' || c > 'z') && (c < '2' || c > '7') {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckRegistration reports whether reg has the form of a registration's
+// answer: its agent is an agent instance's SPIFFE ID,
+// spiffe://<trust domain>/agent/<ag_ identifier>, and its credential's sub
+// names that agent. It reads the credential without verifying it: the broker
+// that issued it verifies it on use. A caller that holds an earlier
+// registration of the same incarnation also checks that reg names the same
+// agent, since the ID carries nothing a caller could predict.
+func CheckRegistration(reg Registration) error {
+	trustDomain, agentID, ok := strings.Cut(strings.TrimPrefix(reg.Agent.Subject, "spiffe://"), agentPath+"/")
+	if !strings.HasPrefix(reg.Agent.Subject, "spiffe://") || !ok || trustDomain == "" || strings.Contains(trustDomain, "/") || !isAgentID(agentID) {
+		return fmt.Errorf("the agent %q is not an agent instance's SPIFFE ID", reg.Agent.Subject)
+	}
+	var claims jwt.RegisteredClaims
+	if _, _, err := jwt.NewParser().ParseUnverified(reg.Credential.Value(), &claims); err != nil {
+		return errors.New("the credential is not a JWT")
+	}
+	if claims.Subject != reg.Agent.Subject {
+		return errors.New("the credential names another agent")
+	}
+	return nil
 }

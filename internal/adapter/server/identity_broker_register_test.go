@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 )
 
 // wantRegistered checks the last registration registered sess's main agent in
@@ -31,7 +32,7 @@ func wantRegistered(t *testing.T, broker *recordingBroker, brokerSession identit
 		HostSessionID: string(sess.ID),
 		Owner:         identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject},
 		Incarnation:   string(sess.Incarnation()),
-		Definition:    identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		Definition:    conformance.MainDefinition,
 	}
 	if got != want {
 		t.Fatalf("registration = %+v, want %+v", got, want)
@@ -193,8 +194,9 @@ func TestIdentityBrokerRefusesAnotherAgent(t *testing.T) {
 }
 
 func TestIdentityBrokerRefusesAnotherAgentOnRenewal(t *testing.T) {
-	// The renewed agent's ID still ends in the incarnation, so only the
-	// comparison with the agent held before catches it.
+	// The renewed agent is a well-formed agent instance named by its
+	// credential, so only the comparison with the agent held before catches
+	// it.
 	broker := newRecordingBroker()
 	llm := mockllm.New(mockllm.TextTurn("must not run"))
 	svc := newIdentityBrokerService(t, broker, llm)
@@ -499,8 +501,8 @@ func TestIdentityBrokerHeldCredentialVerifiesForItsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyCredential of the held credential: %v", err)
 	}
-	if !strings.HasSuffix(got.Agent.Subject, "/inst/"+string(sess.Incarnation())) {
-		t.Fatalf("verified agent = %q, want the session's agent", got.Agent.Subject)
+	if !strings.HasSuffix(got.Agent.Subject, "/agent/"+got.AgentID) || got.ActorID != got.Agent.Subject {
+		t.Fatalf("verified agent = %+v, want its SPIFFE ID, ending in its ag_ identifier, as subject and actor", got)
 	}
 	if !strings.HasPrefix(got.AgentID, "ag_") {
 		t.Fatalf("verified ag_ identifier = %q", got.AgentID)

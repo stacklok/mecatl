@@ -302,8 +302,8 @@ var errIdentityBrokerSessionClosed = errors.New("identity broker session closed"
 // the credential held for it is still current there: registered to the same
 // broker session, with more than half its lifetime left. The main agent's
 // incarnation is the session's own, which the broker session was opened with.
-// The returned agent must be the one registered: its SPIFFE ID ends in the
-// incarnation, and registering again returns the same ID.
+// The returned agent must be the one registered: an agent instance's SPIFFE
+// ID, named by its credential, and the same ID registering again returns.
 func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Session, owner identitybroker.Owner, brokerSession identitybroker.Session) error {
 	host := string(sess.ID)
 	// admit runs only once a registration passed the holder's checks, so it
@@ -320,7 +320,7 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 		HostSessionID: host,
 		Owner:         owner,
 		Incarnation:   string(sess.Incarnation()),
-		Definition:    identityAgentDefinition(sess),
+		Definition:    identityAgentDefinition(s.cfg.IdentityDefinitions, sess),
 	}, admit)
 	switch {
 	case err == nil:
@@ -408,14 +408,29 @@ func (s *Service) openSavedIdentityBrokerSession(ctx context.Context, id session
 	return err
 }
 
-// identityAgentDefinition is the definition a session's main agent runs: its
-// named definition, otherwise the built-in main. A session knows a named
-// definition by name only, so its source and revision are not sent.
-func identityAgentDefinition(sess *session.Session) identitybroker.DefinitionRef {
+// identityAgentDefinition is the reference of the definition a session's
+// main agent runs, from loaded, the records the broker loaded: the global
+// definition of its name, otherwise the built-in main. The harness reads the
+// operator's explicit agent directories, the broker's global source, before
+// any other, so a global record of the name is the definition the session
+// runs. A named definition with no global record comes from a source the
+// broker does not load and is sent by name only; the broker refuses it.
+//
+// Shortcut: a session knows its definition by name only, so this sends the revision the broker loaded, not the one the session runs; removed by #2548.
+func identityAgentDefinition(loaded []identitybroker.DefinitionRecord, sess *session.Session) identitybroker.DefinitionRef {
+	want := identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain}
+	if sess.AgentDefinitionName != "" {
+		want = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: sess.AgentDefinitionName}
+	}
+	for _, rec := range loaded {
+		if rec.Ref.Source == want.Source && rec.Ref.Name == want.Name {
+			return rec.Ref
+		}
+	}
 	if sess.AgentDefinitionName != "" {
 		return identitybroker.DefinitionRef{Name: sess.AgentDefinitionName}
 	}
-	return identitybroker.DefinitionRef{Source: "system", Name: "main"}
+	return want
 }
 
 // openTeamRootIdentityBrokerSession opens the broker session of the session a

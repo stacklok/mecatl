@@ -5,7 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -27,9 +30,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -52,7 +57,7 @@ func (c *closableCore) FindSession(ctx context.Context, workload identitybroker.
 
 func newClosableCore(t *testing.T) *closableCore {
 	t.Helper()
-	broker, err := newIdentityBroker(Config{})
+	broker, err := newIdentityBroker(t.Context(), Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +242,7 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 	}
 	reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: incarnation,
-		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		Definition: builtinMainRef(),
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
@@ -254,7 +259,7 @@ func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 // TestIdentityBrokerKeysAreSeparatePerRole: the wiring generates a broker
 // client key that is not the agent issuer key, nor another build's.
 func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
-	broker, err := newIdentityBroker(Config{})
+	broker, err := newIdentityBroker(t.Context(), Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +275,7 @@ func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
 	}
 	reg, err := broker.core.RegisterAgent(t.Context(), workload, identitybroker.RegisterAgentRequest{
 		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: incarnation,
-		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		Definition: builtinMainRef(),
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
@@ -289,7 +294,7 @@ func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
 	if len(keys) != 1 || keys[0].KeyID == "" || keys[0].KeyID == agentKey.KID {
 		t.Fatalf("broker client JWKS %+v; want one key distinct from the agent issuer key %q", keys, agentKey.KID)
 	}
-	other, err := newIdentityBroker(Config{})
+	other, err := newIdentityBroker(t.Context(), Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +308,7 @@ func TestIdentityBrokerKeysAreSeparatePerRole(t *testing.T) {
 // the broker client key.
 func TestIdentityBrokerWiringConvertsAtAS1(t *testing.T) {
 	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), nil)
-	broker, err := newIdentityBroker(Config{IdentityBrokerAS1: &IdentityBrokerAS1{
+	broker, err := newIdentityBroker(t.Context(), Config{IdentityBrokerAS1: &IdentityBrokerAS1{
 		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
 	}})
 	if err != nil {
@@ -355,13 +360,20 @@ func TestIdentityBrokerSessionsRegisterTheirAgent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("FindSession = %v, %v; want the session's broker session", found, err)
 	}
-	// The main agent is registered: a child naming it as parent passes the
-	// parent check (an unregistered parent is PERMISSION_DENIED), then is
-	// refused as a takeover of the main agent's incarnation.
-	mainAgent := identitybroker.AgentRef{Subject: "spiffe://" + interimIdentityBrokerConfig.TrustDomain + "/mecatl/agent/shared/inst/" + string(sess.Incarnation())}
+	// The main agent is registered with the loaded built-in main: the same
+	// registration again returns the agent, and a child naming it as parent
+	// passes the parent check (an unregistered parent is PERMISSION_DENIED),
+	// then is refused as a takeover of the main agent's incarnation.
+	main, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+		SessionID: open.ID, HostSessionID: string(sess.ID), Owner: open.Owner, Incarnation: string(sess.Incarnation()),
+		Definition: builtinMainRef(),
+	})
+	if err != nil {
+		t.Fatalf("registering the main agent again: %v", err)
+	}
 	_, err = built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 		SessionID: open.ID, HostSessionID: string(sess.ID) + "-child", Owner: open.Owner, Incarnation: string(sess.Incarnation()),
-		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"}, Parent: mainAgent,
+		Definition: builtinMainRef(), Parent: main.Agent,
 	})
 	if !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {
 		t.Fatalf("a child taking the main agent's incarnation = %v, want ALREADY_EXISTS", err)
@@ -568,7 +580,7 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ib, err := newIdentityBroker(Config{})
+	ib, err := newIdentityBroker(t.Context(), Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +592,7 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	})
 	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store, Now: time.Now, DefaultCapabilities: llm.Capabilities(),
-		EventLog: store, Diagnostics: port.NopDiagnostics{}, IdentityBroker: broker,
+		EventLog: store, Diagnostics: port.NopDiagnostics{}, IdentityBroker: broker, IdentityDefinitions: ib.definitions,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -608,4 +620,74 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	if _, open, err := broker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(rec.SessionID)}); err != nil || open {
 		t.Fatalf("after the fire, FindSession = %v, %v; want none open", open, err)
 	}
+}
+
+// builtinMainRef is the reference of the built-in main definition the broker
+// loads in this build.
+func builtinMainRef() identitybroker.DefinitionRef {
+	return identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: definitionloader.BuiltinRevision(buildinfo.BuildID)}
+}
+
+func TestIdentityBrokerLoadsTheOperatorsDefinitions(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	write("reviewer.md", "---\nname: reviewer\ndescription: Reviews code.\n---\nReview the change.\n")
+	const secret = "sk-test-do-not-log"
+	bad := write("broken.md", "---\nname: broken\n---\n"+secret+"\n") // no description
+	diag := &captureDiag{}
+	ib, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{dir}, Diagnostics: diag})
+	if err != nil {
+		t.Fatalf("newIdentityBroker: %v", err)
+	}
+	var refs []identitybroker.DefinitionRef
+	for _, rec := range ib.definitions {
+		refs = append(refs, rec.Ref)
+		if _, ok := ib.core.Definition(rec.Ref); !ok {
+			t.Errorf("the broker did not load %+v", rec.Ref)
+		}
+	}
+	want := map[string]bool{"system/main": false, "system/explorer": false, "global/reviewer": false}
+	for _, ref := range refs {
+		want[ref.Source+"/"+ref.Name] = true
+	}
+	if len(refs) != len(want) || !want["system/main"] || !want["system/explorer"] || !want["global/reviewer"] {
+		t.Fatalf("loaded %+v, want system/main, system/explorer, and global/reviewer", refs)
+	}
+	if n := diag.warnCount("identity broker definition problem"); n != 1 {
+		t.Fatalf("logged %d definition problems, want 1 for %s", n, bad)
+	}
+	for _, e := range diag.entries {
+		line := fmt.Sprint(e.msg, e.args)
+		if strings.Contains(line, secret) {
+			t.Fatalf("a definition problem logged the file's contents: %s", line)
+		}
+		if e.msg == "identity broker definition problem" && !strings.Contains(line, bad) {
+			t.Fatalf("the definition problem %s does not name %s", line, bad)
+		}
+	}
+}
+
+func TestIdentityBrokerMissingAgentsDirFailsStartup(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{missing}}); err == nil || !strings.Contains(err.Error(), "load identity broker definitions") {
+		t.Fatalf("newIdentityBroker with a missing agents directory = %v, want a load failure", err)
+	}
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, AgentsDirs: []string{missing}})
+	if err == nil {
+		built.Close()
+		t.Fatal("startup with the identity broker and a missing agents directory succeeded")
+	}
+	// Positive control: the same startup with the directory present succeeds.
+	built, err = buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, AgentsDirs: []string{t.TempDir()}})
+	if err != nil {
+		t.Fatalf("startup with the identity broker and an empty agents directory: %v", err)
+	}
+	built.Close()
 }

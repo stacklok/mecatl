@@ -28,6 +28,9 @@ type sessionTable struct {
 	byID map[string]*brokerSession
 	// agents holds registered agents by subject, apart from their sessions.
 	agents map[string]*agentRecord
+	// incarnations holds each registered incarnation's subject. An
+	// incarnation keeps its subject, so its identity, for good.
+	incarnations map[string]string
 	// converted holds the jti of every access token AS-1 may have converted,
 	// for any session, with the token's exp; entries are dropped once exp
 	// plus convertedClockSkew has passed.
@@ -67,7 +70,8 @@ type brokerSession struct {
 func newSessionTable() *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
-		converted: map[string]time.Time{}, attempts: newAttemptLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
+		incarnations: map[string]string{},
+		converted:    map[string]time.Time{}, attempts: newAttemptLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
 	}
 }
 
