@@ -21,8 +21,8 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	if got, ok := request.RetryOf(); ok || got != (ModelRequestID{}) {
 		t.Fatal("zero retry")
 	}
-	if got, ok := response.Usage(); ok || got != (InvocationUsageView{}) {
-		t.Fatal("zero response usage")
+	if got, ok := (RecordView{}).Usage(); ok || got != (UsageView{}) {
+		t.Fatal("zero record usage")
 	}
 	if got, ok := response.Private(); ok || got != (OpaqueProviderDataView{}) {
 		t.Fatal("zero response private")
@@ -46,9 +46,6 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 	}
 	if got, ok := failure.Explanation(); ok || got != "" {
 		t.Fatal("zero explanation")
-	}
-	if got, ok := failure.Usage(); ok || got != (InvocationUsageView{}) {
-		t.Fatal("zero usage")
 	}
 	if got, ok := ending.Explanation(); ok || got != "" {
 		t.Fatal("zero ending detail")
@@ -91,8 +88,9 @@ func TestModelResponseViewEmptyAndFailureOutputs(t *testing.T) {
 func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	s := interactionFixture(t, "pending")
 	id := s.state.view.lifecycle.pending
-	usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)), Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 0}}}
-	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Usage: usage, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
+	usage := UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff, 0}}}
+	expectedUsage := usage.Clone()
+	response := ModelResponse{Terminal: ResponseTerminalOther, ProviderStopReason: new(""), Evidence: &ObservedEvidence{Detail: new(""), Correlation: new("opaque")}, Private: &OpaqueProviderData{Producer: "p", Format: "unknown", Version: 19, Data: []byte{0xff, 0, 1}}, Items: []ResponseItem{
 		{Content: &ResponseContent{Kind: ResponseContentOutput, Parts: []ContentPart{{Text: new("")}, {Text: new("  exact\n")}, {Media: &Media{Kind: MediaKindImage, MIMEType: "image/unknown", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}}},
 		{Call: &RequestedCall{Name: "", Arguments: []byte{}}},
 		{Content: &ResponseContent{Kind: ResponseContentReasoning}},
@@ -101,6 +99,9 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	}}
 	expected := response.Clone()
 	r := interactionRecord(t)(newModelResponseRecord(response, id, s.policy.PayloadLimits))
+	b := beginBatch(t, s)
+	_, err := b.AddUsage(nil, &id, UsagePurposeMain, usage)
+	interactionCheck(t, err)
 	// Mutation controls: each operation changes its own representation, but must
 	// not change the constructor's captured bytes or any accepted view.
 	*response.ProviderStopReason = "changed"
@@ -110,14 +111,18 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	response.Items[0].Content.Parts[2].Media.InlineData[0] = 0
 	response.Items[3].Call.Arguments[0] = 0
 	response.Private.Data[0] = 0
-	for _, p := range []*int64{usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite, usage.Reasoning} {
+	counters := usage.Buckets[0].Counters
+	for _, p := range []*int64{counters.Input, counters.Output, counters.CacheRead, counters.CacheWrite, counters.Reasoning} {
 		*p = 99
 	}
 	usage.Raw.Data[0] = 0
 	if response.Equal(expected) {
 		t.Fatal("mutation control did not change source")
 	}
-	interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.add(r, nil)) })
+	interactionCheck(t, b.add(r, nil))
+	submitBatch(t, s, b)
+	usageRecord, _ := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 2).Usage()
+	usageReport := usageRecord.Report()
 	record := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1)
 	view, ok := record.ModelResponse()
 	if !ok {
@@ -133,16 +138,13 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 		t.Fatal("wrong-kind ending")
 	}
 	if n := testing.AllocsPerRun(100, func() {
-		usage, ok := view.Usage()
-		if !ok {
-			panic("missing usage")
-		}
+		usage := usageReport.Buckets().At(0).Counters()
 		for _, counter := range []func() (int64, bool){usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite, usage.Reasoning} {
 			if _, ok := counter(); !ok {
 				panic("missing usage counter")
 			}
 		}
-		raw, ok := usage.Raw()
+		raw, ok := usageReport.Raw()
 		if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 {
 			panic("missing raw usage")
 		}
@@ -173,7 +175,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	if correlation, ok := evidence.Correlation(); !ok || correlation != "opaque" {
 		t.Fatal("evidence correlation changed")
 	}
-	usageView, _ := view.Usage()
+	usageView := usageReport.Buckets().At(0).Counters()
 	for _, counter := range []struct {
 		name string
 		get  func() (int64, bool)
@@ -189,7 +191,7 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 			t.Fatalf("usage %s = %d, %t", counter.name, got, ok)
 		}
 	}
-	raw, ok := usageView.Raw()
+	raw, ok := usageReport.Raw()
 	if !ok || raw.Producer() != "p" || raw.Format() != "usage" || raw.Version() != 1 || !bytes.Equal(raw.Data().Copy(), []byte{0xff, 0}) {
 		t.Fatal("usage raw changed")
 	}
@@ -206,9 +208,8 @@ func TestModelResponseViewRepresentationOwnershipAndShortCircuit(t *testing.T) {
 	callValue, _ := view.Items().At(3).Call()
 	clear(callValue.Arguments().Copy())
 	clear(view.CallAt(1).Arguments().Copy())
-	again, _ := view.Usage()
-	raw, _ = again.Raw()
-	if !bytes.Equal(raw.Data().Copy(), expected.Usage.Raw.Data) {
+	raw, _ = usageReport.Raw()
+	if !bytes.Equal(raw.Data().Copy(), expectedUsage.Raw.Data) {
 		t.Fatal("usage byte export aliases")
 	}
 	evidence, _ = view.Evidence()

@@ -219,16 +219,13 @@ func TestInteractionByteExportsCopyOnlyRequestedField(t *testing.T) {
 				t.Run(seam, func(t *testing.T) {
 					snap := s.Snapshot()
 					request, _ := snap.RecordAt(3).ModelRequest()
-					failure, _ := snap.RecordAt(4).InvocationFailure()
 					response, _ := snap.RecordAt(6).ModelResponse()
-					ending, _ := snap.RecordAt(10).RunEnded()
-					capture, _ := ending.Capture()
-					failureUsage, _ := failure.Usage()
-					responseUsage, _ := response.Usage()
-					captureUsage, _ := capture.Usage()
-					failureRaw, _ := failureUsage.Raw()
-					responseRaw, _ := responseUsage.Raw()
-					captureRaw, _ := captureUsage.Raw()
+					failureUsage, _ := snap.RecordAt(11).Usage()
+					responseUsage, _ := snap.RecordAt(12).Usage()
+					captureUsage, _ := snap.RecordAt(13).Usage()
+					failureRaw, _ := failureUsage.Report().Raw()
+					responseRaw, _ := responseUsage.Report().Raw()
+					captureRaw, _ := captureUsage.Report().Raw()
 					private, _ := response.Private()
 					itemCall, _ := response.Items().At(1).Call()
 					content, _ := response.Items().At(0).Content()
@@ -240,8 +237,8 @@ func TestInteractionByteExportsCopyOnlyRequestedField(t *testing.T) {
 						size   int
 					}{
 						{"parameters", request.Recipe().Parameters().Copy, 3, axis.field}, {"check", request.Recipe().Check().Copy, 3, axis.sibling},
-						{"failure-raw", failureRaw.Data().Copy, 4, axis.field}, {"response-raw", responseRaw.Data().Copy, 6, axis.field},
-						{"capture-raw", captureRaw.Data().Copy, 10, axis.field}, {"private", private.Data().Copy, 6, axis.field},
+						{"failure-raw", failureRaw.Data().Copy, 11, axis.field}, {"response-raw", responseRaw.Data().Copy, 12, axis.field},
+						{"capture-raw", captureRaw.Data().Copy, 13, axis.field}, {"private", private.Data().Copy, 6, axis.field},
 						{"item-call", itemCall.Arguments().Copy, 6, axis.field}, {"call", response.CallAt(0).Arguments().Copy, 6, axis.field},
 						{"media", func() []byte { return media.InlineData().Copy() }, 6, axis.field},
 					} {
@@ -297,7 +294,8 @@ func TestInteractionNestedHandlesPinnedAcrossAppends(t *testing.T) {
 			request, _ := old.RecordAt(3).ModelRequest()
 			recipe := request.Recipe()
 			failure, _ := old.RecordAt(4).InvocationFailure()
-			usage, _ := failure.Usage()
+			usageRecord, _ := old.RecordAt(11).Usage()
+			usage := usageRecord.Report()
 			raw, _ := usage.Raw()
 			evidence, _ := failure.Evidence()
 			response, _ := old.RecordAt(6).ModelResponse()
@@ -312,7 +310,8 @@ func TestInteractionNestedHandlesPinnedAcrossAppends(t *testing.T) {
 			call := response.CallAt(0)
 			ending, _ := old.RecordAt(10).RunEnded()
 			capture, _ := ending.Capture()
-			captureUsage, _ := capture.Usage()
+			captureUsageRecord, _ := old.RecordAt(13).Usage()
+			captureUsage := captureUsageRecord.Report()
 			captureEvidence, _ := capture.Evidence()
 			want := traverseCompleteInteraction(old, true)
 			var wg sync.WaitGroup
@@ -358,7 +357,7 @@ func TestInteractionNestedHandlesPinnedAcrossAppends(t *testing.T) {
 				submitBatch(t, s, b)
 			}
 			wg.Wait()
-			if old.RecordCount() != 11 || s.Snapshot().RecordCount() != 43 {
+			if old.RecordCount() != 14 || s.Snapshot().RecordCount() != 46 {
 				t.Fatal("pinned record bounds")
 			}
 		})
@@ -377,23 +376,27 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 				submitBatch(t, s, b)
 				id := addInteractionRequest(t, s, run, nil, nil)
-				var usage *session.InvocationUsage
+				var usage *session.UsageReport
 				var evidence *session.ObservedEvidence
 				if present {
-					usage, evidence = &session.InvocationUsage{}, &session.ObservedEvidence{}
+					usage, evidence = &session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{}}}, &session.ObservedEvidence{}
 				}
 				if explicit {
-					usage = &session.InvocationUsage{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0))}
+					usage = &session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Input: new(int64(0)), Output: new(int64(0)), CacheRead: new(int64(0)), CacheWrite: new(int64(0)), Reasoning: new(int64(0))}}}}
 					evidence = &session.ObservedEvidence{Detail: new(""), Correlation: new("")}
 				}
 				b = beginBatch(t, s)
 				switch kind {
 				case "failure":
-					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal, Usage: usage, Evidence: evidence}))
+					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal, Evidence: evidence}))
 				case "response":
-					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Usage: usage, Evidence: evidence}))
+					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Evidence: evidence}))
 				case "capture":
-					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: usage, Evidence: evidence}}))
+					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: evidence}}))
+				}
+				if usage != nil {
+					_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, *usage)
+					mustBatch(t, err)
 				}
 				submitBatch(t, s, b)
 				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
@@ -401,17 +404,16 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
 						record := s.Snapshot().RecordAt(4)
-						var u session.InvocationUsageView
+						var u session.UsageCountersView
+						var report session.UsageReportView
 						var e session.ObservedEvidenceView
 						var up, ep bool
 						switch kind {
 						case "failure":
 							v, _ := record.InvocationFailure()
-							u, up = v.Usage()
 							e, ep = v.Evidence()
 						case "response":
 							v, _ := record.ModelResponse()
-							u, up = v.Usage()
 							e, ep = v.Evidence()
 							if private, ok := v.Private(); ok || private != (session.OpaqueProviderDataView{}) {
 								t.Fatal("absent private")
@@ -422,8 +424,13 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 							if !ok || capture.RequestID() != id {
 								t.Fatal("empty capture scope")
 							}
-							u, up = capture.Usage()
 							e, ep = capture.Evidence()
+						}
+						if present {
+							usage, ok := s.Snapshot().RecordAt(5).Usage()
+							up = ok
+							report = usage.Report()
+							u = report.Buckets().At(0).Counters()
 						}
 						if up != present || ep != present {
 							t.Fatal("aggregate presence collapsed")
@@ -433,7 +440,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 								t.Fatal("empty usage counter")
 							}
 						}
-						if raw, ok := u.Raw(); ok || raw != (session.OpaqueProviderDataView{}) {
+						if raw, ok := report.Raw(); ok || raw != (session.OpaqueProviderDataView{}) {
 							t.Fatal("empty raw")
 						}
 						if detail, ok := e.Detail(); ok != explicit || detail != "" {
@@ -442,7 +449,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 						if correlation, ok := e.Correlation(); ok != explicit || correlation != "" {
 							t.Fatal("empty correlation")
 						}
-						if !present && (u != (session.InvocationUsageView{}) || e != (session.ObservedEvidenceView{})) {
+						if !present && (u != (session.UsageCountersView{}) || e != (session.ObservedEvidenceView{})) {
 							t.Fatal("absent child not zero")
 						}
 					})
@@ -451,8 +458,8 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 		}
 	}
 	var capture session.CaptureFailureEvidenceView
-	if u, ok := capture.Usage(); ok || u != (session.InvocationUsageView{}) {
-		t.Fatal("zero capture usage")
+	if u, ok := (session.RecordView{}).Usage(); ok || u != (session.UsageView{}) {
+		t.Fatal("zero record usage")
 	}
 	if e, ok := capture.Evidence(); ok || e != (session.ObservedEvidenceView{}) {
 		t.Fatal("zero capture evidence")
@@ -482,31 +489,33 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 				b = beginBatch(t, s)
 				switch kind {
 				case "failure":
-					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal, Usage: &session.InvocationUsage{Raw: raw}}))
+					mustBatch(t, b.AddInvocationFailure(id, session.InvocationFailure{Class: session.InvocationFailureLocal}))
 				case "response":
-					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Usage: &session.InvocationUsage{Raw: raw}, Private: &session.OpaqueProviderData{Producer: "private", Format: "envelope", Version: 4, Data: input}, Items: []session.ResponseItem{
+					mustBatch(t, b.AddModelResponse(id, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Private: &session.OpaqueProviderData{Producer: "private", Format: "envelope", Version: 4, Data: input}, Items: []session.ResponseItem{
 						{Call: &session.RequestedCall{Arguments: input}},
 						{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{{Media: &session.Media{Kind: session.MediaKindImage, MIMEType: "image/example", Source: session.MediaSourceInline, InlineData: input}}}}},
 					}}))
 				case "capture":
-					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: &session.InvocationUsage{Raw: raw}}}))
+					mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative()}}))
 				}
+				_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive, Raw: raw})
+				mustBatch(t, err)
 				submitBatch(t, s, b)
 				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p)
 				mustBatch(t, err)
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
 						record := s.Snapshot().RecordAt(4)
-						var provider session.OpaqueProviderDataView
-						var present bool
+						usage, ok := s.Snapshot().RecordAt(5).Usage()
+						if !ok {
+							t.Fatal("missing usage record")
+						}
+						provider, present := usage.Report().Raw()
 						switch kind {
 						case "failure":
-							failure, _ := record.InvocationFailure()
-							usage, ok := failure.Usage()
-							if !ok {
-								t.Fatal("missing failure usage")
+							if _, ok := record.InvocationFailure(); !ok {
+								t.Fatal("missing failure")
 							}
-							provider, present = usage.Raw()
 						case "response":
 							response, _ := record.ModelResponse()
 							call, callOK := response.Items().At(0).Call()
@@ -517,11 +526,6 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 								t.Fatal("present-empty generated collections/byte leaves collapsed")
 							}
 							inline.All()(func(int, byte) bool { t.Fatal("empty inline bytes yielded"); return true })
-							usage, ok := response.Usage()
-							if !ok {
-								t.Fatal("missing response usage")
-							}
-							provider, present = usage.Raw()
 							private, privatePresent := response.Private()
 							if !privatePresent || private.Producer() != "private" || private.Format() != "envelope" || private.Version() != 4 || len(private.Data().Copy()) != 0 || !bytes.Equal(private.Data().Copy(), input) {
 								t.Fatal("empty private presence or fields")
@@ -532,11 +536,6 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 							if !ok || capture.RequestID() != id {
 								t.Fatal("missing capture")
 							}
-							usage, ok := capture.Usage()
-							if !ok {
-								t.Fatal("missing capture usage")
-							}
-							provider, present = usage.Raw()
 						}
 						if !present || provider.Producer() != "producer" || provider.Format() != "format" || provider.Version() != 3 || len(provider.Data().Copy()) != 0 || !bytes.Equal(provider.Data().Copy(), input) {
 							t.Fatal("empty raw presence or fields")
@@ -566,7 +565,7 @@ func TestModelInteractionZeroViews(t *testing.T) {
 	if _, ok := response.Private(); ok {
 		t.Fatal("zero private")
 	}
-	if _, ok := response.Usage(); ok {
+	if _, ok := (session.RecordView{}).Usage(); ok {
 		t.Fatal("zero usage")
 	}
 	if _, ok := failure.Evidence(); ok {
@@ -607,10 +606,13 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	clear(rv.Recipe().Parameters().Copy())
 	clear(rv.Recipe().Check().Copy())
 	b = beginBatch(t, s)
-	failure := session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new(""), Evidence: &session.ObservedEvidence{Correlation: new("safe observed correlation")}, Usage: &session.InvocationUsage{Input: new(int64(0)), Raw: &session.OpaqueProviderData{Producer: "adapter", Format: "usage", Version: 8, Data: []byte{0, 0xff}}}}
+	failure := session.InvocationFailure{Class: session.InvocationFailureTransport, Explanation: new(""), Evidence: &session.ObservedEvidence{Correlation: new("safe observed correlation")}}
+	failureUsage := session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Input: new(int64(0))}}}, Raw: &session.OpaqueProviderData{Producer: "adapter", Format: "usage", Version: 8, Data: []byte{0, 0xff}}}
 	mustBatch(t, b.AddInvocationFailure(first, failure))
-	*failure.Usage.Input = 9
-	clear(failure.Usage.Raw.Data)
+	_, err = b.AddUsage(nil, &first, session.UsagePurposeMain, failureUsage)
+	mustBatch(t, err)
+	*failureUsage.Buckets[0].Counters.Input = 9
+	clear(failureUsage.Raw.Data)
 	submitBatch(t, s, b)
 	fv, ok := s.Snapshot().RecordAt(7).InvocationFailure()
 	if !ok || fv.RequestID() != first || fv.Class() != session.InvocationFailureTransport {
@@ -619,8 +621,9 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	if detail, present := fv.Explanation(); !present || detail != "" {
 		t.Fatal("failure explanation presence")
 	}
-	usage, present := fv.Usage()
-	raw, rawPresent := usage.Raw()
+	usageRecord, present := s.Snapshot().RecordAt(8).Usage()
+	usage := usageRecord.Report().Buckets().At(0).Counters()
+	raw, rawPresent := usageRecord.Report().Raw()
 	if !present || !rawPresent {
 		t.Fatal("failure usage presence")
 	}
@@ -635,7 +638,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	if second == first || second.RunID() != first.RunID() {
 		t.Fatal("retry identity")
 	}
-	retry, _ := s.Snapshot().RecordAt(8).ModelRequest()
+	retry, _ := s.Snapshot().RecordAt(9).ModelRequest()
 	if got, ok := retry.RetryOf(); !ok || got != first || string(retry.Recipe().Parameters().Copy()) != "changed recipe" {
 		t.Fatal("retry correlation/recipe")
 	}
@@ -646,20 +649,22 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 			{Content: &session.ResponseContent{Kind: session.ResponseContentRefusal}},
 			{Call: &session.RequestedCall{Name: "unknown", Arguments: []byte{}}},
 			{Content: &session.ResponseContent{Kind: session.ResponseContentOutput, Parts: []session.ContentPart{}}},
-		}, Usage: &session.InvocationUsage{Output: new(int64(0))}, Private: &session.OpaqueProviderData{Producer: "future/provider", Format: "relations", Version: 7, Data: []byte{0, 0xff}},
+		}, Private: &session.OpaqueProviderData{Producer: "future/provider", Format: "relations", Version: 7, Data: []byte{0, 0xff}},
 	}
 	b = beginBatch(t, s)
 	mustBatch(t, b.AddModelResponse(second, response))
+	_, err = b.AddUsage(nil, &second, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Output: new(int64(0))}}}})
+	mustBatch(t, err)
 	response.Items[1].Call.Arguments[0] = 'X'
 	clear(response.Private.Data)
 	submitBatch(t, s, b)
 	accepted := s.Snapshot()
-	view, ok := accepted.RecordAt(9).ModelResponse()
+	view, ok := accepted.RecordAt(10).ModelResponse()
 	if !ok || view.RequestID() != second || view.Terminal() != session.ResponseTerminalError || view.Items().Len() != 5 || view.CallCount() != 2 {
 		t.Fatal("complete response inspection")
 	}
 	if n := testing.AllocsPerRun(100, func() {
-		r, ok := accepted.RecordAt(9).ModelResponse()
+		r, ok := accepted.RecordAt(10).ModelResponse()
 		if !ok || r.Items().Len() != 5 || r.CallCount() != 2 || r.CallAt(0).ID() != view.CallAt(0).ID() || r.CallAt(0).ID().RequestID() != second || r.CallAt(0).ID().RequestID().RunID().HistoryID() != scope || r.Items().At(0) != view.Items().At(0) {
 			panic("direct response navigation")
 		}
@@ -710,7 +715,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	submitBatch(t, s, b)
-	end, ok := s.Snapshot().RecordAt(10).RunEnded()
+	end, ok := s.Snapshot().RecordAt(12).RunEnded()
 	if !ok || end.RunID() != run || end.Reason() != session.RunEndedLimit || !end.BulkToolCloseout() {
 		t.Fatal("unified ending")
 	}
@@ -738,7 +743,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	mustBatch(t, b.EndRun(session.RunEndedCompleted))
 	submitBatch(t, s, b)
 	wg.Wait()
-	if accepted.RecordCount() != 10 || accepted.ActiveRun() != run || accepted.RunAt(0).RecordCount() != 6 || s.Snapshot().RunAt(0).RecordCount() != 8 {
+	if accepted.RecordCount() != 12 || accepted.ActiveRun() != run || accepted.RunAt(0).RecordCount() != 8 || s.Snapshot().RunAt(0).RecordCount() != 10 {
 		t.Fatal("pinned bounds or chronological span")
 	}
 	loaded, err := session.Load(context.Background(), h, scope, p)

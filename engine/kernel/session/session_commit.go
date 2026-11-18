@@ -111,7 +111,7 @@ func (b *SessionCommit) add(r *materializedRecord, err error) error {
 		return codec.ErrLimitExceeded
 	}
 	candidate := b.admission
-	if err := candidate.admit(b.owner.state.view.historyID, r); err != nil {
+	if err := candidate.admit(b.owner.state.view.historyID, r, b.owner.state.view.records, b.records); err != nil {
 		return err
 	}
 	b.records = append(b.records, r)

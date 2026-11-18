@@ -10,7 +10,6 @@
     method func (*InstructionBlock).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*InvocationFailure).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*InvocationFailureClass).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*InvocationUsage).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*Media).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*MediaKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*MediaSourceKind).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -50,7 +49,6 @@
     method func (*UsageBucket).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageCounters).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageDefinition).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (*UsageGranularity).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageReport).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UsageReportState).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
     method func (*UserInput).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
@@ -113,11 +111,6 @@
     method func (InvocationFailureClass).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (InvocationFailureClass).Clone() InvocationFailureClass
     method func (InvocationFailureClass).Equal(other InvocationFailureClass) bool
-    method func (InvocationUsage).AppendCBOR(dst []byte) []byte
-    method func (InvocationUsage).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (InvocationUsage).Clone() InvocationUsage
-    method func (InvocationUsage).Equal(other InvocationUsage) bool
-    method func (InvocationUsage).Validate() error
     method func (Media).AppendCBOR(dst []byte) []byte
     method func (Media).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (Media).Clone() Media
@@ -303,10 +296,6 @@
     method func (UsageDefinition).Clone() UsageDefinition
     method func (UsageDefinition).Equal(other UsageDefinition) bool
     method func (UsageDefinition).Validate() error
-    method func (UsageGranularity).AppendCBOR(dst []byte) []byte
-    method func (UsageGranularity).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (UsageGranularity).Clone() UsageGranularity
-    method func (UsageGranularity).Equal(other UsageGranularity) bool
     method func (UsageReport).AppendCBOR(dst []byte) []byte
     method func (UsageReport).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
     method func (UsageReport).Clone() UsageReport
@@ -390,15 +379,13 @@ const ToolNotInvokedUnavailable ToolNotInvokedReason = "unavailable"
 const ToolNotInvokedUserDenied ToolNotInvokedReason = "user-denied"
 const ToolReturnError ToolReturnStatus = "error"
 const ToolReturnSuccess ToolReturnStatus = "success"
-const UsageGranularityAggregate UsageGranularity = "aggregate"
-const UsageGranularityInvocation UsageGranularity = "invocation"
 const UsagePurposeMain untyped string = "main"
 const UsageReportActive UsageReportState = "active"
 const UsageReportWithdrawn UsageReportState = "withdrawn"
 const Version int64 = 1
 type Actor string
 type AttributedInput struct{Parts []ContentPart "cbor:\"c\""; Actor Actor "cbor:\"a\""; Purpose PromptPurpose "cbor:\"p\""; Source ContentSource "cbor:\"s\""}
-type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\" view:\"manual\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type CaptureFailureEvidence struct{RequestID uint64 "cbor:\"q\" view:\"manual\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""}
 type ConstructionRecipe struct{Algorithm string "cbor:\"a\""; Version int64 "cbor:\"v\""; Parameters []byte "cbor:\"p\""; Check []byte "cbor:\"c\""}
 type ContentPart struct{Text *string "cbor:\"t,omitempty\""; Media *Media "cbor:\"m,omitempty\""}
 type ContentSource struct{Description string "cbor:\"d\""; WorkspaceFile *WorkspaceFileSource "cbor:\"w,omitempty\""}
@@ -406,15 +393,14 @@ type Created struct{}
 type EffectiveInput struct{RunID uint64 "cbor:\"r\" view:\"manual\""; Inputs []InputItem "cbor:\"i\" view:\"manual\""}
 type InputItem struct{UserInputID *uint64 "cbor:\"u,omitempty\" view:\"manual\""; Inline *AttributedInput "cbor:\"i,omitempty\""}
 type InstructionBlock struct{Key string "cbor:\"k\" cborlimit:\"bytes=256\""; Parts []ContentPart "cbor:\"c\""; Source ContentSource "cbor:\"s\""}
-type InvocationFailure struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Class InvocationFailureClass "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""}
+type InvocationFailure struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Class InvocationFailureClass "cbor:\"c\""; Explanation *string "cbor:\"e,omitempty\""; Evidence *ObservedEvidence "cbor:\"v,omitempty\""}
 type InvocationFailureClass string
-type InvocationUsage struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
 type Media struct{Kind MediaKind "cbor:\"k\""; Source MediaSourceKind "cbor:\"s\""; InlineData []byte "cbor:\"d\""; RemoteURI string "cbor:\"u\""; ProviderName string "cbor:\"p\""; ProviderScope string "cbor:\"o\""; ProviderReferenceID string "cbor:\"r\""; MIMEType string "cbor:\"m\""; FormatHint string "cbor:\"f\""; Filename string "cbor:\"n\""; Title string "cbor:\"t\""}
 type MediaKind string
 type MediaSourceKind string
 type ModelBinding struct{Route string "cbor:\"r\""; API string "cbor:\"a\""; Model string "cbor:\"m\""; Settings ModelSettings "cbor:\"s\""}
 type ModelRequest struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"o\" view:\"manual\""; Source *SourceHead "cbor:\"s,omitempty\""; Recipe ConstructionRecipe "cbor:\"c\""; RetryOf *uint64 "cbor:\"x,omitempty\" view:\"manual\""}
-type ModelResponse struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Terminal ResponseTerminalClass "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Usage *InvocationUsage "cbor:\"u,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
+type ModelResponse struct{RunID uint64 "cbor:\"r\" view:\"-\""; RequestID uint64 "cbor:\"q\" view:\"manual\""; Terminal ResponseTerminalClass "cbor:\"t\""; ProviderStopReason *string "cbor:\"p,omitempty\""; Items []ResponseItem "cbor:\"i\""; Evidence *ObservedEvidence "cbor:\"e,omitempty\""; Private *OpaqueProviderData "cbor:\"x,omitempty\""}
 type ModelSettings struct{ReasoningEffort *string "cbor:\"r,omitempty\""; MaxOutputTokens *int64 "cbor:\"m,omitempty\""}
 type ObservedEvidence struct{Detail *string "cbor:\"d,omitempty\""; Correlation *string "cbor:\"c,omitempty\""}
 type OpaqueProviderData struct{Producer string "cbor:\"p\""; Format string "cbor:\"f\""; Version int64 "cbor:\"v\""; Data []byte "cbor:\"d\""}
@@ -447,8 +433,7 @@ type ToolReturned struct{Status ToolReturnStatus "cbor:\"s\" cborlimit:\"bytes=3
 type Usage struct{ID uint64 "cbor:\"o\" view:\"manual\""; Definition *UsageDefinition "cbor:\"d,omitempty\" view:\"manual\""; Report UsageReport "cbor:\"r\""}
 type UsageBucket struct{SelectedRoute *string "cbor:\"r,omitempty\""; SelectedModel *string "cbor:\"m,omitempty\""; Counters UsageCounters "cbor:\"c\""}
 type UsageCounters struct{Input *int64 "cbor:\"i,omitempty\""; Output *int64 "cbor:\"o,omitempty\""; CacheRead *int64 "cbor:\"r,omitempty\""; CacheWrite *int64 "cbor:\"w,omitempty\""; Reasoning *int64 "cbor:\"n,omitempty\""}
-type UsageDefinition struct{Purpose string "cbor:\"p\""; Granularity UsageGranularity "cbor:\"g\""; RunID *uint64 "cbor:\"r,omitempty\" view:\"manual\""; RequestID *uint64 "cbor:\"q,omitempty\" view:\"manual\""}
-type UsageGranularity string
+type UsageDefinition struct{Purpose string "cbor:\"p\""; RunID *uint64 "cbor:\"r,omitempty\" view:\"manual\""; RequestID *uint64 "cbor:\"q,omitempty\" view:\"manual\""}
 type UsageReport struct{State UsageReportState "cbor:\"s\""; Buckets []UsageBucket "cbor:\"b\""; Raw *OpaqueProviderData "cbor:\"x,omitempty\""}
 type UsageReportState string
 type UserInput struct{RunID uint64 "cbor:\"r\" view:\"-\""; ID uint64 "cbor:\"i\" view:\"manual\""; Parts []ContentPart "cbor:\"p\""}

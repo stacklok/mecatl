@@ -9,11 +9,12 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// lifecycleState contains active-run admission scalars and immutable tool state.
+// lifecycleState contains admission scalars and immutable active tool state.
 // Historical facts remain in immutable records when an ending or successor changes these.
 type lifecycleState struct {
 	created                       bool
 	activeRun                     RunID
+	usages                        uint64 // History-wide; never reset at run boundaries.
 	runs, inputs, requests        uint64
 	binding                       bool
 	frontier, accounted, captured uint64 // Admitted contributions, last outcome coverage, pending request coverage.
@@ -60,9 +61,11 @@ func newAdmission(v Snapshot) admissionContext {
 // admit validates a complete locally valid fact in explicit history scope against
 // the pinned source and ordered candidate. On success it mutates only the
 // receiver's candidate; on error it leaves the entire context unchanged, including
-// its pinned accepted source and head. It establishes neither persistence, storage
+// its pinned accepted source and head. Prefixes borrow only preceding accepted
+// and earlier candidate records for first-report correlation; admission never
+// mutates their backing. It establishes neither persistence, storage
 // acceptance, nor publication. Outcomes account only their captured frontier.
-func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord) error {
+func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord, prefixes ...[]*materializedRecord) error {
 	s := &a.candidate
 	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
 		return ErrIdentity
@@ -102,6 +105,8 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 		return a.admitToolDisposition(scope, r.toolDisposition)
 	case sessionformat.KindInvocationFailure:
 		return a.admitOutcome(requestID(scope, r.failure.RunID, r.failure.RequestID), 0)
+	case sessionformat.KindUsage:
+		return a.admitUsage(r.usage, prefixes)
 	case sessionformat.KindRunEnded:
 		return a.endRun(scope, r.ended)
 	default:
@@ -232,11 +237,11 @@ func (s lifecycleState) inputEligible() bool {
 // enclosing scope to the same pinned-source admission used by additions and replay.
 func (s *Session) preflight(records []*materializedRecord, ref history.CommitRef, payloadBytes uint64) error {
 	a := newAdmission(s.state.view)
-	for _, r := range records {
+	for i, r := range records {
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := a.admit(s.state.view.historyID, r); err != nil {
+		if err := a.admit(s.state.view.historyID, r, s.state.view.records, records[:i]); err != nil {
 			return err
 		}
 	}

@@ -46,9 +46,6 @@ type CaptureFailureEvidence struct {
 	// Evidence is optional diagnostic observation for the uncaptured response. Nil
 	// omits it; codec traversal validates only its local UTF-8 shape.
 	Evidence *ObservedEvidence `cbor:"e,omitempty"`
-	// Usage is optional provider-reported usage for the uncaptured response. Nil
-	// omits it; codec traversal validates local counters and opaque metadata.
-	Usage *InvocationUsage `cbor:"u,omitempty"`
 }
 
 // Validate checks the relative request identity and all retained evidence.
@@ -60,9 +57,6 @@ func (v CaptureFailureEvidence) Validate() error {
 		if err := v.Evidence.Validate(); err != nil {
 			return err
 		}
-	}
-	if v.Usage != nil {
-		return v.Usage.Validate()
 	}
 	return nil
 }

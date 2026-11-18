@@ -90,78 +90,6 @@ func (v ObservedEvidence) Clone() ObservedEvidence { return (dtogen{}).clone3(v)
 func (v ObservedEvidence) Equal(other ObservedEvidence) bool { return (dtogen{}).equal3(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InvocationUsage) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check8(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InvocationUsage) AppendCBOR(dst []byte) []byte { return (dtogen{}).append8(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InvocationUsage) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read8(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InvocationUsage) Clone() InvocationUsage { return (dtogen{}).clone8(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InvocationUsage) Equal(other InvocationUsage) bool { return (dtogen{}).equal8(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v OpaqueProviderData) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check16(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v OpaqueProviderData) AppendCBOR(dst []byte) []byte { return (dtogen{}).append16(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *OpaqueProviderData) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read16(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v OpaqueProviderData) Clone() OpaqueProviderData { return (dtogen{}).clone16(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v OpaqueProviderData) Equal(other OpaqueProviderData) bool { return (dtogen{}).equal16(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v ConstructionRecipe) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
@@ -169,11 +97,11 @@ func (v ConstructionRecipe) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check19(v, b, depth, fieldMax)
+	return (dtogen{}).check7(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ConstructionRecipe) AppendCBOR(dst []byte) []byte { return (dtogen{}).append19(dst, v) }
+func (v ConstructionRecipe) AppendCBOR(dst []byte) []byte { return (dtogen{}).append7(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *ConstructionRecipe) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -183,7 +111,7 @@ func (v *ConstructionRecipe) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read19(r, depth, fieldMax)
+	x, err := (dtogen{}).read7(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -192,10 +120,10 @@ func (v *ConstructionRecipe) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ConstructionRecipe) Clone() ConstructionRecipe { return (dtogen{}).clone19(v) }
+func (v ConstructionRecipe) Clone() ConstructionRecipe { return (dtogen{}).clone7(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ConstructionRecipe) Equal(other ConstructionRecipe) bool { return (dtogen{}).equal19(v, other) }
+func (v ConstructionRecipe) Equal(other ConstructionRecipe) bool { return (dtogen{}).equal7(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v Created) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -205,11 +133,11 @@ func (v Created) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check22(v, b, depth, fieldMax)
+	return (dtogen{}).check12(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Created) AppendCBOR(dst []byte) []byte { return (dtogen{}).append22(dst, v) }
+func (v Created) AppendCBOR(dst []byte) []byte { return (dtogen{}).append12(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *Created) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -219,7 +147,7 @@ func (v *Created) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read22(r, depth, fieldMax)
+	x, err := (dtogen{}).read12(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -228,13 +156,157 @@ func (v *Created) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Created) Clone() Created { return (dtogen{}).clone22(v) }
+func (v Created) Clone() Created { return (dtogen{}).clone12(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Created) Equal(other Created) bool { return (dtogen{}).equal22(v, other) }
+func (v Created) Equal(other Created) bool { return (dtogen{}).equal12(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v EffectiveInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check13(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v EffectiveInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append13(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *EffectiveInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read13(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v EffectiveInput) Clone() EffectiveInput { return (dtogen{}).clone13(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v EffectiveInput) Equal(other EffectiveInput) bool { return (dtogen{}).equal13(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v InputItem) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check15(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v InputItem) AppendCBOR(dst []byte) []byte { return (dtogen{}).append15(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *InputItem) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read15(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v InputItem) Clone() InputItem { return (dtogen{}).clone15(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v InputItem) Equal(other InputItem) bool { return (dtogen{}).equal15(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v AttributedInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check18(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v AttributedInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append18(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *AttributedInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read18(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v AttributedInput) Clone() AttributedInput { return (dtogen{}).clone18(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v AttributedInput) Equal(other AttributedInput) bool { return (dtogen{}).equal18(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ContentPart) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check20(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ContentPart) AppendCBOR(dst []byte) []byte { return (dtogen{}).append20(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ContentPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read20(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ContentPart) Clone() ContentPart { return (dtogen{}).clone20(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ContentPart) Equal(other ContentPart) bool { return (dtogen{}).equal20(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v Media) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -245,10 +317,10 @@ func (v EffectiveInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) er
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v EffectiveInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append23(dst, v) }
+func (v Media) AppendCBOR(dst []byte) []byte { return (dtogen{}).append23(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *EffectiveInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *Media) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -264,13 +336,49 @@ func (v *EffectiveInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v EffectiveInput) Clone() EffectiveInput { return (dtogen{}).clone23(v) }
+func (v Media) Clone() Media { return (dtogen{}).clone23(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v EffectiveInput) Equal(other EffectiveInput) bool { return (dtogen{}).equal23(v, other) }
+func (v Media) Equal(other Media) bool { return (dtogen{}).equal23(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InputItem) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v MediaKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check24(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v MediaKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append24(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *MediaKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read24(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v MediaKind) Clone() MediaKind { return (dtogen{}).clone24(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v MediaKind) Equal(other MediaKind) bool { return (dtogen{}).equal24(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v MediaSourceKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -281,10 +389,10 @@ func (v InputItem) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InputItem) AppendCBOR(dst []byte) []byte { return (dtogen{}).append25(dst, v) }
+func (v MediaSourceKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append25(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InputItem) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *MediaSourceKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -300,13 +408,49 @@ func (v *InputItem) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InputItem) Clone() InputItem { return (dtogen{}).clone25(v) }
+func (v MediaSourceKind) Clone() MediaSourceKind { return (dtogen{}).clone25(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InputItem) Equal(other InputItem) bool { return (dtogen{}).equal25(v, other) }
+func (v MediaSourceKind) Equal(other MediaSourceKind) bool { return (dtogen{}).equal25(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v AttributedInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v Actor) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check27(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v Actor) AppendCBOR(dst []byte) []byte { return (dtogen{}).append27(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *Actor) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read27(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v Actor) Clone() Actor { return (dtogen{}).clone27(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v Actor) Equal(other Actor) bool { return (dtogen{}).equal27(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v PromptPurpose) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -317,10 +461,10 @@ func (v AttributedInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) e
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v AttributedInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append28(dst, v) }
+func (v PromptPurpose) AppendCBOR(dst []byte) []byte { return (dtogen{}).append28(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *AttributedInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *PromptPurpose) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -336,34 +480,34 @@ func (v *AttributedInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) e
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v AttributedInput) Clone() AttributedInput { return (dtogen{}).clone28(v) }
+func (v PromptPurpose) Clone() PromptPurpose { return (dtogen{}).clone28(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v AttributedInput) Equal(other AttributedInput) bool { return (dtogen{}).equal28(v, other) }
+func (v PromptPurpose) Equal(other PromptPurpose) bool { return (dtogen{}).equal28(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ContentPart) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ContentSource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check30(v, b, depth, fieldMax)
+	return (dtogen{}).check29(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ContentPart) AppendCBOR(dst []byte) []byte { return (dtogen{}).append30(dst, v) }
+func (v ContentSource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append29(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ContentPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ContentSource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read30(r, depth, fieldMax)
+	x, err := (dtogen{}).read29(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -372,13 +516,87 @@ func (v *ContentPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ContentPart) Clone() ContentPart { return (dtogen{}).clone30(v) }
+func (v ContentSource) Clone() ContentSource { return (dtogen{}).clone29(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ContentPart) Equal(other ContentPart) bool { return (dtogen{}).equal30(v, other) }
+func (v ContentSource) Equal(other ContentSource) bool { return (dtogen{}).equal29(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v Media) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v WorkspaceFileSource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check31(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v WorkspaceFileSource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append31(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *WorkspaceFileSource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read31(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v WorkspaceFileSource) Clone() WorkspaceFileSource { return (dtogen{}).clone31(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v WorkspaceFileSource) Equal(other WorkspaceFileSource) bool {
+	return (dtogen{}).equal31(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v InvocationFailure) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check32(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v InvocationFailure) AppendCBOR(dst []byte) []byte { return (dtogen{}).append32(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *InvocationFailure) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read32(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v InvocationFailure) Clone() InvocationFailure { return (dtogen{}).clone32(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v InvocationFailure) Equal(other InvocationFailure) bool { return (dtogen{}).equal32(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v InvocationFailureClass) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -389,10 +607,10 @@ func (v Media) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Media) AppendCBOR(dst []byte) []byte { return (dtogen{}).append33(dst, v) }
+func (v InvocationFailureClass) AppendCBOR(dst []byte) []byte { return (dtogen{}).append33(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *Media) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *InvocationFailureClass) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -408,34 +626,36 @@ func (v *Media) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Media) Clone() Media { return (dtogen{}).clone33(v) }
+func (v InvocationFailureClass) Clone() InvocationFailureClass { return (dtogen{}).clone33(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Media) Equal(other Media) bool { return (dtogen{}).equal33(v, other) }
+func (v InvocationFailureClass) Equal(other InvocationFailureClass) bool {
+	return (dtogen{}).equal33(v, other)
+}
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v MediaKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ModelBinding) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check34(v, b, depth, fieldMax)
+	return (dtogen{}).check36(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v MediaKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append34(dst, v) }
+func (v ModelBinding) AppendCBOR(dst []byte) []byte { return (dtogen{}).append36(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *MediaKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ModelBinding) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read34(r, depth, fieldMax)
+	x, err := (dtogen{}).read36(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -444,49 +664,13 @@ func (v *MediaKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v MediaKind) Clone() MediaKind { return (dtogen{}).clone34(v) }
+func (v ModelBinding) Clone() ModelBinding { return (dtogen{}).clone36(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v MediaKind) Equal(other MediaKind) bool { return (dtogen{}).equal34(v, other) }
+func (v ModelBinding) Equal(other ModelBinding) bool { return (dtogen{}).equal36(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v MediaSourceKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check35(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v MediaSourceKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append35(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *MediaSourceKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read35(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v MediaSourceKind) Clone() MediaSourceKind { return (dtogen{}).clone35(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v MediaSourceKind) Equal(other MediaSourceKind) bool { return (dtogen{}).equal35(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v Actor) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ModelSettings) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -497,10 +681,10 @@ func (v Actor) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Actor) AppendCBOR(dst []byte) []byte { return (dtogen{}).append37(dst, v) }
+func (v ModelSettings) AppendCBOR(dst []byte) []byte { return (dtogen{}).append37(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *Actor) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ModelSettings) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -516,34 +700,34 @@ func (v *Actor) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Actor) Clone() Actor { return (dtogen{}).clone37(v) }
+func (v ModelSettings) Clone() ModelSettings { return (dtogen{}).clone37(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Actor) Equal(other Actor) bool { return (dtogen{}).equal37(v, other) }
+func (v ModelSettings) Equal(other ModelSettings) bool { return (dtogen{}).equal37(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v PromptPurpose) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ModelRequest) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check38(v, b, depth, fieldMax)
+	return (dtogen{}).check40(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v PromptPurpose) AppendCBOR(dst []byte) []byte { return (dtogen{}).append38(dst, v) }
+func (v ModelRequest) AppendCBOR(dst []byte) []byte { return (dtogen{}).append40(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *PromptPurpose) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ModelRequest) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read38(r, depth, fieldMax)
+	x, err := (dtogen{}).read40(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -552,87 +736,13 @@ func (v *PromptPurpose) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v PromptPurpose) Clone() PromptPurpose { return (dtogen{}).clone38(v) }
+func (v ModelRequest) Clone() ModelRequest { return (dtogen{}).clone40(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v PromptPurpose) Equal(other PromptPurpose) bool { return (dtogen{}).equal38(v, other) }
+func (v ModelRequest) Equal(other ModelRequest) bool { return (dtogen{}).equal40(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ContentSource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check39(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ContentSource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append39(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ContentSource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read39(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ContentSource) Clone() ContentSource { return (dtogen{}).clone39(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ContentSource) Equal(other ContentSource) bool { return (dtogen{}).equal39(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v WorkspaceFileSource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check41(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v WorkspaceFileSource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append41(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *WorkspaceFileSource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read41(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v WorkspaceFileSource) Clone() WorkspaceFileSource { return (dtogen{}).clone41(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v WorkspaceFileSource) Equal(other WorkspaceFileSource) bool {
-	return (dtogen{}).equal41(v, other)
-}
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InvocationFailure) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v SourceHead) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -643,10 +753,10 @@ func (v InvocationFailure) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InvocationFailure) AppendCBOR(dst []byte) []byte { return (dtogen{}).append42(dst, v) }
+func (v SourceHead) AppendCBOR(dst []byte) []byte { return (dtogen{}).append42(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InvocationFailure) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *SourceHead) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -662,34 +772,34 @@ func (v *InvocationFailure) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int)
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InvocationFailure) Clone() InvocationFailure { return (dtogen{}).clone42(v) }
+func (v SourceHead) Clone() SourceHead { return (dtogen{}).clone42(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InvocationFailure) Equal(other InvocationFailure) bool { return (dtogen{}).equal42(v, other) }
+func (v SourceHead) Equal(other SourceHead) bool { return (dtogen{}).equal42(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InvocationFailureClass) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ModelResponse) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check43(v, b, depth, fieldMax)
+	return (dtogen{}).check45(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InvocationFailureClass) AppendCBOR(dst []byte) []byte { return (dtogen{}).append43(dst, v) }
+func (v ModelResponse) AppendCBOR(dst []byte) []byte { return (dtogen{}).append45(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InvocationFailureClass) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ModelResponse) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read43(r, depth, fieldMax)
+	x, err := (dtogen{}).read45(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -698,36 +808,34 @@ func (v *InvocationFailureClass) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InvocationFailureClass) Clone() InvocationFailureClass { return (dtogen{}).clone43(v) }
+func (v ModelResponse) Clone() ModelResponse { return (dtogen{}).clone45(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InvocationFailureClass) Equal(other InvocationFailureClass) bool {
-	return (dtogen{}).equal43(v, other)
-}
+func (v ModelResponse) Equal(other ModelResponse) bool { return (dtogen{}).equal45(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ModelBinding) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ResponseTerminalClass) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check47(v, b, depth, fieldMax)
+	return (dtogen{}).check46(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ModelBinding) AppendCBOR(dst []byte) []byte { return (dtogen{}).append47(dst, v) }
+func (v ResponseTerminalClass) AppendCBOR(dst []byte) []byte { return (dtogen{}).append46(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ModelBinding) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ResponseTerminalClass) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read47(r, depth, fieldMax)
+	x, err := (dtogen{}).read46(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -736,34 +844,36 @@ func (v *ModelBinding) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ModelBinding) Clone() ModelBinding { return (dtogen{}).clone47(v) }
+func (v ResponseTerminalClass) Clone() ResponseTerminalClass { return (dtogen{}).clone46(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ModelBinding) Equal(other ModelBinding) bool { return (dtogen{}).equal47(v, other) }
+func (v ResponseTerminalClass) Equal(other ResponseTerminalClass) bool {
+	return (dtogen{}).equal46(v, other)
+}
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ModelSettings) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ResponseItem) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check48(v, b, depth, fieldMax)
+	return (dtogen{}).check49(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ModelSettings) AppendCBOR(dst []byte) []byte { return (dtogen{}).append48(dst, v) }
+func (v ResponseItem) AppendCBOR(dst []byte) []byte { return (dtogen{}).append49(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ModelSettings) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ResponseItem) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read48(r, depth, fieldMax)
+	x, err := (dtogen{}).read49(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -772,13 +882,13 @@ func (v *ModelSettings) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ModelSettings) Clone() ModelSettings { return (dtogen{}).clone48(v) }
+func (v ResponseItem) Clone() ResponseItem { return (dtogen{}).clone49(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ModelSettings) Equal(other ModelSettings) bool { return (dtogen{}).equal48(v, other) }
+func (v ResponseItem) Equal(other ResponseItem) bool { return (dtogen{}).equal49(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ModelRequest) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ResponseContent) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -789,10 +899,10 @@ func (v ModelRequest) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) erro
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ModelRequest) AppendCBOR(dst []byte) []byte { return (dtogen{}).append51(dst, v) }
+func (v ResponseContent) AppendCBOR(dst []byte) []byte { return (dtogen{}).append51(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ModelRequest) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ResponseContent) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -808,195 +918,159 @@ func (v *ModelRequest) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ModelRequest) Clone() ModelRequest { return (dtogen{}).clone51(v) }
+func (v ResponseContent) Clone() ResponseContent { return (dtogen{}).clone51(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ModelRequest) Equal(other ModelRequest) bool { return (dtogen{}).equal51(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v SourceHead) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check53(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v SourceHead) AppendCBOR(dst []byte) []byte { return (dtogen{}).append53(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *SourceHead) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read53(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v SourceHead) Clone() SourceHead { return (dtogen{}).clone53(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v SourceHead) Equal(other SourceHead) bool { return (dtogen{}).equal53(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ModelResponse) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check56(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ModelResponse) AppendCBOR(dst []byte) []byte { return (dtogen{}).append56(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ModelResponse) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read56(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ModelResponse) Clone() ModelResponse { return (dtogen{}).clone56(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ModelResponse) Equal(other ModelResponse) bool { return (dtogen{}).equal56(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ResponseTerminalClass) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check57(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ResponseTerminalClass) AppendCBOR(dst []byte) []byte { return (dtogen{}).append57(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ResponseTerminalClass) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read57(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ResponseTerminalClass) Clone() ResponseTerminalClass { return (dtogen{}).clone57(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ResponseTerminalClass) Equal(other ResponseTerminalClass) bool {
-	return (dtogen{}).equal57(v, other)
-}
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ResponseItem) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check60(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ResponseItem) AppendCBOR(dst []byte) []byte { return (dtogen{}).append60(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ResponseItem) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read60(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ResponseItem) Clone() ResponseItem { return (dtogen{}).clone60(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ResponseItem) Equal(other ResponseItem) bool { return (dtogen{}).equal60(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ResponseContent) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check62(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ResponseContent) AppendCBOR(dst []byte) []byte { return (dtogen{}).append62(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ResponseContent) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read62(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ResponseContent) Clone() ResponseContent { return (dtogen{}).clone62(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ResponseContent) Equal(other ResponseContent) bool { return (dtogen{}).equal62(v, other) }
+func (v ResponseContent) Equal(other ResponseContent) bool { return (dtogen{}).equal51(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v ResponseContentKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check52(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ResponseContentKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append52(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ResponseContentKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read52(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ResponseContentKind) Clone() ResponseContentKind { return (dtogen{}).clone52(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ResponseContentKind) Equal(other ResponseContentKind) bool {
+	return (dtogen{}).equal52(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v RequestedCall) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check55(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v RequestedCall) AppendCBOR(dst []byte) []byte { return (dtogen{}).append55(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *RequestedCall) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read55(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v RequestedCall) Clone() RequestedCall { return (dtogen{}).clone55(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v RequestedCall) Equal(other RequestedCall) bool { return (dtogen{}).equal55(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v OpaqueProviderData) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check59(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v OpaqueProviderData) AppendCBOR(dst []byte) []byte { return (dtogen{}).append59(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *OpaqueProviderData) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read59(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v OpaqueProviderData) Clone() OpaqueProviderData { return (dtogen{}).clone59(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v OpaqueProviderData) Equal(other OpaqueProviderData) bool { return (dtogen{}).equal59(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v RootInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check61(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v RootInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append61(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *RootInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read61(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v RootInstructions) Clone() RootInstructions { return (dtogen{}).clone61(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v RootInstructions) Equal(other RootInstructions) bool { return (dtogen{}).equal61(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v InstructionBlock) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1007,10 +1081,10 @@ func (v ResponseContentKind) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax in
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ResponseContentKind) AppendCBOR(dst []byte) []byte { return (dtogen{}).append63(dst, v) }
+func (v InstructionBlock) AppendCBOR(dst []byte) []byte { return (dtogen{}).append63(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ResponseContentKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *InstructionBlock) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1026,15 +1100,49 @@ func (v *ResponseContentKind) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax in
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ResponseContentKind) Clone() ResponseContentKind { return (dtogen{}).clone63(v) }
+func (v InstructionBlock) Clone() InstructionBlock { return (dtogen{}).clone63(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ResponseContentKind) Equal(other ResponseContentKind) bool {
-	return (dtogen{}).equal63(v, other)
-}
+func (v InstructionBlock) Equal(other InstructionBlock) bool { return (dtogen{}).equal63(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RequestedCall) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v RunEnded) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check65(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v RunEnded) AppendCBOR(dst []byte) []byte { return (dtogen{}).append65(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *RunEnded) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read65(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v RunEnded) Clone() RunEnded { return (dtogen{}).clone65(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v RunEnded) Equal(other RunEnded) bool { return (dtogen{}).equal65(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v RunEndedReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1045,10 +1153,10 @@ func (v RequestedCall) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) err
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RequestedCall) AppendCBOR(dst []byte) []byte { return (dtogen{}).append66(dst, v) }
+func (v RunEndedReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append66(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RequestedCall) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *RunEndedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1064,13 +1172,49 @@ func (v *RequestedCall) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RequestedCall) Clone() RequestedCall { return (dtogen{}).clone66(v) }
+func (v RunEndedReason) Clone() RunEndedReason { return (dtogen{}).clone66(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RequestedCall) Equal(other RequestedCall) bool { return (dtogen{}).equal66(v, other) }
+func (v RunEndedReason) Equal(other RunEndedReason) bool { return (dtogen{}).equal66(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RootInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v RunStarted) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check70(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v RunStarted) AppendCBOR(dst []byte) []byte { return (dtogen{}).append70(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *RunStarted) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read70(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v RunStarted) Clone() RunStarted { return (dtogen{}).clone70(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v RunStarted) Equal(other RunStarted) bool { return (dtogen{}).equal70(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolCatalog) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1081,10 +1225,10 @@ func (v RootInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) 
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RootInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append71(dst, v) }
+func (v ToolCatalog) AppendCBOR(dst []byte) []byte { return (dtogen{}).append71(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RootInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolCatalog) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1100,13 +1244,13 @@ func (v *RootInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RootInstructions) Clone() RootInstructions { return (dtogen{}).clone71(v) }
+func (v ToolCatalog) Clone() ToolCatalog { return (dtogen{}).clone71(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RootInstructions) Equal(other RootInstructions) bool { return (dtogen{}).equal71(v, other) }
+func (v ToolCatalog) Equal(other ToolCatalog) bool { return (dtogen{}).equal71(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v InstructionBlock) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolDefinition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1117,10 +1261,10 @@ func (v InstructionBlock) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) 
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v InstructionBlock) AppendCBOR(dst []byte) []byte { return (dtogen{}).append73(dst, v) }
+func (v ToolDefinition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append73(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *InstructionBlock) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolDefinition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1136,13 +1280,13 @@ func (v *InstructionBlock) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v InstructionBlock) Clone() InstructionBlock { return (dtogen{}).clone73(v) }
+func (v ToolDefinition) Clone() ToolDefinition { return (dtogen{}).clone73(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v InstructionBlock) Equal(other InstructionBlock) bool { return (dtogen{}).equal73(v, other) }
+func (v ToolDefinition) Equal(other ToolDefinition) bool { return (dtogen{}).equal73(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RunEnded) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolDisposition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1153,10 +1297,10 @@ func (v RunEnded) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RunEnded) AppendCBOR(dst []byte) []byte { return (dtogen{}).append75(dst, v) }
+func (v ToolDisposition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append75(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RunEnded) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolDisposition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1172,34 +1316,34 @@ func (v *RunEnded) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RunEnded) Clone() RunEnded { return (dtogen{}).clone75(v) }
+func (v ToolDisposition) Clone() ToolDisposition { return (dtogen{}).clone75(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RunEnded) Equal(other RunEnded) bool { return (dtogen{}).equal75(v, other) }
+func (v ToolDisposition) Equal(other ToolDisposition) bool { return (dtogen{}).equal75(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RunEndedReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolReturned) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check76(v, b, depth, fieldMax)
+	return (dtogen{}).check77(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RunEndedReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append76(dst, v) }
+func (v ToolReturned) AppendCBOR(dst []byte) []byte { return (dtogen{}).append77(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RunEndedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolReturned) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read76(r, depth, fieldMax)
+	x, err := (dtogen{}).read77(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -1208,13 +1352,85 @@ func (v *RunEndedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RunEndedReason) Clone() RunEndedReason { return (dtogen{}).clone76(v) }
+func (v ToolReturned) Clone() ToolReturned { return (dtogen{}).clone77(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RunEndedReason) Equal(other RunEndedReason) bool { return (dtogen{}).equal76(v, other) }
+func (v ToolReturned) Equal(other ToolReturned) bool { return (dtogen{}).equal77(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v RunStarted) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolReturnStatus) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check78(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolReturnStatus) AppendCBOR(dst []byte) []byte { return (dtogen{}).append78(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolReturnStatus) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read78(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ToolReturnStatus) Clone() ToolReturnStatus { return (dtogen{}).clone78(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ToolReturnStatus) Equal(other ToolReturnStatus) bool { return (dtogen{}).equal78(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolOutput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check79(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolOutput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append79(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolOutput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read79(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ToolOutput) Clone() ToolOutput { return (dtogen{}).clone79(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ToolOutput) Equal(other ToolOutput) bool { return (dtogen{}).equal79(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolCaptureState) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1225,10 +1441,10 @@ func (v RunStarted) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error 
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v RunStarted) AppendCBOR(dst []byte) []byte { return (dtogen{}).append80(dst, v) }
+func (v ToolCaptureState) AppendCBOR(dst []byte) []byte { return (dtogen{}).append80(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *RunStarted) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolCaptureState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1244,34 +1460,34 @@ func (v *RunStarted) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v RunStarted) Clone() RunStarted { return (dtogen{}).clone80(v) }
+func (v ToolCaptureState) Clone() ToolCaptureState { return (dtogen{}).clone80(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v RunStarted) Equal(other RunStarted) bool { return (dtogen{}).equal80(v, other) }
+func (v ToolCaptureState) Equal(other ToolCaptureState) bool { return (dtogen{}).equal80(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolCatalog) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolOutputPart) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check81(v, b, depth, fieldMax)
+	return (dtogen{}).check82(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolCatalog) AppendCBOR(dst []byte) []byte { return (dtogen{}).append81(dst, v) }
+func (v ToolOutputPart) AppendCBOR(dst []byte) []byte { return (dtogen{}).append82(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolCatalog) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolOutputPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read81(r, depth, fieldMax)
+	x, err := (dtogen{}).read82(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -1280,85 +1496,13 @@ func (v *ToolCatalog) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolCatalog) Clone() ToolCatalog { return (dtogen{}).clone81(v) }
+func (v ToolOutputPart) Clone() ToolOutputPart { return (dtogen{}).clone82(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolCatalog) Equal(other ToolCatalog) bool { return (dtogen{}).equal81(v, other) }
+func (v ToolOutputPart) Equal(other ToolOutputPart) bool { return (dtogen{}).equal82(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolDefinition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check83(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolDefinition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append83(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolDefinition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read83(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolDefinition) Clone() ToolDefinition { return (dtogen{}).clone83(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolDefinition) Equal(other ToolDefinition) bool { return (dtogen{}).equal83(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolDisposition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check85(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolDisposition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append85(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolDisposition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read85(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolDisposition) Clone() ToolDisposition { return (dtogen{}).clone85(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolDisposition) Equal(other ToolDisposition) bool { return (dtogen{}).equal85(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolReturned) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolResource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1369,10 +1513,10 @@ func (v ToolReturned) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) erro
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolReturned) AppendCBOR(dst []byte) []byte { return (dtogen{}).append87(dst, v) }
+func (v ToolResource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append87(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolReturned) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolResource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1388,121 +1532,13 @@ func (v *ToolReturned) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolReturned) Clone() ToolReturned { return (dtogen{}).clone87(v) }
+func (v ToolResource) Clone() ToolResource { return (dtogen{}).clone87(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolReturned) Equal(other ToolReturned) bool { return (dtogen{}).equal87(v, other) }
+func (v ToolResource) Equal(other ToolResource) bool { return (dtogen{}).equal87(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolReturnStatus) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check88(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolReturnStatus) AppendCBOR(dst []byte) []byte { return (dtogen{}).append88(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolReturnStatus) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read88(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolReturnStatus) Clone() ToolReturnStatus { return (dtogen{}).clone88(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolReturnStatus) Equal(other ToolReturnStatus) bool { return (dtogen{}).equal88(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolOutput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check89(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolOutput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append89(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolOutput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read89(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolOutput) Clone() ToolOutput { return (dtogen{}).clone89(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolOutput) Equal(other ToolOutput) bool { return (dtogen{}).equal89(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolCaptureState) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check90(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolCaptureState) AppendCBOR(dst []byte) []byte { return (dtogen{}).append90(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolCaptureState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read90(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolCaptureState) Clone() ToolCaptureState { return (dtogen{}).clone90(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolCaptureState) Equal(other ToolCaptureState) bool { return (dtogen{}).equal90(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolOutputPart) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolEmbeddedResource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1513,10 +1549,10 @@ func (v ToolOutputPart) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) er
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolOutputPart) AppendCBOR(dst []byte) []byte { return (dtogen{}).append92(dst, v) }
+func (v ToolEmbeddedResource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append92(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolOutputPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolEmbeddedResource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1532,13 +1568,15 @@ func (v *ToolOutputPart) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) er
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolOutputPart) Clone() ToolOutputPart { return (dtogen{}).clone92(v) }
+func (v ToolEmbeddedResource) Clone() ToolEmbeddedResource { return (dtogen{}).clone92(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolOutputPart) Equal(other ToolOutputPart) bool { return (dtogen{}).equal92(v, other) }
+func (v ToolEmbeddedResource) Equal(other ToolEmbeddedResource) bool {
+	return (dtogen{}).equal92(v, other)
+}
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolResource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v ToolNotInvoked) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1549,10 +1587,10 @@ func (v ToolResource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) erro
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolResource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append97(dst, v) }
+func (v ToolNotInvoked) AppendCBOR(dst []byte) []byte { return (dtogen{}).append97(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolResource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *ToolNotInvoked) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1568,87 +1606,199 @@ func (v *ToolResource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) erro
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolResource) Clone() ToolResource { return (dtogen{}).clone97(v) }
+func (v ToolNotInvoked) Clone() ToolNotInvoked { return (dtogen{}).clone97(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolResource) Equal(other ToolResource) bool { return (dtogen{}).equal97(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolEmbeddedResource) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check102(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolEmbeddedResource) AppendCBOR(dst []byte) []byte { return (dtogen{}).append102(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolEmbeddedResource) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read102(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolEmbeddedResource) Clone() ToolEmbeddedResource { return (dtogen{}).clone102(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolEmbeddedResource) Equal(other ToolEmbeddedResource) bool {
-	return (dtogen{}).equal102(v, other)
-}
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolNotInvoked) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check107(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolNotInvoked) AppendCBOR(dst []byte) []byte { return (dtogen{}).append107(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolNotInvoked) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read107(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolNotInvoked) Clone() ToolNotInvoked { return (dtogen{}).clone107(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolNotInvoked) Equal(other ToolNotInvoked) bool { return (dtogen{}).equal107(v, other) }
+func (v ToolNotInvoked) Equal(other ToolNotInvoked) bool { return (dtogen{}).equal97(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v ToolNotInvokedReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check98(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolNotInvokedReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append98(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolNotInvokedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read98(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ToolNotInvokedReason) Clone() ToolNotInvokedReason { return (dtogen{}).clone98(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ToolNotInvokedReason) Equal(other ToolNotInvokedReason) bool {
+	return (dtogen{}).equal98(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolIndeterminate) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check100(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolIndeterminate) AppendCBOR(dst []byte) []byte { return (dtogen{}).append100(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolIndeterminate) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read100(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ToolIndeterminate) Clone() ToolIndeterminate { return (dtogen{}).clone100(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ToolIndeterminate) Equal(other ToolIndeterminate) bool { return (dtogen{}).equal100(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolIndeterminateReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check101(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolIndeterminateReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append101(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolIndeterminateReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read101(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v ToolIndeterminateReason) Clone() ToolIndeterminateReason { return (dtogen{}).clone101(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v ToolIndeterminateReason) Equal(other ToolIndeterminateReason) bool {
+	return (dtogen{}).equal101(v, other)
+}
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v ToolInvocation) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check103(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v ToolInvocation) AppendCBOR(dst []byte) []byte { return (dtogen{}).append103(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *ToolInvocation) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read103(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+// It propagates value.ErrDepthExceeded panics when traversing structured values beyond their fixed local depth of 128.
+func (v ToolInvocation) Clone() ToolInvocation { return (dtogen{}).clone103(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+// It propagates value.ErrDepthExceeded panics on traversed structured values beyond local depth 128; shallow mismatches may return first.
+func (v ToolInvocation) Equal(other ToolInvocation) bool { return (dtogen{}).equal103(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v Usage) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+	if b == nil {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	if fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	return (dtogen{}).check106(v, b, depth, fieldMax)
+}
+
+// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
+func (v Usage) AppendCBOR(dst []byte) []byte { return (dtogen{}).append106(dst, v) }
+
+// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
+func (v *Usage) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	if r == nil || fieldMax <= 0 {
+		return dtogenCodec.ErrInvalidLimits
+	}
+	x, err := (dtogen{}).read106(r, depth, fieldMax)
+	if err != nil {
+		return err
+	}
+	*v = x
+	return nil
+}
+
+// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
+func (v Usage) Clone() Usage { return (dtogen{}).clone106(v) }
+
+// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
+func (v Usage) Equal(other Usage) bool { return (dtogen{}).equal106(v, other) }
+
+// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
+func (v UsageDefinition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1659,10 +1809,10 @@ func (v ToolNotInvokedReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax i
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolNotInvokedReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append108(dst, v) }
+func (v UsageDefinition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append108(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolNotInvokedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *UsageDefinition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1678,51 +1828,13 @@ func (v *ToolNotInvokedReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax i
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolNotInvokedReason) Clone() ToolNotInvokedReason { return (dtogen{}).clone108(v) }
+func (v UsageDefinition) Clone() UsageDefinition { return (dtogen{}).clone108(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolNotInvokedReason) Equal(other ToolNotInvokedReason) bool {
-	return (dtogen{}).equal108(v, other)
-}
+func (v UsageDefinition) Equal(other UsageDefinition) bool { return (dtogen{}).equal108(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolIndeterminate) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check110(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolIndeterminate) AppendCBOR(dst []byte) []byte { return (dtogen{}).append110(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolIndeterminate) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read110(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolIndeterminate) Clone() ToolIndeterminate { return (dtogen{}).clone110(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolIndeterminate) Equal(other ToolIndeterminate) bool { return (dtogen{}).equal110(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolIndeterminateReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v UsageReport) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -1733,10 +1845,10 @@ func (v ToolIndeterminateReason) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMa
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolIndeterminateReason) AppendCBOR(dst []byte) []byte { return (dtogen{}).append111(dst, v) }
+func (v UsageReport) AppendCBOR(dst []byte) []byte { return (dtogen{}).append111(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolIndeterminateReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *UsageReport) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -1752,194 +1864,10 @@ func (v *ToolIndeterminateReason) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMa
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v ToolIndeterminateReason) Clone() ToolIndeterminateReason { return (dtogen{}).clone111(v) }
+func (v UsageReport) Clone() UsageReport { return (dtogen{}).clone111(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v ToolIndeterminateReason) Equal(other ToolIndeterminateReason) bool {
-	return (dtogen{}).equal111(v, other)
-}
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v ToolInvocation) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check113(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v ToolInvocation) AppendCBOR(dst []byte) []byte { return (dtogen{}).append113(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *ToolInvocation) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read113(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-// It propagates value.ErrDepthExceeded panics when traversing structured values beyond their fixed local depth of 128.
-func (v ToolInvocation) Clone() ToolInvocation { return (dtogen{}).clone113(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-// It propagates value.ErrDepthExceeded panics on traversed structured values beyond local depth 128; shallow mismatches may return first.
-func (v ToolInvocation) Equal(other ToolInvocation) bool { return (dtogen{}).equal113(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v Usage) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check116(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Usage) AppendCBOR(dst []byte) []byte { return (dtogen{}).append116(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *Usage) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read116(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Usage) Clone() Usage { return (dtogen{}).clone116(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Usage) Equal(other Usage) bool { return (dtogen{}).equal116(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UsageDefinition) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check118(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageDefinition) AppendCBOR(dst []byte) []byte { return (dtogen{}).append118(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UsageDefinition) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read118(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageDefinition) Clone() UsageDefinition { return (dtogen{}).clone118(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageDefinition) Equal(other UsageDefinition) bool { return (dtogen{}).equal118(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UsageGranularity) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check119(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageGranularity) AppendCBOR(dst []byte) []byte { return (dtogen{}).append119(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UsageGranularity) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read119(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageGranularity) Clone() UsageGranularity { return (dtogen{}).clone119(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageGranularity) Equal(other UsageGranularity) bool { return (dtogen{}).equal119(v, other) }
-
-// CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v UsageReport) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
-	if b == nil {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	if fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	return (dtogen{}).check122(v, b, depth, fieldMax)
-}
-
-// AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageReport) AppendCBOR(dst []byte) []byte { return (dtogen{}).append122(dst, v) }
-
-// ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *UsageReport) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	if r == nil || fieldMax <= 0 {
-		return dtogenCodec.ErrInvalidLimits
-	}
-	x, err := (dtogen{}).read122(r, depth, fieldMax)
-	if err != nil {
-		return err
-	}
-	*v = x
-	return nil
-}
-
-// Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageReport) Clone() UsageReport { return (dtogen{}).clone122(v) }
-
-// Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageReport) Equal(other UsageReport) bool { return (dtogen{}).equal122(v, other) }
+func (v UsageReport) Equal(other UsageReport) bool { return (dtogen{}).equal111(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v UsageReportState) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -1949,11 +1877,11 @@ func (v UsageReportState) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) 
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check123(v, b, depth, fieldMax)
+	return (dtogen{}).check112(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageReportState) AppendCBOR(dst []byte) []byte { return (dtogen{}).append123(dst, v) }
+func (v UsageReportState) AppendCBOR(dst []byte) []byte { return (dtogen{}).append112(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *UsageReportState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -1963,7 +1891,7 @@ func (v *UsageReportState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read123(r, depth, fieldMax)
+	x, err := (dtogen{}).read112(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -1972,10 +1900,10 @@ func (v *UsageReportState) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageReportState) Clone() UsageReportState { return (dtogen{}).clone123(v) }
+func (v UsageReportState) Clone() UsageReportState { return (dtogen{}).clone112(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageReportState) Equal(other UsageReportState) bool { return (dtogen{}).equal123(v, other) }
+func (v UsageReportState) Equal(other UsageReportState) bool { return (dtogen{}).equal112(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v UsageBucket) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -1985,11 +1913,11 @@ func (v UsageBucket) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check125(v, b, depth, fieldMax)
+	return (dtogen{}).check114(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageBucket) AppendCBOR(dst []byte) []byte { return (dtogen{}).append125(dst, v) }
+func (v UsageBucket) AppendCBOR(dst []byte) []byte { return (dtogen{}).append114(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *UsageBucket) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -1999,7 +1927,7 @@ func (v *UsageBucket) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read125(r, depth, fieldMax)
+	x, err := (dtogen{}).read114(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -2008,10 +1936,10 @@ func (v *UsageBucket) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageBucket) Clone() UsageBucket { return (dtogen{}).clone125(v) }
+func (v UsageBucket) Clone() UsageBucket { return (dtogen{}).clone114(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageBucket) Equal(other UsageBucket) bool { return (dtogen{}).equal125(v, other) }
+func (v UsageBucket) Equal(other UsageBucket) bool { return (dtogen{}).equal114(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v UsageCounters) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -2021,11 +1949,11 @@ func (v UsageCounters) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) err
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check128(v, b, depth, fieldMax)
+	return (dtogen{}).check117(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UsageCounters) AppendCBOR(dst []byte) []byte { return (dtogen{}).append128(dst, v) }
+func (v UsageCounters) AppendCBOR(dst []byte) []byte { return (dtogen{}).append117(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *UsageCounters) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -2035,7 +1963,7 @@ func (v *UsageCounters) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) err
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read128(r, depth, fieldMax)
+	x, err := (dtogen{}).read117(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -2044,10 +1972,10 @@ func (v *UsageCounters) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) err
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UsageCounters) Clone() UsageCounters { return (dtogen{}).clone128(v) }
+func (v UsageCounters) Clone() UsageCounters { return (dtogen{}).clone117(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UsageCounters) Equal(other UsageCounters) bool { return (dtogen{}).equal128(v, other) }
+func (v UsageCounters) Equal(other UsageCounters) bool { return (dtogen{}).equal117(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v UserInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -2057,11 +1985,11 @@ func (v UserInput) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check135(v, b, depth, fieldMax)
+	return (dtogen{}).check124(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UserInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append135(dst, v) }
+func (v UserInput) AppendCBOR(dst []byte) []byte { return (dtogen{}).append124(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -2071,7 +1999,7 @@ func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read135(r, depth, fieldMax)
+	x, err := (dtogen{}).read124(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -2080,10 +2008,10 @@ func (v *UserInput) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UserInput) Clone() UserInput { return (dtogen{}).clone135(v) }
+func (v UserInput) Clone() UserInput { return (dtogen{}).clone124(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UserInput) Equal(other UserInput) bool { return (dtogen{}).equal135(v, other) }
+func (v UserInput) Equal(other UserInput) bool { return (dtogen{}).equal124(v, other) }
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
 func (v UserInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
@@ -2093,11 +2021,11 @@ func (v UserInstructions) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) 
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check137(v, b, depth, fieldMax)
+	return (dtogen{}).check126(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v UserInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append137(dst, v) }
+func (v UserInstructions) AppendCBOR(dst []byte) []byte { return (dtogen{}).append126(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -2107,7 +2035,7 @@ func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read137(r, depth, fieldMax)
+	x, err := (dtogen{}).read126(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -2116,17 +2044,16 @@ func (v *UserInstructions) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) 
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v UserInstructions) Clone() UserInstructions { return (dtogen{}).clone137(v) }
+func (v UserInstructions) Clone() UserInstructions { return (dtogen{}).clone126(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v UserInstructions) Equal(other UserInstructions) bool { return (dtogen{}).equal137(v, other) }
+func (v UserInstructions) Equal(other UserInstructions) bool { return (dtogen{}).equal126(v, other) }
 
 // Helpers 0: CaptureFailureEvidence.
 func (h dtogen) clone0(v CaptureFailureEvidence) CaptureFailureEvidence {
 	out := v
 	out.RequestID = h.clone1(v.RequestID)
 	out.Evidence = h.clone2(v.Evidence)
-	out.Usage = h.clone7(v.Usage)
 	return out
 }
 func (h dtogen) equal0(v, w CaptureFailureEvidence) bool {
@@ -2134,9 +2061,6 @@ func (h dtogen) equal0(v, w CaptureFailureEvidence) bool {
 		return false
 	}
 	if !h.equal2(v.Evidence, w.Evidence) {
-		return false
-	}
-	if !h.equal7(v.Usage, w.Usage) {
 		return false
 	}
 	return true
@@ -2149,9 +2073,6 @@ func (h dtogen) check0(v CaptureFailureEvidence, b *dtogenCodec.Budget, d, cap i
 	}()
 	count := 1
 	if v.Evidence != nil {
-		count++
-	}
-	if v.Usage != nil {
 		count++
 	}
 	if err := b.CheckMap(count, d, cap); err != nil {
@@ -2171,22 +2092,11 @@ func (h dtogen) check0(v CaptureFailureEvidence, b *dtogenCodec.Budget, d, cap i
 	if err := h.check1(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("RequestID: %w", err)
 	}
-	if v.Usage != nil {
-		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
-		if err := h.check7(v.Usage, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
-	}
 	return nil
 }
 func (h dtogen) append0(out []byte, v CaptureFailureEvidence) []byte {
 	count := 1
 	if v.Evidence != nil {
-		count++
-	}
-	if v.Usage != nil {
 		count++
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
@@ -2196,10 +2106,6 @@ func (h dtogen) append0(out []byte, v CaptureFailureEvidence) []byte {
 	}
 	out = dtogenCBOR.AppendText(out, "q")
 	out = h.append1(out, v.RequestID)
-	if v.Usage != nil {
-		out = dtogenCBOR.AppendText(out, "u")
-		out = h.append7(out, v.Usage)
-	}
 	return out
 }
 func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v CaptureFailureEvidence, err error) {
@@ -2213,7 +2119,7 @@ func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v CaptureFailureEviden
 		return v, err
 	}
 	previous := ""
-	var seen [3]bool
+	var seen [2]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -2236,12 +2142,6 @@ func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v CaptureFailureEviden
 			v.RequestID, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("RequestID: %w", err)
-			}
-		case "u":
-			seen[2] = true
-			v.Usage, err = h.read7(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Usage: %w", err)
 			}
 		default:
 			return v, dtogenCodec.ErrInvalidData
@@ -2499,699 +2399,31 @@ func (h dtogen) read6(r *dtogenCodec.Reader, d, cap int) (v *string, err error) 
 	return (*string)(&x), nil
 }
 
-// Helpers 7: *InvocationUsage.
-func (h dtogen) clone7(v *InvocationUsage) *InvocationUsage {
-	if v == nil {
-		return nil
-	}
-	x := h.clone8(*v)
-	return (*InvocationUsage)(&x)
-}
-func (h dtogen) equal7(v, w *InvocationUsage) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal8(*v, *w)
-}
-func (h dtogen) check7(v *InvocationUsage, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check8(*v, b, d, cap)
-}
-func (h dtogen) append7(out []byte, v *InvocationUsage) []byte {
-	return h.append8(out, *v)
-}
-func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v *InvocationUsage, err error) {
-	x, err := h.read8(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*InvocationUsage)(&x), nil
-}
-
-// Helpers 8: InvocationUsage.
-func (h dtogen) clone8(v InvocationUsage) InvocationUsage {
-	out := v
-	out.Input = h.clone9(v.Input)
-	out.Output = h.clone11(v.Output)
-	out.CacheRead = h.clone12(v.CacheRead)
-	out.CacheWrite = h.clone13(v.CacheWrite)
-	out.Reasoning = h.clone14(v.Reasoning)
-	out.Raw = h.clone15(v.Raw)
-	return out
-}
-func (h dtogen) equal8(v, w InvocationUsage) bool {
-	if !h.equal9(v.Input, w.Input) {
-		return false
-	}
-	if !h.equal11(v.Output, w.Output) {
-		return false
-	}
-	if !h.equal12(v.CacheRead, w.CacheRead) {
-		return false
-	}
-	if !h.equal13(v.CacheWrite, w.CacheWrite) {
-		return false
-	}
-	if !h.equal14(v.Reasoning, w.Reasoning) {
-		return false
-	}
-	if !h.equal15(v.Raw, w.Raw) {
-		return false
-	}
-	return true
-}
-func (h dtogen) check8(v InvocationUsage, b *dtogenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count := 0
-	if v.Input != nil {
-		count++
-	}
-	if v.Reasoning != nil {
-		count++
-	}
-	if v.Output != nil {
-		count++
-	}
-	if v.CacheRead != nil {
-		count++
-	}
-	if v.CacheWrite != nil {
-		count++
-	}
-	if v.Raw != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if v.Input != nil {
-		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Input: %w", err)
-		}
-		if err := h.check9(v.Input, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Input: %w", err)
-		}
-	}
-	if v.Reasoning != nil {
-		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Reasoning: %w", err)
-		}
-		if err := h.check14(v.Reasoning, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Reasoning: %w", err)
-		}
-	}
-	if v.Output != nil {
-		if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Output: %w", err)
-		}
-		if err := h.check11(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Output: %w", err)
-		}
-	}
-	if v.CacheRead != nil {
-		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("CacheRead: %w", err)
-		}
-		if err := h.check12(v.CacheRead, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("CacheRead: %w", err)
-		}
-	}
-	if v.CacheWrite != nil {
-		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("CacheWrite: %w", err)
-		}
-		if err := h.check13(v.CacheWrite, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("CacheWrite: %w", err)
-		}
-	}
-	if v.Raw != nil {
-		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Raw: %w", err)
-		}
-		if err := h.check15(v.Raw, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Raw: %w", err)
-		}
-	}
-	return nil
-}
-func (h dtogen) append8(out []byte, v InvocationUsage) []byte {
-	count := 0
-	if v.Input != nil {
-		count++
-	}
-	if v.Reasoning != nil {
-		count++
-	}
-	if v.Output != nil {
-		count++
-	}
-	if v.CacheRead != nil {
-		count++
-	}
-	if v.CacheWrite != nil {
-		count++
-	}
-	if v.Raw != nil {
-		count++
-	}
-	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	if v.Input != nil {
-		out = dtogenCBOR.AppendText(out, "i")
-		out = h.append9(out, v.Input)
-	}
-	if v.Reasoning != nil {
-		out = dtogenCBOR.AppendText(out, "n")
-		out = h.append14(out, v.Reasoning)
-	}
-	if v.Output != nil {
-		out = dtogenCBOR.AppendText(out, "o")
-		out = h.append11(out, v.Output)
-	}
-	if v.CacheRead != nil {
-		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append12(out, v.CacheRead)
-	}
-	if v.CacheWrite != nil {
-		out = dtogenCBOR.AppendText(out, "w")
-		out = h.append13(out, v.CacheWrite)
-	}
-	if v.Raw != nil {
-		out = dtogenCBOR.AppendText(out, "x")
-		out = h.append15(out, v.Raw)
-	}
-	return out
-}
-func (h dtogen) read8(r *dtogenCodec.Reader, d, cap int) (v InvocationUsage, err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [6]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, dtogenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "i":
-			seen[0] = true
-			v.Input, err = h.read9(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Input: %w", err)
-			}
-		case "n":
-			seen[1] = true
-			v.Reasoning, err = h.read14(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Reasoning: %w", err)
-			}
-		case "o":
-			seen[2] = true
-			v.Output, err = h.read11(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Output: %w", err)
-			}
-		case "r":
-			seen[3] = true
-			v.CacheRead, err = h.read12(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("CacheRead: %w", err)
-			}
-		case "w":
-			seen[4] = true
-			v.CacheWrite, err = h.read13(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("CacheWrite: %w", err)
-			}
-		case "x":
-			seen[5] = true
-			v.Raw, err = h.read15(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Raw: %w", err)
-			}
-		default:
-			return v, dtogenCodec.ErrInvalidData
-		}
-	}
-	return v, nil
-}
-
-// Helpers 9: *int64.
-func (h dtogen) clone9(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	x := h.clone10(*v)
-	return (*int64)(&x)
-}
-func (h dtogen) equal9(v, w *int64) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal10(*v, *w)
-}
-func (h dtogen) check9(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check10(*v, b, d, cap)
-}
-func (h dtogen) append9(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
-}
-func (h dtogen) read9(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*int64)(&x), nil
-}
-
-// Helpers 10: int64.
-func (h dtogen) clone10(v int64) int64 {
-	return v
-}
-func (h dtogen) equal10(v, w int64) bool {
-	return v == w
-}
-func (h dtogen) check10(v int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckScalar(d)
-}
-func (h dtogen) append10(out []byte, v int64) []byte {
-	return dtogenCBOR.AppendInt(out, int64(v))
-}
-func (h dtogen) read10(r *dtogenCodec.Reader, d, cap int) (v int64, err error) {
-	x, err := r.Int(d)
-	if err != nil {
-		return v, err
-	}
-	return int64(x), nil
-}
-
-// Helpers 11: *int64.
-func (h dtogen) clone11(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	x := h.clone10(*v)
-	return (*int64)(&x)
-}
-func (h dtogen) equal11(v, w *int64) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal10(*v, *w)
-}
-func (h dtogen) check11(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check10(*v, b, d, cap)
-}
-func (h dtogen) append11(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
-}
-func (h dtogen) read11(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*int64)(&x), nil
-}
-
-// Helpers 12: *int64.
-func (h dtogen) clone12(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	x := h.clone10(*v)
-	return (*int64)(&x)
-}
-func (h dtogen) equal12(v, w *int64) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal10(*v, *w)
-}
-func (h dtogen) check12(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check10(*v, b, d, cap)
-}
-func (h dtogen) append12(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
-}
-func (h dtogen) read12(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*int64)(&x), nil
-}
-
-// Helpers 13: *int64.
-func (h dtogen) clone13(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	x := h.clone10(*v)
-	return (*int64)(&x)
-}
-func (h dtogen) equal13(v, w *int64) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal10(*v, *w)
-}
-func (h dtogen) check13(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check10(*v, b, d, cap)
-}
-func (h dtogen) append13(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
-}
-func (h dtogen) read13(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*int64)(&x), nil
-}
-
-// Helpers 14: *int64.
-func (h dtogen) clone14(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	x := h.clone10(*v)
-	return (*int64)(&x)
-}
-func (h dtogen) equal14(v, w *int64) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal10(*v, *w)
-}
-func (h dtogen) check14(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check10(*v, b, d, cap)
-}
-func (h dtogen) append14(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
-}
-func (h dtogen) read14(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*int64)(&x), nil
-}
-
-// Helpers 15: *OpaqueProviderData.
-func (h dtogen) clone15(v *OpaqueProviderData) *OpaqueProviderData {
-	if v == nil {
-		return nil
-	}
-	x := h.clone16(*v)
-	return (*OpaqueProviderData)(&x)
-}
-func (h dtogen) equal15(v, w *OpaqueProviderData) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal16(*v, *w)
-}
-func (h dtogen) check15(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check16(*v, b, d, cap)
-}
-func (h dtogen) append15(out []byte, v *OpaqueProviderData) []byte {
-	return h.append16(out, *v)
-}
-func (h dtogen) read15(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
-	x, err := h.read16(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*OpaqueProviderData)(&x), nil
-}
-
-// Helpers 16: OpaqueProviderData.
-func (h dtogen) clone16(v OpaqueProviderData) OpaqueProviderData {
-	out := v
-	out.Producer = h.clone5(v.Producer)
-	out.Format = h.clone5(v.Format)
-	out.Version = h.clone10(v.Version)
-	out.Data = h.clone17(v.Data)
-	return out
-}
-func (h dtogen) equal16(v, w OpaqueProviderData) bool {
-	if !h.equal5(v.Producer, w.Producer) {
-		return false
-	}
-	if !h.equal5(v.Format, w.Format) {
-		return false
-	}
-	if !h.equal10(v.Version, w.Version) {
-		return false
-	}
-	if !h.equal17(v.Data, w.Data) {
-		return false
-	}
-	return true
-}
-func (h dtogen) check16(v OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count := 4
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Data: %w", err)
-	}
-	if err := h.check17(v.Data, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Data: %w", err)
-	}
-	if err := b.CheckString("f", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Format: %w", err)
-	}
-	if err := h.check5(v.Format, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Format: %w", err)
-	}
-	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Producer: %w", err)
-	}
-	if err := h.check5(v.Producer, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Producer: %w", err)
-	}
-	if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Version: %w", err)
-	}
-	if err := h.check10(v.Version, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Version: %w", err)
-	}
-	return nil
-}
-func (h dtogen) append16(out []byte, v OpaqueProviderData) []byte {
-	count := 4
-	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	out = dtogenCBOR.AppendText(out, "d")
-	out = h.append17(out, v.Data)
-	out = dtogenCBOR.AppendText(out, "f")
-	out = h.append5(out, v.Format)
-	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append5(out, v.Producer)
-	out = dtogenCBOR.AppendText(out, "v")
-	out = h.append10(out, v.Version)
-	return out
-}
-func (h dtogen) read16(r *dtogenCodec.Reader, d, cap int) (v OpaqueProviderData, err error) {
-	defer func() {
-		if err == nil && v.Validate() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [4]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, dtogenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "d":
-			seen[0] = true
-			v.Data, err = h.read17(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Data: %w", err)
-			}
-		case "f":
-			seen[1] = true
-			v.Format, err = h.read5(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Format: %w", err)
-			}
-		case "p":
-			seen[2] = true
-			v.Producer, err = h.read5(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Producer: %w", err)
-			}
-		case "v":
-			seen[3] = true
-			v.Version, err = h.read10(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Version: %w", err)
-			}
-		default:
-			return v, dtogenCodec.ErrInvalidData
-		}
-	}
-	if !seen[0] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	if !seen[1] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	if !seen[2] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	if !seen[3] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 17: []byte.
-func (h dtogen) clone17(v []byte) []byte {
-	if v == nil {
-		return nil
-	}
-	out := make([]byte, len(v))
-	for i := range v {
-		out[i] = h.clone18(v[i])
-	}
-	return out
-}
-func (h dtogen) equal17(v, w []byte) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal18(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h dtogen) check17(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckBytes(len(v), d, cap)
-}
-func (h dtogen) append17(out []byte, v []byte) []byte {
-	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = append(out, byte(x))
-	}
-	return out
-}
-func (h dtogen) read17(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
-	x, err := r.Bytes(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]byte, len(x))
-	for i := range x {
-		v[i] = byte(x[i])
-	}
-	return v, nil
-}
-
-// Helpers 18: byte.
-func (h dtogen) clone18(v byte) byte {
-	return v
-}
-func (h dtogen) equal18(v, w byte) bool {
-	return v == w
-}
-func (h dtogen) check18(v byte, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckScalar(d)
-}
-func (h dtogen) append18(out []byte, v byte) []byte {
-	return dtogenCBOR.AppendUint(out, uint64(v))
-}
-func (h dtogen) read18(r *dtogenCodec.Reader, d, cap int) (v byte, err error) {
-	x, err := r.Uint(d)
-	if err != nil {
-		return v, err
-	}
-	if x > (1<<8)-1 {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	return byte(x), nil
-}
-
-// Helpers 19: ConstructionRecipe.
-func (h dtogen) clone19(v ConstructionRecipe) ConstructionRecipe {
+// Helpers 7: ConstructionRecipe.
+func (h dtogen) clone7(v ConstructionRecipe) ConstructionRecipe {
 	out := v
 	out.Algorithm = h.clone5(v.Algorithm)
-	out.Version = h.clone10(v.Version)
-	out.Parameters = h.clone20(v.Parameters)
-	out.Check = h.clone21(v.Check)
+	out.Version = h.clone8(v.Version)
+	out.Parameters = h.clone9(v.Parameters)
+	out.Check = h.clone11(v.Check)
 	return out
 }
-func (h dtogen) equal19(v, w ConstructionRecipe) bool {
+func (h dtogen) equal7(v, w ConstructionRecipe) bool {
 	if !h.equal5(v.Algorithm, w.Algorithm) {
 		return false
 	}
-	if !h.equal10(v.Version, w.Version) {
+	if !h.equal8(v.Version, w.Version) {
 		return false
 	}
-	if !h.equal20(v.Parameters, w.Parameters) {
+	if !h.equal9(v.Parameters, w.Parameters) {
 		return false
 	}
-	if !h.equal21(v.Check, w.Check) {
+	if !h.equal11(v.Check, w.Check) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check19(v ConstructionRecipe, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check7(v ConstructionRecipe, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3210,37 +2442,37 @@ func (h dtogen) check19(v ConstructionRecipe, b *dtogenCodec.Budget, d, cap int)
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Check: %w", err)
 	}
-	if err := h.check21(v.Check, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check11(v.Check, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Check: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parameters: %w", err)
 	}
-	if err := h.check20(v.Parameters, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check9(v.Parameters, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parameters: %w", err)
 	}
 	if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Version: %w", err)
 	}
-	if err := h.check10(v.Version, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check8(v.Version, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Version: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append19(out []byte, v ConstructionRecipe) []byte {
+func (h dtogen) append7(out []byte, v ConstructionRecipe) []byte {
 	count := 4
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "a")
 	out = h.append5(out, v.Algorithm)
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append21(out, v.Check)
+	out = h.append11(out, v.Check)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append20(out, v.Parameters)
+	out = h.append9(out, v.Parameters)
 	out = dtogenCBOR.AppendText(out, "v")
-	out = h.append10(out, v.Version)
+	out = h.append8(out, v.Version)
 	return out
 }
-func (h dtogen) read19(r *dtogenCodec.Reader, d, cap int) (v ConstructionRecipe, err error) {
+func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v ConstructionRecipe, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3271,19 +2503,19 @@ func (h dtogen) read19(r *dtogenCodec.Reader, d, cap int) (v ConstructionRecipe,
 			}
 		case "c":
 			seen[1] = true
-			v.Check, err = h.read21(r, d+1, int(^uint(0)>>1))
+			v.Check, err = h.read11(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Check: %w", err)
 			}
 		case "p":
 			seen[2] = true
-			v.Parameters, err = h.read20(r, d+1, int(^uint(0)>>1))
+			v.Parameters, err = h.read9(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parameters: %w", err)
 			}
 		case "v":
 			seen[3] = true
-			v.Version, err = h.read10(r, d+1, int(^uint(0)>>1))
+			v.Version, err = h.read8(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Version: %w", err)
 			}
@@ -3306,39 +2538,60 @@ func (h dtogen) read19(r *dtogenCodec.Reader, d, cap int) (v ConstructionRecipe,
 	return v, nil
 }
 
-// Helpers 20: []byte.
-func (h dtogen) clone20(v []byte) []byte {
+// Helpers 8: int64.
+func (h dtogen) clone8(v int64) int64 {
+	return v
+}
+func (h dtogen) equal8(v, w int64) bool {
+	return v == w
+}
+func (h dtogen) check8(v int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckScalar(d)
+}
+func (h dtogen) append8(out []byte, v int64) []byte {
+	return dtogenCBOR.AppendInt(out, int64(v))
+}
+func (h dtogen) read8(r *dtogenCodec.Reader, d, cap int) (v int64, err error) {
+	x, err := r.Int(d)
+	if err != nil {
+		return v, err
+	}
+	return int64(x), nil
+}
+
+// Helpers 9: []byte.
+func (h dtogen) clone9(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
-func (h dtogen) equal20(v, w []byte) bool {
+func (h dtogen) equal9(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check20(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check9(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append20(out []byte, v []byte) []byte {
+func (h dtogen) append9(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read20(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read9(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -3350,39 +2603,63 @@ func (h dtogen) read20(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 21: []byte.
-func (h dtogen) clone21(v []byte) []byte {
+// Helpers 10: byte.
+func (h dtogen) clone10(v byte) byte {
+	return v
+}
+func (h dtogen) equal10(v, w byte) bool {
+	return v == w
+}
+func (h dtogen) check10(v byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckScalar(d)
+}
+func (h dtogen) append10(out []byte, v byte) []byte {
+	return dtogenCBOR.AppendUint(out, uint64(v))
+}
+func (h dtogen) read10(r *dtogenCodec.Reader, d, cap int) (v byte, err error) {
+	x, err := r.Uint(d)
+	if err != nil {
+		return v, err
+	}
+	if x > (1<<8)-1 {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return byte(x), nil
+}
+
+// Helpers 11: []byte.
+func (h dtogen) clone11(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
-func (h dtogen) equal21(v, w []byte) bool {
+func (h dtogen) equal11(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check21(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check11(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append21(out []byte, v []byte) []byte {
+func (h dtogen) append11(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read21(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read11(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -3394,27 +2671,27 @@ func (h dtogen) read21(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 22: Created.
-func (h dtogen) clone22(v Created) Created {
+// Helpers 12: Created.
+func (h dtogen) clone12(v Created) Created {
 	out := v
 	return out
 }
-func (h dtogen) equal22(v, w Created) bool {
+func (h dtogen) equal12(v, w Created) bool {
 	return true
 }
-func (h dtogen) check22(v Created, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check12(v Created, b *dtogenCodec.Budget, d, cap int) (err error) {
 	count := 0
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
 	}
 	return nil
 }
-func (h dtogen) append22(out []byte, v Created) []byte {
+func (h dtogen) append12(out []byte, v Created) []byte {
 	count := 0
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	return out
 }
-func (h dtogen) read22(r *dtogenCodec.Reader, d, cap int) (v Created, err error) {
+func (h dtogen) read12(r *dtogenCodec.Reader, d, cap int) (v Created, err error) {
 	count, err := r.Map(d, cap)
 	if err != nil {
 		return v, err
@@ -3438,23 +2715,23 @@ func (h dtogen) read22(r *dtogenCodec.Reader, d, cap int) (v Created, err error)
 	return v, nil
 }
 
-// Helpers 23: EffectiveInput.
-func (h dtogen) clone23(v EffectiveInput) EffectiveInput {
+// Helpers 13: EffectiveInput.
+func (h dtogen) clone13(v EffectiveInput) EffectiveInput {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.Inputs = h.clone24(v.Inputs)
+	out.Inputs = h.clone14(v.Inputs)
 	return out
 }
-func (h dtogen) equal23(v, w EffectiveInput) bool {
+func (h dtogen) equal13(v, w EffectiveInput) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal24(v.Inputs, w.Inputs) {
+	if !h.equal14(v.Inputs, w.Inputs) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check23(v EffectiveInput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check13(v EffectiveInput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3467,7 +2744,7 @@ func (h dtogen) check23(v EffectiveInput, b *dtogenCodec.Budget, d, cap int) (er
 	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Inputs: %w", err)
 	}
-	if err := h.check24(v.Inputs, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check14(v.Inputs, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Inputs: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
@@ -3478,16 +2755,16 @@ func (h dtogen) check23(v EffectiveInput, b *dtogenCodec.Budget, d, cap int) (er
 	}
 	return nil
 }
-func (h dtogen) append23(out []byte, v EffectiveInput) []byte {
+func (h dtogen) append13(out []byte, v EffectiveInput) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "i")
-	out = h.append24(out, v.Inputs)
+	out = h.append14(out, v.Inputs)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	return out
 }
-func (h dtogen) read23(r *dtogenCodec.Reader, d, cap int) (v EffectiveInput, err error) {
+func (h dtogen) read13(r *dtogenCodec.Reader, d, cap int) (v EffectiveInput, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3512,7 +2789,7 @@ func (h dtogen) read23(r *dtogenCodec.Reader, d, cap int) (v EffectiveInput, err
 		switch key {
 		case "i":
 			seen[0] = true
-			v.Inputs, err = h.read24(r, d+1, int(^uint(0)>>1))
+			v.Inputs, err = h.read14(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Inputs: %w", err)
 			}
@@ -3535,54 +2812,54 @@ func (h dtogen) read23(r *dtogenCodec.Reader, d, cap int) (v EffectiveInput, err
 	return v, nil
 }
 
-// Helpers 24: []InputItem.
-func (h dtogen) clone24(v []InputItem) []InputItem {
+// Helpers 14: []InputItem.
+func (h dtogen) clone14(v []InputItem) []InputItem {
 	if v == nil {
 		return nil
 	}
 	out := make([]InputItem, len(v))
 	for i := range v {
-		out[i] = h.clone25(v[i])
+		out[i] = h.clone15(v[i])
 	}
 	return out
 }
-func (h dtogen) equal24(v, w []InputItem) bool {
+func (h dtogen) equal14(v, w []InputItem) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal25(v[i], w[i]) {
+		if !h.equal15(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check24(v []InputItem, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check14(v []InputItem, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check25(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check15(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append24(out []byte, v []InputItem) []byte {
+func (h dtogen) append14(out []byte, v []InputItem) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append25(out, x)
+		out = h.append15(out, x)
 	}
 	return out
 }
-func (h dtogen) read24(r *dtogenCodec.Reader, d, cap int) (v []InputItem, err error) {
+func (h dtogen) read14(r *dtogenCodec.Reader, d, cap int) (v []InputItem, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]InputItem, count)
 	for i := range v {
-		v[i], err = h.read25(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read15(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -3590,23 +2867,23 @@ func (h dtogen) read24(r *dtogenCodec.Reader, d, cap int) (v []InputItem, err er
 	return v, nil
 }
 
-// Helpers 25: InputItem.
-func (h dtogen) clone25(v InputItem) InputItem {
+// Helpers 15: InputItem.
+func (h dtogen) clone15(v InputItem) InputItem {
 	out := v
-	out.UserInputID = h.clone26(v.UserInputID)
-	out.Inline = h.clone27(v.Inline)
+	out.UserInputID = h.clone16(v.UserInputID)
+	out.Inline = h.clone17(v.Inline)
 	return out
 }
-func (h dtogen) equal25(v, w InputItem) bool {
-	if !h.equal26(v.UserInputID, w.UserInputID) {
+func (h dtogen) equal15(v, w InputItem) bool {
+	if !h.equal16(v.UserInputID, w.UserInputID) {
 		return false
 	}
-	if !h.equal27(v.Inline, w.Inline) {
+	if !h.equal17(v.Inline, w.Inline) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check25(v InputItem, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check15(v InputItem, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3626,7 +2903,7 @@ func (h dtogen) check25(v InputItem, b *dtogenCodec.Budget, d, cap int) (err err
 		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Inline: %w", err)
 		}
-		if err := h.check27(v.Inline, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check17(v.Inline, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Inline: %w", err)
 		}
 	}
@@ -3634,13 +2911,13 @@ func (h dtogen) check25(v InputItem, b *dtogenCodec.Budget, d, cap int) (err err
 		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("UserInputID: %w", err)
 		}
-		if err := h.check26(v.UserInputID, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check16(v.UserInputID, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("UserInputID: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append25(out []byte, v InputItem) []byte {
+func (h dtogen) append15(out []byte, v InputItem) []byte {
 	count := 0
 	if v.Inline != nil {
 		count++
@@ -3651,15 +2928,15 @@ func (h dtogen) append25(out []byte, v InputItem) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Inline != nil {
 		out = dtogenCBOR.AppendText(out, "i")
-		out = h.append27(out, v.Inline)
+		out = h.append17(out, v.Inline)
 	}
 	if v.UserInputID != nil {
 		out = dtogenCBOR.AppendText(out, "u")
-		out = h.append26(out, v.UserInputID)
+		out = h.append16(out, v.UserInputID)
 	}
 	return out
 }
-func (h dtogen) read25(r *dtogenCodec.Reader, d, cap int) (v InputItem, err error) {
+func (h dtogen) read15(r *dtogenCodec.Reader, d, cap int) (v InputItem, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3684,13 +2961,13 @@ func (h dtogen) read25(r *dtogenCodec.Reader, d, cap int) (v InputItem, err erro
 		switch key {
 		case "i":
 			seen[0] = true
-			v.Inline, err = h.read27(r, d+1, int(^uint(0)>>1))
+			v.Inline, err = h.read17(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Inline: %w", err)
 			}
 		case "u":
 			seen[1] = true
-			v.UserInputID, err = h.read26(r, d+1, int(^uint(0)>>1))
+			v.UserInputID, err = h.read16(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("UserInputID: %w", err)
 			}
@@ -3701,30 +2978,30 @@ func (h dtogen) read25(r *dtogenCodec.Reader, d, cap int) (v InputItem, err erro
 	return v, nil
 }
 
-// Helpers 26: *uint64.
-func (h dtogen) clone26(v *uint64) *uint64 {
+// Helpers 16: *uint64.
+func (h dtogen) clone16(v *uint64) *uint64 {
 	if v == nil {
 		return nil
 	}
 	x := h.clone1(*v)
 	return (*uint64)(&x)
 }
-func (h dtogen) equal26(v, w *uint64) bool {
+func (h dtogen) equal16(v, w *uint64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal1(*v, *w)
 }
-func (h dtogen) check26(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check16(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check1(*v, b, d, cap)
 }
-func (h dtogen) append26(out []byte, v *uint64) []byte {
+func (h dtogen) append16(out []byte, v *uint64) []byte {
 	return h.append1(out, *v)
 }
-func (h dtogen) read26(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+func (h dtogen) read16(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
 	x, err := h.read1(r, d, cap)
 	if err != nil {
 		return v, err
@@ -3732,62 +3009,62 @@ func (h dtogen) read26(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error)
 	return (*uint64)(&x), nil
 }
 
-// Helpers 27: *AttributedInput.
-func (h dtogen) clone27(v *AttributedInput) *AttributedInput {
+// Helpers 17: *AttributedInput.
+func (h dtogen) clone17(v *AttributedInput) *AttributedInput {
 	if v == nil {
 		return nil
 	}
-	x := h.clone28(*v)
+	x := h.clone18(*v)
 	return (*AttributedInput)(&x)
 }
-func (h dtogen) equal27(v, w *AttributedInput) bool {
+func (h dtogen) equal17(v, w *AttributedInput) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal28(*v, *w)
+	return h.equal18(*v, *w)
 }
-func (h dtogen) check27(v *AttributedInput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check17(v *AttributedInput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check28(*v, b, d, cap)
+	return h.check18(*v, b, d, cap)
 }
-func (h dtogen) append27(out []byte, v *AttributedInput) []byte {
-	return h.append28(out, *v)
+func (h dtogen) append17(out []byte, v *AttributedInput) []byte {
+	return h.append18(out, *v)
 }
-func (h dtogen) read27(r *dtogenCodec.Reader, d, cap int) (v *AttributedInput, err error) {
-	x, err := h.read28(r, d, cap)
+func (h dtogen) read17(r *dtogenCodec.Reader, d, cap int) (v *AttributedInput, err error) {
+	x, err := h.read18(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*AttributedInput)(&x), nil
 }
 
-// Helpers 28: AttributedInput.
-func (h dtogen) clone28(v AttributedInput) AttributedInput {
+// Helpers 18: AttributedInput.
+func (h dtogen) clone18(v AttributedInput) AttributedInput {
 	out := v
-	out.Parts = h.clone29(v.Parts)
-	out.Actor = h.clone37(v.Actor)
-	out.Purpose = h.clone38(v.Purpose)
-	out.Source = h.clone39(v.Source)
+	out.Parts = h.clone19(v.Parts)
+	out.Actor = h.clone27(v.Actor)
+	out.Purpose = h.clone28(v.Purpose)
+	out.Source = h.clone29(v.Source)
 	return out
 }
-func (h dtogen) equal28(v, w AttributedInput) bool {
-	if !h.equal29(v.Parts, w.Parts) {
+func (h dtogen) equal18(v, w AttributedInput) bool {
+	if !h.equal19(v.Parts, w.Parts) {
 		return false
 	}
-	if !h.equal37(v.Actor, w.Actor) {
+	if !h.equal27(v.Actor, w.Actor) {
 		return false
 	}
-	if !h.equal38(v.Purpose, w.Purpose) {
+	if !h.equal28(v.Purpose, w.Purpose) {
 		return false
 	}
-	if !h.equal39(v.Source, w.Source) {
+	if !h.equal29(v.Source, w.Source) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check28(v AttributedInput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check18(v AttributedInput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3800,43 +3077,43 @@ func (h dtogen) check28(v AttributedInput, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Actor: %w", err)
 	}
-	if err := h.check37(v.Actor, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check27(v.Actor, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Actor: %w", err)
 	}
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check29(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check19(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Purpose: %w", err)
 	}
-	if err := h.check38(v.Purpose, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check28(v.Purpose, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Purpose: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
-	if err := h.check39(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check29(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append28(out []byte, v AttributedInput) []byte {
+func (h dtogen) append18(out []byte, v AttributedInput) []byte {
 	count := 4
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "a")
-	out = h.append37(out, v.Actor)
+	out = h.append27(out, v.Actor)
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append29(out, v.Parts)
+	out = h.append19(out, v.Parts)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append38(out, v.Purpose)
+	out = h.append28(out, v.Purpose)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append39(out, v.Source)
+	out = h.append29(out, v.Source)
 	return out
 }
-func (h dtogen) read28(r *dtogenCodec.Reader, d, cap int) (v AttributedInput, err error) {
+func (h dtogen) read18(r *dtogenCodec.Reader, d, cap int) (v AttributedInput, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3861,25 +3138,25 @@ func (h dtogen) read28(r *dtogenCodec.Reader, d, cap int) (v AttributedInput, er
 		switch key {
 		case "a":
 			seen[0] = true
-			v.Actor, err = h.read37(r, d+1, int(^uint(0)>>1))
+			v.Actor, err = h.read27(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Actor: %w", err)
 			}
 		case "c":
 			seen[1] = true
-			v.Parts, err = h.read29(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read19(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
 		case "p":
 			seen[2] = true
-			v.Purpose, err = h.read38(r, d+1, int(^uint(0)>>1))
+			v.Purpose, err = h.read28(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Purpose: %w", err)
 			}
 		case "s":
 			seen[3] = true
-			v.Source, err = h.read39(r, d+1, int(^uint(0)>>1))
+			v.Source, err = h.read29(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Source: %w", err)
 			}
@@ -3902,54 +3179,54 @@ func (h dtogen) read28(r *dtogenCodec.Reader, d, cap int) (v AttributedInput, er
 	return v, nil
 }
 
-// Helpers 29: []ContentPart.
-func (h dtogen) clone29(v []ContentPart) []ContentPart {
+// Helpers 19: []ContentPart.
+func (h dtogen) clone19(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
 	out := make([]ContentPart, len(v))
 	for i := range v {
-		out[i] = h.clone30(v[i])
+		out[i] = h.clone20(v[i])
 	}
 	return out
 }
-func (h dtogen) equal29(v, w []ContentPart) bool {
+func (h dtogen) equal19(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal30(v[i], w[i]) {
+		if !h.equal20(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check29(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check19(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check30(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check20(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append29(out []byte, v []ContentPart) []byte {
+func (h dtogen) append19(out []byte, v []ContentPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append30(out, x)
+		out = h.append20(out, x)
 	}
 	return out
 }
-func (h dtogen) read29(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+func (h dtogen) read19(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ContentPart, count)
 	for i := range v {
-		v[i], err = h.read30(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read20(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -3957,23 +3234,23 @@ func (h dtogen) read29(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err 
 	return v, nil
 }
 
-// Helpers 30: ContentPart.
-func (h dtogen) clone30(v ContentPart) ContentPart {
+// Helpers 20: ContentPart.
+func (h dtogen) clone20(v ContentPart) ContentPart {
 	out := v
-	out.Text = h.clone31(v.Text)
-	out.Media = h.clone32(v.Media)
+	out.Text = h.clone21(v.Text)
+	out.Media = h.clone22(v.Media)
 	return out
 }
-func (h dtogen) equal30(v, w ContentPart) bool {
-	if !h.equal31(v.Text, w.Text) {
+func (h dtogen) equal20(v, w ContentPart) bool {
+	if !h.equal21(v.Text, w.Text) {
 		return false
 	}
-	if !h.equal32(v.Media, w.Media) {
+	if !h.equal22(v.Media, w.Media) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check30(v ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check20(v ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -3993,7 +3270,7 @@ func (h dtogen) check30(v ContentPart, b *dtogenCodec.Budget, d, cap int) (err e
 		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Media: %w", err)
 		}
-		if err := h.check32(v.Media, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check22(v.Media, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Media: %w", err)
 		}
 	}
@@ -4001,13 +3278,13 @@ func (h dtogen) check30(v ContentPart, b *dtogenCodec.Budget, d, cap int) (err e
 		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Text: %w", err)
 		}
-		if err := h.check31(v.Text, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check21(v.Text, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Text: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append30(out []byte, v ContentPart) []byte {
+func (h dtogen) append20(out []byte, v ContentPart) []byte {
 	count := 0
 	if v.Media != nil {
 		count++
@@ -4018,15 +3295,15 @@ func (h dtogen) append30(out []byte, v ContentPart) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Media != nil {
 		out = dtogenCBOR.AppendText(out, "m")
-		out = h.append32(out, v.Media)
+		out = h.append22(out, v.Media)
 	}
 	if v.Text != nil {
 		out = dtogenCBOR.AppendText(out, "t")
-		out = h.append31(out, v.Text)
+		out = h.append21(out, v.Text)
 	}
 	return out
 }
-func (h dtogen) read30(r *dtogenCodec.Reader, d, cap int) (v ContentPart, err error) {
+func (h dtogen) read20(r *dtogenCodec.Reader, d, cap int) (v ContentPart, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4051,13 +3328,13 @@ func (h dtogen) read30(r *dtogenCodec.Reader, d, cap int) (v ContentPart, err er
 		switch key {
 		case "m":
 			seen[0] = true
-			v.Media, err = h.read32(r, d+1, int(^uint(0)>>1))
+			v.Media, err = h.read22(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Media: %w", err)
 			}
 		case "t":
 			seen[1] = true
-			v.Text, err = h.read31(r, d+1, int(^uint(0)>>1))
+			v.Text, err = h.read21(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Text: %w", err)
 			}
@@ -4068,30 +3345,30 @@ func (h dtogen) read30(r *dtogenCodec.Reader, d, cap int) (v ContentPart, err er
 	return v, nil
 }
 
-// Helpers 31: *string.
-func (h dtogen) clone31(v *string) *string {
+// Helpers 21: *string.
+func (h dtogen) clone21(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal31(v, w *string) bool {
+func (h dtogen) equal21(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check31(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check21(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append31(out []byte, v *string) []byte {
+func (h dtogen) append21(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read31(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read21(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -4099,43 +3376,43 @@ func (h dtogen) read31(r *dtogenCodec.Reader, d, cap int) (v *string, err error)
 	return (*string)(&x), nil
 }
 
-// Helpers 32: *Media.
-func (h dtogen) clone32(v *Media) *Media {
+// Helpers 22: *Media.
+func (h dtogen) clone22(v *Media) *Media {
 	if v == nil {
 		return nil
 	}
-	x := h.clone33(*v)
+	x := h.clone23(*v)
 	return (*Media)(&x)
 }
-func (h dtogen) equal32(v, w *Media) bool {
+func (h dtogen) equal22(v, w *Media) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal33(*v, *w)
+	return h.equal23(*v, *w)
 }
-func (h dtogen) check32(v *Media, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check22(v *Media, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check33(*v, b, d, cap)
+	return h.check23(*v, b, d, cap)
 }
-func (h dtogen) append32(out []byte, v *Media) []byte {
-	return h.append33(out, *v)
+func (h dtogen) append22(out []byte, v *Media) []byte {
+	return h.append23(out, *v)
 }
-func (h dtogen) read32(r *dtogenCodec.Reader, d, cap int) (v *Media, err error) {
-	x, err := h.read33(r, d, cap)
+func (h dtogen) read22(r *dtogenCodec.Reader, d, cap int) (v *Media, err error) {
+	x, err := h.read23(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*Media)(&x), nil
 }
 
-// Helpers 33: Media.
-func (h dtogen) clone33(v Media) Media {
+// Helpers 23: Media.
+func (h dtogen) clone23(v Media) Media {
 	out := v
-	out.Kind = h.clone34(v.Kind)
-	out.Source = h.clone35(v.Source)
-	out.InlineData = h.clone36(v.InlineData)
+	out.Kind = h.clone24(v.Kind)
+	out.Source = h.clone25(v.Source)
+	out.InlineData = h.clone26(v.InlineData)
 	out.RemoteURI = h.clone5(v.RemoteURI)
 	out.ProviderName = h.clone5(v.ProviderName)
 	out.ProviderScope = h.clone5(v.ProviderScope)
@@ -4146,14 +3423,14 @@ func (h dtogen) clone33(v Media) Media {
 	out.Title = h.clone5(v.Title)
 	return out
 }
-func (h dtogen) equal33(v, w Media) bool {
-	if !h.equal34(v.Kind, w.Kind) {
+func (h dtogen) equal23(v, w Media) bool {
+	if !h.equal24(v.Kind, w.Kind) {
 		return false
 	}
-	if !h.equal35(v.Source, w.Source) {
+	if !h.equal25(v.Source, w.Source) {
 		return false
 	}
-	if !h.equal36(v.InlineData, w.InlineData) {
+	if !h.equal26(v.InlineData, w.InlineData) {
 		return false
 	}
 	if !h.equal5(v.RemoteURI, w.RemoteURI) {
@@ -4182,7 +3459,7 @@ func (h dtogen) equal33(v, w Media) bool {
 	}
 	return true
 }
-func (h dtogen) check33(v Media, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check23(v Media, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4195,7 +3472,7 @@ func (h dtogen) check33(v Media, b *dtogenCodec.Budget, d, cap int) (err error) 
 	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("InlineData: %w", err)
 	}
-	if err := h.check36(v.InlineData, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check26(v.InlineData, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("InlineData: %w", err)
 	}
 	if err := b.CheckString("f", d+1, int(^uint(0)>>1)); err != nil {
@@ -4207,7 +3484,7 @@ func (h dtogen) check33(v Media, b *dtogenCodec.Budget, d, cap int) (err error) 
 	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
-	if err := h.check34(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check24(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
 	if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
@@ -4243,7 +3520,7 @@ func (h dtogen) check33(v Media, b *dtogenCodec.Budget, d, cap int) (err error) 
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
-	if err := h.check35(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check25(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
 	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
@@ -4260,15 +3537,15 @@ func (h dtogen) check33(v Media, b *dtogenCodec.Budget, d, cap int) (err error) 
 	}
 	return nil
 }
-func (h dtogen) append33(out []byte, v Media) []byte {
+func (h dtogen) append23(out []byte, v Media) []byte {
 	count := 11
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "d")
-	out = h.append36(out, v.InlineData)
+	out = h.append26(out, v.InlineData)
 	out = dtogenCBOR.AppendText(out, "f")
 	out = h.append5(out, v.FormatHint)
 	out = dtogenCBOR.AppendText(out, "k")
-	out = h.append34(out, v.Kind)
+	out = h.append24(out, v.Kind)
 	out = dtogenCBOR.AppendText(out, "m")
 	out = h.append5(out, v.MIMEType)
 	out = dtogenCBOR.AppendText(out, "n")
@@ -4280,14 +3557,14 @@ func (h dtogen) append33(out []byte, v Media) []byte {
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append5(out, v.ProviderReferenceID)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append35(out, v.Source)
+	out = h.append25(out, v.Source)
 	out = dtogenCBOR.AppendText(out, "t")
 	out = h.append5(out, v.Title)
 	out = dtogenCBOR.AppendText(out, "u")
 	out = h.append5(out, v.RemoteURI)
 	return out
 }
-func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
+func (h dtogen) read23(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4312,7 +3589,7 @@ func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
 		switch key {
 		case "d":
 			seen[0] = true
-			v.InlineData, err = h.read36(r, d+1, int(^uint(0)>>1))
+			v.InlineData, err = h.read26(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("InlineData: %w", err)
 			}
@@ -4324,7 +3601,7 @@ func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
 			}
 		case "k":
 			seen[2] = true
-			v.Kind, err = h.read34(r, d+1, int(^uint(0)>>1))
+			v.Kind, err = h.read24(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Kind: %w", err)
 			}
@@ -4360,7 +3637,7 @@ func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
 			}
 		case "s":
 			seen[8] = true
-			v.Source, err = h.read35(r, d+1, int(^uint(0)>>1))
+			v.Source, err = h.read25(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Source: %w", err)
 			}
@@ -4416,20 +3693,20 @@ func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v Media, err error) {
 	return v, nil
 }
 
-// Helpers 34: MediaKind.
-func (h dtogen) clone34(v MediaKind) MediaKind {
+// Helpers 24: MediaKind.
+func (h dtogen) clone24(v MediaKind) MediaKind {
 	return v
 }
-func (h dtogen) equal34(v, w MediaKind) bool {
+func (h dtogen) equal24(v, w MediaKind) bool {
 	return v == w
 }
-func (h dtogen) check34(v MediaKind, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check24(v MediaKind, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append34(out []byte, v MediaKind) []byte {
+func (h dtogen) append24(out []byte, v MediaKind) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read34(r *dtogenCodec.Reader, d, cap int) (v MediaKind, err error) {
+func (h dtogen) read24(r *dtogenCodec.Reader, d, cap int) (v MediaKind, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -4437,20 +3714,20 @@ func (h dtogen) read34(r *dtogenCodec.Reader, d, cap int) (v MediaKind, err erro
 	return MediaKind(x), nil
 }
 
-// Helpers 35: MediaSourceKind.
-func (h dtogen) clone35(v MediaSourceKind) MediaSourceKind {
+// Helpers 25: MediaSourceKind.
+func (h dtogen) clone25(v MediaSourceKind) MediaSourceKind {
 	return v
 }
-func (h dtogen) equal35(v, w MediaSourceKind) bool {
+func (h dtogen) equal25(v, w MediaSourceKind) bool {
 	return v == w
 }
-func (h dtogen) check35(v MediaSourceKind, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check25(v MediaSourceKind, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append35(out []byte, v MediaSourceKind) []byte {
+func (h dtogen) append25(out []byte, v MediaSourceKind) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read35(r *dtogenCodec.Reader, d, cap int) (v MediaSourceKind, err error) {
+func (h dtogen) read25(r *dtogenCodec.Reader, d, cap int) (v MediaSourceKind, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -4458,39 +3735,39 @@ func (h dtogen) read35(r *dtogenCodec.Reader, d, cap int) (v MediaSourceKind, er
 	return MediaSourceKind(x), nil
 }
 
-// Helpers 36: []byte.
-func (h dtogen) clone36(v []byte) []byte {
+// Helpers 26: []byte.
+func (h dtogen) clone26(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
-func (h dtogen) equal36(v, w []byte) bool {
+func (h dtogen) equal26(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check36(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check26(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append36(out []byte, v []byte) []byte {
+func (h dtogen) append26(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read36(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read26(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -4502,20 +3779,20 @@ func (h dtogen) read36(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 37: Actor.
-func (h dtogen) clone37(v Actor) Actor {
+// Helpers 27: Actor.
+func (h dtogen) clone27(v Actor) Actor {
 	return v
 }
-func (h dtogen) equal37(v, w Actor) bool {
+func (h dtogen) equal27(v, w Actor) bool {
 	return v == w
 }
-func (h dtogen) check37(v Actor, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check27(v Actor, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append37(out []byte, v Actor) []byte {
+func (h dtogen) append27(out []byte, v Actor) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read37(r *dtogenCodec.Reader, d, cap int) (v Actor, err error) {
+func (h dtogen) read27(r *dtogenCodec.Reader, d, cap int) (v Actor, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -4523,20 +3800,20 @@ func (h dtogen) read37(r *dtogenCodec.Reader, d, cap int) (v Actor, err error) {
 	return Actor(x), nil
 }
 
-// Helpers 38: PromptPurpose.
-func (h dtogen) clone38(v PromptPurpose) PromptPurpose {
+// Helpers 28: PromptPurpose.
+func (h dtogen) clone28(v PromptPurpose) PromptPurpose {
 	return v
 }
-func (h dtogen) equal38(v, w PromptPurpose) bool {
+func (h dtogen) equal28(v, w PromptPurpose) bool {
 	return v == w
 }
-func (h dtogen) check38(v PromptPurpose, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check28(v PromptPurpose, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append38(out []byte, v PromptPurpose) []byte {
+func (h dtogen) append28(out []byte, v PromptPurpose) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read38(r *dtogenCodec.Reader, d, cap int) (v PromptPurpose, err error) {
+func (h dtogen) read28(r *dtogenCodec.Reader, d, cap int) (v PromptPurpose, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -4544,23 +3821,23 @@ func (h dtogen) read38(r *dtogenCodec.Reader, d, cap int) (v PromptPurpose, err 
 	return PromptPurpose(x), nil
 }
 
-// Helpers 39: ContentSource.
-func (h dtogen) clone39(v ContentSource) ContentSource {
+// Helpers 29: ContentSource.
+func (h dtogen) clone29(v ContentSource) ContentSource {
 	out := v
 	out.Description = h.clone5(v.Description)
-	out.WorkspaceFile = h.clone40(v.WorkspaceFile)
+	out.WorkspaceFile = h.clone30(v.WorkspaceFile)
 	return out
 }
-func (h dtogen) equal39(v, w ContentSource) bool {
+func (h dtogen) equal29(v, w ContentSource) bool {
 	if !h.equal5(v.Description, w.Description) {
 		return false
 	}
-	if !h.equal40(v.WorkspaceFile, w.WorkspaceFile) {
+	if !h.equal30(v.WorkspaceFile, w.WorkspaceFile) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check39(v ContentSource, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check29(v ContentSource, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4583,13 +3860,13 @@ func (h dtogen) check39(v ContentSource, b *dtogenCodec.Budget, d, cap int) (err
 		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("WorkspaceFile: %w", err)
 		}
-		if err := h.check40(v.WorkspaceFile, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check30(v.WorkspaceFile, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("WorkspaceFile: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append39(out []byte, v ContentSource) []byte {
+func (h dtogen) append29(out []byte, v ContentSource) []byte {
 	count := 1
 	if v.WorkspaceFile != nil {
 		count++
@@ -4599,11 +3876,11 @@ func (h dtogen) append39(out []byte, v ContentSource) []byte {
 	out = h.append5(out, v.Description)
 	if v.WorkspaceFile != nil {
 		out = dtogenCBOR.AppendText(out, "w")
-		out = h.append40(out, v.WorkspaceFile)
+		out = h.append30(out, v.WorkspaceFile)
 	}
 	return out
 }
-func (h dtogen) read39(r *dtogenCodec.Reader, d, cap int) (v ContentSource, err error) {
+func (h dtogen) read29(r *dtogenCodec.Reader, d, cap int) (v ContentSource, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4634,7 +3911,7 @@ func (h dtogen) read39(r *dtogenCodec.Reader, d, cap int) (v ContentSource, err 
 			}
 		case "w":
 			seen[1] = true
-			v.WorkspaceFile, err = h.read40(r, d+1, int(^uint(0)>>1))
+			v.WorkspaceFile, err = h.read30(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("WorkspaceFile: %w", err)
 			}
@@ -4648,50 +3925,50 @@ func (h dtogen) read39(r *dtogenCodec.Reader, d, cap int) (v ContentSource, err 
 	return v, nil
 }
 
-// Helpers 40: *WorkspaceFileSource.
-func (h dtogen) clone40(v *WorkspaceFileSource) *WorkspaceFileSource {
+// Helpers 30: *WorkspaceFileSource.
+func (h dtogen) clone30(v *WorkspaceFileSource) *WorkspaceFileSource {
 	if v == nil {
 		return nil
 	}
-	x := h.clone41(*v)
+	x := h.clone31(*v)
 	return (*WorkspaceFileSource)(&x)
 }
-func (h dtogen) equal40(v, w *WorkspaceFileSource) bool {
+func (h dtogen) equal30(v, w *WorkspaceFileSource) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal41(*v, *w)
+	return h.equal31(*v, *w)
 }
-func (h dtogen) check40(v *WorkspaceFileSource, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check30(v *WorkspaceFileSource, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check41(*v, b, d, cap)
+	return h.check31(*v, b, d, cap)
 }
-func (h dtogen) append40(out []byte, v *WorkspaceFileSource) []byte {
-	return h.append41(out, *v)
+func (h dtogen) append30(out []byte, v *WorkspaceFileSource) []byte {
+	return h.append31(out, *v)
 }
-func (h dtogen) read40(r *dtogenCodec.Reader, d, cap int) (v *WorkspaceFileSource, err error) {
-	x, err := h.read41(r, d, cap)
+func (h dtogen) read30(r *dtogenCodec.Reader, d, cap int) (v *WorkspaceFileSource, err error) {
+	x, err := h.read31(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*WorkspaceFileSource)(&x), nil
 }
 
-// Helpers 41: WorkspaceFileSource.
-func (h dtogen) clone41(v WorkspaceFileSource) WorkspaceFileSource {
+// Helpers 31: WorkspaceFileSource.
+func (h dtogen) clone31(v WorkspaceFileSource) WorkspaceFileSource {
 	out := v
 	out.Path = h.clone5(v.Path)
 	return out
 }
-func (h dtogen) equal41(v, w WorkspaceFileSource) bool {
+func (h dtogen) equal31(v, w WorkspaceFileSource) bool {
 	if !h.equal5(v.Path, w.Path) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check41(v WorkspaceFileSource, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check31(v WorkspaceFileSource, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4709,14 +3986,14 @@ func (h dtogen) check41(v WorkspaceFileSource, b *dtogenCodec.Budget, d, cap int
 	}
 	return nil
 }
-func (h dtogen) append41(out []byte, v WorkspaceFileSource) []byte {
+func (h dtogen) append31(out []byte, v WorkspaceFileSource) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "p")
 	out = h.append5(out, v.Path)
 	return out
 }
-func (h dtogen) read41(r *dtogenCodec.Reader, d, cap int) (v WorkspaceFileSource, err error) {
+func (h dtogen) read31(r *dtogenCodec.Reader, d, cap int) (v WorkspaceFileSource, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4755,39 +4032,35 @@ func (h dtogen) read41(r *dtogenCodec.Reader, d, cap int) (v WorkspaceFileSource
 	return v, nil
 }
 
-// Helpers 42: InvocationFailure.
-func (h dtogen) clone42(v InvocationFailure) InvocationFailure {
+// Helpers 32: InvocationFailure.
+func (h dtogen) clone32(v InvocationFailure) InvocationFailure {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.RequestID = h.clone1(v.RequestID)
-	out.Class = h.clone43(v.Class)
-	out.Explanation = h.clone44(v.Explanation)
-	out.Evidence = h.clone45(v.Evidence)
-	out.Usage = h.clone46(v.Usage)
+	out.Class = h.clone33(v.Class)
+	out.Explanation = h.clone34(v.Explanation)
+	out.Evidence = h.clone35(v.Evidence)
 	return out
 }
-func (h dtogen) equal42(v, w InvocationFailure) bool {
+func (h dtogen) equal32(v, w InvocationFailure) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal1(v.RequestID, w.RequestID) {
 		return false
 	}
-	if !h.equal43(v.Class, w.Class) {
+	if !h.equal33(v.Class, w.Class) {
 		return false
 	}
-	if !h.equal44(v.Explanation, w.Explanation) {
+	if !h.equal34(v.Explanation, w.Explanation) {
 		return false
 	}
-	if !h.equal45(v.Evidence, w.Evidence) {
-		return false
-	}
-	if !h.equal46(v.Usage, w.Usage) {
+	if !h.equal35(v.Evidence, w.Evidence) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check42(v InvocationFailure, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check32(v InvocationFailure, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4795,9 +4068,6 @@ func (h dtogen) check42(v InvocationFailure, b *dtogenCodec.Budget, d, cap int) 
 	}()
 	count := 3
 	if v.Explanation != nil {
-		count++
-	}
-	if v.Usage != nil {
 		count++
 	}
 	if v.Evidence != nil {
@@ -4809,14 +4079,14 @@ func (h dtogen) check42(v InvocationFailure, b *dtogenCodec.Budget, d, cap int) 
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Class: %w", err)
 	}
-	if err := h.check43(v.Class, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check33(v.Class, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Class: %w", err)
 	}
 	if v.Explanation != nil {
 		if err := b.CheckString("e", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Explanation: %w", err)
 		}
-		if err := h.check44(v.Explanation, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check34(v.Explanation, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Explanation: %w", err)
 		}
 	}
@@ -4832,30 +4102,19 @@ func (h dtogen) check42(v InvocationFailure, b *dtogenCodec.Budget, d, cap int) 
 	if err := h.check1(v.RunID, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("RunID: %w", err)
 	}
-	if v.Usage != nil {
-		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
-		if err := h.check46(v.Usage, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
-	}
 	if v.Evidence != nil {
 		if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Evidence: %w", err)
 		}
-		if err := h.check45(v.Evidence, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check35(v.Evidence, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Evidence: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append42(out []byte, v InvocationFailure) []byte {
+func (h dtogen) append32(out []byte, v InvocationFailure) []byte {
 	count := 3
 	if v.Explanation != nil {
-		count++
-	}
-	if v.Usage != nil {
 		count++
 	}
 	if v.Evidence != nil {
@@ -4863,26 +4122,22 @@ func (h dtogen) append42(out []byte, v InvocationFailure) []byte {
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append43(out, v.Class)
+	out = h.append33(out, v.Class)
 	if v.Explanation != nil {
 		out = dtogenCBOR.AppendText(out, "e")
-		out = h.append44(out, v.Explanation)
+		out = h.append34(out, v.Explanation)
 	}
 	out = dtogenCBOR.AppendText(out, "q")
 	out = h.append1(out, v.RequestID)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
-	if v.Usage != nil {
-		out = dtogenCBOR.AppendText(out, "u")
-		out = h.append46(out, v.Usage)
-	}
 	if v.Evidence != nil {
 		out = dtogenCBOR.AppendText(out, "v")
-		out = h.append45(out, v.Evidence)
+		out = h.append35(out, v.Evidence)
 	}
 	return out
 }
-func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, err error) {
+func (h dtogen) read32(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -4893,7 +4148,7 @@ func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, 
 		return v, err
 	}
 	previous := ""
-	var seen [6]bool
+	var seen [5]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -4907,13 +4162,13 @@ func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, 
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Class, err = h.read43(r, d+1, int(^uint(0)>>1))
+			v.Class, err = h.read33(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Class: %w", err)
 			}
 		case "e":
 			seen[1] = true
-			v.Explanation, err = h.read44(r, d+1, int(^uint(0)>>1))
+			v.Explanation, err = h.read34(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Explanation: %w", err)
 			}
@@ -4929,15 +4184,9 @@ func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, 
 			if err != nil {
 				return v, dtogenFmt.Errorf("RunID: %w", err)
 			}
-		case "u":
-			seen[4] = true
-			v.Usage, err = h.read46(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Usage: %w", err)
-			}
 		case "v":
-			seen[5] = true
-			v.Evidence, err = h.read45(r, d+1, int(^uint(0)>>1))
+			seen[4] = true
+			v.Evidence, err = h.read35(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Evidence: %w", err)
 			}
@@ -4957,20 +4206,20 @@ func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v InvocationFailure, 
 	return v, nil
 }
 
-// Helpers 43: InvocationFailureClass.
-func (h dtogen) clone43(v InvocationFailureClass) InvocationFailureClass {
+// Helpers 33: InvocationFailureClass.
+func (h dtogen) clone33(v InvocationFailureClass) InvocationFailureClass {
 	return v
 }
-func (h dtogen) equal43(v, w InvocationFailureClass) bool {
+func (h dtogen) equal33(v, w InvocationFailureClass) bool {
 	return v == w
 }
-func (h dtogen) check43(v InvocationFailureClass, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check33(v InvocationFailureClass, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append43(out []byte, v InvocationFailureClass) []byte {
+func (h dtogen) append33(out []byte, v InvocationFailureClass) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read43(r *dtogenCodec.Reader, d, cap int) (v InvocationFailureClass, err error) {
+func (h dtogen) read33(r *dtogenCodec.Reader, d, cap int) (v InvocationFailureClass, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -4978,30 +4227,30 @@ func (h dtogen) read43(r *dtogenCodec.Reader, d, cap int) (v InvocationFailureCl
 	return InvocationFailureClass(x), nil
 }
 
-// Helpers 44: *string.
-func (h dtogen) clone44(v *string) *string {
+// Helpers 34: *string.
+func (h dtogen) clone34(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal44(v, w *string) bool {
+func (h dtogen) equal34(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check44(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check34(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append44(out []byte, v *string) []byte {
+func (h dtogen) append34(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read44(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read34(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -5009,30 +4258,30 @@ func (h dtogen) read44(r *dtogenCodec.Reader, d, cap int) (v *string, err error)
 	return (*string)(&x), nil
 }
 
-// Helpers 45: *ObservedEvidence.
-func (h dtogen) clone45(v *ObservedEvidence) *ObservedEvidence {
+// Helpers 35: *ObservedEvidence.
+func (h dtogen) clone35(v *ObservedEvidence) *ObservedEvidence {
 	if v == nil {
 		return nil
 	}
 	x := h.clone3(*v)
 	return (*ObservedEvidence)(&x)
 }
-func (h dtogen) equal45(v, w *ObservedEvidence) bool {
+func (h dtogen) equal35(v, w *ObservedEvidence) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal3(*v, *w)
 }
-func (h dtogen) check45(v *ObservedEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check35(v *ObservedEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check3(*v, b, d, cap)
 }
-func (h dtogen) append45(out []byte, v *ObservedEvidence) []byte {
+func (h dtogen) append35(out []byte, v *ObservedEvidence) []byte {
 	return h.append3(out, *v)
 }
-func (h dtogen) read45(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, err error) {
+func (h dtogen) read35(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, err error) {
 	x, err := h.read3(r, d, cap)
 	if err != nil {
 		return v, err
@@ -5040,47 +4289,16 @@ func (h dtogen) read45(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, 
 	return (*ObservedEvidence)(&x), nil
 }
 
-// Helpers 46: *InvocationUsage.
-func (h dtogen) clone46(v *InvocationUsage) *InvocationUsage {
-	if v == nil {
-		return nil
-	}
-	x := h.clone8(*v)
-	return (*InvocationUsage)(&x)
-}
-func (h dtogen) equal46(v, w *InvocationUsage) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal8(*v, *w)
-}
-func (h dtogen) check46(v *InvocationUsage, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check8(*v, b, d, cap)
-}
-func (h dtogen) append46(out []byte, v *InvocationUsage) []byte {
-	return h.append8(out, *v)
-}
-func (h dtogen) read46(r *dtogenCodec.Reader, d, cap int) (v *InvocationUsage, err error) {
-	x, err := h.read8(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*InvocationUsage)(&x), nil
-}
-
-// Helpers 47: ModelBinding.
-func (h dtogen) clone47(v ModelBinding) ModelBinding {
+// Helpers 36: ModelBinding.
+func (h dtogen) clone36(v ModelBinding) ModelBinding {
 	out := v
 	out.Route = h.clone5(v.Route)
 	out.API = h.clone5(v.API)
 	out.Model = h.clone5(v.Model)
-	out.Settings = h.clone48(v.Settings)
+	out.Settings = h.clone37(v.Settings)
 	return out
 }
-func (h dtogen) equal47(v, w ModelBinding) bool {
+func (h dtogen) equal36(v, w ModelBinding) bool {
 	if !h.equal5(v.Route, w.Route) {
 		return false
 	}
@@ -5090,12 +4308,12 @@ func (h dtogen) equal47(v, w ModelBinding) bool {
 	if !h.equal5(v.Model, w.Model) {
 		return false
 	}
-	if !h.equal48(v.Settings, w.Settings) {
+	if !h.equal37(v.Settings, w.Settings) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check47(v ModelBinding, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check36(v ModelBinding, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5126,12 +4344,12 @@ func (h dtogen) check47(v ModelBinding, b *dtogenCodec.Budget, d, cap int) (err 
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Settings: %w", err)
 	}
-	if err := h.check48(v.Settings, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check37(v.Settings, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Settings: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append47(out []byte, v ModelBinding) []byte {
+func (h dtogen) append36(out []byte, v ModelBinding) []byte {
 	count := 4
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "a")
@@ -5141,10 +4359,10 @@ func (h dtogen) append47(out []byte, v ModelBinding) []byte {
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append5(out, v.Route)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append48(out, v.Settings)
+	out = h.append37(out, v.Settings)
 	return out
 }
-func (h dtogen) read47(r *dtogenCodec.Reader, d, cap int) (v ModelBinding, err error) {
+func (h dtogen) read36(r *dtogenCodec.Reader, d, cap int) (v ModelBinding, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5187,7 +4405,7 @@ func (h dtogen) read47(r *dtogenCodec.Reader, d, cap int) (v ModelBinding, err e
 			}
 		case "s":
 			seen[3] = true
-			v.Settings, err = h.read48(r, d+1, int(^uint(0)>>1))
+			v.Settings, err = h.read37(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Settings: %w", err)
 			}
@@ -5210,23 +4428,23 @@ func (h dtogen) read47(r *dtogenCodec.Reader, d, cap int) (v ModelBinding, err e
 	return v, nil
 }
 
-// Helpers 48: ModelSettings.
-func (h dtogen) clone48(v ModelSettings) ModelSettings {
+// Helpers 37: ModelSettings.
+func (h dtogen) clone37(v ModelSettings) ModelSettings {
 	out := v
-	out.ReasoningEffort = h.clone49(v.ReasoningEffort)
-	out.MaxOutputTokens = h.clone50(v.MaxOutputTokens)
+	out.ReasoningEffort = h.clone38(v.ReasoningEffort)
+	out.MaxOutputTokens = h.clone39(v.MaxOutputTokens)
 	return out
 }
-func (h dtogen) equal48(v, w ModelSettings) bool {
-	if !h.equal49(v.ReasoningEffort, w.ReasoningEffort) {
+func (h dtogen) equal37(v, w ModelSettings) bool {
+	if !h.equal38(v.ReasoningEffort, w.ReasoningEffort) {
 		return false
 	}
-	if !h.equal50(v.MaxOutputTokens, w.MaxOutputTokens) {
+	if !h.equal39(v.MaxOutputTokens, w.MaxOutputTokens) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check48(v ModelSettings, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check37(v ModelSettings, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5246,7 +4464,7 @@ func (h dtogen) check48(v ModelSettings, b *dtogenCodec.Budget, d, cap int) (err
 		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("MaxOutputTokens: %w", err)
 		}
-		if err := h.check50(v.MaxOutputTokens, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check39(v.MaxOutputTokens, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("MaxOutputTokens: %w", err)
 		}
 	}
@@ -5254,13 +4472,13 @@ func (h dtogen) check48(v ModelSettings, b *dtogenCodec.Budget, d, cap int) (err
 		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ReasoningEffort: %w", err)
 		}
-		if err := h.check49(v.ReasoningEffort, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check38(v.ReasoningEffort, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ReasoningEffort: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append48(out []byte, v ModelSettings) []byte {
+func (h dtogen) append37(out []byte, v ModelSettings) []byte {
 	count := 0
 	if v.MaxOutputTokens != nil {
 		count++
@@ -5271,15 +4489,15 @@ func (h dtogen) append48(out []byte, v ModelSettings) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.MaxOutputTokens != nil {
 		out = dtogenCBOR.AppendText(out, "m")
-		out = h.append50(out, v.MaxOutputTokens)
+		out = h.append39(out, v.MaxOutputTokens)
 	}
 	if v.ReasoningEffort != nil {
 		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append49(out, v.ReasoningEffort)
+		out = h.append38(out, v.ReasoningEffort)
 	}
 	return out
 }
-func (h dtogen) read48(r *dtogenCodec.Reader, d, cap int) (v ModelSettings, err error) {
+func (h dtogen) read37(r *dtogenCodec.Reader, d, cap int) (v ModelSettings, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5304,13 +4522,13 @@ func (h dtogen) read48(r *dtogenCodec.Reader, d, cap int) (v ModelSettings, err 
 		switch key {
 		case "m":
 			seen[0] = true
-			v.MaxOutputTokens, err = h.read50(r, d+1, int(^uint(0)>>1))
+			v.MaxOutputTokens, err = h.read39(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("MaxOutputTokens: %w", err)
 			}
 		case "r":
 			seen[1] = true
-			v.ReasoningEffort, err = h.read49(r, d+1, int(^uint(0)>>1))
+			v.ReasoningEffort, err = h.read38(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("ReasoningEffort: %w", err)
 			}
@@ -5321,30 +4539,30 @@ func (h dtogen) read48(r *dtogenCodec.Reader, d, cap int) (v ModelSettings, err 
 	return v, nil
 }
 
-// Helpers 49: *string.
-func (h dtogen) clone49(v *string) *string {
+// Helpers 38: *string.
+func (h dtogen) clone38(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal49(v, w *string) bool {
+func (h dtogen) equal38(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check49(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check38(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append49(out []byte, v *string) []byte {
+func (h dtogen) append38(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read49(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read38(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -5352,66 +4570,66 @@ func (h dtogen) read49(r *dtogenCodec.Reader, d, cap int) (v *string, err error)
 	return (*string)(&x), nil
 }
 
-// Helpers 50: *int64.
-func (h dtogen) clone50(v *int64) *int64 {
+// Helpers 39: *int64.
+func (h dtogen) clone39(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal50(v, w *int64) bool {
+func (h dtogen) equal39(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check50(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check39(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append50(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append39(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read50(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read39(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 51: ModelRequest.
-func (h dtogen) clone51(v ModelRequest) ModelRequest {
+// Helpers 40: ModelRequest.
+func (h dtogen) clone40(v ModelRequest) ModelRequest {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.ID = h.clone1(v.ID)
-	out.Source = h.clone52(v.Source)
-	out.Recipe = h.clone19(v.Recipe)
-	out.RetryOf = h.clone55(v.RetryOf)
+	out.Source = h.clone41(v.Source)
+	out.Recipe = h.clone7(v.Recipe)
+	out.RetryOf = h.clone44(v.RetryOf)
 	return out
 }
-func (h dtogen) equal51(v, w ModelRequest) bool {
+func (h dtogen) equal40(v, w ModelRequest) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
-	if !h.equal52(v.Source, w.Source) {
+	if !h.equal41(v.Source, w.Source) {
 		return false
 	}
-	if !h.equal19(v.Recipe, w.Recipe) {
+	if !h.equal7(v.Recipe, w.Recipe) {
 		return false
 	}
-	if !h.equal55(v.RetryOf, w.RetryOf) {
+	if !h.equal44(v.RetryOf, w.RetryOf) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check51(v ModelRequest, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check40(v ModelRequest, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5430,7 +4648,7 @@ func (h dtogen) check51(v ModelRequest, b *dtogenCodec.Budget, d, cap int) (err 
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Recipe: %w", err)
 	}
-	if err := h.check19(v.Recipe, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check7(v.Recipe, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Recipe: %w", err)
 	}
 	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
@@ -5449,7 +4667,7 @@ func (h dtogen) check51(v ModelRequest, b *dtogenCodec.Budget, d, cap int) (err 
 		if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Source: %w", err)
 		}
-		if err := h.check52(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check41(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Source: %w", err)
 		}
 	}
@@ -5457,13 +4675,13 @@ func (h dtogen) check51(v ModelRequest, b *dtogenCodec.Budget, d, cap int) (err 
 		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RetryOf: %w", err)
 		}
-		if err := h.check55(v.RetryOf, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check44(v.RetryOf, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RetryOf: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append51(out []byte, v ModelRequest) []byte {
+func (h dtogen) append40(out []byte, v ModelRequest) []byte {
 	count := 3
 	if v.Source != nil {
 		count++
@@ -5473,22 +4691,22 @@ func (h dtogen) append51(out []byte, v ModelRequest) []byte {
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append19(out, v.Recipe)
+	out = h.append7(out, v.Recipe)
 	out = dtogenCBOR.AppendText(out, "o")
 	out = h.append1(out, v.ID)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	if v.Source != nil {
 		out = dtogenCBOR.AppendText(out, "s")
-		out = h.append52(out, v.Source)
+		out = h.append41(out, v.Source)
 	}
 	if v.RetryOf != nil {
 		out = dtogenCBOR.AppendText(out, "x")
-		out = h.append55(out, v.RetryOf)
+		out = h.append44(out, v.RetryOf)
 	}
 	return out
 }
-func (h dtogen) read51(r *dtogenCodec.Reader, d, cap int) (v ModelRequest, err error) {
+func (h dtogen) read40(r *dtogenCodec.Reader, d, cap int) (v ModelRequest, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5513,7 +4731,7 @@ func (h dtogen) read51(r *dtogenCodec.Reader, d, cap int) (v ModelRequest, err e
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Recipe, err = h.read19(r, d+1, int(^uint(0)>>1))
+			v.Recipe, err = h.read7(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Recipe: %w", err)
 			}
@@ -5531,13 +4749,13 @@ func (h dtogen) read51(r *dtogenCodec.Reader, d, cap int) (v ModelRequest, err e
 			}
 		case "s":
 			seen[3] = true
-			v.Source, err = h.read52(r, d+1, int(^uint(0)>>1))
+			v.Source, err = h.read41(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Source: %w", err)
 			}
 		case "x":
 			seen[4] = true
-			v.RetryOf, err = h.read55(r, d+1, int(^uint(0)>>1))
+			v.RetryOf, err = h.read44(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("RetryOf: %w", err)
 			}
@@ -5557,54 +4775,54 @@ func (h dtogen) read51(r *dtogenCodec.Reader, d, cap int) (v ModelRequest, err e
 	return v, nil
 }
 
-// Helpers 52: *SourceHead.
-func (h dtogen) clone52(v *SourceHead) *SourceHead {
+// Helpers 41: *SourceHead.
+func (h dtogen) clone41(v *SourceHead) *SourceHead {
 	if v == nil {
 		return nil
 	}
-	x := h.clone53(*v)
+	x := h.clone42(*v)
 	return (*SourceHead)(&x)
 }
-func (h dtogen) equal52(v, w *SourceHead) bool {
+func (h dtogen) equal41(v, w *SourceHead) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal53(*v, *w)
+	return h.equal42(*v, *w)
 }
-func (h dtogen) check52(v *SourceHead, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check41(v *SourceHead, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check53(*v, b, d, cap)
+	return h.check42(*v, b, d, cap)
 }
-func (h dtogen) append52(out []byte, v *SourceHead) []byte {
-	return h.append53(out, *v)
+func (h dtogen) append41(out []byte, v *SourceHead) []byte {
+	return h.append42(out, *v)
 }
-func (h dtogen) read52(r *dtogenCodec.Reader, d, cap int) (v *SourceHead, err error) {
-	x, err := h.read53(r, d, cap)
+func (h dtogen) read41(r *dtogenCodec.Reader, d, cap int) (v *SourceHead, err error) {
+	x, err := h.read42(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*SourceHead)(&x), nil
 }
 
-// Helpers 53: SourceHead.
-func (h dtogen) clone53(v SourceHead) SourceHead {
+// Helpers 42: SourceHead.
+func (h dtogen) clone42(v SourceHead) SourceHead {
 	out := v
-	out.Sequence = h.clone10(v.Sequence)
-	out.CID = h.clone54(v.CID)
+	out.Sequence = h.clone8(v.Sequence)
+	out.CID = h.clone43(v.CID)
 	return out
 }
-func (h dtogen) equal53(v, w SourceHead) bool {
-	if !h.equal10(v.Sequence, w.Sequence) {
+func (h dtogen) equal42(v, w SourceHead) bool {
+	if !h.equal8(v.Sequence, w.Sequence) {
 		return false
 	}
-	if !h.equal54(v.CID, w.CID) {
+	if !h.equal43(v.CID, w.CID) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check53(v SourceHead, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check42(v SourceHead, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5617,27 +4835,27 @@ func (h dtogen) check53(v SourceHead, b *dtogenCodec.Budget, d, cap int) (err er
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("CID: %w", err)
 	}
-	if err := h.check54(v.CID, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check43(v.CID, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("CID: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Sequence: %w", err)
 	}
-	if err := h.check10(v.Sequence, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check8(v.Sequence, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Sequence: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append53(out []byte, v SourceHead) []byte {
+func (h dtogen) append42(out []byte, v SourceHead) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append54(out, v.CID)
+	out = h.append43(out, v.CID)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append10(out, v.Sequence)
+	out = h.append8(out, v.Sequence)
 	return out
 }
-func (h dtogen) read53(r *dtogenCodec.Reader, d, cap int) (v SourceHead, err error) {
+func (h dtogen) read42(r *dtogenCodec.Reader, d, cap int) (v SourceHead, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5662,13 +4880,13 @@ func (h dtogen) read53(r *dtogenCodec.Reader, d, cap int) (v SourceHead, err err
 		switch key {
 		case "c":
 			seen[0] = true
-			v.CID, err = h.read54(r, d+1, int(^uint(0)>>1))
+			v.CID, err = h.read43(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("CID: %w", err)
 			}
 		case "s":
 			seen[1] = true
-			v.Sequence, err = h.read10(r, d+1, int(^uint(0)>>1))
+			v.Sequence, err = h.read8(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Sequence: %w", err)
 			}
@@ -5685,48 +4903,48 @@ func (h dtogen) read53(r *dtogenCodec.Reader, d, cap int) (v SourceHead, err err
 	return v, nil
 }
 
-// Helpers 54: contentid.CID.
-func (h dtogen) clone54(v dtogenType2.CID) dtogenType2.CID {
+// Helpers 43: contentid.CID.
+func (h dtogen) clone43(v dtogenType2.CID) dtogenType2.CID {
 	return v.Clone()
 }
-func (h dtogen) equal54(v, w dtogenType2.CID) bool {
+func (h dtogen) equal43(v, w dtogenType2.CID) bool {
 	return v.Equal(w)
 }
-func (h dtogen) check54(v dtogenType2.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check43(v dtogenType2.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append54(out []byte, v dtogenType2.CID) []byte {
+func (h dtogen) append43(out []byte, v dtogenType2.CID) []byte {
 	return v.AppendCBOR(out)
 }
-func (h dtogen) read54(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.CID, err error) {
+func (h dtogen) read43(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.CID, err error) {
 	err = v.ReadCBOR(r, d, cap)
 	return v, err
 }
 
-// Helpers 55: *uint64.
-func (h dtogen) clone55(v *uint64) *uint64 {
+// Helpers 44: *uint64.
+func (h dtogen) clone44(v *uint64) *uint64 {
 	if v == nil {
 		return nil
 	}
 	x := h.clone1(*v)
 	return (*uint64)(&x)
 }
-func (h dtogen) equal55(v, w *uint64) bool {
+func (h dtogen) equal44(v, w *uint64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal1(*v, *w)
 }
-func (h dtogen) check55(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check44(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check1(*v, b, d, cap)
 }
-func (h dtogen) append55(out []byte, v *uint64) []byte {
+func (h dtogen) append44(out []byte, v *uint64) []byte {
 	return h.append1(out, *v)
 }
-func (h dtogen) read55(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+func (h dtogen) read44(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
 	x, err := h.read1(r, d, cap)
 	if err != nil {
 		return v, err
@@ -5734,47 +4952,43 @@ func (h dtogen) read55(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error)
 	return (*uint64)(&x), nil
 }
 
-// Helpers 56: ModelResponse.
-func (h dtogen) clone56(v ModelResponse) ModelResponse {
+// Helpers 45: ModelResponse.
+func (h dtogen) clone45(v ModelResponse) ModelResponse {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.RequestID = h.clone1(v.RequestID)
-	out.Terminal = h.clone57(v.Terminal)
-	out.ProviderStopReason = h.clone58(v.ProviderStopReason)
-	out.Items = h.clone59(v.Items)
-	out.Evidence = h.clone68(v.Evidence)
-	out.Usage = h.clone69(v.Usage)
-	out.Private = h.clone70(v.Private)
+	out.Terminal = h.clone46(v.Terminal)
+	out.ProviderStopReason = h.clone47(v.ProviderStopReason)
+	out.Items = h.clone48(v.Items)
+	out.Evidence = h.clone57(v.Evidence)
+	out.Private = h.clone58(v.Private)
 	return out
 }
-func (h dtogen) equal56(v, w ModelResponse) bool {
+func (h dtogen) equal45(v, w ModelResponse) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal1(v.RequestID, w.RequestID) {
 		return false
 	}
-	if !h.equal57(v.Terminal, w.Terminal) {
+	if !h.equal46(v.Terminal, w.Terminal) {
 		return false
 	}
-	if !h.equal58(v.ProviderStopReason, w.ProviderStopReason) {
+	if !h.equal47(v.ProviderStopReason, w.ProviderStopReason) {
 		return false
 	}
-	if !h.equal59(v.Items, w.Items) {
+	if !h.equal48(v.Items, w.Items) {
 		return false
 	}
-	if !h.equal68(v.Evidence, w.Evidence) {
+	if !h.equal57(v.Evidence, w.Evidence) {
 		return false
 	}
-	if !h.equal69(v.Usage, w.Usage) {
-		return false
-	}
-	if !h.equal70(v.Private, w.Private) {
+	if !h.equal58(v.Private, w.Private) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check56(v ModelResponse, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check45(v ModelResponse, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5787,9 +5001,6 @@ func (h dtogen) check56(v ModelResponse, b *dtogenCodec.Budget, d, cap int) (err
 	if v.ProviderStopReason != nil {
 		count++
 	}
-	if v.Usage != nil {
-		count++
-	}
 	if v.Private != nil {
 		count++
 	}
@@ -5800,21 +5011,21 @@ func (h dtogen) check56(v ModelResponse, b *dtogenCodec.Budget, d, cap int) (err
 		if err := b.CheckString("e", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Evidence: %w", err)
 		}
-		if err := h.check68(v.Evidence, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check57(v.Evidence, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Evidence: %w", err)
 		}
 	}
 	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Items: %w", err)
 	}
-	if err := h.check59(v.Items, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check48(v.Items, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Items: %w", err)
 	}
 	if v.ProviderStopReason != nil {
 		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ProviderStopReason: %w", err)
 		}
-		if err := h.check58(v.ProviderStopReason, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check47(v.ProviderStopReason, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ProviderStopReason: %w", err)
 		}
 	}
@@ -5833,36 +5044,25 @@ func (h dtogen) check56(v ModelResponse, b *dtogenCodec.Budget, d, cap int) (err
 	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Terminal: %w", err)
 	}
-	if err := h.check57(v.Terminal, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check46(v.Terminal, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Terminal: %w", err)
-	}
-	if v.Usage != nil {
-		if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
-		if err := h.check69(v.Usage, b, d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Usage: %w", err)
-		}
 	}
 	if v.Private != nil {
 		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Private: %w", err)
 		}
-		if err := h.check70(v.Private, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check58(v.Private, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Private: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append56(out []byte, v ModelResponse) []byte {
+func (h dtogen) append45(out []byte, v ModelResponse) []byte {
 	count := 4
 	if v.Evidence != nil {
 		count++
 	}
 	if v.ProviderStopReason != nil {
-		count++
-	}
-	if v.Usage != nil {
 		count++
 	}
 	if v.Private != nil {
@@ -5871,31 +5071,27 @@ func (h dtogen) append56(out []byte, v ModelResponse) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Evidence != nil {
 		out = dtogenCBOR.AppendText(out, "e")
-		out = h.append68(out, v.Evidence)
+		out = h.append57(out, v.Evidence)
 	}
 	out = dtogenCBOR.AppendText(out, "i")
-	out = h.append59(out, v.Items)
+	out = h.append48(out, v.Items)
 	if v.ProviderStopReason != nil {
 		out = dtogenCBOR.AppendText(out, "p")
-		out = h.append58(out, v.ProviderStopReason)
+		out = h.append47(out, v.ProviderStopReason)
 	}
 	out = dtogenCBOR.AppendText(out, "q")
 	out = h.append1(out, v.RequestID)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	out = dtogenCBOR.AppendText(out, "t")
-	out = h.append57(out, v.Terminal)
-	if v.Usage != nil {
-		out = dtogenCBOR.AppendText(out, "u")
-		out = h.append69(out, v.Usage)
-	}
+	out = h.append46(out, v.Terminal)
 	if v.Private != nil {
 		out = dtogenCBOR.AppendText(out, "x")
-		out = h.append70(out, v.Private)
+		out = h.append58(out, v.Private)
 	}
 	return out
 }
-func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err error) {
+func (h dtogen) read45(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -5906,7 +5102,7 @@ func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err 
 		return v, err
 	}
 	previous := ""
-	var seen [8]bool
+	var seen [7]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -5920,19 +5116,19 @@ func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err 
 		switch key {
 		case "e":
 			seen[0] = true
-			v.Evidence, err = h.read68(r, d+1, int(^uint(0)>>1))
+			v.Evidence, err = h.read57(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Evidence: %w", err)
 			}
 		case "i":
 			seen[1] = true
-			v.Items, err = h.read59(r, d+1, int(^uint(0)>>1))
+			v.Items, err = h.read48(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Items: %w", err)
 			}
 		case "p":
 			seen[2] = true
-			v.ProviderStopReason, err = h.read58(r, d+1, int(^uint(0)>>1))
+			v.ProviderStopReason, err = h.read47(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("ProviderStopReason: %w", err)
 			}
@@ -5950,19 +5146,13 @@ func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err 
 			}
 		case "t":
 			seen[5] = true
-			v.Terminal, err = h.read57(r, d+1, int(^uint(0)>>1))
+			v.Terminal, err = h.read46(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Terminal: %w", err)
 			}
-		case "u":
-			seen[6] = true
-			v.Usage, err = h.read69(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Usage: %w", err)
-			}
 		case "x":
-			seen[7] = true
-			v.Private, err = h.read70(r, d+1, int(^uint(0)>>1))
+			seen[6] = true
+			v.Private, err = h.read58(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Private: %w", err)
 			}
@@ -5985,20 +5175,20 @@ func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v ModelResponse, err 
 	return v, nil
 }
 
-// Helpers 57: ResponseTerminalClass.
-func (h dtogen) clone57(v ResponseTerminalClass) ResponseTerminalClass {
+// Helpers 46: ResponseTerminalClass.
+func (h dtogen) clone46(v ResponseTerminalClass) ResponseTerminalClass {
 	return v
 }
-func (h dtogen) equal57(v, w ResponseTerminalClass) bool {
+func (h dtogen) equal46(v, w ResponseTerminalClass) bool {
 	return v == w
 }
-func (h dtogen) check57(v ResponseTerminalClass, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check46(v ResponseTerminalClass, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append57(out []byte, v ResponseTerminalClass) []byte {
+func (h dtogen) append46(out []byte, v ResponseTerminalClass) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read57(r *dtogenCodec.Reader, d, cap int) (v ResponseTerminalClass, err error) {
+func (h dtogen) read46(r *dtogenCodec.Reader, d, cap int) (v ResponseTerminalClass, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -6006,30 +5196,30 @@ func (h dtogen) read57(r *dtogenCodec.Reader, d, cap int) (v ResponseTerminalCla
 	return ResponseTerminalClass(x), nil
 }
 
-// Helpers 58: *string.
-func (h dtogen) clone58(v *string) *string {
+// Helpers 47: *string.
+func (h dtogen) clone47(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal58(v, w *string) bool {
+func (h dtogen) equal47(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check58(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check47(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append58(out []byte, v *string) []byte {
+func (h dtogen) append47(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read58(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read47(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -6037,54 +5227,54 @@ func (h dtogen) read58(r *dtogenCodec.Reader, d, cap int) (v *string, err error)
 	return (*string)(&x), nil
 }
 
-// Helpers 59: []ResponseItem.
-func (h dtogen) clone59(v []ResponseItem) []ResponseItem {
+// Helpers 48: []ResponseItem.
+func (h dtogen) clone48(v []ResponseItem) []ResponseItem {
 	if v == nil {
 		return nil
 	}
 	out := make([]ResponseItem, len(v))
 	for i := range v {
-		out[i] = h.clone60(v[i])
+		out[i] = h.clone49(v[i])
 	}
 	return out
 }
-func (h dtogen) equal59(v, w []ResponseItem) bool {
+func (h dtogen) equal48(v, w []ResponseItem) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal60(v[i], w[i]) {
+		if !h.equal49(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check59(v []ResponseItem, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check48(v []ResponseItem, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check60(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check49(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append59(out []byte, v []ResponseItem) []byte {
+func (h dtogen) append48(out []byte, v []ResponseItem) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append60(out, x)
+		out = h.append49(out, x)
 	}
 	return out
 }
-func (h dtogen) read59(r *dtogenCodec.Reader, d, cap int) (v []ResponseItem, err error) {
+func (h dtogen) read48(r *dtogenCodec.Reader, d, cap int) (v []ResponseItem, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ResponseItem, count)
 	for i := range v {
-		v[i], err = h.read60(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read49(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -6092,23 +5282,23 @@ func (h dtogen) read59(r *dtogenCodec.Reader, d, cap int) (v []ResponseItem, err
 	return v, nil
 }
 
-// Helpers 60: ResponseItem.
-func (h dtogen) clone60(v ResponseItem) ResponseItem {
+// Helpers 49: ResponseItem.
+func (h dtogen) clone49(v ResponseItem) ResponseItem {
 	out := v
-	out.Content = h.clone61(v.Content)
-	out.Call = h.clone65(v.Call)
+	out.Content = h.clone50(v.Content)
+	out.Call = h.clone54(v.Call)
 	return out
 }
-func (h dtogen) equal60(v, w ResponseItem) bool {
-	if !h.equal61(v.Content, w.Content) {
+func (h dtogen) equal49(v, w ResponseItem) bool {
+	if !h.equal50(v.Content, w.Content) {
 		return false
 	}
-	if !h.equal65(v.Call, w.Call) {
+	if !h.equal54(v.Call, w.Call) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check60(v ResponseItem, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check49(v ResponseItem, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6128,7 +5318,7 @@ func (h dtogen) check60(v ResponseItem, b *dtogenCodec.Budget, d, cap int) (err 
 		if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Call: %w", err)
 		}
-		if err := h.check65(v.Call, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check54(v.Call, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Call: %w", err)
 		}
 	}
@@ -6136,13 +5326,13 @@ func (h dtogen) check60(v ResponseItem, b *dtogenCodec.Budget, d, cap int) (err 
 		if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Content: %w", err)
 		}
-		if err := h.check61(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check50(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Content: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append60(out []byte, v ResponseItem) []byte {
+func (h dtogen) append49(out []byte, v ResponseItem) []byte {
 	count := 0
 	if v.Call != nil {
 		count++
@@ -6153,15 +5343,15 @@ func (h dtogen) append60(out []byte, v ResponseItem) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Call != nil {
 		out = dtogenCBOR.AppendText(out, "a")
-		out = h.append65(out, v.Call)
+		out = h.append54(out, v.Call)
 	}
 	if v.Content != nil {
 		out = dtogenCBOR.AppendText(out, "c")
-		out = h.append61(out, v.Content)
+		out = h.append50(out, v.Content)
 	}
 	return out
 }
-func (h dtogen) read60(r *dtogenCodec.Reader, d, cap int) (v ResponseItem, err error) {
+func (h dtogen) read49(r *dtogenCodec.Reader, d, cap int) (v ResponseItem, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6186,13 +5376,13 @@ func (h dtogen) read60(r *dtogenCodec.Reader, d, cap int) (v ResponseItem, err e
 		switch key {
 		case "a":
 			seen[0] = true
-			v.Call, err = h.read65(r, d+1, int(^uint(0)>>1))
+			v.Call, err = h.read54(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Call: %w", err)
 			}
 		case "c":
 			seen[1] = true
-			v.Content, err = h.read61(r, d+1, int(^uint(0)>>1))
+			v.Content, err = h.read50(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Content: %w", err)
 			}
@@ -6203,54 +5393,54 @@ func (h dtogen) read60(r *dtogenCodec.Reader, d, cap int) (v ResponseItem, err e
 	return v, nil
 }
 
-// Helpers 61: *ResponseContent.
-func (h dtogen) clone61(v *ResponseContent) *ResponseContent {
+// Helpers 50: *ResponseContent.
+func (h dtogen) clone50(v *ResponseContent) *ResponseContent {
 	if v == nil {
 		return nil
 	}
-	x := h.clone62(*v)
+	x := h.clone51(*v)
 	return (*ResponseContent)(&x)
 }
-func (h dtogen) equal61(v, w *ResponseContent) bool {
+func (h dtogen) equal50(v, w *ResponseContent) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal62(*v, *w)
+	return h.equal51(*v, *w)
 }
-func (h dtogen) check61(v *ResponseContent, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check50(v *ResponseContent, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check62(*v, b, d, cap)
+	return h.check51(*v, b, d, cap)
 }
-func (h dtogen) append61(out []byte, v *ResponseContent) []byte {
-	return h.append62(out, *v)
+func (h dtogen) append50(out []byte, v *ResponseContent) []byte {
+	return h.append51(out, *v)
 }
-func (h dtogen) read61(r *dtogenCodec.Reader, d, cap int) (v *ResponseContent, err error) {
-	x, err := h.read62(r, d, cap)
+func (h dtogen) read50(r *dtogenCodec.Reader, d, cap int) (v *ResponseContent, err error) {
+	x, err := h.read51(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*ResponseContent)(&x), nil
 }
 
-// Helpers 62: ResponseContent.
-func (h dtogen) clone62(v ResponseContent) ResponseContent {
+// Helpers 51: ResponseContent.
+func (h dtogen) clone51(v ResponseContent) ResponseContent {
 	out := v
-	out.Kind = h.clone63(v.Kind)
-	out.Parts = h.clone64(v.Parts)
+	out.Kind = h.clone52(v.Kind)
+	out.Parts = h.clone53(v.Parts)
 	return out
 }
-func (h dtogen) equal62(v, w ResponseContent) bool {
-	if !h.equal63(v.Kind, w.Kind) {
+func (h dtogen) equal51(v, w ResponseContent) bool {
+	if !h.equal52(v.Kind, w.Kind) {
 		return false
 	}
-	if !h.equal64(v.Parts, w.Parts) {
+	if !h.equal53(v.Parts, w.Parts) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check62(v ResponseContent, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check51(v ResponseContent, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6263,27 +5453,27 @@ func (h dtogen) check62(v ResponseContent, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
-	if err := h.check63(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check52(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check64(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check53(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append62(out []byte, v ResponseContent) []byte {
+func (h dtogen) append51(out []byte, v ResponseContent) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "k")
-	out = h.append63(out, v.Kind)
+	out = h.append52(out, v.Kind)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append64(out, v.Parts)
+	out = h.append53(out, v.Parts)
 	return out
 }
-func (h dtogen) read62(r *dtogenCodec.Reader, d, cap int) (v ResponseContent, err error) {
+func (h dtogen) read51(r *dtogenCodec.Reader, d, cap int) (v ResponseContent, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6308,13 +5498,13 @@ func (h dtogen) read62(r *dtogenCodec.Reader, d, cap int) (v ResponseContent, er
 		switch key {
 		case "k":
 			seen[0] = true
-			v.Kind, err = h.read63(r, d+1, int(^uint(0)>>1))
+			v.Kind, err = h.read52(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Kind: %w", err)
 			}
 		case "p":
 			seen[1] = true
-			v.Parts, err = h.read64(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read53(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
@@ -6331,20 +5521,20 @@ func (h dtogen) read62(r *dtogenCodec.Reader, d, cap int) (v ResponseContent, er
 	return v, nil
 }
 
-// Helpers 63: ResponseContentKind.
-func (h dtogen) clone63(v ResponseContentKind) ResponseContentKind {
+// Helpers 52: ResponseContentKind.
+func (h dtogen) clone52(v ResponseContentKind) ResponseContentKind {
 	return v
 }
-func (h dtogen) equal63(v, w ResponseContentKind) bool {
+func (h dtogen) equal52(v, w ResponseContentKind) bool {
 	return v == w
 }
-func (h dtogen) check63(v ResponseContentKind, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check52(v ResponseContentKind, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append63(out []byte, v ResponseContentKind) []byte {
+func (h dtogen) append52(out []byte, v ResponseContentKind) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read63(r *dtogenCodec.Reader, d, cap int) (v ResponseContentKind, err error) {
+func (h dtogen) read52(r *dtogenCodec.Reader, d, cap int) (v ResponseContentKind, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -6352,54 +5542,54 @@ func (h dtogen) read63(r *dtogenCodec.Reader, d, cap int) (v ResponseContentKind
 	return ResponseContentKind(x), nil
 }
 
-// Helpers 64: []ContentPart.
-func (h dtogen) clone64(v []ContentPart) []ContentPart {
+// Helpers 53: []ContentPart.
+func (h dtogen) clone53(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
 	out := make([]ContentPart, len(v))
 	for i := range v {
-		out[i] = h.clone30(v[i])
+		out[i] = h.clone20(v[i])
 	}
 	return out
 }
-func (h dtogen) equal64(v, w []ContentPart) bool {
+func (h dtogen) equal53(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal30(v[i], w[i]) {
+		if !h.equal20(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check64(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check53(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check30(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check20(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append64(out []byte, v []ContentPart) []byte {
+func (h dtogen) append53(out []byte, v []ContentPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append30(out, x)
+		out = h.append20(out, x)
 	}
 	return out
 }
-func (h dtogen) read64(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+func (h dtogen) read53(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ContentPart, count)
 	for i := range v {
-		v[i], err = h.read30(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read20(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -6407,58 +5597,58 @@ func (h dtogen) read64(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err 
 	return v, nil
 }
 
-// Helpers 65: *RequestedCall.
-func (h dtogen) clone65(v *RequestedCall) *RequestedCall {
+// Helpers 54: *RequestedCall.
+func (h dtogen) clone54(v *RequestedCall) *RequestedCall {
 	if v == nil {
 		return nil
 	}
-	x := h.clone66(*v)
+	x := h.clone55(*v)
 	return (*RequestedCall)(&x)
 }
-func (h dtogen) equal65(v, w *RequestedCall) bool {
+func (h dtogen) equal54(v, w *RequestedCall) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal66(*v, *w)
+	return h.equal55(*v, *w)
 }
-func (h dtogen) check65(v *RequestedCall, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check54(v *RequestedCall, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check66(*v, b, d, cap)
+	return h.check55(*v, b, d, cap)
 }
-func (h dtogen) append65(out []byte, v *RequestedCall) []byte {
-	return h.append66(out, *v)
+func (h dtogen) append54(out []byte, v *RequestedCall) []byte {
+	return h.append55(out, *v)
 }
-func (h dtogen) read65(r *dtogenCodec.Reader, d, cap int) (v *RequestedCall, err error) {
-	x, err := h.read66(r, d, cap)
+func (h dtogen) read54(r *dtogenCodec.Reader, d, cap int) (v *RequestedCall, err error) {
+	x, err := h.read55(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*RequestedCall)(&x), nil
 }
 
-// Helpers 66: RequestedCall.
-func (h dtogen) clone66(v RequestedCall) RequestedCall {
+// Helpers 55: RequestedCall.
+func (h dtogen) clone55(v RequestedCall) RequestedCall {
 	out := v
 	out.ProviderCallID = h.clone5(v.ProviderCallID)
 	out.Name = h.clone5(v.Name)
-	out.Arguments = h.clone67(v.Arguments)
+	out.Arguments = h.clone56(v.Arguments)
 	return out
 }
-func (h dtogen) equal66(v, w RequestedCall) bool {
+func (h dtogen) equal55(v, w RequestedCall) bool {
 	if !h.equal5(v.ProviderCallID, w.ProviderCallID) {
 		return false
 	}
 	if !h.equal5(v.Name, w.Name) {
 		return false
 	}
-	if !h.equal67(v.Arguments, w.Arguments) {
+	if !h.equal56(v.Arguments, w.Arguments) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check66(v RequestedCall, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check55(v RequestedCall, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6471,7 +5661,7 @@ func (h dtogen) check66(v RequestedCall, b *dtogenCodec.Budget, d, cap int) (err
 	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
-	if err := h.check67(v.Arguments, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check56(v.Arguments, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
 	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
@@ -6488,18 +5678,18 @@ func (h dtogen) check66(v RequestedCall, b *dtogenCodec.Budget, d, cap int) (err
 	}
 	return nil
 }
-func (h dtogen) append66(out []byte, v RequestedCall) []byte {
+func (h dtogen) append55(out []byte, v RequestedCall) []byte {
 	count := 3
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "a")
-	out = h.append67(out, v.Arguments)
+	out = h.append56(out, v.Arguments)
 	out = dtogenCBOR.AppendText(out, "i")
 	out = h.append5(out, v.ProviderCallID)
 	out = dtogenCBOR.AppendText(out, "n")
 	out = h.append5(out, v.Name)
 	return out
 }
-func (h dtogen) read66(r *dtogenCodec.Reader, d, cap int) (v RequestedCall, err error) {
+func (h dtogen) read55(r *dtogenCodec.Reader, d, cap int) (v RequestedCall, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6524,7 +5714,7 @@ func (h dtogen) read66(r *dtogenCodec.Reader, d, cap int) (v RequestedCall, err 
 		switch key {
 		case "a":
 			seen[0] = true
-			v.Arguments, err = h.read67(r, d+1, int(^uint(0)>>1))
+			v.Arguments, err = h.read56(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Arguments: %w", err)
 			}
@@ -6556,39 +5746,39 @@ func (h dtogen) read66(r *dtogenCodec.Reader, d, cap int) (v RequestedCall, err 
 	return v, nil
 }
 
-// Helpers 67: []byte.
-func (h dtogen) clone67(v []byte) []byte {
+// Helpers 56: []byte.
+func (h dtogen) clone56(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
-func (h dtogen) equal67(v, w []byte) bool {
+func (h dtogen) equal56(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check67(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check56(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append67(out []byte, v []byte) []byte {
+func (h dtogen) append56(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read67(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read56(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -6600,30 +5790,30 @@ func (h dtogen) read67(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 68: *ObservedEvidence.
-func (h dtogen) clone68(v *ObservedEvidence) *ObservedEvidence {
+// Helpers 57: *ObservedEvidence.
+func (h dtogen) clone57(v *ObservedEvidence) *ObservedEvidence {
 	if v == nil {
 		return nil
 	}
 	x := h.clone3(*v)
 	return (*ObservedEvidence)(&x)
 }
-func (h dtogen) equal68(v, w *ObservedEvidence) bool {
+func (h dtogen) equal57(v, w *ObservedEvidence) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal3(*v, *w)
 }
-func (h dtogen) check68(v *ObservedEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check57(v *ObservedEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check3(*v, b, d, cap)
 }
-func (h dtogen) append68(out []byte, v *ObservedEvidence) []byte {
+func (h dtogen) append57(out []byte, v *ObservedEvidence) []byte {
 	return h.append3(out, *v)
 }
-func (h dtogen) read68(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, err error) {
+func (h dtogen) read57(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, err error) {
 	x, err := h.read3(r, d, cap)
 	if err != nil {
 		return v, err
@@ -6631,81 +5821,233 @@ func (h dtogen) read68(r *dtogenCodec.Reader, d, cap int) (v *ObservedEvidence, 
 	return (*ObservedEvidence)(&x), nil
 }
 
-// Helpers 69: *InvocationUsage.
-func (h dtogen) clone69(v *InvocationUsage) *InvocationUsage {
+// Helpers 58: *OpaqueProviderData.
+func (h dtogen) clone58(v *OpaqueProviderData) *OpaqueProviderData {
 	if v == nil {
 		return nil
 	}
-	x := h.clone8(*v)
-	return (*InvocationUsage)(&x)
-}
-func (h dtogen) equal69(v, w *InvocationUsage) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal8(*v, *w)
-}
-func (h dtogen) check69(v *InvocationUsage, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check8(*v, b, d, cap)
-}
-func (h dtogen) append69(out []byte, v *InvocationUsage) []byte {
-	return h.append8(out, *v)
-}
-func (h dtogen) read69(r *dtogenCodec.Reader, d, cap int) (v *InvocationUsage, err error) {
-	x, err := h.read8(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*InvocationUsage)(&x), nil
-}
-
-// Helpers 70: *OpaqueProviderData.
-func (h dtogen) clone70(v *OpaqueProviderData) *OpaqueProviderData {
-	if v == nil {
-		return nil
-	}
-	x := h.clone16(*v)
+	x := h.clone59(*v)
 	return (*OpaqueProviderData)(&x)
 }
-func (h dtogen) equal70(v, w *OpaqueProviderData) bool {
+func (h dtogen) equal58(v, w *OpaqueProviderData) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal16(*v, *w)
+	return h.equal59(*v, *w)
 }
-func (h dtogen) check70(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check58(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check16(*v, b, d, cap)
+	return h.check59(*v, b, d, cap)
 }
-func (h dtogen) append70(out []byte, v *OpaqueProviderData) []byte {
-	return h.append16(out, *v)
+func (h dtogen) append58(out []byte, v *OpaqueProviderData) []byte {
+	return h.append59(out, *v)
 }
-func (h dtogen) read70(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
-	x, err := h.read16(r, d, cap)
+func (h dtogen) read58(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
+	x, err := h.read59(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*OpaqueProviderData)(&x), nil
 }
 
-// Helpers 71: RootInstructions.
-func (h dtogen) clone71(v RootInstructions) RootInstructions {
+// Helpers 59: OpaqueProviderData.
+func (h dtogen) clone59(v OpaqueProviderData) OpaqueProviderData {
 	out := v
-	out.Blocks = h.clone72(v.Blocks)
+	out.Producer = h.clone5(v.Producer)
+	out.Format = h.clone5(v.Format)
+	out.Version = h.clone8(v.Version)
+	out.Data = h.clone60(v.Data)
 	return out
 }
-func (h dtogen) equal71(v, w RootInstructions) bool {
-	if !h.equal72(v.Blocks, w.Blocks) {
+func (h dtogen) equal59(v, w OpaqueProviderData) bool {
+	if !h.equal5(v.Producer, w.Producer) {
+		return false
+	}
+	if !h.equal5(v.Format, w.Format) {
+		return false
+	}
+	if !h.equal8(v.Version, w.Version) {
+		return false
+	}
+	if !h.equal60(v.Data, w.Data) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check71(v RootInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check59(v OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 4
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Data: %w", err)
+	}
+	if err := h.check60(v.Data, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Data: %w", err)
+	}
+	if err := b.CheckString("f", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Format: %w", err)
+	}
+	if err := h.check5(v.Format, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Format: %w", err)
+	}
+	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Producer: %w", err)
+	}
+	if err := h.check5(v.Producer, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Producer: %w", err)
+	}
+	if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Version: %w", err)
+	}
+	if err := h.check8(v.Version, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Version: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append59(out []byte, v OpaqueProviderData) []byte {
+	count := 4
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	out = dtogenCBOR.AppendText(out, "d")
+	out = h.append60(out, v.Data)
+	out = dtogenCBOR.AppendText(out, "f")
+	out = h.append5(out, v.Format)
+	out = dtogenCBOR.AppendText(out, "p")
+	out = h.append5(out, v.Producer)
+	out = dtogenCBOR.AppendText(out, "v")
+	out = h.append8(out, v.Version)
+	return out
+}
+func (h dtogen) read59(r *dtogenCodec.Reader, d, cap int) (v OpaqueProviderData, err error) {
+	defer func() {
+		if err == nil && v.Validate() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [4]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "d":
+			seen[0] = true
+			v.Data, err = h.read60(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Data: %w", err)
+			}
+		case "f":
+			seen[1] = true
+			v.Format, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Format: %w", err)
+			}
+		case "p":
+			seen[2] = true
+			v.Producer, err = h.read5(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Producer: %w", err)
+			}
+		case "v":
+			seen[3] = true
+			v.Version, err = h.read8(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Version: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[0] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[2] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[3] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 60: []byte.
+func (h dtogen) clone60(v []byte) []byte {
+	if v == nil {
+		return nil
+	}
+	out := make([]byte, len(v))
+	for i := range v {
+		out[i] = h.clone10(v[i])
+	}
+	return out
+}
+func (h dtogen) equal60(v, w []byte) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal10(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h dtogen) check60(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckBytes(len(v), d, cap)
+}
+func (h dtogen) append60(out []byte, v []byte) []byte {
+	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = append(out, byte(x))
+	}
+	return out
+}
+func (h dtogen) read60(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+	x, err := r.Bytes(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]byte, len(x))
+	for i := range x {
+		v[i] = byte(x[i])
+	}
+	return v, nil
+}
+
+// Helpers 61: RootInstructions.
+func (h dtogen) clone61(v RootInstructions) RootInstructions {
+	out := v
+	out.Blocks = h.clone62(v.Blocks)
+	return out
+}
+func (h dtogen) equal61(v, w RootInstructions) bool {
+	if !h.equal62(v.Blocks, w.Blocks) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check61(v RootInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6718,19 +6060,19 @@ func (h dtogen) check71(v RootInstructions, b *dtogenCodec.Budget, d, cap int) (
 	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
-	if err := h.check72(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check62(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append71(out []byte, v RootInstructions) []byte {
+func (h dtogen) append61(out []byte, v RootInstructions) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "b")
-	out = h.append72(out, v.Blocks)
+	out = h.append62(out, v.Blocks)
 	return out
 }
-func (h dtogen) read71(r *dtogenCodec.Reader, d, cap int) (v RootInstructions, err error) {
+func (h dtogen) read61(r *dtogenCodec.Reader, d, cap int) (v RootInstructions, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6755,7 +6097,7 @@ func (h dtogen) read71(r *dtogenCodec.Reader, d, cap int) (v RootInstructions, e
 		switch key {
 		case "b":
 			seen[0] = true
-			v.Blocks, err = h.read72(r, d+1, int(^uint(0)>>1))
+			v.Blocks, err = h.read62(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Blocks: %w", err)
 			}
@@ -6769,54 +6111,54 @@ func (h dtogen) read71(r *dtogenCodec.Reader, d, cap int) (v RootInstructions, e
 	return v, nil
 }
 
-// Helpers 72: []InstructionBlock.
-func (h dtogen) clone72(v []InstructionBlock) []InstructionBlock {
+// Helpers 62: []InstructionBlock.
+func (h dtogen) clone62(v []InstructionBlock) []InstructionBlock {
 	if v == nil {
 		return nil
 	}
 	out := make([]InstructionBlock, len(v))
 	for i := range v {
-		out[i] = h.clone73(v[i])
+		out[i] = h.clone63(v[i])
 	}
 	return out
 }
-func (h dtogen) equal72(v, w []InstructionBlock) bool {
+func (h dtogen) equal62(v, w []InstructionBlock) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal73(v[i], w[i]) {
+		if !h.equal63(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check72(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check62(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check73(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check63(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append72(out []byte, v []InstructionBlock) []byte {
+func (h dtogen) append62(out []byte, v []InstructionBlock) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append73(out, x)
+		out = h.append63(out, x)
 	}
 	return out
 }
-func (h dtogen) read72(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
+func (h dtogen) read62(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]InstructionBlock, count)
 	for i := range v {
-		v[i], err = h.read73(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read63(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -6824,27 +6166,27 @@ func (h dtogen) read72(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock,
 	return v, nil
 }
 
-// Helpers 73: InstructionBlock.
-func (h dtogen) clone73(v InstructionBlock) InstructionBlock {
+// Helpers 63: InstructionBlock.
+func (h dtogen) clone63(v InstructionBlock) InstructionBlock {
 	out := v
 	out.Key = h.clone5(v.Key)
-	out.Parts = h.clone74(v.Parts)
-	out.Source = h.clone39(v.Source)
+	out.Parts = h.clone64(v.Parts)
+	out.Source = h.clone29(v.Source)
 	return out
 }
-func (h dtogen) equal73(v, w InstructionBlock) bool {
+func (h dtogen) equal63(v, w InstructionBlock) bool {
 	if !h.equal5(v.Key, w.Key) {
 		return false
 	}
-	if !h.equal74(v.Parts, w.Parts) {
+	if !h.equal64(v.Parts, w.Parts) {
 		return false
 	}
-	if !h.equal39(v.Source, w.Source) {
+	if !h.equal29(v.Source, w.Source) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check73(v InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check63(v InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6857,7 +6199,7 @@ func (h dtogen) check73(v InstructionBlock, b *dtogenCodec.Budget, d, cap int) (
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check74(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check64(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
@@ -6869,23 +6211,23 @@ func (h dtogen) check73(v InstructionBlock, b *dtogenCodec.Budget, d, cap int) (
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
-	if err := h.check39(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check29(v.Source, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Source: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append73(out []byte, v InstructionBlock) []byte {
+func (h dtogen) append63(out []byte, v InstructionBlock) []byte {
 	count := 3
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append74(out, v.Parts)
+	out = h.append64(out, v.Parts)
 	out = dtogenCBOR.AppendText(out, "k")
 	out = h.append5(out, v.Key)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append39(out, v.Source)
+	out = h.append29(out, v.Source)
 	return out
 }
-func (h dtogen) read73(r *dtogenCodec.Reader, d, cap int) (v InstructionBlock, err error) {
+func (h dtogen) read63(r *dtogenCodec.Reader, d, cap int) (v InstructionBlock, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -6910,7 +6252,7 @@ func (h dtogen) read73(r *dtogenCodec.Reader, d, cap int) (v InstructionBlock, e
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Parts, err = h.read74(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read64(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
@@ -6922,7 +6264,7 @@ func (h dtogen) read73(r *dtogenCodec.Reader, d, cap int) (v InstructionBlock, e
 			}
 		case "s":
 			seen[2] = true
-			v.Source, err = h.read39(r, d+1, int(^uint(0)>>1))
+			v.Source, err = h.read29(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Source: %w", err)
 			}
@@ -6942,54 +6284,54 @@ func (h dtogen) read73(r *dtogenCodec.Reader, d, cap int) (v InstructionBlock, e
 	return v, nil
 }
 
-// Helpers 74: []ContentPart.
-func (h dtogen) clone74(v []ContentPart) []ContentPart {
+// Helpers 64: []ContentPart.
+func (h dtogen) clone64(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
 	out := make([]ContentPart, len(v))
 	for i := range v {
-		out[i] = h.clone30(v[i])
+		out[i] = h.clone20(v[i])
 	}
 	return out
 }
-func (h dtogen) equal74(v, w []ContentPart) bool {
+func (h dtogen) equal64(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal30(v[i], w[i]) {
+		if !h.equal20(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check74(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check64(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check30(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check20(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append74(out []byte, v []ContentPart) []byte {
+func (h dtogen) append64(out []byte, v []ContentPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append30(out, x)
+		out = h.append20(out, x)
 	}
 	return out
 }
-func (h dtogen) read74(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+func (h dtogen) read64(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ContentPart, count)
 	for i := range v {
-		v[i], err = h.read30(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read20(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -6997,35 +6339,35 @@ func (h dtogen) read74(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err 
 	return v, nil
 }
 
-// Helpers 75: RunEnded.
-func (h dtogen) clone75(v RunEnded) RunEnded {
+// Helpers 65: RunEnded.
+func (h dtogen) clone65(v RunEnded) RunEnded {
 	out := v
 	out.RunID = h.clone1(v.RunID)
-	out.Reason = h.clone76(v.Reason)
-	out.BulkToolCloseout = h.clone77(v.BulkToolCloseout)
-	out.Explanation = h.clone78(v.Explanation)
-	out.Capture = h.clone79(v.Capture)
+	out.Reason = h.clone66(v.Reason)
+	out.BulkToolCloseout = h.clone67(v.BulkToolCloseout)
+	out.Explanation = h.clone68(v.Explanation)
+	out.Capture = h.clone69(v.Capture)
 	return out
 }
-func (h dtogen) equal75(v, w RunEnded) bool {
+func (h dtogen) equal65(v, w RunEnded) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal76(v.Reason, w.Reason) {
+	if !h.equal66(v.Reason, w.Reason) {
 		return false
 	}
-	if !h.equal77(v.BulkToolCloseout, w.BulkToolCloseout) {
+	if !h.equal67(v.BulkToolCloseout, w.BulkToolCloseout) {
 		return false
 	}
-	if !h.equal78(v.Explanation, w.Explanation) {
+	if !h.equal68(v.Explanation, w.Explanation) {
 		return false
 	}
-	if !h.equal79(v.Capture, w.Capture) {
+	if !h.equal69(v.Capture, w.Capture) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check75(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check65(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7048,7 +6390,7 @@ func (h dtogen) check75(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 		if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
 		}
-		if err := h.check77(v.BulkToolCloseout, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check67(v.BulkToolCloseout, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("BulkToolCloseout: %w", err)
 		}
 	}
@@ -7056,14 +6398,14 @@ func (h dtogen) check75(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 		if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Capture: %w", err)
 		}
-		if err := h.check79(v.Capture, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check69(v.Capture, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Capture: %w", err)
 		}
 	}
 	if err := b.CheckString("e", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
-	if err := h.check76(v.Reason, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check66(v.Reason, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
@@ -7076,13 +6418,13 @@ func (h dtogen) check75(v RunEnded, b *dtogenCodec.Budget, d, cap int) (err erro
 		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Explanation: %w", err)
 		}
-		if err := h.check78(v.Explanation, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check68(v.Explanation, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Explanation: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append75(out []byte, v RunEnded) []byte {
+func (h dtogen) append65(out []byte, v RunEnded) []byte {
 	count := 2
 	if v.BulkToolCloseout {
 		count++
@@ -7096,23 +6438,23 @@ func (h dtogen) append75(out []byte, v RunEnded) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.BulkToolCloseout {
 		out = dtogenCBOR.AppendText(out, "b")
-		out = h.append77(out, v.BulkToolCloseout)
+		out = h.append67(out, v.BulkToolCloseout)
 	}
 	if v.Capture != nil {
 		out = dtogenCBOR.AppendText(out, "c")
-		out = h.append79(out, v.Capture)
+		out = h.append69(out, v.Capture)
 	}
 	out = dtogenCBOR.AppendText(out, "e")
-	out = h.append76(out, v.Reason)
+	out = h.append66(out, v.Reason)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	if v.Explanation != nil {
 		out = dtogenCBOR.AppendText(out, "x")
-		out = h.append78(out, v.Explanation)
+		out = h.append68(out, v.Explanation)
 	}
 	return out
 }
-func (h dtogen) read75(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error) {
+func (h dtogen) read65(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7137,19 +6479,19 @@ func (h dtogen) read75(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error
 		switch key {
 		case "b":
 			seen[0] = true
-			v.BulkToolCloseout, err = h.read77(r, d+1, int(^uint(0)>>1))
+			v.BulkToolCloseout, err = h.read67(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("BulkToolCloseout: %w", err)
 			}
 		case "c":
 			seen[1] = true
-			v.Capture, err = h.read79(r, d+1, int(^uint(0)>>1))
+			v.Capture, err = h.read69(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Capture: %w", err)
 			}
 		case "e":
 			seen[2] = true
-			v.Reason, err = h.read76(r, d+1, int(^uint(0)>>1))
+			v.Reason, err = h.read66(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Reason: %w", err)
 			}
@@ -7161,7 +6503,7 @@ func (h dtogen) read75(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error
 			}
 		case "x":
 			seen[4] = true
-			v.Explanation, err = h.read78(r, d+1, int(^uint(0)>>1))
+			v.Explanation, err = h.read68(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Explanation: %w", err)
 			}
@@ -7178,20 +6520,20 @@ func (h dtogen) read75(r *dtogenCodec.Reader, d, cap int) (v RunEnded, err error
 	return v, nil
 }
 
-// Helpers 76: RunEndedReason.
-func (h dtogen) clone76(v RunEndedReason) RunEndedReason {
+// Helpers 66: RunEndedReason.
+func (h dtogen) clone66(v RunEndedReason) RunEndedReason {
 	return v
 }
-func (h dtogen) equal76(v, w RunEndedReason) bool {
+func (h dtogen) equal66(v, w RunEndedReason) bool {
 	return v == w
 }
-func (h dtogen) check76(v RunEndedReason, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check66(v RunEndedReason, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append76(out []byte, v RunEndedReason) []byte {
+func (h dtogen) append66(out []byte, v RunEndedReason) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read76(r *dtogenCodec.Reader, d, cap int) (v RunEndedReason, err error) {
+func (h dtogen) read66(r *dtogenCodec.Reader, d, cap int) (v RunEndedReason, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -7199,20 +6541,20 @@ func (h dtogen) read76(r *dtogenCodec.Reader, d, cap int) (v RunEndedReason, err
 	return RunEndedReason(x), nil
 }
 
-// Helpers 77: bool.
-func (h dtogen) clone77(v bool) bool {
+// Helpers 67: bool.
+func (h dtogen) clone67(v bool) bool {
 	return v
 }
-func (h dtogen) equal77(v, w bool) bool {
+func (h dtogen) equal67(v, w bool) bool {
 	return v == w
 }
-func (h dtogen) check77(v bool, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check67(v bool, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckScalar(d)
 }
-func (h dtogen) append77(out []byte, v bool) []byte {
+func (h dtogen) append67(out []byte, v bool) []byte {
 	return dtogenCBOR.AppendBool(out, bool(v))
 }
-func (h dtogen) read77(r *dtogenCodec.Reader, d, cap int) (v bool, err error) {
+func (h dtogen) read67(r *dtogenCodec.Reader, d, cap int) (v bool, err error) {
 	x, err := r.Bool(d)
 	if err != nil {
 		return v, err
@@ -7220,30 +6562,30 @@ func (h dtogen) read77(r *dtogenCodec.Reader, d, cap int) (v bool, err error) {
 	return bool(x), nil
 }
 
-// Helpers 78: *string.
-func (h dtogen) clone78(v *string) *string {
+// Helpers 68: *string.
+func (h dtogen) clone68(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal78(v, w *string) bool {
+func (h dtogen) equal68(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check78(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check68(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append78(out []byte, v *string) []byte {
+func (h dtogen) append68(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read78(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read68(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -7251,30 +6593,30 @@ func (h dtogen) read78(r *dtogenCodec.Reader, d, cap int) (v *string, err error)
 	return (*string)(&x), nil
 }
 
-// Helpers 79: *CaptureFailureEvidence.
-func (h dtogen) clone79(v *CaptureFailureEvidence) *CaptureFailureEvidence {
+// Helpers 69: *CaptureFailureEvidence.
+func (h dtogen) clone69(v *CaptureFailureEvidence) *CaptureFailureEvidence {
 	if v == nil {
 		return nil
 	}
 	x := h.clone0(*v)
 	return (*CaptureFailureEvidence)(&x)
 }
-func (h dtogen) equal79(v, w *CaptureFailureEvidence) bool {
+func (h dtogen) equal69(v, w *CaptureFailureEvidence) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal0(*v, *w)
 }
-func (h dtogen) check79(v *CaptureFailureEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check69(v *CaptureFailureEvidence, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check0(*v, b, d, cap)
 }
-func (h dtogen) append79(out []byte, v *CaptureFailureEvidence) []byte {
+func (h dtogen) append69(out []byte, v *CaptureFailureEvidence) []byte {
 	return h.append0(out, *v)
 }
-func (h dtogen) read79(r *dtogenCodec.Reader, d, cap int) (v *CaptureFailureEvidence, err error) {
+func (h dtogen) read69(r *dtogenCodec.Reader, d, cap int) (v *CaptureFailureEvidence, err error) {
 	x, err := h.read0(r, d, cap)
 	if err != nil {
 		return v, err
@@ -7282,19 +6624,19 @@ func (h dtogen) read79(r *dtogenCodec.Reader, d, cap int) (v *CaptureFailureEvid
 	return (*CaptureFailureEvidence)(&x), nil
 }
 
-// Helpers 80: RunStarted.
-func (h dtogen) clone80(v RunStarted) RunStarted {
+// Helpers 70: RunStarted.
+func (h dtogen) clone70(v RunStarted) RunStarted {
 	out := v
 	out.ID = h.clone1(v.ID)
 	return out
 }
-func (h dtogen) equal80(v, w RunStarted) bool {
+func (h dtogen) equal70(v, w RunStarted) bool {
 	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check80(v RunStarted, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check70(v RunStarted, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7312,14 +6654,14 @@ func (h dtogen) check80(v RunStarted, b *dtogenCodec.Budget, d, cap int) (err er
 	}
 	return nil
 }
-func (h dtogen) append80(out []byte, v RunStarted) []byte {
+func (h dtogen) append70(out []byte, v RunStarted) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.ID)
 	return out
 }
-func (h dtogen) read80(r *dtogenCodec.Reader, d, cap int) (v RunStarted, err error) {
+func (h dtogen) read70(r *dtogenCodec.Reader, d, cap int) (v RunStarted, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7358,19 +6700,19 @@ func (h dtogen) read80(r *dtogenCodec.Reader, d, cap int) (v RunStarted, err err
 	return v, nil
 }
 
-// Helpers 81: ToolCatalog.
-func (h dtogen) clone81(v ToolCatalog) ToolCatalog {
+// Helpers 71: ToolCatalog.
+func (h dtogen) clone71(v ToolCatalog) ToolCatalog {
 	out := v
-	out.Tools = h.clone82(v.Tools)
+	out.Tools = h.clone72(v.Tools)
 	return out
 }
-func (h dtogen) equal81(v, w ToolCatalog) bool {
-	if !h.equal82(v.Tools, w.Tools) {
+func (h dtogen) equal71(v, w ToolCatalog) bool {
+	if !h.equal72(v.Tools, w.Tools) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check81(v ToolCatalog, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check71(v ToolCatalog, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7383,19 +6725,19 @@ func (h dtogen) check81(v ToolCatalog, b *dtogenCodec.Budget, d, cap int) (err e
 	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Tools: %w", err)
 	}
-	if err := h.check82(v.Tools, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check72(v.Tools, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Tools: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append81(out []byte, v ToolCatalog) []byte {
+func (h dtogen) append71(out []byte, v ToolCatalog) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "t")
-	out = h.append82(out, v.Tools)
+	out = h.append72(out, v.Tools)
 	return out
 }
-func (h dtogen) read81(r *dtogenCodec.Reader, d, cap int) (v ToolCatalog, err error) {
+func (h dtogen) read71(r *dtogenCodec.Reader, d, cap int) (v ToolCatalog, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7420,7 +6762,7 @@ func (h dtogen) read81(r *dtogenCodec.Reader, d, cap int) (v ToolCatalog, err er
 		switch key {
 		case "t":
 			seen[0] = true
-			v.Tools, err = h.read82(r, d+1, int(^uint(0)>>1))
+			v.Tools, err = h.read72(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Tools: %w", err)
 			}
@@ -7434,54 +6776,54 @@ func (h dtogen) read81(r *dtogenCodec.Reader, d, cap int) (v ToolCatalog, err er
 	return v, nil
 }
 
-// Helpers 82: []ToolDefinition.
-func (h dtogen) clone82(v []ToolDefinition) []ToolDefinition {
+// Helpers 72: []ToolDefinition.
+func (h dtogen) clone72(v []ToolDefinition) []ToolDefinition {
 	if v == nil {
 		return nil
 	}
 	out := make([]ToolDefinition, len(v))
 	for i := range v {
-		out[i] = h.clone83(v[i])
+		out[i] = h.clone73(v[i])
 	}
 	return out
 }
-func (h dtogen) equal82(v, w []ToolDefinition) bool {
+func (h dtogen) equal72(v, w []ToolDefinition) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal83(v[i], w[i]) {
+		if !h.equal73(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check82(v []ToolDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check72(v []ToolDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check83(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check73(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append82(out []byte, v []ToolDefinition) []byte {
+func (h dtogen) append72(out []byte, v []ToolDefinition) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append83(out, x)
+		out = h.append73(out, x)
 	}
 	return out
 }
-func (h dtogen) read82(r *dtogenCodec.Reader, d, cap int) (v []ToolDefinition, err error) {
+func (h dtogen) read72(r *dtogenCodec.Reader, d, cap int) (v []ToolDefinition, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ToolDefinition, count)
 	for i := range v {
-		v[i], err = h.read83(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read73(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -7489,27 +6831,27 @@ func (h dtogen) read82(r *dtogenCodec.Reader, d, cap int) (v []ToolDefinition, e
 	return v, nil
 }
 
-// Helpers 83: ToolDefinition.
-func (h dtogen) clone83(v ToolDefinition) ToolDefinition {
+// Helpers 73: ToolDefinition.
+func (h dtogen) clone73(v ToolDefinition) ToolDefinition {
 	out := v
 	out.Name = h.clone5(v.Name)
 	out.Description = h.clone5(v.Description)
-	out.ArgumentSchema = h.clone84(v.ArgumentSchema)
+	out.ArgumentSchema = h.clone74(v.ArgumentSchema)
 	return out
 }
-func (h dtogen) equal83(v, w ToolDefinition) bool {
+func (h dtogen) equal73(v, w ToolDefinition) bool {
 	if !h.equal5(v.Name, w.Name) {
 		return false
 	}
 	if !h.equal5(v.Description, w.Description) {
 		return false
 	}
-	if !h.equal84(v.ArgumentSchema, w.ArgumentSchema) {
+	if !h.equal74(v.ArgumentSchema, w.ArgumentSchema) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check83(v ToolDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check73(v ToolDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7534,12 +6876,12 @@ func (h dtogen) check83(v ToolDefinition, b *dtogenCodec.Budget, d, cap int) (er
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("ArgumentSchema: %w", err)
 	}
-	if err := h.check84(v.ArgumentSchema, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check74(v.ArgumentSchema, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("ArgumentSchema: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append83(out []byte, v ToolDefinition) []byte {
+func (h dtogen) append73(out []byte, v ToolDefinition) []byte {
 	count := 3
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "d")
@@ -7547,10 +6889,10 @@ func (h dtogen) append83(out []byte, v ToolDefinition) []byte {
 	out = dtogenCBOR.AppendText(out, "n")
 	out = h.append5(out, v.Name)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append84(out, v.ArgumentSchema)
+	out = h.append74(out, v.ArgumentSchema)
 	return out
 }
-func (h dtogen) read83(r *dtogenCodec.Reader, d, cap int) (v ToolDefinition, err error) {
+func (h dtogen) read73(r *dtogenCodec.Reader, d, cap int) (v ToolDefinition, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7587,7 +6929,7 @@ func (h dtogen) read83(r *dtogenCodec.Reader, d, cap int) (v ToolDefinition, err
 			}
 		case "s":
 			seen[2] = true
-			v.ArgumentSchema, err = h.read84(r, d+1, int(^uint(0)>>1))
+			v.ArgumentSchema, err = h.read74(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("ArgumentSchema: %w", err)
 			}
@@ -7607,39 +6949,39 @@ func (h dtogen) read83(r *dtogenCodec.Reader, d, cap int) (v ToolDefinition, err
 	return v, nil
 }
 
-// Helpers 84: []byte.
-func (h dtogen) clone84(v []byte) []byte {
+// Helpers 74: []byte.
+func (h dtogen) clone74(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
-func (h dtogen) equal84(v, w []byte) bool {
+func (h dtogen) equal74(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check84(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check74(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append84(out []byte, v []byte) []byte {
+func (h dtogen) append74(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read84(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read74(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -7651,19 +6993,19 @@ func (h dtogen) read84(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 85: ToolDisposition.
-func (h dtogen) clone85(v ToolDisposition) ToolDisposition {
+// Helpers 75: ToolDisposition.
+func (h dtogen) clone75(v ToolDisposition) ToolDisposition {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.RequestID = h.clone1(v.RequestID)
 	out.CallID = h.clone1(v.CallID)
-	out.Returned = h.clone86(v.Returned)
-	out.NotInvoked = h.clone106(v.NotInvoked)
-	out.Indeterminate = h.clone109(v.Indeterminate)
-	out.Diagnostic = h.clone112(v.Diagnostic)
+	out.Returned = h.clone76(v.Returned)
+	out.NotInvoked = h.clone96(v.NotInvoked)
+	out.Indeterminate = h.clone99(v.Indeterminate)
+	out.Diagnostic = h.clone102(v.Diagnostic)
 	return out
 }
-func (h dtogen) equal85(v, w ToolDisposition) bool {
+func (h dtogen) equal75(v, w ToolDisposition) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
@@ -7673,21 +7015,21 @@ func (h dtogen) equal85(v, w ToolDisposition) bool {
 	if !h.equal1(v.CallID, w.CallID) {
 		return false
 	}
-	if !h.equal86(v.Returned, w.Returned) {
+	if !h.equal76(v.Returned, w.Returned) {
 		return false
 	}
-	if !h.equal106(v.NotInvoked, w.NotInvoked) {
+	if !h.equal96(v.NotInvoked, w.NotInvoked) {
 		return false
 	}
-	if !h.equal109(v.Indeterminate, w.Indeterminate) {
+	if !h.equal99(v.Indeterminate, w.Indeterminate) {
 		return false
 	}
-	if !h.equal112(v.Diagnostic, w.Diagnostic) {
+	if !h.equal102(v.Diagnostic, w.Diagnostic) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check85(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check75(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7719,7 +7061,7 @@ func (h dtogen) check85(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (e
 		if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Diagnostic: %w", err)
 		}
-		if err := h.check112(v.Diagnostic, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384)))); err != nil {
+		if err := h.check102(v.Diagnostic, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384)))); err != nil {
 			return dtogenFmt.Errorf("Diagnostic: %w", err)
 		}
 	}
@@ -7727,7 +7069,7 @@ func (h dtogen) check85(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (e
 		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Indeterminate: %w", err)
 		}
-		if err := h.check109(v.Indeterminate, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check99(v.Indeterminate, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Indeterminate: %w", err)
 		}
 	}
@@ -7735,7 +7077,7 @@ func (h dtogen) check85(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (e
 		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("NotInvoked: %w", err)
 		}
-		if err := h.check106(v.NotInvoked, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check96(v.NotInvoked, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("NotInvoked: %w", err)
 		}
 	}
@@ -7755,13 +7097,13 @@ func (h dtogen) check85(v ToolDisposition, b *dtogenCodec.Budget, d, cap int) (e
 		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Returned: %w", err)
 		}
-		if err := h.check86(v.Returned, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check76(v.Returned, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Returned: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append85(out []byte, v ToolDisposition) []byte {
+func (h dtogen) append75(out []byte, v ToolDisposition) []byte {
 	count := 3
 	if v.Diagnostic != nil {
 		count++
@@ -7780,15 +7122,15 @@ func (h dtogen) append85(out []byte, v ToolDisposition) []byte {
 	out = h.append1(out, v.CallID)
 	if v.Diagnostic != nil {
 		out = dtogenCBOR.AppendText(out, "d")
-		out = h.append112(out, v.Diagnostic)
+		out = h.append102(out, v.Diagnostic)
 	}
 	if v.Indeterminate != nil {
 		out = dtogenCBOR.AppendText(out, "i")
-		out = h.append109(out, v.Indeterminate)
+		out = h.append99(out, v.Indeterminate)
 	}
 	if v.NotInvoked != nil {
 		out = dtogenCBOR.AppendText(out, "n")
-		out = h.append106(out, v.NotInvoked)
+		out = h.append96(out, v.NotInvoked)
 	}
 	out = dtogenCBOR.AppendText(out, "q")
 	out = h.append1(out, v.RequestID)
@@ -7796,11 +7138,11 @@ func (h dtogen) append85(out []byte, v ToolDisposition) []byte {
 	out = h.append1(out, v.RunID)
 	if v.Returned != nil {
 		out = dtogenCBOR.AppendText(out, "t")
-		out = h.append86(out, v.Returned)
+		out = h.append76(out, v.Returned)
 	}
 	return out
 }
-func (h dtogen) read85(r *dtogenCodec.Reader, d, cap int) (v ToolDisposition, err error) {
+func (h dtogen) read75(r *dtogenCodec.Reader, d, cap int) (v ToolDisposition, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7831,19 +7173,19 @@ func (h dtogen) read85(r *dtogenCodec.Reader, d, cap int) (v ToolDisposition, er
 			}
 		case "d":
 			seen[1] = true
-			v.Diagnostic, err = h.read112(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384))))
+			v.Diagnostic, err = h.read102(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Diagnostic: %w", err)
 			}
 		case "i":
 			seen[2] = true
-			v.Indeterminate, err = h.read109(r, d+1, int(^uint(0)>>1))
+			v.Indeterminate, err = h.read99(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Indeterminate: %w", err)
 			}
 		case "n":
 			seen[3] = true
-			v.NotInvoked, err = h.read106(r, d+1, int(^uint(0)>>1))
+			v.NotInvoked, err = h.read96(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("NotInvoked: %w", err)
 			}
@@ -7861,7 +7203,7 @@ func (h dtogen) read85(r *dtogenCodec.Reader, d, cap int) (v ToolDisposition, er
 			}
 		case "t":
 			seen[6] = true
-			v.Returned, err = h.read86(r, d+1, int(^uint(0)>>1))
+			v.Returned, err = h.read76(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Returned: %w", err)
 			}
@@ -7881,54 +7223,54 @@ func (h dtogen) read85(r *dtogenCodec.Reader, d, cap int) (v ToolDisposition, er
 	return v, nil
 }
 
-// Helpers 86: *ToolReturned.
-func (h dtogen) clone86(v *ToolReturned) *ToolReturned {
+// Helpers 76: *ToolReturned.
+func (h dtogen) clone76(v *ToolReturned) *ToolReturned {
 	if v == nil {
 		return nil
 	}
-	x := h.clone87(*v)
+	x := h.clone77(*v)
 	return (*ToolReturned)(&x)
 }
-func (h dtogen) equal86(v, w *ToolReturned) bool {
+func (h dtogen) equal76(v, w *ToolReturned) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal87(*v, *w)
+	return h.equal77(*v, *w)
 }
-func (h dtogen) check86(v *ToolReturned, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check76(v *ToolReturned, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check87(*v, b, d, cap)
+	return h.check77(*v, b, d, cap)
 }
-func (h dtogen) append86(out []byte, v *ToolReturned) []byte {
-	return h.append87(out, *v)
+func (h dtogen) append76(out []byte, v *ToolReturned) []byte {
+	return h.append77(out, *v)
 }
-func (h dtogen) read86(r *dtogenCodec.Reader, d, cap int) (v *ToolReturned, err error) {
-	x, err := h.read87(r, d, cap)
+func (h dtogen) read76(r *dtogenCodec.Reader, d, cap int) (v *ToolReturned, err error) {
+	x, err := h.read77(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*ToolReturned)(&x), nil
 }
 
-// Helpers 87: ToolReturned.
-func (h dtogen) clone87(v ToolReturned) ToolReturned {
+// Helpers 77: ToolReturned.
+func (h dtogen) clone77(v ToolReturned) ToolReturned {
 	out := v
-	out.Status = h.clone88(v.Status)
-	out.Output = h.clone89(v.Output)
+	out.Status = h.clone78(v.Status)
+	out.Output = h.clone79(v.Output)
 	return out
 }
-func (h dtogen) equal87(v, w ToolReturned) bool {
-	if !h.equal88(v.Status, w.Status) {
+func (h dtogen) equal77(v, w ToolReturned) bool {
+	if !h.equal78(v.Status, w.Status) {
 		return false
 	}
-	if !h.equal89(v.Output, w.Output) {
+	if !h.equal79(v.Output, w.Output) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check87(v ToolReturned, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check77(v ToolReturned, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7941,27 +7283,27 @@ func (h dtogen) check87(v ToolReturned, b *dtogenCodec.Budget, d, cap int) (err 
 	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Output: %w", err)
 	}
-	if err := h.check89(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check79(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Output: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Status: %w", err)
 	}
-	if err := h.check88(v.Status, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
+	if err := h.check78(v.Status, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
 		return dtogenFmt.Errorf("Status: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append87(out []byte, v ToolReturned) []byte {
+func (h dtogen) append77(out []byte, v ToolReturned) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "o")
-	out = h.append89(out, v.Output)
+	out = h.append79(out, v.Output)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append88(out, v.Status)
+	out = h.append78(out, v.Status)
 	return out
 }
-func (h dtogen) read87(r *dtogenCodec.Reader, d, cap int) (v ToolReturned, err error) {
+func (h dtogen) read77(r *dtogenCodec.Reader, d, cap int) (v ToolReturned, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -7986,13 +7328,13 @@ func (h dtogen) read87(r *dtogenCodec.Reader, d, cap int) (v ToolReturned, err e
 		switch key {
 		case "o":
 			seen[0] = true
-			v.Output, err = h.read89(r, d+1, int(^uint(0)>>1))
+			v.Output, err = h.read79(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Output: %w", err)
 			}
 		case "s":
 			seen[1] = true
-			v.Status, err = h.read88(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
+			v.Status, err = h.read78(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Status: %w", err)
 			}
@@ -8009,20 +7351,20 @@ func (h dtogen) read87(r *dtogenCodec.Reader, d, cap int) (v ToolReturned, err e
 	return v, nil
 }
 
-// Helpers 88: ToolReturnStatus.
-func (h dtogen) clone88(v ToolReturnStatus) ToolReturnStatus {
+// Helpers 78: ToolReturnStatus.
+func (h dtogen) clone78(v ToolReturnStatus) ToolReturnStatus {
 	return v
 }
-func (h dtogen) equal88(v, w ToolReturnStatus) bool {
+func (h dtogen) equal78(v, w ToolReturnStatus) bool {
 	return v == w
 }
-func (h dtogen) check88(v ToolReturnStatus, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check78(v ToolReturnStatus, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append88(out []byte, v ToolReturnStatus) []byte {
+func (h dtogen) append78(out []byte, v ToolReturnStatus) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read88(r *dtogenCodec.Reader, d, cap int) (v ToolReturnStatus, err error) {
+func (h dtogen) read78(r *dtogenCodec.Reader, d, cap int) (v ToolReturnStatus, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -8030,23 +7372,23 @@ func (h dtogen) read88(r *dtogenCodec.Reader, d, cap int) (v ToolReturnStatus, e
 	return ToolReturnStatus(x), nil
 }
 
-// Helpers 89: ToolOutput.
-func (h dtogen) clone89(v ToolOutput) ToolOutput {
+// Helpers 79: ToolOutput.
+func (h dtogen) clone79(v ToolOutput) ToolOutput {
 	out := v
-	out.Capture = h.clone90(v.Capture)
-	out.Parts = h.clone91(v.Parts)
+	out.Capture = h.clone80(v.Capture)
+	out.Parts = h.clone81(v.Parts)
 	return out
 }
-func (h dtogen) equal89(v, w ToolOutput) bool {
-	if !h.equal90(v.Capture, w.Capture) {
+func (h dtogen) equal79(v, w ToolOutput) bool {
+	if !h.equal80(v.Capture, w.Capture) {
 		return false
 	}
-	if !h.equal91(v.Parts, w.Parts) {
+	if !h.equal81(v.Parts, w.Parts) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check89(v ToolOutput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check79(v ToolOutput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -8059,27 +7401,27 @@ func (h dtogen) check89(v ToolOutput, b *dtogenCodec.Budget, d, cap int) (err er
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Capture: %w", err)
 	}
-	if err := h.check90(v.Capture, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
+	if err := h.check80(v.Capture, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
 		return dtogenFmt.Errorf("Capture: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check91(v.Parts, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
+	if err := h.check81(v.Parts, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append89(out []byte, v ToolOutput) []byte {
+func (h dtogen) append79(out []byte, v ToolOutput) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append90(out, v.Capture)
+	out = h.append80(out, v.Capture)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append91(out, v.Parts)
+	out = h.append81(out, v.Parts)
 	return out
 }
-func (h dtogen) read89(r *dtogenCodec.Reader, d, cap int) (v ToolOutput, err error) {
+func (h dtogen) read79(r *dtogenCodec.Reader, d, cap int) (v ToolOutput, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -8104,13 +7446,13 @@ func (h dtogen) read89(r *dtogenCodec.Reader, d, cap int) (v ToolOutput, err err
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Capture, err = h.read90(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
+			v.Capture, err = h.read80(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Capture: %w", err)
 			}
 		case "p":
 			seen[1] = true
-			v.Parts, err = h.read91(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
+			v.Parts, err = h.read81(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
@@ -8127,20 +7469,20 @@ func (h dtogen) read89(r *dtogenCodec.Reader, d, cap int) (v ToolOutput, err err
 	return v, nil
 }
 
-// Helpers 90: ToolCaptureState.
-func (h dtogen) clone90(v ToolCaptureState) ToolCaptureState {
+// Helpers 80: ToolCaptureState.
+func (h dtogen) clone80(v ToolCaptureState) ToolCaptureState {
 	return v
 }
-func (h dtogen) equal90(v, w ToolCaptureState) bool {
+func (h dtogen) equal80(v, w ToolCaptureState) bool {
 	return v == w
 }
-func (h dtogen) check90(v ToolCaptureState, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check80(v ToolCaptureState, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append90(out []byte, v ToolCaptureState) []byte {
+func (h dtogen) append80(out []byte, v ToolCaptureState) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read90(r *dtogenCodec.Reader, d, cap int) (v ToolCaptureState, err error) {
+func (h dtogen) read80(r *dtogenCodec.Reader, d, cap int) (v ToolCaptureState, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -8148,54 +7490,54 @@ func (h dtogen) read90(r *dtogenCodec.Reader, d, cap int) (v ToolCaptureState, e
 	return ToolCaptureState(x), nil
 }
 
-// Helpers 91: []ToolOutputPart.
-func (h dtogen) clone91(v []ToolOutputPart) []ToolOutputPart {
+// Helpers 81: []ToolOutputPart.
+func (h dtogen) clone81(v []ToolOutputPart) []ToolOutputPart {
 	if v == nil {
 		return nil
 	}
 	out := make([]ToolOutputPart, len(v))
 	for i := range v {
-		out[i] = h.clone92(v[i])
+		out[i] = h.clone82(v[i])
 	}
 	return out
 }
-func (h dtogen) equal91(v, w []ToolOutputPart) bool {
+func (h dtogen) equal81(v, w []ToolOutputPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal92(v[i], w[i]) {
+		if !h.equal82(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check91(v []ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check81(v []ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check92(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check82(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append91(out []byte, v []ToolOutputPart) []byte {
+func (h dtogen) append81(out []byte, v []ToolOutputPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append92(out, x)
+		out = h.append82(out, x)
 	}
 	return out
 }
-func (h dtogen) read91(r *dtogenCodec.Reader, d, cap int) (v []ToolOutputPart, err error) {
+func (h dtogen) read81(r *dtogenCodec.Reader, d, cap int) (v []ToolOutputPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ToolOutputPart, count)
 	for i := range v {
-		v[i], err = h.read92(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read82(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -8203,31 +7545,31 @@ func (h dtogen) read91(r *dtogenCodec.Reader, d, cap int) (v []ToolOutputPart, e
 	return v, nil
 }
 
-// Helpers 92: ToolOutputPart.
-func (h dtogen) clone92(v ToolOutputPart) ToolOutputPart {
+// Helpers 82: ToolOutputPart.
+func (h dtogen) clone82(v ToolOutputPart) ToolOutputPart {
 	out := v
-	out.Content = h.clone93(v.Content)
-	out.JSON = h.clone94(v.JSON)
-	out.ResourceLink = h.clone96(v.ResourceLink)
-	out.Resource = h.clone101(v.Resource)
+	out.Content = h.clone83(v.Content)
+	out.JSON = h.clone84(v.JSON)
+	out.ResourceLink = h.clone86(v.ResourceLink)
+	out.Resource = h.clone91(v.Resource)
 	return out
 }
-func (h dtogen) equal92(v, w ToolOutputPart) bool {
-	if !h.equal93(v.Content, w.Content) {
+func (h dtogen) equal82(v, w ToolOutputPart) bool {
+	if !h.equal83(v.Content, w.Content) {
 		return false
 	}
-	if !h.equal94(v.JSON, w.JSON) {
+	if !h.equal84(v.JSON, w.JSON) {
 		return false
 	}
-	if !h.equal96(v.ResourceLink, w.ResourceLink) {
+	if !h.equal86(v.ResourceLink, w.ResourceLink) {
 		return false
 	}
-	if !h.equal101(v.Resource, w.Resource) {
+	if !h.equal91(v.Resource, w.Resource) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check92(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check82(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -8253,7 +7595,7 @@ func (h dtogen) check92(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Content: %w", err)
 		}
-		if err := h.check93(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check83(v.Content, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Content: %w", err)
 		}
 	}
@@ -8261,7 +7603,7 @@ func (h dtogen) check92(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("j", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("JSON: %w", err)
 		}
-		if err := h.check94(v.JSON, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
+		if err := h.check84(v.JSON, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
 			return dtogenFmt.Errorf("JSON: %w", err)
 		}
 	}
@@ -8269,7 +7611,7 @@ func (h dtogen) check92(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("l", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ResourceLink: %w", err)
 		}
-		if err := h.check96(v.ResourceLink, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check86(v.ResourceLink, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("ResourceLink: %w", err)
 		}
 	}
@@ -8277,13 +7619,13 @@ func (h dtogen) check92(v ToolOutputPart, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Resource: %w", err)
 		}
-		if err := h.check101(v.Resource, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check91(v.Resource, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Resource: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append92(out []byte, v ToolOutputPart) []byte {
+func (h dtogen) append82(out []byte, v ToolOutputPart) []byte {
 	count := 0
 	if v.Content != nil {
 		count++
@@ -8300,23 +7642,23 @@ func (h dtogen) append92(out []byte, v ToolOutputPart) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Content != nil {
 		out = dtogenCBOR.AppendText(out, "c")
-		out = h.append93(out, v.Content)
+		out = h.append83(out, v.Content)
 	}
 	if v.JSON != nil {
 		out = dtogenCBOR.AppendText(out, "j")
-		out = h.append94(out, v.JSON)
+		out = h.append84(out, v.JSON)
 	}
 	if v.ResourceLink != nil {
 		out = dtogenCBOR.AppendText(out, "l")
-		out = h.append96(out, v.ResourceLink)
+		out = h.append86(out, v.ResourceLink)
 	}
 	if v.Resource != nil {
 		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append101(out, v.Resource)
+		out = h.append91(out, v.Resource)
 	}
 	return out
 }
-func (h dtogen) read92(r *dtogenCodec.Reader, d, cap int) (v ToolOutputPart, err error) {
+func (h dtogen) read82(r *dtogenCodec.Reader, d, cap int) (v ToolOutputPart, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -8341,25 +7683,25 @@ func (h dtogen) read92(r *dtogenCodec.Reader, d, cap int) (v ToolOutputPart, err
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Content, err = h.read93(r, d+1, int(^uint(0)>>1))
+			v.Content, err = h.read83(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Content: %w", err)
 			}
 		case "j":
 			seen[1] = true
-			v.JSON, err = h.read94(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
+			v.JSON, err = h.read84(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("JSON: %w", err)
 			}
 		case "l":
 			seen[2] = true
-			v.ResourceLink, err = h.read96(r, d+1, int(^uint(0)>>1))
+			v.ResourceLink, err = h.read86(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("ResourceLink: %w", err)
 			}
 		case "r":
 			seen[3] = true
-			v.Resource, err = h.read101(r, d+1, int(^uint(0)>>1))
+			v.Resource, err = h.read91(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Resource: %w", err)
 			}
@@ -8370,35 +7712,588 @@ func (h dtogen) read92(r *dtogenCodec.Reader, d, cap int) (v ToolOutputPart, err
 	return v, nil
 }
 
-// Helpers 93: *ContentPart.
-func (h dtogen) clone93(v *ContentPart) *ContentPart {
+// Helpers 83: *ContentPart.
+func (h dtogen) clone83(v *ContentPart) *ContentPart {
 	if v == nil {
 		return nil
 	}
-	x := h.clone30(*v)
+	x := h.clone20(*v)
 	return (*ContentPart)(&x)
 }
-func (h dtogen) equal93(v, w *ContentPart) bool {
+func (h dtogen) equal83(v, w *ContentPart) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal30(*v, *w)
+	return h.equal20(*v, *w)
 }
-func (h dtogen) check93(v *ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check83(v *ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check30(*v, b, d, cap)
+	return h.check20(*v, b, d, cap)
 }
-func (h dtogen) append93(out []byte, v *ContentPart) []byte {
-	return h.append30(out, *v)
+func (h dtogen) append83(out []byte, v *ContentPart) []byte {
+	return h.append20(out, *v)
 }
-func (h dtogen) read93(r *dtogenCodec.Reader, d, cap int) (v *ContentPart, err error) {
-	x, err := h.read30(r, d, cap)
+func (h dtogen) read83(r *dtogenCodec.Reader, d, cap int) (v *ContentPart, err error) {
+	x, err := h.read20(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*ContentPart)(&x), nil
+}
+
+// Helpers 84: *[]byte.
+func (h dtogen) clone84(v *[]byte) *[]byte {
+	if v == nil {
+		return nil
+	}
+	x := h.clone85(*v)
+	return (*[]byte)(&x)
+}
+func (h dtogen) equal84(v, w *[]byte) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal85(*v, *w)
+}
+func (h dtogen) check84(v *[]byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check85(*v, b, d, cap)
+}
+func (h dtogen) append84(out []byte, v *[]byte) []byte {
+	return h.append85(out, *v)
+}
+func (h dtogen) read84(r *dtogenCodec.Reader, d, cap int) (v *[]byte, err error) {
+	x, err := h.read85(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*[]byte)(&x), nil
+}
+
+// Helpers 85: []byte.
+func (h dtogen) clone85(v []byte) []byte {
+	if v == nil {
+		return nil
+	}
+	out := make([]byte, len(v))
+	for i := range v {
+		out[i] = h.clone10(v[i])
+	}
+	return out
+}
+func (h dtogen) equal85(v, w []byte) bool {
+	if len(v) != len(w) {
+		return false
+	}
+	for i := range v {
+		if !h.equal10(v[i], w[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (h dtogen) check85(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckBytes(len(v), d, cap)
+}
+func (h dtogen) append85(out []byte, v []byte) []byte {
+	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
+	for _, x := range v {
+		out = append(out, byte(x))
+	}
+	return out
+}
+func (h dtogen) read85(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+	x, err := r.Bytes(d, cap)
+	if err != nil {
+		return v, err
+	}
+	v = make([]byte, len(x))
+	for i := range x {
+		v[i] = byte(x[i])
+	}
+	return v, nil
+}
+
+// Helpers 86: *ToolResource.
+func (h dtogen) clone86(v *ToolResource) *ToolResource {
+	if v == nil {
+		return nil
+	}
+	x := h.clone87(*v)
+	return (*ToolResource)(&x)
+}
+func (h dtogen) equal86(v, w *ToolResource) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal87(*v, *w)
+}
+func (h dtogen) check86(v *ToolResource, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check87(*v, b, d, cap)
+}
+func (h dtogen) append86(out []byte, v *ToolResource) []byte {
+	return h.append87(out, *v)
+}
+func (h dtogen) read86(r *dtogenCodec.Reader, d, cap int) (v *ToolResource, err error) {
+	x, err := h.read87(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*ToolResource)(&x), nil
+}
+
+// Helpers 87: ToolResource.
+func (h dtogen) clone87(v ToolResource) ToolResource {
+	out := v
+	out.URI = h.clone5(v.URI)
+	out.Name = h.clone88(v.Name)
+	out.Title = h.clone89(v.Title)
+	out.MIMEType = h.clone90(v.MIMEType)
+	return out
+}
+func (h dtogen) equal87(v, w ToolResource) bool {
+	if !h.equal5(v.URI, w.URI) {
+		return false
+	}
+	if !h.equal88(v.Name, w.Name) {
+		return false
+	}
+	if !h.equal89(v.Title, w.Title) {
+		return false
+	}
+	if !h.equal90(v.MIMEType, w.MIMEType) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check87(v ToolResource, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if v.MIMEType != nil {
+		count++
+	}
+	if v.Name != nil {
+		count++
+	}
+	if v.Title != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.MIMEType != nil {
+		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("MIMEType: %w", err)
+		}
+		if err := h.check90(v.MIMEType, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
+			return dtogenFmt.Errorf("MIMEType: %w", err)
+		}
+	}
+	if v.Name != nil {
+		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Name: %w", err)
+		}
+		if err := h.check88(v.Name, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
+			return dtogenFmt.Errorf("Name: %w", err)
+		}
+	}
+	if v.Title != nil {
+		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Title: %w", err)
+		}
+		if err := h.check89(v.Title, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
+			return dtogenFmt.Errorf("Title: %w", err)
+		}
+	}
+	if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("URI: %w", err)
+	}
+	if err := h.check5(v.URI, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384)))); err != nil {
+		return dtogenFmt.Errorf("URI: %w", err)
+	}
+	return nil
+}
+func (h dtogen) append87(out []byte, v ToolResource) []byte {
+	count := 1
+	if v.MIMEType != nil {
+		count++
+	}
+	if v.Name != nil {
+		count++
+	}
+	if v.Title != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.MIMEType != nil {
+		out = dtogenCBOR.AppendText(out, "m")
+		out = h.append90(out, v.MIMEType)
+	}
+	if v.Name != nil {
+		out = dtogenCBOR.AppendText(out, "n")
+		out = h.append88(out, v.Name)
+	}
+	if v.Title != nil {
+		out = dtogenCBOR.AppendText(out, "t")
+		out = h.append89(out, v.Title)
+	}
+	out = dtogenCBOR.AppendText(out, "u")
+	out = h.append5(out, v.URI)
+	return out
+}
+func (h dtogen) read87(r *dtogenCodec.Reader, d, cap int) (v ToolResource, err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [4]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "m":
+			seen[0] = true
+			v.MIMEType, err = h.read90(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("MIMEType: %w", err)
+			}
+		case "n":
+			seen[1] = true
+			v.Name, err = h.read88(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Name: %w", err)
+			}
+		case "t":
+			seen[2] = true
+			v.Title, err = h.read89(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Title: %w", err)
+			}
+		case "u":
+			seen[3] = true
+			v.URI, err = h.read5(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("URI: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[3] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 88: *string.
+func (h dtogen) clone88(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal88(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check88(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append88(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read88(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 89: *string.
+func (h dtogen) clone89(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal89(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check89(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append89(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read89(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 90: *string.
+func (h dtogen) clone90(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal90(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check90(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append90(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read90(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
+}
+
+// Helpers 91: *ToolEmbeddedResource.
+func (h dtogen) clone91(v *ToolEmbeddedResource) *ToolEmbeddedResource {
+	if v == nil {
+		return nil
+	}
+	x := h.clone92(*v)
+	return (*ToolEmbeddedResource)(&x)
+}
+func (h dtogen) equal91(v, w *ToolEmbeddedResource) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal92(*v, *w)
+}
+func (h dtogen) check91(v *ToolEmbeddedResource, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check92(*v, b, d, cap)
+}
+func (h dtogen) append91(out []byte, v *ToolEmbeddedResource) []byte {
+	return h.append92(out, *v)
+}
+func (h dtogen) read91(r *dtogenCodec.Reader, d, cap int) (v *ToolEmbeddedResource, err error) {
+	x, err := h.read92(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*ToolEmbeddedResource)(&x), nil
+}
+
+// Helpers 92: ToolEmbeddedResource.
+func (h dtogen) clone92(v ToolEmbeddedResource) ToolEmbeddedResource {
+	out := v
+	out.Resource = h.clone87(v.Resource)
+	out.Text = h.clone93(v.Text)
+	out.Blob = h.clone94(v.Blob)
+	return out
+}
+func (h dtogen) equal92(v, w ToolEmbeddedResource) bool {
+	if !h.equal87(v.Resource, w.Resource) {
+		return false
+	}
+	if !h.equal93(v.Text, w.Text) {
+		return false
+	}
+	if !h.equal94(v.Blob, w.Blob) {
+		return false
+	}
+	return true
+}
+func (h dtogen) check92(v ToolEmbeddedResource, b *dtogenCodec.Budget, d, cap int) (err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count := 1
+	if v.Blob != nil {
+		count++
+	}
+	if v.Text != nil {
+		count++
+	}
+	if err := b.CheckMap(count, d, cap); err != nil {
+		return err
+	}
+	if v.Blob != nil {
+		if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Blob: %w", err)
+		}
+		if err := h.check94(v.Blob, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
+			return dtogenFmt.Errorf("Blob: %w", err)
+		}
+	}
+	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Resource: %w", err)
+	}
+	if err := h.check87(v.Resource, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Resource: %w", err)
+	}
+	if v.Text != nil {
+		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+			return dtogenFmt.Errorf("Text: %w", err)
+		}
+		if err := h.check93(v.Text, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
+			return dtogenFmt.Errorf("Text: %w", err)
+		}
+	}
+	return nil
+}
+func (h dtogen) append92(out []byte, v ToolEmbeddedResource) []byte {
+	count := 1
+	if v.Blob != nil {
+		count++
+	}
+	if v.Text != nil {
+		count++
+	}
+	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
+	if v.Blob != nil {
+		out = dtogenCBOR.AppendText(out, "b")
+		out = h.append94(out, v.Blob)
+	}
+	out = dtogenCBOR.AppendText(out, "r")
+	out = h.append87(out, v.Resource)
+	if v.Text != nil {
+		out = dtogenCBOR.AppendText(out, "t")
+		out = h.append93(out, v.Text)
+	}
+	return out
+}
+func (h dtogen) read92(r *dtogenCodec.Reader, d, cap int) (v ToolEmbeddedResource, err error) {
+	defer func() {
+		if err == nil && v.validateLocal() != nil {
+			err = dtogenCodec.ErrInvalidData
+		}
+	}()
+	count, err := r.Map(d, cap)
+	if err != nil {
+		return v, err
+	}
+	previous := ""
+	var seen [3]bool
+	for i := 0; i < count; i++ {
+		key, err := r.String(d+1, int(^uint(0)>>1))
+		if err != nil {
+			return v, err
+		}
+		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
+		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
+			return v, dtogenCodec.ErrInvalidData
+		}
+		previous = key
+		switch key {
+		case "b":
+			seen[0] = true
+			v.Blob, err = h.read94(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Blob: %w", err)
+			}
+		case "r":
+			seen[1] = true
+			v.Resource, err = h.read87(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Resource: %w", err)
+			}
+		case "t":
+			seen[2] = true
+			v.Text, err = h.read93(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Text: %w", err)
+			}
+		default:
+			return v, dtogenCodec.ErrInvalidData
+		}
+	}
+	if !seen[1] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	return v, nil
+}
+
+// Helpers 93: *string.
+func (h dtogen) clone93(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	x := h.clone5(*v)
+	return (*string)(&x)
+}
+func (h dtogen) equal93(v, w *string) bool {
+	if v == nil || w == nil {
+		return v == nil && w == nil
+	}
+	return h.equal5(*v, *w)
+}
+func (h dtogen) check93(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+	if v == nil {
+		return dtogenCodec.ErrInvalidData
+	}
+	return h.check5(*v, b, d, cap)
+}
+func (h dtogen) append93(out []byte, v *string) []byte {
+	return h.append5(out, *v)
+}
+func (h dtogen) read93(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+	x, err := h.read5(r, d, cap)
+	if err != nil {
+		return v, err
+	}
+	return (*string)(&x), nil
 }
 
 // Helpers 94: *[]byte.
@@ -8439,7 +8334,7 @@ func (h dtogen) clone95(v []byte) []byte {
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone18(v[i])
+		out[i] = h.clone10(v[i])
 	}
 	return out
 }
@@ -8448,7 +8343,7 @@ func (h dtogen) equal95(v, w []byte) bool {
 		return false
 	}
 	for i := range v {
-		if !h.equal18(v[i], w[i]) {
+		if !h.equal10(v[i], w[i]) {
 			return false
 		}
 	}
@@ -8476,603 +8371,50 @@ func (h dtogen) read95(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) 
 	return v, nil
 }
 
-// Helpers 96: *ToolResource.
-func (h dtogen) clone96(v *ToolResource) *ToolResource {
+// Helpers 96: *ToolNotInvoked.
+func (h dtogen) clone96(v *ToolNotInvoked) *ToolNotInvoked {
 	if v == nil {
 		return nil
 	}
 	x := h.clone97(*v)
-	return (*ToolResource)(&x)
+	return (*ToolNotInvoked)(&x)
 }
-func (h dtogen) equal96(v, w *ToolResource) bool {
+func (h dtogen) equal96(v, w *ToolNotInvoked) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal97(*v, *w)
 }
-func (h dtogen) check96(v *ToolResource, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check96(v *ToolNotInvoked, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check97(*v, b, d, cap)
 }
-func (h dtogen) append96(out []byte, v *ToolResource) []byte {
+func (h dtogen) append96(out []byte, v *ToolNotInvoked) []byte {
 	return h.append97(out, *v)
 }
-func (h dtogen) read96(r *dtogenCodec.Reader, d, cap int) (v *ToolResource, err error) {
+func (h dtogen) read96(r *dtogenCodec.Reader, d, cap int) (v *ToolNotInvoked, err error) {
 	x, err := h.read97(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*ToolResource)(&x), nil
-}
-
-// Helpers 97: ToolResource.
-func (h dtogen) clone97(v ToolResource) ToolResource {
-	out := v
-	out.URI = h.clone5(v.URI)
-	out.Name = h.clone98(v.Name)
-	out.Title = h.clone99(v.Title)
-	out.MIMEType = h.clone100(v.MIMEType)
-	return out
-}
-func (h dtogen) equal97(v, w ToolResource) bool {
-	if !h.equal5(v.URI, w.URI) {
-		return false
-	}
-	if !h.equal98(v.Name, w.Name) {
-		return false
-	}
-	if !h.equal99(v.Title, w.Title) {
-		return false
-	}
-	if !h.equal100(v.MIMEType, w.MIMEType) {
-		return false
-	}
-	return true
-}
-func (h dtogen) check97(v ToolResource, b *dtogenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if v.MIMEType != nil {
-		count++
-	}
-	if v.Name != nil {
-		count++
-	}
-	if v.Title != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if v.MIMEType != nil {
-		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("MIMEType: %w", err)
-		}
-		if err := h.check100(v.MIMEType, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
-			return dtogenFmt.Errorf("MIMEType: %w", err)
-		}
-	}
-	if v.Name != nil {
-		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Name: %w", err)
-		}
-		if err := h.check98(v.Name, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
-			return dtogenFmt.Errorf("Name: %w", err)
-		}
-	}
-	if v.Title != nil {
-		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Title: %w", err)
-		}
-		if err := h.check99(v.Title, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024)))); err != nil {
-			return dtogenFmt.Errorf("Title: %w", err)
-		}
-	}
-	if err := b.CheckString("u", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("URI: %w", err)
-	}
-	if err := h.check5(v.URI, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384)))); err != nil {
-		return dtogenFmt.Errorf("URI: %w", err)
-	}
-	return nil
-}
-func (h dtogen) append97(out []byte, v ToolResource) []byte {
-	count := 1
-	if v.MIMEType != nil {
-		count++
-	}
-	if v.Name != nil {
-		count++
-	}
-	if v.Title != nil {
-		count++
-	}
-	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	if v.MIMEType != nil {
-		out = dtogenCBOR.AppendText(out, "m")
-		out = h.append100(out, v.MIMEType)
-	}
-	if v.Name != nil {
-		out = dtogenCBOR.AppendText(out, "n")
-		out = h.append98(out, v.Name)
-	}
-	if v.Title != nil {
-		out = dtogenCBOR.AppendText(out, "t")
-		out = h.append99(out, v.Title)
-	}
-	out = dtogenCBOR.AppendText(out, "u")
-	out = h.append5(out, v.URI)
-	return out
-}
-func (h dtogen) read97(r *dtogenCodec.Reader, d, cap int) (v ToolResource, err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [4]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, dtogenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "m":
-			seen[0] = true
-			v.MIMEType, err = h.read100(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("MIMEType: %w", err)
-			}
-		case "n":
-			seen[1] = true
-			v.Name, err = h.read98(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Name: %w", err)
-			}
-		case "t":
-			seen[2] = true
-			v.Title, err = h.read99(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(1024))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Title: %w", err)
-			}
-		case "u":
-			seen[3] = true
-			v.URI, err = h.read5(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(16384))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("URI: %w", err)
-			}
-		default:
-			return v, dtogenCodec.ErrInvalidData
-		}
-	}
-	if !seen[3] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 98: *string.
-func (h dtogen) clone98(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	x := h.clone5(*v)
-	return (*string)(&x)
-}
-func (h dtogen) equal98(v, w *string) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal5(*v, *w)
-}
-func (h dtogen) check98(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check5(*v, b, d, cap)
-}
-func (h dtogen) append98(out []byte, v *string) []byte {
-	return h.append5(out, *v)
-}
-func (h dtogen) read98(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
-	x, err := h.read5(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*string)(&x), nil
-}
-
-// Helpers 99: *string.
-func (h dtogen) clone99(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	x := h.clone5(*v)
-	return (*string)(&x)
-}
-func (h dtogen) equal99(v, w *string) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal5(*v, *w)
-}
-func (h dtogen) check99(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check5(*v, b, d, cap)
-}
-func (h dtogen) append99(out []byte, v *string) []byte {
-	return h.append5(out, *v)
-}
-func (h dtogen) read99(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
-	x, err := h.read5(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*string)(&x), nil
-}
-
-// Helpers 100: *string.
-func (h dtogen) clone100(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	x := h.clone5(*v)
-	return (*string)(&x)
-}
-func (h dtogen) equal100(v, w *string) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal5(*v, *w)
-}
-func (h dtogen) check100(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check5(*v, b, d, cap)
-}
-func (h dtogen) append100(out []byte, v *string) []byte {
-	return h.append5(out, *v)
-}
-func (h dtogen) read100(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
-	x, err := h.read5(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*string)(&x), nil
-}
-
-// Helpers 101: *ToolEmbeddedResource.
-func (h dtogen) clone101(v *ToolEmbeddedResource) *ToolEmbeddedResource {
-	if v == nil {
-		return nil
-	}
-	x := h.clone102(*v)
-	return (*ToolEmbeddedResource)(&x)
-}
-func (h dtogen) equal101(v, w *ToolEmbeddedResource) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal102(*v, *w)
-}
-func (h dtogen) check101(v *ToolEmbeddedResource, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check102(*v, b, d, cap)
-}
-func (h dtogen) append101(out []byte, v *ToolEmbeddedResource) []byte {
-	return h.append102(out, *v)
-}
-func (h dtogen) read101(r *dtogenCodec.Reader, d, cap int) (v *ToolEmbeddedResource, err error) {
-	x, err := h.read102(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*ToolEmbeddedResource)(&x), nil
-}
-
-// Helpers 102: ToolEmbeddedResource.
-func (h dtogen) clone102(v ToolEmbeddedResource) ToolEmbeddedResource {
-	out := v
-	out.Resource = h.clone97(v.Resource)
-	out.Text = h.clone103(v.Text)
-	out.Blob = h.clone104(v.Blob)
-	return out
-}
-func (h dtogen) equal102(v, w ToolEmbeddedResource) bool {
-	if !h.equal97(v.Resource, w.Resource) {
-		return false
-	}
-	if !h.equal103(v.Text, w.Text) {
-		return false
-	}
-	if !h.equal104(v.Blob, w.Blob) {
-		return false
-	}
-	return true
-}
-func (h dtogen) check102(v ToolEmbeddedResource, b *dtogenCodec.Budget, d, cap int) (err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count := 1
-	if v.Blob != nil {
-		count++
-	}
-	if v.Text != nil {
-		count++
-	}
-	if err := b.CheckMap(count, d, cap); err != nil {
-		return err
-	}
-	if v.Blob != nil {
-		if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Blob: %w", err)
-		}
-		if err := h.check104(v.Blob, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
-			return dtogenFmt.Errorf("Blob: %w", err)
-		}
-	}
-	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Resource: %w", err)
-	}
-	if err := h.check97(v.Resource, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Resource: %w", err)
-	}
-	if v.Text != nil {
-		if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
-			return dtogenFmt.Errorf("Text: %w", err)
-		}
-		if err := h.check103(v.Text, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304)))); err != nil {
-			return dtogenFmt.Errorf("Text: %w", err)
-		}
-	}
-	return nil
-}
-func (h dtogen) append102(out []byte, v ToolEmbeddedResource) []byte {
-	count := 1
-	if v.Blob != nil {
-		count++
-	}
-	if v.Text != nil {
-		count++
-	}
-	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	if v.Blob != nil {
-		out = dtogenCBOR.AppendText(out, "b")
-		out = h.append104(out, v.Blob)
-	}
-	out = dtogenCBOR.AppendText(out, "r")
-	out = h.append97(out, v.Resource)
-	if v.Text != nil {
-		out = dtogenCBOR.AppendText(out, "t")
-		out = h.append103(out, v.Text)
-	}
-	return out
-}
-func (h dtogen) read102(r *dtogenCodec.Reader, d, cap int) (v ToolEmbeddedResource, err error) {
-	defer func() {
-		if err == nil && v.validateLocal() != nil {
-			err = dtogenCodec.ErrInvalidData
-		}
-	}()
-	count, err := r.Map(d, cap)
-	if err != nil {
-		return v, err
-	}
-	previous := ""
-	var seen [3]bool
-	for i := 0; i < count; i++ {
-		key, err := r.String(d+1, int(^uint(0)>>1))
-		if err != nil {
-			return v, err
-		}
-		// Strict canonical key ordering also rejects duplicates before assignment can overwrite them.
-		if i > 0 && (len(key) < len(previous) || (len(key) == len(previous) && key <= previous)) {
-			return v, dtogenCodec.ErrInvalidData
-		}
-		previous = key
-		switch key {
-		case "b":
-			seen[0] = true
-			v.Blob, err = h.read104(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Blob: %w", err)
-			}
-		case "r":
-			seen[1] = true
-			v.Resource, err = h.read97(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Resource: %w", err)
-			}
-		case "t":
-			seen[2] = true
-			v.Text, err = h.read103(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4194304))))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Text: %w", err)
-			}
-		default:
-			return v, dtogenCodec.ErrInvalidData
-		}
-	}
-	if !seen[1] {
-		return v, dtogenCodec.ErrInvalidData
-	}
-	return v, nil
-}
-
-// Helpers 103: *string.
-func (h dtogen) clone103(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	x := h.clone5(*v)
-	return (*string)(&x)
-}
-func (h dtogen) equal103(v, w *string) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal5(*v, *w)
-}
-func (h dtogen) check103(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check5(*v, b, d, cap)
-}
-func (h dtogen) append103(out []byte, v *string) []byte {
-	return h.append5(out, *v)
-}
-func (h dtogen) read103(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
-	x, err := h.read5(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*string)(&x), nil
-}
-
-// Helpers 104: *[]byte.
-func (h dtogen) clone104(v *[]byte) *[]byte {
-	if v == nil {
-		return nil
-	}
-	x := h.clone105(*v)
-	return (*[]byte)(&x)
-}
-func (h dtogen) equal104(v, w *[]byte) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal105(*v, *w)
-}
-func (h dtogen) check104(v *[]byte, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check105(*v, b, d, cap)
-}
-func (h dtogen) append104(out []byte, v *[]byte) []byte {
-	return h.append105(out, *v)
-}
-func (h dtogen) read104(r *dtogenCodec.Reader, d, cap int) (v *[]byte, err error) {
-	x, err := h.read105(r, d, cap)
-	if err != nil {
-		return v, err
-	}
-	return (*[]byte)(&x), nil
-}
-
-// Helpers 105: []byte.
-func (h dtogen) clone105(v []byte) []byte {
-	if v == nil {
-		return nil
-	}
-	out := make([]byte, len(v))
-	for i := range v {
-		out[i] = h.clone18(v[i])
-	}
-	return out
-}
-func (h dtogen) equal105(v, w []byte) bool {
-	if len(v) != len(w) {
-		return false
-	}
-	for i := range v {
-		if !h.equal18(v[i], w[i]) {
-			return false
-		}
-	}
-	return true
-}
-func (h dtogen) check105(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckBytes(len(v), d, cap)
-}
-func (h dtogen) append105(out []byte, v []byte) []byte {
-	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
-	for _, x := range v {
-		out = append(out, byte(x))
-	}
-	return out
-}
-func (h dtogen) read105(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
-	x, err := r.Bytes(d, cap)
-	if err != nil {
-		return v, err
-	}
-	v = make([]byte, len(x))
-	for i := range x {
-		v[i] = byte(x[i])
-	}
-	return v, nil
-}
-
-// Helpers 106: *ToolNotInvoked.
-func (h dtogen) clone106(v *ToolNotInvoked) *ToolNotInvoked {
-	if v == nil {
-		return nil
-	}
-	x := h.clone107(*v)
-	return (*ToolNotInvoked)(&x)
-}
-func (h dtogen) equal106(v, w *ToolNotInvoked) bool {
-	if v == nil || w == nil {
-		return v == nil && w == nil
-	}
-	return h.equal107(*v, *w)
-}
-func (h dtogen) check106(v *ToolNotInvoked, b *dtogenCodec.Budget, d, cap int) (err error) {
-	if v == nil {
-		return dtogenCodec.ErrInvalidData
-	}
-	return h.check107(*v, b, d, cap)
-}
-func (h dtogen) append106(out []byte, v *ToolNotInvoked) []byte {
-	return h.append107(out, *v)
-}
-func (h dtogen) read106(r *dtogenCodec.Reader, d, cap int) (v *ToolNotInvoked, err error) {
-	x, err := h.read107(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*ToolNotInvoked)(&x), nil
 }
 
-// Helpers 107: ToolNotInvoked.
-func (h dtogen) clone107(v ToolNotInvoked) ToolNotInvoked {
+// Helpers 97: ToolNotInvoked.
+func (h dtogen) clone97(v ToolNotInvoked) ToolNotInvoked {
 	out := v
-	out.Reason = h.clone108(v.Reason)
+	out.Reason = h.clone98(v.Reason)
 	return out
 }
-func (h dtogen) equal107(v, w ToolNotInvoked) bool {
-	if !h.equal108(v.Reason, w.Reason) {
+func (h dtogen) equal97(v, w ToolNotInvoked) bool {
+	if !h.equal98(v.Reason, w.Reason) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check107(v ToolNotInvoked, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check97(v ToolNotInvoked, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9085,19 +8427,19 @@ func (h dtogen) check107(v ToolNotInvoked, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
-	if err := h.check108(v.Reason, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
+	if err := h.check98(v.Reason, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append107(out []byte, v ToolNotInvoked) []byte {
+func (h dtogen) append97(out []byte, v ToolNotInvoked) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "r")
-	out = h.append108(out, v.Reason)
+	out = h.append98(out, v.Reason)
 	return out
 }
-func (h dtogen) read107(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvoked, err error) {
+func (h dtogen) read97(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvoked, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9122,7 +8464,7 @@ func (h dtogen) read107(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvoked, er
 		switch key {
 		case "r":
 			seen[0] = true
-			v.Reason, err = h.read108(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
+			v.Reason, err = h.read98(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Reason: %w", err)
 			}
@@ -9136,20 +8478,20 @@ func (h dtogen) read107(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvoked, er
 	return v, nil
 }
 
-// Helpers 108: ToolNotInvokedReason.
-func (h dtogen) clone108(v ToolNotInvokedReason) ToolNotInvokedReason {
+// Helpers 98: ToolNotInvokedReason.
+func (h dtogen) clone98(v ToolNotInvokedReason) ToolNotInvokedReason {
 	return v
 }
-func (h dtogen) equal108(v, w ToolNotInvokedReason) bool {
+func (h dtogen) equal98(v, w ToolNotInvokedReason) bool {
 	return v == w
 }
-func (h dtogen) check108(v ToolNotInvokedReason, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check98(v ToolNotInvokedReason, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append108(out []byte, v ToolNotInvokedReason) []byte {
+func (h dtogen) append98(out []byte, v ToolNotInvokedReason) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read108(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvokedReason, err error) {
+func (h dtogen) read98(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvokedReason, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -9157,54 +8499,54 @@ func (h dtogen) read108(r *dtogenCodec.Reader, d, cap int) (v ToolNotInvokedReas
 	return ToolNotInvokedReason(x), nil
 }
 
-// Helpers 109: *ToolIndeterminate.
-func (h dtogen) clone109(v *ToolIndeterminate) *ToolIndeterminate {
+// Helpers 99: *ToolIndeterminate.
+func (h dtogen) clone99(v *ToolIndeterminate) *ToolIndeterminate {
 	if v == nil {
 		return nil
 	}
-	x := h.clone110(*v)
+	x := h.clone100(*v)
 	return (*ToolIndeterminate)(&x)
 }
-func (h dtogen) equal109(v, w *ToolIndeterminate) bool {
+func (h dtogen) equal99(v, w *ToolIndeterminate) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal110(*v, *w)
+	return h.equal100(*v, *w)
 }
-func (h dtogen) check109(v *ToolIndeterminate, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check99(v *ToolIndeterminate, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check110(*v, b, d, cap)
+	return h.check100(*v, b, d, cap)
 }
-func (h dtogen) append109(out []byte, v *ToolIndeterminate) []byte {
-	return h.append110(out, *v)
+func (h dtogen) append99(out []byte, v *ToolIndeterminate) []byte {
+	return h.append100(out, *v)
 }
-func (h dtogen) read109(r *dtogenCodec.Reader, d, cap int) (v *ToolIndeterminate, err error) {
-	x, err := h.read110(r, d, cap)
+func (h dtogen) read99(r *dtogenCodec.Reader, d, cap int) (v *ToolIndeterminate, err error) {
+	x, err := h.read100(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*ToolIndeterminate)(&x), nil
 }
 
-// Helpers 110: ToolIndeterminate.
-func (h dtogen) clone110(v ToolIndeterminate) ToolIndeterminate {
+// Helpers 100: ToolIndeterminate.
+func (h dtogen) clone100(v ToolIndeterminate) ToolIndeterminate {
 	out := v
-	out.Reason = h.clone111(v.Reason)
-	out.Output = h.clone89(v.Output)
+	out.Reason = h.clone101(v.Reason)
+	out.Output = h.clone79(v.Output)
 	return out
 }
-func (h dtogen) equal110(v, w ToolIndeterminate) bool {
-	if !h.equal111(v.Reason, w.Reason) {
+func (h dtogen) equal100(v, w ToolIndeterminate) bool {
+	if !h.equal101(v.Reason, w.Reason) {
 		return false
 	}
-	if !h.equal89(v.Output, w.Output) {
+	if !h.equal79(v.Output, w.Output) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check110(v ToolIndeterminate, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check100(v ToolIndeterminate, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9217,27 +8559,27 @@ func (h dtogen) check110(v ToolIndeterminate, b *dtogenCodec.Budget, d, cap int)
 	if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Output: %w", err)
 	}
-	if err := h.check89(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check79(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Output: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
-	if err := h.check111(v.Reason, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
+	if err := h.check101(v.Reason, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32)))); err != nil {
 		return dtogenFmt.Errorf("Reason: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append110(out []byte, v ToolIndeterminate) []byte {
+func (h dtogen) append100(out []byte, v ToolIndeterminate) []byte {
 	count := 2
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "o")
-	out = h.append89(out, v.Output)
+	out = h.append79(out, v.Output)
 	out = dtogenCBOR.AppendText(out, "r")
-	out = h.append111(out, v.Reason)
+	out = h.append101(out, v.Reason)
 	return out
 }
-func (h dtogen) read110(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminate, err error) {
+func (h dtogen) read100(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminate, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9262,13 +8604,13 @@ func (h dtogen) read110(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminate,
 		switch key {
 		case "o":
 			seen[0] = true
-			v.Output, err = h.read89(r, d+1, int(^uint(0)>>1))
+			v.Output, err = h.read79(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Output: %w", err)
 			}
 		case "r":
 			seen[1] = true
-			v.Reason, err = h.read111(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
+			v.Reason, err = h.read101(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(32))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Reason: %w", err)
 			}
@@ -9285,20 +8627,20 @@ func (h dtogen) read110(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminate,
 	return v, nil
 }
 
-// Helpers 111: ToolIndeterminateReason.
-func (h dtogen) clone111(v ToolIndeterminateReason) ToolIndeterminateReason {
+// Helpers 101: ToolIndeterminateReason.
+func (h dtogen) clone101(v ToolIndeterminateReason) ToolIndeterminateReason {
 	return v
 }
-func (h dtogen) equal111(v, w ToolIndeterminateReason) bool {
+func (h dtogen) equal101(v, w ToolIndeterminateReason) bool {
 	return v == w
 }
-func (h dtogen) check111(v ToolIndeterminateReason, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check101(v ToolIndeterminateReason, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append111(out []byte, v ToolIndeterminateReason) []byte {
+func (h dtogen) append101(out []byte, v ToolIndeterminateReason) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read111(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminateReason, err error) {
+func (h dtogen) read101(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminateReason, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -9306,30 +8648,30 @@ func (h dtogen) read111(r *dtogenCodec.Reader, d, cap int) (v ToolIndeterminateR
 	return ToolIndeterminateReason(x), nil
 }
 
-// Helpers 112: *string.
-func (h dtogen) clone112(v *string) *string {
+// Helpers 102: *string.
+func (h dtogen) clone102(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal112(v, w *string) bool {
+func (h dtogen) equal102(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check112(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check102(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append112(out []byte, v *string) []byte {
+func (h dtogen) append102(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read112(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read102(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -9337,18 +8679,18 @@ func (h dtogen) read112(r *dtogenCodec.Reader, d, cap int) (v *string, err error
 	return (*string)(&x), nil
 }
 
-// Helpers 113: ToolInvocation.
-func (h dtogen) clone113(v ToolInvocation) ToolInvocation {
+// Helpers 103: ToolInvocation.
+func (h dtogen) clone103(v ToolInvocation) ToolInvocation {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.RequestID = h.clone1(v.RequestID)
 	out.CallID = h.clone1(v.CallID)
 	out.Name = h.clone5(v.Name)
-	out.Arguments = h.clone114(v.Arguments)
-	out.Prerequisites = h.clone115(v.Prerequisites)
+	out.Arguments = h.clone104(v.Arguments)
+	out.Prerequisites = h.clone105(v.Prerequisites)
 	return out
 }
-func (h dtogen) equal113(v, w ToolInvocation) bool {
+func (h dtogen) equal103(v, w ToolInvocation) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
@@ -9361,15 +8703,15 @@ func (h dtogen) equal113(v, w ToolInvocation) bool {
 	if !h.equal5(v.Name, w.Name) {
 		return false
 	}
-	if !h.equal114(v.Arguments, w.Arguments) {
+	if !h.equal104(v.Arguments, w.Arguments) {
 		return false
 	}
-	if !h.equal115(v.Prerequisites, w.Prerequisites) {
+	if !h.equal105(v.Prerequisites, w.Prerequisites) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check113(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check103(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9382,7 +8724,7 @@ func (h dtogen) check113(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("a", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
-	if err := h.check114(v.Arguments, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
+	if err := h.check104(v.Arguments, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
 		return dtogenFmt.Errorf("Arguments: %w", err)
 	}
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
@@ -9400,7 +8742,7 @@ func (h dtogen) check113(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (e
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Prerequisites: %w", err)
 	}
-	if err := h.check115(v.Prerequisites, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
+	if err := h.check105(v.Prerequisites, b, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096)))); err != nil {
 		return dtogenFmt.Errorf("Prerequisites: %w", err)
 	}
 	if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
@@ -9417,24 +8759,24 @@ func (h dtogen) check113(v ToolInvocation, b *dtogenCodec.Budget, d, cap int) (e
 	}
 	return nil
 }
-func (h dtogen) append113(out []byte, v ToolInvocation) []byte {
+func (h dtogen) append103(out []byte, v ToolInvocation) []byte {
 	count := 6
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "a")
-	out = h.append114(out, v.Arguments)
+	out = h.append104(out, v.Arguments)
 	out = dtogenCBOR.AppendText(out, "c")
 	out = h.append1(out, v.CallID)
 	out = dtogenCBOR.AppendText(out, "n")
 	out = h.append5(out, v.Name)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append115(out, v.Prerequisites)
+	out = h.append105(out, v.Prerequisites)
 	out = dtogenCBOR.AppendText(out, "q")
 	out = h.append1(out, v.RequestID)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	return out
 }
-func (h dtogen) read113(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, err error) {
+func (h dtogen) read103(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9459,7 +8801,7 @@ func (h dtogen) read113(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, er
 		switch key {
 		case "a":
 			seen[0] = true
-			v.Arguments, err = h.read114(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
+			v.Arguments, err = h.read104(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Arguments: %w", err)
 			}
@@ -9477,7 +8819,7 @@ func (h dtogen) read113(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, er
 			}
 		case "p":
 			seen[3] = true
-			v.Prerequisites, err = h.read115(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
+			v.Prerequisites, err = h.read105(r, d+1, int(min(uint64(int(^uint(0)>>1)), uint64(4096))))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Prerequisites: %w", err)
 			}
@@ -9518,26 +8860,26 @@ func (h dtogen) read113(r *dtogenCodec.Reader, d, cap int) (v ToolInvocation, er
 	return v, nil
 }
 
-// Helpers 114: value.Map.
-func (h dtogen) clone114(v dtogenType3.Map) dtogenType3.Map {
+// Helpers 104: value.Map.
+func (h dtogen) clone104(v dtogenType3.Map) dtogenType3.Map {
 	return v.Clone()
 }
-func (h dtogen) equal114(v, w dtogenType3.Map) bool {
+func (h dtogen) equal104(v, w dtogenType3.Map) bool {
 	return v.Equal(w)
 }
-func (h dtogen) check114(v dtogenType3.Map, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check104(v dtogenType3.Map, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append114(out []byte, v dtogenType3.Map) []byte {
+func (h dtogen) append104(out []byte, v dtogenType3.Map) []byte {
 	return v.AppendCBOR(out)
 }
-func (h dtogen) read114(r *dtogenCodec.Reader, d, cap int) (v dtogenType3.Map, err error) {
+func (h dtogen) read104(r *dtogenCodec.Reader, d, cap int) (v dtogenType3.Map, err error) {
 	err = v.ReadCBOR(r, d, cap)
 	return v, err
 }
 
-// Helpers 115: []uint64.
-func (h dtogen) clone115(v []uint64) []uint64 {
+// Helpers 105: []uint64.
+func (h dtogen) clone105(v []uint64) []uint64 {
 	if v == nil {
 		return nil
 	}
@@ -9547,7 +8889,7 @@ func (h dtogen) clone115(v []uint64) []uint64 {
 	}
 	return out
 }
-func (h dtogen) equal115(v, w []uint64) bool {
+func (h dtogen) equal105(v, w []uint64) bool {
 	if len(v) != len(w) {
 		return false
 	}
@@ -9558,7 +8900,7 @@ func (h dtogen) equal115(v, w []uint64) bool {
 	}
 	return true
 }
-func (h dtogen) check115(v []uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check105(v []uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
@@ -9569,14 +8911,14 @@ func (h dtogen) check115(v []uint64, b *dtogenCodec.Budget, d, cap int) (err err
 	}
 	return nil
 }
-func (h dtogen) append115(out []byte, v []uint64) []byte {
+func (h dtogen) append105(out []byte, v []uint64) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = h.append1(out, x)
 	}
 	return out
 }
-func (h dtogen) read115(r *dtogenCodec.Reader, d, cap int) (v []uint64, err error) {
+func (h dtogen) read105(r *dtogenCodec.Reader, d, cap int) (v []uint64, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
@@ -9591,27 +8933,27 @@ func (h dtogen) read115(r *dtogenCodec.Reader, d, cap int) (v []uint64, err erro
 	return v, nil
 }
 
-// Helpers 116: Usage.
-func (h dtogen) clone116(v Usage) Usage {
+// Helpers 106: Usage.
+func (h dtogen) clone106(v Usage) Usage {
 	out := v
 	out.ID = h.clone1(v.ID)
-	out.Definition = h.clone117(v.Definition)
-	out.Report = h.clone122(v.Report)
+	out.Definition = h.clone107(v.Definition)
+	out.Report = h.clone111(v.Report)
 	return out
 }
-func (h dtogen) equal116(v, w Usage) bool {
+func (h dtogen) equal106(v, w Usage) bool {
 	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
-	if !h.equal117(v.Definition, w.Definition) {
+	if !h.equal107(v.Definition, w.Definition) {
 		return false
 	}
-	if !h.equal122(v.Report, w.Report) {
+	if !h.equal111(v.Report, w.Report) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check116(v Usage, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check106(v Usage, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9628,7 +8970,7 @@ func (h dtogen) check116(v Usage, b *dtogenCodec.Budget, d, cap int) (err error)
 		if err := b.CheckString("d", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Definition: %w", err)
 		}
-		if err := h.check117(v.Definition, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check107(v.Definition, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Definition: %w", err)
 		}
 	}
@@ -9641,12 +8983,12 @@ func (h dtogen) check116(v Usage, b *dtogenCodec.Budget, d, cap int) (err error)
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Report: %w", err)
 	}
-	if err := h.check122(v.Report, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check111(v.Report, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Report: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append116(out []byte, v Usage) []byte {
+func (h dtogen) append106(out []byte, v Usage) []byte {
 	count := 2
 	if v.Definition != nil {
 		count++
@@ -9654,15 +8996,15 @@ func (h dtogen) append116(out []byte, v Usage) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Definition != nil {
 		out = dtogenCBOR.AppendText(out, "d")
-		out = h.append117(out, v.Definition)
+		out = h.append107(out, v.Definition)
 	}
 	out = dtogenCBOR.AppendText(out, "o")
 	out = h.append1(out, v.ID)
 	out = dtogenCBOR.AppendText(out, "r")
-	out = h.append122(out, v.Report)
+	out = h.append111(out, v.Report)
 	return out
 }
-func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) {
+func (h dtogen) read106(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9687,7 +9029,7 @@ func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) 
 		switch key {
 		case "d":
 			seen[0] = true
-			v.Definition, err = h.read117(r, d+1, int(^uint(0)>>1))
+			v.Definition, err = h.read107(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Definition: %w", err)
 			}
@@ -9699,7 +9041,7 @@ func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) 
 			}
 		case "r":
 			seen[2] = true
-			v.Report, err = h.read122(r, d+1, int(^uint(0)>>1))
+			v.Report, err = h.read111(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Report: %w", err)
 			}
@@ -9716,68 +9058,64 @@ func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v Usage, err error) 
 	return v, nil
 }
 
-// Helpers 117: *UsageDefinition.
-func (h dtogen) clone117(v *UsageDefinition) *UsageDefinition {
+// Helpers 107: *UsageDefinition.
+func (h dtogen) clone107(v *UsageDefinition) *UsageDefinition {
 	if v == nil {
 		return nil
 	}
-	x := h.clone118(*v)
+	x := h.clone108(*v)
 	return (*UsageDefinition)(&x)
 }
-func (h dtogen) equal117(v, w *UsageDefinition) bool {
+func (h dtogen) equal107(v, w *UsageDefinition) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal118(*v, *w)
+	return h.equal108(*v, *w)
 }
-func (h dtogen) check117(v *UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check107(v *UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check118(*v, b, d, cap)
+	return h.check108(*v, b, d, cap)
 }
-func (h dtogen) append117(out []byte, v *UsageDefinition) []byte {
-	return h.append118(out, *v)
+func (h dtogen) append107(out []byte, v *UsageDefinition) []byte {
+	return h.append108(out, *v)
 }
-func (h dtogen) read117(r *dtogenCodec.Reader, d, cap int) (v *UsageDefinition, err error) {
-	x, err := h.read118(r, d, cap)
+func (h dtogen) read107(r *dtogenCodec.Reader, d, cap int) (v *UsageDefinition, err error) {
+	x, err := h.read108(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*UsageDefinition)(&x), nil
 }
 
-// Helpers 118: UsageDefinition.
-func (h dtogen) clone118(v UsageDefinition) UsageDefinition {
+// Helpers 108: UsageDefinition.
+func (h dtogen) clone108(v UsageDefinition) UsageDefinition {
 	out := v
 	out.Purpose = h.clone5(v.Purpose)
-	out.Granularity = h.clone119(v.Granularity)
-	out.RunID = h.clone120(v.RunID)
-	out.RequestID = h.clone121(v.RequestID)
+	out.RunID = h.clone109(v.RunID)
+	out.RequestID = h.clone110(v.RequestID)
 	return out
 }
-func (h dtogen) equal118(v, w UsageDefinition) bool {
+func (h dtogen) equal108(v, w UsageDefinition) bool {
 	if !h.equal5(v.Purpose, w.Purpose) {
 		return false
 	}
-	if !h.equal119(v.Granularity, w.Granularity) {
+	if !h.equal109(v.RunID, w.RunID) {
 		return false
 	}
-	if !h.equal120(v.RunID, w.RunID) {
-		return false
-	}
-	if !h.equal121(v.RequestID, w.RequestID) {
+	if !h.equal110(v.RequestID, w.RequestID) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check118(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check108(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
 		}
 	}()
-	count := 2
+	count := 1
 	if v.RequestID != nil {
 		count++
 	}
@@ -9786,12 +9124,6 @@ func (h dtogen) check118(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (
 	}
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
-	}
-	if err := b.CheckString("g", d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Granularity: %w", err)
-	}
-	if err := h.check119(v.Granularity, b, d+1, int(^uint(0)>>1)); err != nil {
-		return dtogenFmt.Errorf("Granularity: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Purpose: %w", err)
@@ -9803,7 +9135,7 @@ func (h dtogen) check118(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (
 		if err := b.CheckString("q", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RequestID: %w", err)
 		}
-		if err := h.check121(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check110(v.RequestID, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RequestID: %w", err)
 		}
 	}
@@ -9811,14 +9143,14 @@ func (h dtogen) check118(v UsageDefinition, b *dtogenCodec.Budget, d, cap int) (
 		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RunID: %w", err)
 		}
-		if err := h.check120(v.RunID, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check109(v.RunID, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("RunID: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append118(out []byte, v UsageDefinition) []byte {
-	count := 2
+func (h dtogen) append108(out []byte, v UsageDefinition) []byte {
+	count := 1
 	if v.RequestID != nil {
 		count++
 	}
@@ -9826,21 +9158,19 @@ func (h dtogen) append118(out []byte, v UsageDefinition) []byte {
 		count++
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
-	out = dtogenCBOR.AppendText(out, "g")
-	out = h.append119(out, v.Granularity)
 	out = dtogenCBOR.AppendText(out, "p")
 	out = h.append5(out, v.Purpose)
 	if v.RequestID != nil {
 		out = dtogenCBOR.AppendText(out, "q")
-		out = h.append121(out, v.RequestID)
+		out = h.append110(out, v.RequestID)
 	}
 	if v.RunID != nil {
 		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append120(out, v.RunID)
+		out = h.append109(out, v.RunID)
 	}
 	return out
 }
-func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, err error) {
+func (h dtogen) read108(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -9851,7 +9181,7 @@ func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, e
 		return v, err
 	}
 	previous := ""
-	var seen [4]bool
+	var seen [3]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -9863,27 +9193,21 @@ func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, e
 		}
 		previous = key
 		switch key {
-		case "g":
-			seen[0] = true
-			v.Granularity, err = h.read119(r, d+1, int(^uint(0)>>1))
-			if err != nil {
-				return v, dtogenFmt.Errorf("Granularity: %w", err)
-			}
 		case "p":
-			seen[1] = true
+			seen[0] = true
 			v.Purpose, err = h.read5(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Purpose: %w", err)
 			}
 		case "q":
-			seen[2] = true
-			v.RequestID, err = h.read121(r, d+1, int(^uint(0)>>1))
+			seen[1] = true
+			v.RequestID, err = h.read110(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("RequestID: %w", err)
 			}
 		case "r":
-			seen[3] = true
-			v.RunID, err = h.read120(r, d+1, int(^uint(0)>>1))
+			seen[2] = true
+			v.RunID, err = h.read109(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("RunID: %w", err)
 			}
@@ -9894,57 +9218,33 @@ func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v UsageDefinition, e
 	if !seen[0] {
 		return v, dtogenCodec.ErrInvalidData
 	}
-	if !seen[1] {
-		return v, dtogenCodec.ErrInvalidData
-	}
 	return v, nil
 }
 
-// Helpers 119: UsageGranularity.
-func (h dtogen) clone119(v UsageGranularity) UsageGranularity {
-	return v
-}
-func (h dtogen) equal119(v, w UsageGranularity) bool {
-	return v == w
-}
-func (h dtogen) check119(v UsageGranularity, b *dtogenCodec.Budget, d, cap int) (err error) {
-	return b.CheckString(string(v), d, cap)
-}
-func (h dtogen) append119(out []byte, v UsageGranularity) []byte {
-	return dtogenCodec.AppendString(out, string(v))
-}
-func (h dtogen) read119(r *dtogenCodec.Reader, d, cap int) (v UsageGranularity, err error) {
-	x, err := r.String(d, cap)
-	if err != nil {
-		return v, err
-	}
-	return UsageGranularity(x), nil
-}
-
-// Helpers 120: *uint64.
-func (h dtogen) clone120(v *uint64) *uint64 {
+// Helpers 109: *uint64.
+func (h dtogen) clone109(v *uint64) *uint64 {
 	if v == nil {
 		return nil
 	}
 	x := h.clone1(*v)
 	return (*uint64)(&x)
 }
-func (h dtogen) equal120(v, w *uint64) bool {
+func (h dtogen) equal109(v, w *uint64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal1(*v, *w)
 }
-func (h dtogen) check120(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check109(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check1(*v, b, d, cap)
 }
-func (h dtogen) append120(out []byte, v *uint64) []byte {
+func (h dtogen) append109(out []byte, v *uint64) []byte {
 	return h.append1(out, *v)
 }
-func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+func (h dtogen) read109(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
 	x, err := h.read1(r, d, cap)
 	if err != nil {
 		return v, err
@@ -9952,30 +9252,30 @@ func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error
 	return (*uint64)(&x), nil
 }
 
-// Helpers 121: *uint64.
-func (h dtogen) clone121(v *uint64) *uint64 {
+// Helpers 110: *uint64.
+func (h dtogen) clone110(v *uint64) *uint64 {
 	if v == nil {
 		return nil
 	}
 	x := h.clone1(*v)
 	return (*uint64)(&x)
 }
-func (h dtogen) equal121(v, w *uint64) bool {
+func (h dtogen) equal110(v, w *uint64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal1(*v, *w)
 }
-func (h dtogen) check121(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check110(v *uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check1(*v, b, d, cap)
 }
-func (h dtogen) append121(out []byte, v *uint64) []byte {
+func (h dtogen) append110(out []byte, v *uint64) []byte {
 	return h.append1(out, *v)
 }
-func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
+func (h dtogen) read110(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error) {
 	x, err := h.read1(r, d, cap)
 	if err != nil {
 		return v, err
@@ -9983,27 +9283,27 @@ func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v *uint64, err error
 	return (*uint64)(&x), nil
 }
 
-// Helpers 122: UsageReport.
-func (h dtogen) clone122(v UsageReport) UsageReport {
+// Helpers 111: UsageReport.
+func (h dtogen) clone111(v UsageReport) UsageReport {
 	out := v
-	out.State = h.clone123(v.State)
-	out.Buckets = h.clone124(v.Buckets)
-	out.Raw = h.clone134(v.Raw)
+	out.State = h.clone112(v.State)
+	out.Buckets = h.clone113(v.Buckets)
+	out.Raw = h.clone123(v.Raw)
 	return out
 }
-func (h dtogen) equal122(v, w UsageReport) bool {
-	if !h.equal123(v.State, w.State) {
+func (h dtogen) equal111(v, w UsageReport) bool {
+	if !h.equal112(v.State, w.State) {
 		return false
 	}
-	if !h.equal124(v.Buckets, w.Buckets) {
+	if !h.equal113(v.Buckets, w.Buckets) {
 		return false
 	}
-	if !h.equal134(v.Raw, w.Raw) {
+	if !h.equal123(v.Raw, w.Raw) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check122(v UsageReport, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check111(v UsageReport, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10019,42 +9319,42 @@ func (h dtogen) check122(v UsageReport, b *dtogenCodec.Budget, d, cap int) (err 
 	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Buckets: %w", err)
 	}
-	if err := h.check124(v.Buckets, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check113(v.Buckets, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Buckets: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("State: %w", err)
 	}
-	if err := h.check123(v.State, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check112(v.State, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("State: %w", err)
 	}
 	if v.Raw != nil {
 		if err := b.CheckString("x", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Raw: %w", err)
 		}
-		if err := h.check134(v.Raw, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check123(v.Raw, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Raw: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append122(out []byte, v UsageReport) []byte {
+func (h dtogen) append111(out []byte, v UsageReport) []byte {
 	count := 2
 	if v.Raw != nil {
 		count++
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "b")
-	out = h.append124(out, v.Buckets)
+	out = h.append113(out, v.Buckets)
 	out = dtogenCBOR.AppendText(out, "s")
-	out = h.append123(out, v.State)
+	out = h.append112(out, v.State)
 	if v.Raw != nil {
 		out = dtogenCBOR.AppendText(out, "x")
-		out = h.append134(out, v.Raw)
+		out = h.append123(out, v.Raw)
 	}
 	return out
 }
-func (h dtogen) read122(r *dtogenCodec.Reader, d, cap int) (v UsageReport, err error) {
+func (h dtogen) read111(r *dtogenCodec.Reader, d, cap int) (v UsageReport, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10079,19 +9379,19 @@ func (h dtogen) read122(r *dtogenCodec.Reader, d, cap int) (v UsageReport, err e
 		switch key {
 		case "b":
 			seen[0] = true
-			v.Buckets, err = h.read124(r, d+1, int(^uint(0)>>1))
+			v.Buckets, err = h.read113(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Buckets: %w", err)
 			}
 		case "s":
 			seen[1] = true
-			v.State, err = h.read123(r, d+1, int(^uint(0)>>1))
+			v.State, err = h.read112(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("State: %w", err)
 			}
 		case "x":
 			seen[2] = true
-			v.Raw, err = h.read134(r, d+1, int(^uint(0)>>1))
+			v.Raw, err = h.read123(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Raw: %w", err)
 			}
@@ -10108,20 +9408,20 @@ func (h dtogen) read122(r *dtogenCodec.Reader, d, cap int) (v UsageReport, err e
 	return v, nil
 }
 
-// Helpers 123: UsageReportState.
-func (h dtogen) clone123(v UsageReportState) UsageReportState {
+// Helpers 112: UsageReportState.
+func (h dtogen) clone112(v UsageReportState) UsageReportState {
 	return v
 }
-func (h dtogen) equal123(v, w UsageReportState) bool {
+func (h dtogen) equal112(v, w UsageReportState) bool {
 	return v == w
 }
-func (h dtogen) check123(v UsageReportState, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check112(v UsageReportState, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append123(out []byte, v UsageReportState) []byte {
+func (h dtogen) append112(out []byte, v UsageReportState) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read123(r *dtogenCodec.Reader, d, cap int) (v UsageReportState, err error) {
+func (h dtogen) read112(r *dtogenCodec.Reader, d, cap int) (v UsageReportState, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -10129,54 +9429,54 @@ func (h dtogen) read123(r *dtogenCodec.Reader, d, cap int) (v UsageReportState, 
 	return UsageReportState(x), nil
 }
 
-// Helpers 124: []UsageBucket.
-func (h dtogen) clone124(v []UsageBucket) []UsageBucket {
+// Helpers 113: []UsageBucket.
+func (h dtogen) clone113(v []UsageBucket) []UsageBucket {
 	if v == nil {
 		return nil
 	}
 	out := make([]UsageBucket, len(v))
 	for i := range v {
-		out[i] = h.clone125(v[i])
+		out[i] = h.clone114(v[i])
 	}
 	return out
 }
-func (h dtogen) equal124(v, w []UsageBucket) bool {
+func (h dtogen) equal113(v, w []UsageBucket) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal125(v[i], w[i]) {
+		if !h.equal114(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check124(v []UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check113(v []UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check125(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check114(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append124(out []byte, v []UsageBucket) []byte {
+func (h dtogen) append113(out []byte, v []UsageBucket) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append125(out, x)
+		out = h.append114(out, x)
 	}
 	return out
 }
-func (h dtogen) read124(r *dtogenCodec.Reader, d, cap int) (v []UsageBucket, err error) {
+func (h dtogen) read113(r *dtogenCodec.Reader, d, cap int) (v []UsageBucket, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]UsageBucket, count)
 	for i := range v {
-		v[i], err = h.read125(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read114(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -10184,27 +9484,27 @@ func (h dtogen) read124(r *dtogenCodec.Reader, d, cap int) (v []UsageBucket, err
 	return v, nil
 }
 
-// Helpers 125: UsageBucket.
-func (h dtogen) clone125(v UsageBucket) UsageBucket {
+// Helpers 114: UsageBucket.
+func (h dtogen) clone114(v UsageBucket) UsageBucket {
 	out := v
-	out.SelectedRoute = h.clone126(v.SelectedRoute)
-	out.SelectedModel = h.clone127(v.SelectedModel)
-	out.Counters = h.clone128(v.Counters)
+	out.SelectedRoute = h.clone115(v.SelectedRoute)
+	out.SelectedModel = h.clone116(v.SelectedModel)
+	out.Counters = h.clone117(v.Counters)
 	return out
 }
-func (h dtogen) equal125(v, w UsageBucket) bool {
-	if !h.equal126(v.SelectedRoute, w.SelectedRoute) {
+func (h dtogen) equal114(v, w UsageBucket) bool {
+	if !h.equal115(v.SelectedRoute, w.SelectedRoute) {
 		return false
 	}
-	if !h.equal127(v.SelectedModel, w.SelectedModel) {
+	if !h.equal116(v.SelectedModel, w.SelectedModel) {
 		return false
 	}
-	if !h.equal128(v.Counters, w.Counters) {
+	if !h.equal117(v.Counters, w.Counters) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check125(v UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check114(v UsageBucket, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10223,14 +9523,14 @@ func (h dtogen) check125(v UsageBucket, b *dtogenCodec.Budget, d, cap int) (err 
 	if err := b.CheckString("c", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Counters: %w", err)
 	}
-	if err := h.check128(v.Counters, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check117(v.Counters, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Counters: %w", err)
 	}
 	if v.SelectedModel != nil {
 		if err := b.CheckString("m", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("SelectedModel: %w", err)
 		}
-		if err := h.check127(v.SelectedModel, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check116(v.SelectedModel, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("SelectedModel: %w", err)
 		}
 	}
@@ -10238,13 +9538,13 @@ func (h dtogen) check125(v UsageBucket, b *dtogenCodec.Budget, d, cap int) (err 
 		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("SelectedRoute: %w", err)
 		}
-		if err := h.check126(v.SelectedRoute, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check115(v.SelectedRoute, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("SelectedRoute: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append125(out []byte, v UsageBucket) []byte {
+func (h dtogen) append114(out []byte, v UsageBucket) []byte {
 	count := 1
 	if v.SelectedModel != nil {
 		count++
@@ -10254,18 +9554,18 @@ func (h dtogen) append125(out []byte, v UsageBucket) []byte {
 	}
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "c")
-	out = h.append128(out, v.Counters)
+	out = h.append117(out, v.Counters)
 	if v.SelectedModel != nil {
 		out = dtogenCBOR.AppendText(out, "m")
-		out = h.append127(out, v.SelectedModel)
+		out = h.append116(out, v.SelectedModel)
 	}
 	if v.SelectedRoute != nil {
 		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append126(out, v.SelectedRoute)
+		out = h.append115(out, v.SelectedRoute)
 	}
 	return out
 }
-func (h dtogen) read125(r *dtogenCodec.Reader, d, cap int) (v UsageBucket, err error) {
+func (h dtogen) read114(r *dtogenCodec.Reader, d, cap int) (v UsageBucket, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10290,19 +9590,19 @@ func (h dtogen) read125(r *dtogenCodec.Reader, d, cap int) (v UsageBucket, err e
 		switch key {
 		case "c":
 			seen[0] = true
-			v.Counters, err = h.read128(r, d+1, int(^uint(0)>>1))
+			v.Counters, err = h.read117(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Counters: %w", err)
 			}
 		case "m":
 			seen[1] = true
-			v.SelectedModel, err = h.read127(r, d+1, int(^uint(0)>>1))
+			v.SelectedModel, err = h.read116(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("SelectedModel: %w", err)
 			}
 		case "r":
 			seen[2] = true
-			v.SelectedRoute, err = h.read126(r, d+1, int(^uint(0)>>1))
+			v.SelectedRoute, err = h.read115(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("SelectedRoute: %w", err)
 			}
@@ -10316,30 +9616,30 @@ func (h dtogen) read125(r *dtogenCodec.Reader, d, cap int) (v UsageBucket, err e
 	return v, nil
 }
 
-// Helpers 126: *string.
-func (h dtogen) clone126(v *string) *string {
+// Helpers 115: *string.
+func (h dtogen) clone115(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal126(v, w *string) bool {
+func (h dtogen) equal115(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check126(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check115(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append126(out []byte, v *string) []byte {
+func (h dtogen) append115(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read126(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read115(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -10347,30 +9647,30 @@ func (h dtogen) read126(r *dtogenCodec.Reader, d, cap int) (v *string, err error
 	return (*string)(&x), nil
 }
 
-// Helpers 127: *string.
-func (h dtogen) clone127(v *string) *string {
+// Helpers 116: *string.
+func (h dtogen) clone116(v *string) *string {
 	if v == nil {
 		return nil
 	}
 	x := h.clone5(*v)
 	return (*string)(&x)
 }
-func (h dtogen) equal127(v, w *string) bool {
+func (h dtogen) equal116(v, w *string) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal5(*v, *w)
 }
-func (h dtogen) check127(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check116(v *string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check5(*v, b, d, cap)
 }
-func (h dtogen) append127(out []byte, v *string) []byte {
+func (h dtogen) append116(out []byte, v *string) []byte {
 	return h.append5(out, *v)
 }
-func (h dtogen) read127(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
+func (h dtogen) read116(r *dtogenCodec.Reader, d, cap int) (v *string, err error) {
 	x, err := h.read5(r, d, cap)
 	if err != nil {
 		return v, err
@@ -10378,35 +9678,35 @@ func (h dtogen) read127(r *dtogenCodec.Reader, d, cap int) (v *string, err error
 	return (*string)(&x), nil
 }
 
-// Helpers 128: UsageCounters.
-func (h dtogen) clone128(v UsageCounters) UsageCounters {
+// Helpers 117: UsageCounters.
+func (h dtogen) clone117(v UsageCounters) UsageCounters {
 	out := v
-	out.Input = h.clone129(v.Input)
-	out.Output = h.clone130(v.Output)
-	out.CacheRead = h.clone131(v.CacheRead)
-	out.CacheWrite = h.clone132(v.CacheWrite)
-	out.Reasoning = h.clone133(v.Reasoning)
+	out.Input = h.clone118(v.Input)
+	out.Output = h.clone119(v.Output)
+	out.CacheRead = h.clone120(v.CacheRead)
+	out.CacheWrite = h.clone121(v.CacheWrite)
+	out.Reasoning = h.clone122(v.Reasoning)
 	return out
 }
-func (h dtogen) equal128(v, w UsageCounters) bool {
-	if !h.equal129(v.Input, w.Input) {
+func (h dtogen) equal117(v, w UsageCounters) bool {
+	if !h.equal118(v.Input, w.Input) {
 		return false
 	}
-	if !h.equal130(v.Output, w.Output) {
+	if !h.equal119(v.Output, w.Output) {
 		return false
 	}
-	if !h.equal131(v.CacheRead, w.CacheRead) {
+	if !h.equal120(v.CacheRead, w.CacheRead) {
 		return false
 	}
-	if !h.equal132(v.CacheWrite, w.CacheWrite) {
+	if !h.equal121(v.CacheWrite, w.CacheWrite) {
 		return false
 	}
-	if !h.equal133(v.Reasoning, w.Reasoning) {
+	if !h.equal122(v.Reasoning, w.Reasoning) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check117(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10435,7 +9735,7 @@ func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Input: %w", err)
 		}
-		if err := h.check129(v.Input, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check118(v.Input, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Input: %w", err)
 		}
 	}
@@ -10443,7 +9743,7 @@ func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("n", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Reasoning: %w", err)
 		}
-		if err := h.check133(v.Reasoning, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check122(v.Reasoning, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Reasoning: %w", err)
 		}
 	}
@@ -10451,7 +9751,7 @@ func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("o", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Output: %w", err)
 		}
-		if err := h.check130(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check119(v.Output, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Output: %w", err)
 		}
 	}
@@ -10459,7 +9759,7 @@ func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("CacheRead: %w", err)
 		}
-		if err := h.check131(v.CacheRead, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check120(v.CacheRead, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("CacheRead: %w", err)
 		}
 	}
@@ -10467,13 +9767,13 @@ func (h dtogen) check128(v UsageCounters, b *dtogenCodec.Budget, d, cap int) (er
 		if err := b.CheckString("w", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("CacheWrite: %w", err)
 		}
-		if err := h.check132(v.CacheWrite, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check121(v.CacheWrite, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("CacheWrite: %w", err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append128(out []byte, v UsageCounters) []byte {
+func (h dtogen) append117(out []byte, v UsageCounters) []byte {
 	count := 0
 	if v.Input != nil {
 		count++
@@ -10493,27 +9793,27 @@ func (h dtogen) append128(out []byte, v UsageCounters) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.Input != nil {
 		out = dtogenCBOR.AppendText(out, "i")
-		out = h.append129(out, v.Input)
+		out = h.append118(out, v.Input)
 	}
 	if v.Reasoning != nil {
 		out = dtogenCBOR.AppendText(out, "n")
-		out = h.append133(out, v.Reasoning)
+		out = h.append122(out, v.Reasoning)
 	}
 	if v.Output != nil {
 		out = dtogenCBOR.AppendText(out, "o")
-		out = h.append130(out, v.Output)
+		out = h.append119(out, v.Output)
 	}
 	if v.CacheRead != nil {
 		out = dtogenCBOR.AppendText(out, "r")
-		out = h.append131(out, v.CacheRead)
+		out = h.append120(out, v.CacheRead)
 	}
 	if v.CacheWrite != nil {
 		out = dtogenCBOR.AppendText(out, "w")
-		out = h.append132(out, v.CacheWrite)
+		out = h.append121(out, v.CacheWrite)
 	}
 	return out
 }
-func (h dtogen) read128(r *dtogenCodec.Reader, d, cap int) (v UsageCounters, err error) {
+func (h dtogen) read117(r *dtogenCodec.Reader, d, cap int) (v UsageCounters, err error) {
 	defer func() {
 		if err == nil && v.Validate() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10538,31 +9838,31 @@ func (h dtogen) read128(r *dtogenCodec.Reader, d, cap int) (v UsageCounters, err
 		switch key {
 		case "i":
 			seen[0] = true
-			v.Input, err = h.read129(r, d+1, int(^uint(0)>>1))
+			v.Input, err = h.read118(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Input: %w", err)
 			}
 		case "n":
 			seen[1] = true
-			v.Reasoning, err = h.read133(r, d+1, int(^uint(0)>>1))
+			v.Reasoning, err = h.read122(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Reasoning: %w", err)
 			}
 		case "o":
 			seen[2] = true
-			v.Output, err = h.read130(r, d+1, int(^uint(0)>>1))
+			v.Output, err = h.read119(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Output: %w", err)
 			}
 		case "r":
 			seen[3] = true
-			v.CacheRead, err = h.read131(r, d+1, int(^uint(0)>>1))
+			v.CacheRead, err = h.read120(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("CacheRead: %w", err)
 			}
 		case "w":
 			seen[4] = true
-			v.CacheWrite, err = h.read132(r, d+1, int(^uint(0)>>1))
+			v.CacheWrite, err = h.read121(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("CacheWrite: %w", err)
 			}
@@ -10573,213 +9873,213 @@ func (h dtogen) read128(r *dtogenCodec.Reader, d, cap int) (v UsageCounters, err
 	return v, nil
 }
 
-// Helpers 129: *int64.
-func (h dtogen) clone129(v *int64) *int64 {
+// Helpers 118: *int64.
+func (h dtogen) clone118(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal129(v, w *int64) bool {
+func (h dtogen) equal118(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check129(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check118(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append129(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append118(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read129(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read118(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 130: *int64.
-func (h dtogen) clone130(v *int64) *int64 {
+// Helpers 119: *int64.
+func (h dtogen) clone119(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal130(v, w *int64) bool {
+func (h dtogen) equal119(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check130(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check119(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append130(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append119(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read130(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read119(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 131: *int64.
-func (h dtogen) clone131(v *int64) *int64 {
+// Helpers 120: *int64.
+func (h dtogen) clone120(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal131(v, w *int64) bool {
+func (h dtogen) equal120(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check131(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check120(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append131(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append120(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read131(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read120(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 132: *int64.
-func (h dtogen) clone132(v *int64) *int64 {
+// Helpers 121: *int64.
+func (h dtogen) clone121(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal132(v, w *int64) bool {
+func (h dtogen) equal121(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check132(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check121(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append132(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append121(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read132(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read121(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 133: *int64.
-func (h dtogen) clone133(v *int64) *int64 {
+// Helpers 122: *int64.
+func (h dtogen) clone122(v *int64) *int64 {
 	if v == nil {
 		return nil
 	}
-	x := h.clone10(*v)
+	x := h.clone8(*v)
 	return (*int64)(&x)
 }
-func (h dtogen) equal133(v, w *int64) bool {
+func (h dtogen) equal122(v, w *int64) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal10(*v, *w)
+	return h.equal8(*v, *w)
 }
-func (h dtogen) check133(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check122(v *int64, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check10(*v, b, d, cap)
+	return h.check8(*v, b, d, cap)
 }
-func (h dtogen) append133(out []byte, v *int64) []byte {
-	return h.append10(out, *v)
+func (h dtogen) append122(out []byte, v *int64) []byte {
+	return h.append8(out, *v)
 }
-func (h dtogen) read133(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
-	x, err := h.read10(r, d, cap)
+func (h dtogen) read122(r *dtogenCodec.Reader, d, cap int) (v *int64, err error) {
+	x, err := h.read8(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*int64)(&x), nil
 }
 
-// Helpers 134: *OpaqueProviderData.
-func (h dtogen) clone134(v *OpaqueProviderData) *OpaqueProviderData {
+// Helpers 123: *OpaqueProviderData.
+func (h dtogen) clone123(v *OpaqueProviderData) *OpaqueProviderData {
 	if v == nil {
 		return nil
 	}
-	x := h.clone16(*v)
+	x := h.clone59(*v)
 	return (*OpaqueProviderData)(&x)
 }
-func (h dtogen) equal134(v, w *OpaqueProviderData) bool {
+func (h dtogen) equal123(v, w *OpaqueProviderData) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal16(*v, *w)
+	return h.equal59(*v, *w)
 }
-func (h dtogen) check134(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check123(v *OpaqueProviderData, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check16(*v, b, d, cap)
+	return h.check59(*v, b, d, cap)
 }
-func (h dtogen) append134(out []byte, v *OpaqueProviderData) []byte {
-	return h.append16(out, *v)
+func (h dtogen) append123(out []byte, v *OpaqueProviderData) []byte {
+	return h.append59(out, *v)
 }
-func (h dtogen) read134(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
-	x, err := h.read16(r, d, cap)
+func (h dtogen) read123(r *dtogenCodec.Reader, d, cap int) (v *OpaqueProviderData, err error) {
+	x, err := h.read59(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*OpaqueProviderData)(&x), nil
 }
 
-// Helpers 135: UserInput.
-func (h dtogen) clone135(v UserInput) UserInput {
+// Helpers 124: UserInput.
+func (h dtogen) clone124(v UserInput) UserInput {
 	out := v
 	out.RunID = h.clone1(v.RunID)
 	out.ID = h.clone1(v.ID)
-	out.Parts = h.clone136(v.Parts)
+	out.Parts = h.clone125(v.Parts)
 	return out
 }
-func (h dtogen) equal135(v, w UserInput) bool {
+func (h dtogen) equal124(v, w UserInput) bool {
 	if !h.equal1(v.RunID, w.RunID) {
 		return false
 	}
 	if !h.equal1(v.ID, w.ID) {
 		return false
 	}
-	if !h.equal136(v.Parts, w.Parts) {
+	if !h.equal125(v.Parts, w.Parts) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check135(v UserInput, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check124(v UserInput, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10798,7 +10098,7 @@ func (h dtogen) check135(v UserInput, b *dtogenCodec.Budget, d, cap int) (err er
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
-	if err := h.check136(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check125(v.Parts, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Parts: %w", err)
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
@@ -10809,18 +10109,18 @@ func (h dtogen) check135(v UserInput, b *dtogenCodec.Budget, d, cap int) (err er
 	}
 	return nil
 }
-func (h dtogen) append135(out []byte, v UserInput) []byte {
+func (h dtogen) append124(out []byte, v UserInput) []byte {
 	count := 3
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "i")
 	out = h.append1(out, v.ID)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append136(out, v.Parts)
+	out = h.append125(out, v.Parts)
 	out = dtogenCBOR.AppendText(out, "r")
 	out = h.append1(out, v.RunID)
 	return out
 }
-func (h dtogen) read135(r *dtogenCodec.Reader, d, cap int) (v UserInput, err error) {
+func (h dtogen) read124(r *dtogenCodec.Reader, d, cap int) (v UserInput, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10851,7 +10151,7 @@ func (h dtogen) read135(r *dtogenCodec.Reader, d, cap int) (v UserInput, err err
 			}
 		case "p":
 			seen[1] = true
-			v.Parts, err = h.read136(r, d+1, int(^uint(0)>>1))
+			v.Parts, err = h.read125(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parts: %w", err)
 			}
@@ -10877,54 +10177,54 @@ func (h dtogen) read135(r *dtogenCodec.Reader, d, cap int) (v UserInput, err err
 	return v, nil
 }
 
-// Helpers 136: []ContentPart.
-func (h dtogen) clone136(v []ContentPart) []ContentPart {
+// Helpers 125: []ContentPart.
+func (h dtogen) clone125(v []ContentPart) []ContentPart {
 	if v == nil {
 		return nil
 	}
 	out := make([]ContentPart, len(v))
 	for i := range v {
-		out[i] = h.clone30(v[i])
+		out[i] = h.clone20(v[i])
 	}
 	return out
 }
-func (h dtogen) equal136(v, w []ContentPart) bool {
+func (h dtogen) equal125(v, w []ContentPart) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal30(v[i], w[i]) {
+		if !h.equal20(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check136(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check125(v []ContentPart, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check30(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check20(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append136(out []byte, v []ContentPart) []byte {
+func (h dtogen) append125(out []byte, v []ContentPart) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append30(out, x)
+		out = h.append20(out, x)
 	}
 	return out
 }
-func (h dtogen) read136(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
+func (h dtogen) read125(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]ContentPart, count)
 	for i := range v {
-		v[i], err = h.read30(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read20(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -10932,19 +10232,19 @@ func (h dtogen) read136(r *dtogenCodec.Reader, d, cap int) (v []ContentPart, err
 	return v, nil
 }
 
-// Helpers 137: UserInstructions.
-func (h dtogen) clone137(v UserInstructions) UserInstructions {
+// Helpers 126: UserInstructions.
+func (h dtogen) clone126(v UserInstructions) UserInstructions {
 	out := v
-	out.Blocks = h.clone138(v.Blocks)
+	out.Blocks = h.clone127(v.Blocks)
 	return out
 }
-func (h dtogen) equal137(v, w UserInstructions) bool {
-	if !h.equal138(v.Blocks, w.Blocks) {
+func (h dtogen) equal126(v, w UserInstructions) bool {
+	if !h.equal127(v.Blocks, w.Blocks) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check137(v UserInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check126(v UserInstructions, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10957,19 +10257,19 @@ func (h dtogen) check137(v UserInstructions, b *dtogenCodec.Budget, d, cap int) 
 	if err := b.CheckString("b", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
-	if err := h.check138(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check127(v.Blocks, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Blocks: %w", err)
 	}
 	return nil
 }
-func (h dtogen) append137(out []byte, v UserInstructions) []byte {
+func (h dtogen) append126(out []byte, v UserInstructions) []byte {
 	count := 1
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "b")
-	out = h.append138(out, v.Blocks)
+	out = h.append127(out, v.Blocks)
 	return out
 }
-func (h dtogen) read137(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, err error) {
+func (h dtogen) read126(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, err error) {
 	defer func() {
 		if err == nil && v.validateLocal() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -10994,7 +10294,7 @@ func (h dtogen) read137(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, 
 		switch key {
 		case "b":
 			seen[0] = true
-			v.Blocks, err = h.read138(r, d+1, int(^uint(0)>>1))
+			v.Blocks, err = h.read127(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Blocks: %w", err)
 			}
@@ -11008,54 +10308,54 @@ func (h dtogen) read137(r *dtogenCodec.Reader, d, cap int) (v UserInstructions, 
 	return v, nil
 }
 
-// Helpers 138: []InstructionBlock.
-func (h dtogen) clone138(v []InstructionBlock) []InstructionBlock {
+// Helpers 127: []InstructionBlock.
+func (h dtogen) clone127(v []InstructionBlock) []InstructionBlock {
 	if v == nil {
 		return nil
 	}
 	out := make([]InstructionBlock, len(v))
 	for i := range v {
-		out[i] = h.clone73(v[i])
+		out[i] = h.clone63(v[i])
 	}
 	return out
 }
-func (h dtogen) equal138(v, w []InstructionBlock) bool {
+func (h dtogen) equal127(v, w []InstructionBlock) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal73(v[i], w[i]) {
+		if !h.equal63(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check138(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check127(v []InstructionBlock, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check73(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check63(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append138(out []byte, v []InstructionBlock) []byte {
+func (h dtogen) append127(out []byte, v []InstructionBlock) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append73(out, x)
+		out = h.append63(out, x)
 	}
 	return out
 }
-func (h dtogen) read138(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
+func (h dtogen) read127(r *dtogenCodec.Reader, d, cap int) (v []InstructionBlock, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]InstructionBlock, count)
 	for i := range v {
-		v[i], err = h.read73(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read63(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}

@@ -8,6 +8,7 @@
     method func (*SessionCommit).AddRunEnded(run RunID, v RunEnded) error
     method func (*SessionCommit).AddToolDisposition(call RequestedCallID, v ToolDisposition) error
     method func (*SessionCommit).AddToolInvocation(call RequestedCallID, v ToolInvocation) error
+    method func (*SessionCommit).AddUsage(run *RunID, request *ModelRequestID, purpose string, report UsageReport) (UsageID, error)
     method func (*SessionCommit).AddUserInput(run RunID, request UserInput) (UserInputID, error)
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
@@ -15,6 +16,7 @@
     method func (*SessionCommit).ReplaceModelBinding(scope id.HistoryID, v ModelBinding) error
     method func (*SessionCommit).ReplaceRootInstructions(scope id.HistoryID, v RootInstructions) error
     method func (*SessionCommit).ReplaceToolCatalog(scope id.HistoryID, v ToolCatalog) error
+    method func (*SessionCommit).ReplaceUsage(id UsageID, report UsageReport) error
     method func (*SessionCommit).ReplaceUserInstructions(scope id.HistoryID, v UserInstructions) error
     method func (*SessionCommit).StartRun() (RunID, error)
     method func (*SessionCommit).View() (CommitView, error)
@@ -26,7 +28,6 @@
     method func (CaptureFailureEvidenceView).Evidence() (ObservedEvidenceView, bool)
     method func (CaptureFailureEvidenceView).MutableClone() format.CaptureFailureEvidence
     method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
-    method func (CaptureFailureEvidenceView).Usage() (InvocationUsageView, bool)
     method func (CommitView).ActiveRun() RunID
     method func (CommitView).HistoryID() id.HistoryID
     method func (CommitView).RecordAt(i int) RecordView
@@ -60,14 +61,6 @@
     method func (InvocationFailureView).Explanation() (string, bool)
     method func (InvocationFailureView).MutableClone() format.InvocationFailure
     method func (InvocationFailureView).RequestID() ModelRequestID
-    method func (InvocationFailureView).Usage() (InvocationUsageView, bool)
-    method func (InvocationUsageView).CacheRead() (int64, bool)
-    method func (InvocationUsageView).CacheWrite() (int64, bool)
-    method func (InvocationUsageView).Input() (int64, bool)
-    method func (InvocationUsageView).MutableClone() format.InvocationUsage
-    method func (InvocationUsageView).Output() (int64, bool)
-    method func (InvocationUsageView).Raw() (OpaqueProviderDataView, bool)
-    method func (InvocationUsageView).Reasoning() (int64, bool)
     method func (MediaView).Filename() string
     method func (MediaView).FormatHint() string
     method func (MediaView).InlineData() views.Bytes
@@ -105,7 +98,6 @@
     method func (ModelResponseView).ProviderStopReason() (string, bool)
     method func (ModelResponseView).RequestID() ModelRequestID
     method func (ModelResponseView).Terminal() format.ResponseTerminalClass
-    method func (ModelResponseView).Usage() (InvocationUsageView, bool)
     method func (ModelSettingsView).MaxOutputTokens() (int64, bool)
     method func (ModelSettingsView).MutableClone() format.ModelSettings
     method func (ModelSettingsView).ReasoningEffort() (string, bool)
@@ -133,6 +125,7 @@
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).ToolDisposition() (ToolDispositionView, bool)
     method func (RecordView).ToolInvocation() (ToolInvocationView, bool)
+    method func (RecordView).Usage() (UsageView, bool)
     method func (RecordView).UserInput() (UserInputView, bool)
     method func (RecordView).UserInstructions() (UserInstructionsView, bool)
     method func (RequestedCallDataView).Arguments() views.Bytes
@@ -188,6 +181,7 @@
     method func (Snapshot).RunCount() int
     method func (Snapshot).Runs() iter.Seq[RunView]
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
+    method func (Snapshot).Usages() UsageEntriesView
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
     method func (Snapshot).UserInstructions() (UserInstructionsView, bool)
     method func (SourceHeadView).CID() contentid.CID
@@ -258,11 +252,17 @@
     method func (UsageCountersView).MutableClone() format.UsageCounters
     method func (UsageCountersView).Output() (int64, bool)
     method func (UsageCountersView).Reasoning() (int64, bool)
-    method func (UsageDefinitionView).Granularity() format.UsageGranularity
     method func (UsageDefinitionView).MutableClone() format.UsageDefinition
     method func (UsageDefinitionView).Purpose() string
     method func (UsageDefinitionView).RequestID() (ModelRequestID, bool)
     method func (UsageDefinitionView).RunID() (RunID, bool)
+    method func (UsageEntriesView).All() iter.Seq2[int, UsageEntryView]
+    method func (UsageEntriesView).At(i int) UsageEntryView
+    method func (UsageEntriesView).ByID(id UsageID) (UsageEntryView, bool)
+    method func (UsageEntriesView).Len() int
+    method func (UsageEntryView).Definition() UsageDefinitionView
+    method func (UsageEntryView).ID() UsageID
+    method func (UsageEntryView).Report() UsageReportView
     method func (UsageID).Equal(other UsageID) bool
     method func (UsageID).HistoryID() id.HistoryID
     method func (UsageID).HistoryRelative() uint64
@@ -333,8 +333,6 @@ const ToolReturnSuccess format.ToolReturnStatus = "success"
 const ToolSettlementIndeterminate ToolSettlementCategory = 3
 const ToolSettlementNotInvoked ToolSettlementCategory = 2
 const ToolSettlementReturned ToolSettlementCategory = 1
-const UsageGranularityAggregate format.UsageGranularity = "aggregate"
-const UsageGranularityInvocation format.UsageGranularity = "invocation"
 const UsagePurposeMain untyped string = "main"
 const UsageReportActive format.UsageReportState = "active"
 const UsageReportWithdrawn format.UsageReportState = "withdrawn"
@@ -368,8 +366,6 @@ type InstructionBlockView struct{}
 type InvocationFailure = format.InvocationFailure
 type InvocationFailureClass = format.InvocationFailureClass
 type InvocationFailureView struct{}
-type InvocationUsage = format.InvocationUsage
-type InvocationUsageView struct{}
 type Media = format.Media
 type MediaKind = format.MediaKind
 type MediaSourceKind = format.MediaSourceKind
@@ -450,7 +446,8 @@ type UsageCounters = format.UsageCounters
 type UsageCountersView struct{}
 type UsageDefinition = format.UsageDefinition
 type UsageDefinitionView struct{}
-type UsageGranularity = format.UsageGranularity
+type UsageEntriesView struct{}
+type UsageEntryView struct{}
 type UsageID struct{}
 type UsageReport = format.UsageReport
 type UsageReportState = format.UsageReportState

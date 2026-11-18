@@ -45,9 +45,6 @@ type InvocationFailure struct {
 	// Evidence is optional diagnostic observation. Nil omits it; codec traversal
 	// validates its local UTF-8 shape, not disclosure safety or remote effects.
 	Evidence *ObservedEvidence `cbor:"v,omitempty"`
-	// Usage is optional provider-reported usage. Nil omits it; codec traversal
-	// validates local counters and optional opaque metadata.
-	Usage *InvocationUsage `cbor:"u,omitempty"`
 }
 
 // Validate checks persisted identity, closed class and all retained evidence.
@@ -60,9 +57,6 @@ func (v InvocationFailure) Validate() error {
 		if err := v.Evidence.Validate(); err != nil {
 			return err
 		}
-	}
-	if v.Usage != nil {
-		return v.Usage.Validate()
 	}
 	return nil
 }

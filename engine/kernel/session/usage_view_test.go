@@ -10,11 +10,11 @@ import (
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
-// These tests intentionally construct DTO-backed handles directly: aggregate
-// materialization, Submit and Load are deferred until the contract is reviewed.
+// Direct DTO-backed fixtures isolate leaf navigation and allocation checks from
+// aggregate capture; usage tests cover Submit and storage-backed Load separately.
 func usageViewFixture(t *testing.T) UsageView {
 	t.Helper()
-	v := sessionformat.Usage{ID: 7, Definition: &UsageDefinition{Purpose: " Future ", Granularity: UsageGranularityAggregate, RunID: new(uint64(2)), RequestID: new(uint64(3))}, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{
+	v := sessionformat.Usage{ID: 7, Definition: &UsageDefinition{Purpose: " Future ", RunID: new(uint64(2)), RequestID: new(uint64(3))}, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{
 		{SelectedRoute: new(" Route "), SelectedModel: new("Selected"), Counters: UsageCounters{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4))}},
 		{SelectedModel: new(string(bytes.Repeat([]byte("m"), 8192)))},
 	}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: bytes.Repeat([]byte{0x80}, 8192)}}}
@@ -36,7 +36,7 @@ func TestUsageViewScopedTraversalAndOwnership(t *testing.T) {
 		t.Fatal("usage scope lost")
 	}
 	def, ok := v.Definition()
-	if !ok || def.value != v.value.Definition || def.Purpose() != " Future " || def.Granularity() != UsageGranularityAggregate {
+	if !ok || def.value != v.value.Definition || def.Purpose() != " Future " {
 		t.Fatal("definition navigation")
 	}
 	run, ok := def.RunID()
@@ -127,7 +127,7 @@ func TestUsageViewsZeroAndAbsent(t *testing.T) {
 		t.Fatal("zero record/report")
 	}
 	def, ok := v.Definition()
-	if ok || def != (UsageDefinitionView{}) || def.Purpose() != "" || def.Granularity() != "" {
+	if ok || def != (UsageDefinitionView{}) || def.Purpose() != "" {
 		t.Fatal("zero definition")
 	}
 	if run, ok := def.RunID(); ok || run != (RunID{}) {

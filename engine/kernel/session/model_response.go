@@ -63,7 +63,6 @@ type ModelResponse = sessionformat.ModelResponse
 func checkModelResponseSize(v ModelResponse, b *valueBudget) {
 	b.text(string(v.Terminal))
 	checkEvidenceSize(v.Evidence, b)
-	checkUsageSize(v.Usage, b)
 	checkOpaqueSize(v.Private, b)
 	if v.ProviderStopReason != nil {
 		b.pointer()

@@ -14,7 +14,7 @@ import (
 func usageFixture() format.Usage {
 	return format.Usage{
 		ID:         1,
-		Definition: &format.UsageDefinition{Purpose: " Future Purpose ", Granularity: format.UsageGranularityAggregate, RunID: new(uint64(2)), RequestID: new(uint64(3))},
+		Definition: &format.UsageDefinition{Purpose: " Future Purpose ", RunID: new(uint64(2)), RequestID: new(uint64(3))},
 		Report: format.UsageReport{State: format.UsageReportActive, Buckets: []format.UsageBucket{
 			{SelectedRoute: new(" Gateway "), SelectedModel: new("Selected/Model"), Counters: format.UsageCounters{Input: new(int64(0)), Output: new(int64(math.MaxInt64)), CacheRead: new(int64(7)), CacheWrite: new(int64(8)), Reasoning: new(int64(9))}},
 			{}, // Unknown bucket, retained in order; no equations or deduplication.
@@ -105,8 +105,6 @@ func TestUsageLocalValidation(t *testing.T) {
 		"zero ID":             func(v *format.Usage) { v.ID = 0 },
 		"empty purpose":       func(v *format.Usage) { v.Definition.Purpose = "" },
 		"invalid purpose":     func(v *format.Usage) { v.Definition.Purpose = badUTF8 },
-		"zero granularity":    func(v *format.Usage) { v.Definition.Granularity = "" },
-		"unknown granularity": func(v *format.Usage) { v.Definition.Granularity = "future" },
 		"zero run":            func(v *format.Usage) { v.Definition.RunID = new(uint64(0)) },
 		"zero request":        func(v *format.Usage) { v.Definition.RequestID = new(uint64(0)) },
 		"request without run": func(v *format.Usage) { v.Definition.RunID = nil },
@@ -161,8 +159,8 @@ func TestUsageLocalValidation(t *testing.T) {
 		})
 	}
 	for _, def := range []format.UsageDefinition{
-		{Purpose: " ", Granularity: format.UsageGranularityInvocation},
-		{Purpose: "未来", Granularity: format.UsageGranularityAggregate, RunID: new(uint64(1))},
+		{Purpose: " "},
+		{Purpose: "未来", RunID: new(uint64(1))},
 	} {
 		if err := def.Validate(); err != nil {
 			t.Fatalf("open exact purpose/run-only correlation: %v", err)
@@ -218,13 +216,12 @@ func TestUsageCodecBoundsAndMalformed(t *testing.T) {
 
 func TestUsageCloneEqualOwnership(t *testing.T) {
 	for name, mutate := range map[string]func(*format.Usage){
-		"ID":          func(v *format.Usage) { v.ID++ },
-		"definition":  func(v *format.Usage) { v.Definition = nil },
-		"purpose":     func(v *format.Usage) { v.Definition.Purpose = "other" },
-		"granularity": func(v *format.Usage) { v.Definition.Granularity = format.UsageGranularityInvocation },
-		"run":         func(v *format.Usage) { *v.Definition.RunID++ },
-		"request":     func(v *format.Usage) { *v.Definition.RequestID++ },
-		"state":       func(v *format.Usage) { v.Report.State = format.UsageReportWithdrawn },
+		"ID":         func(v *format.Usage) { v.ID++ },
+		"definition": func(v *format.Usage) { v.Definition = nil },
+		"purpose":    func(v *format.Usage) { v.Definition.Purpose = "other" },
+		"run":        func(v *format.Usage) { *v.Definition.RunID++ },
+		"request":    func(v *format.Usage) { *v.Definition.RequestID++ },
+		"state":      func(v *format.Usage) { v.Report.State = format.UsageReportWithdrawn },
 		"order": func(v *format.Usage) {
 			v.Report.Buckets[0], v.Report.Buckets[1] = v.Report.Buckets[1], v.Report.Buckets[0]
 		},

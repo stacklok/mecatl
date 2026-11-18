@@ -51,7 +51,6 @@ func checkRunEndedSize(v RunEnded, b *valueBudget) {
 	if v.Capture != nil {
 		b.pointer()
 		checkEvidenceSize(v.Capture.Evidence, b)
-		checkUsageSize(v.Capture.Usage, b)
 	}
 }
 

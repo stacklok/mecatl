@@ -70,10 +70,9 @@ func TestInteractionClosedVocabularies(t *testing.T) {
 	}
 }
 
-func TestModelResponseCodecPreservesEmptyAndUsageZero(t *testing.T) {
+func TestModelResponseCodecPreservesEmpty(t *testing.T) {
 	empty := ""
-	zero := int64(0)
-	v := format.ModelResponse{RunID: 1, RequestID: 2, Terminal: format.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentOutput, Parts: []format.ContentPart{{Text: &empty}}}}, {Call: &format.RequestedCall{Name: "", Arguments: []byte("invalid JSON")}}}, Usage: &format.InvocationUsage{Input: &zero}, Private: &format.OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{1, 2}}}
+	v := format.ModelResponse{RunID: 1, RequestID: 2, Terminal: format.ResponseTerminalNormal, ProviderStopReason: &empty, Items: []format.ResponseItem{{Content: &format.ResponseContent{Kind: format.ResponseContentOutput, Parts: []format.ContentPart{{Text: &empty}}}}, {Call: &format.RequestedCall{Name: "", Arguments: []byte("invalid JSON")}}}, Private: &format.OpaqueProviderData{Producer: "p", Format: "f", Version: 1, Data: []byte{1, 2}}}
 	wire, err := codec.Encode(v, limits())
 	if err != nil {
 		t.Fatal(err)
@@ -84,32 +83,22 @@ func TestModelResponseCodecPreservesEmptyAndUsageZero(t *testing.T) {
 	}
 	v.Items[1].Call.Arguments[0] = 'X'
 	v.Private.Data[0] = 9
-	if string(got.Items[1].Call.Arguments) != "invalid JSON" || got.Private.Data[0] != 1 || got.Usage.Input == nil || *got.Usage.Input != 0 || got.ProviderStopReason == nil || *got.ProviderStopReason != "" {
+	if string(got.Items[1].Call.Arguments) != "invalid JSON" || got.Private.Data[0] != 1 || got.ProviderStopReason == nil || *got.ProviderStopReason != "" {
 		t.Fatal("codec aliased or lost explicit representation")
 	}
 }
 
-func TestModelResponseCodecRejectsInvalidUsageAndOpaqueVersions(t *testing.T) {
-	zero := int64(0)
-	negative := int64(-1)
+func TestModelResponseCodecRejectsInvalidOpaqueVersions(t *testing.T) {
 	valid := func() format.ModelResponse {
 		return format.ModelResponse{
 			RunID:     1,
 			RequestID: 1,
 			Terminal:  format.ResponseTerminalNormal,
-			Usage: &format.InvocationUsage{
-				Input:      &zero,
-				Output:     &zero,
-				CacheRead:  &zero,
-				CacheWrite: &zero,
-				Reasoning:  &zero,
-				Raw:        &format.OpaqueProviderData{Producer: "provider", Format: "usage", Version: 1},
-			},
-			Private: &format.OpaqueProviderData{Producer: "provider", Format: "response", Version: 1},
+			Private:   &format.OpaqueProviderData{Producer: "provider", Format: "response", Version: 1},
 		}
 	}
 	if wire, err := codec.Encode(valid(), limits()); err != nil || wire == nil {
-		t.Fatalf("valid zero usage and positive opaque versions: %v", err)
+		t.Fatalf("valid positive opaque version: %v", err)
 	} else if got, err := codec.Decode[format.ModelResponse](wire, limits()); err != nil || !got.Equal(valid()) {
 		t.Fatalf("valid control roundtrip: %v", err)
 	}
@@ -118,15 +107,8 @@ func TestModelResponseCodecRejectsInvalidUsageAndOpaqueVersions(t *testing.T) {
 		name string
 		edit func(*format.ModelResponse)
 	}{
-		{"negative input", func(v *format.ModelResponse) { v.Usage.Input = &negative }},
-		{"negative output", func(v *format.ModelResponse) { v.Usage.Output = &negative }},
-		{"negative cache read", func(v *format.ModelResponse) { v.Usage.CacheRead = &negative }},
-		{"negative cache write", func(v *format.ModelResponse) { v.Usage.CacheWrite = &negative }},
-		{"negative reasoning", func(v *format.ModelResponse) { v.Usage.Reasoning = &negative }},
 		{"zero private version", func(v *format.ModelResponse) { v.Private.Version = 0 }},
 		{"negative private version", func(v *format.ModelResponse) { v.Private.Version = -1 }},
-		{"zero raw version", func(v *format.ModelResponse) { v.Usage.Raw.Version = 0 }},
-		{"negative raw version", func(v *format.ModelResponse) { v.Usage.Raw.Version = -1 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := valid()

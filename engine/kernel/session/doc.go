@@ -3,6 +3,12 @@
 // Package session interprets accepted history as lifecycle and retained context
 // for the isolated kernel. It validates and submits ordered batches through a
 // bound History; it does not execute work or resolve retained references.
+// Model usage is retained as independent accounting facts with fixed correlation
+// and replaceable complete reports, not as execution state or proof of spend.
+// [Snapshot.Usages] explicitly joins first definitions and latest reports across
+// the whole pinned history, including late reports for ended runs and withdrawn
+// identities. Its allocating scan is caller-retained, not a hidden snapshot cache.
+// Missing measurements and unobserved work must not be interpreted as zero usage.
 //
 // Payloads are mutable DTOs defined in session/format. Payload-local validation
 // is separate from aggregate lifecycle legality. Accepted views reconstruct

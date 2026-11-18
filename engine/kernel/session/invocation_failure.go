@@ -30,7 +30,6 @@ type InvocationFailure = sessionformat.InvocationFailure
 func checkInvocationFailureSize(v InvocationFailure, b *valueBudget) {
 	b.text(string(v.Class))
 	checkEvidenceSize(v.Evidence, b)
-	checkUsageSize(v.Usage, b)
 	if v.Explanation != nil {
 		b.pointer()
 		b.text(*v.Explanation)

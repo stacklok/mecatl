@@ -73,11 +73,13 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 			submitBatch(t, s, b)
 			id := addInteractionRequest(t, s, run, nil, nil)
 			b = beginBatch(t, s)
-			mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("local capture rejected"), Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative(), Usage: &session.InvocationUsage{Output: new(int64(0))}}}))
+			_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive, Buckets: []session.UsageBucket{{Counters: session.UsageCounters{Output: new(int64(0))}}}})
+			mustBatch(t, err)
+			mustBatch(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedCaptureFailed, Explanation: new("local capture rejected"), Capture: &session.CaptureFailureEvidence{RequestID: id.RunRelative()}}))
 			before := s.Snapshot()
 			backend.accept = accepted
 			backend.fail = codec.ErrLimitExceeded
-			_, err := s.SubmitCommit(context.Background(), b)
+			_, err = s.SubmitCommit(context.Background(), b)
 			if !errors.Is(err, session.ErrAcceptanceUnknown) || !reflect.DeepEqual(before, s.Snapshot()) {
 				t.Fatalf("unknown ending acceptance: %v", err)
 			}
@@ -99,8 +101,8 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 				t.Fatal("ending missing")
 			}
 			if capture, ok := ending.Capture(); !ok || capture.RequestID() != id || func() bool {
-				usage, present := capture.Usage()
-				output, outputPresent := usage.Output()
+				usage, present := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 2).Usage()
+				output, outputPresent := usage.Report().Buckets().At(0).Counters().Output()
 				return !present || !outputPresent || output != 0
 			}() {
 				t.Fatal("retry dropped detailed evidence")

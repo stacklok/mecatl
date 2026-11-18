@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
 )
 
 // Snapshot is an immutable accepted-state handle, not a restore token. Capture
@@ -122,6 +123,35 @@ func (v Snapshot) Runs() iter.Seq[RunView] {
 // RecordAt returns a chronological record; out-of-range indices panic.
 func (v Snapshot) RecordAt(i int) RecordView {
 	return RecordView{scope: v.historyID, record: v.records[i]}
+}
+
+// Usages constructs a caller-retained first-definition/latest-report join over
+// the whole pinned snapshot, including withdrawn identities and late reports
+// correlated with earlier runs. It scans O(records) once and allocates O(usage
+// identities) locators, borrowing immutable payloads without copying them. Order
+// is first-definition occurrence order. Traversal and lookup reuse the locators;
+// another invocation rebuilds them. There is no hidden cache. The join and its
+// entries retain backing for their lifetime and never change after later appends.
+func (v Snapshot) Usages() UsageEntriesView {
+	result := UsageEntriesView{scope: v.historyID}
+	if v.lifecycle.usages == 0 {
+		return result
+	}
+	// Admission allocates contiguous identities, each with an accepted first
+	// definition, so the count and each index are bounded by len(v.records).
+	result.entries = make([]usageEntryLocator, int(v.lifecycle.usages)) //nolint:gosec // Bounded by the captured int-sized record count.
+	for _, record := range v.records {
+		if record.value.Kind != sessionformat.KindUsage {
+			continue
+		}
+		usage := &record.usage
+		entry := &result.entries[int(usage.ID-1)] //nolint:gosec // Accepted identity is bounded by the allocated count above.
+		if usage.Definition != nil {
+			entry.first = usage
+		}
+		entry.latest = usage
+	}
+	return result
 }
 
 // RunAt returns a run with bounds pinned to this snapshot; out-of-range indices panic.

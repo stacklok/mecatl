@@ -232,7 +232,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		if err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
-		if err := admission.admit(candidate.view.historyID, fact); err != nil {
+		if err := admission.admit(candidate.view.historyID, fact, candidate.view.records, staged[:i]); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		staged[i] = fact

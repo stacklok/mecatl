@@ -32,6 +32,7 @@ type materializedRecord struct {
 	ended            sessionformat.RunEnded
 	request          sessionformat.ModelRequest
 	response         sessionformat.ModelResponse
+	usage            sessionformat.Usage
 	failure          sessionformat.InvocationFailure
 	userInstructions sessionformat.UserInstructions
 	rootInstructions sessionformat.RootInstructions
@@ -85,6 +86,8 @@ func decodeMaterialized(v format.Record, limits codec.Limits) (*materializedReco
 		r.toolInvocation, err = codec.Decode[sessionformat.ToolInvocation](v.Payload, limits)
 	case sessionformat.KindToolDisposition:
 		r.toolDisposition, err = codec.Decode[sessionformat.ToolDisposition](v.Payload, limits)
+	case sessionformat.KindUsage:
+		r.usage, err = codec.Decode[sessionformat.Usage](v.Payload, limits)
 	case sessionformat.KindInvocationFailure:
 		r.failure, err = codec.Decode[sessionformat.InvocationFailure](v.Payload, limits)
 	default:
@@ -116,7 +119,7 @@ func supportedRecord(kind string, version int64) bool {
 	switch kind {
 	case sessionformat.KindCreated, sessionformat.KindUserInput, sessionformat.KindRunStarted,
 		sessionformat.KindRunEnded, sessionformat.KindModelRequest, sessionformat.KindModelResponse, sessionformat.KindInvocationFailure, sessionformat.KindEffectiveInput, sessionformat.KindUserInstructions, sessionformat.KindRootInstructions,
-		sessionformat.KindToolCatalog, sessionformat.KindModelBinding, sessionformat.KindToolInvocation, sessionformat.KindToolDisposition:
+		sessionformat.KindUsage, sessionformat.KindToolCatalog, sessionformat.KindModelBinding, sessionformat.KindToolInvocation, sessionformat.KindToolDisposition:
 		return true
 	default:
 		return false

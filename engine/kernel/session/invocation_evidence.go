@@ -16,20 +16,6 @@ type OpaqueProviderDataView struct {
 	value *sessionformat.OpaqueProviderData
 }
 
-// InvocationUsage retains optional reported counters and usage-only raw evidence.
-// Nil counters differ from reported zero. Assignment borrows pointers and bytes;
-// Clone detaches them. Breakdowns do not add to inclusive input/output spend.
-type InvocationUsage = sessionformat.InvocationUsage
-
-// InvocationUsageView is immutable reported invocation usage. Zero and absent
-// counters return zero, false; Raw returns a zero view, false when absent. All reads
-// are O(1), and Raw shares no mutable access with callers.
-//
-//dtogen:include
-type InvocationUsageView struct {
-	value *sessionformat.InvocationUsage
-}
-
 // ObservedEvidence retains optional diagnostic context and safe provider
 // correlation, not local identities or proof of remote effects. Present-empty
 // strings are retained; assignment borrows pointers and Clone detaches them.
@@ -67,16 +53,4 @@ func checkEvidenceSize(v *ObservedEvidence, b *valueBudget) {
 		b.pointer()
 		b.text(*v.Correlation)
 	}
-}
-func checkUsageSize(v *InvocationUsage, b *valueBudget) {
-	if v == nil {
-		return
-	}
-	b.pointer()
-	for _, p := range []*int64{v.Input, v.Output, v.CacheRead, v.CacheWrite, v.Reasoning} {
-		if p != nil {
-			b.pointer()
-		}
-	}
-	checkOpaqueSize(v.Raw, b)
 }

@@ -52,19 +52,6 @@ func (v Usage) validateLocal() error {
 	return nil
 }
 
-// UsageGranularity is a closed persisted vocabulary describing the producer's
-// observation, not a physical-attempt count. Zero and unknown labels are invalid.
-type UsageGranularity string
-
-const (
-	// UsageGranularityInvocation denotes one locally observed invocation; it
-	// does not prove that exactly one upstream physical request occurred.
-	UsageGranularityInvocation UsageGranularity = "invocation"
-	// UsageGranularityAggregate denotes combined consumption without asserting
-	// a physical-attempt breakdown.
-	UsageGranularityAggregate UsageGranularity = "aggregate"
-)
-
 const (
 	// UsagePurposeMain labels conversational model work, without reserved authority.
 	UsagePurposeMain = "main"
@@ -79,8 +66,6 @@ type UsageDefinition struct {
 	// Purpose is required nonempty exact UTF-8, open beyond the established
 	// UsagePurpose constants. No trimming, fallback, or normalization is applied.
 	Purpose string `cbor:"p"`
-	// Granularity is required and closed to invocation or aggregate.
-	Granularity UsageGranularity `cbor:"g"`
 	// RunID optionally correlates a positive run component within the enclosing
 	// history. Nil with nil RequestID means session-level work. Zero is invalid.
 	RunID *uint64 `cbor:"r,omitempty" view:"manual"`
@@ -90,16 +75,11 @@ type UsageDefinition struct {
 	RequestID *uint64 `cbor:"q,omitempty" view:"manual"`
 }
 
-// Validate checks exact purpose syntax, closed granularity and relative reference
-// shape, not history scope, allocation, membership or lifecycle.
+// Validate checks exact purpose syntax and relative reference shape, not history
+// scope, allocation, membership or lifecycle.
 func (v UsageDefinition) Validate() error {
 	if v.Purpose == "" || !utf8.ValidString(v.Purpose) {
 		return errors.New("usage purpose requires nonempty UTF-8")
-	}
-	switch v.Granularity {
-	case UsageGranularityInvocation, UsageGranularityAggregate:
-	default:
-		return errors.New("invalid usage granularity")
 	}
 	if v.RunID != nil && *v.RunID == 0 {
 		return errors.New("usage run ID must be positive")

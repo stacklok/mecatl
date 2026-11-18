@@ -43,52 +43,6 @@ func (v OpaqueProviderData) Validate() error {
 	return nil
 }
 
-// InvocationUsage retains optional provider-reported counters and optional
-// usage-only opaque provider evidence. Input and Output are inclusive counts;
-// CacheRead, CacheWrite, and Reasoning are breakdowns rather than additional spend.
-// Nil counters are absent and distinct from reported zero. Assignment shares
-// pointers and Raw's bytes; Clone detaches them.
-//
-//dtogen:validate validateLocal
-//dtogen:include
-type InvocationUsage struct {
-	// Input is an optional nonnegative provider-reported inclusive input count.
-	Input *int64 `cbor:"i,omitempty"`
-	// Output is an optional nonnegative provider-reported inclusive output count.
-	Output *int64 `cbor:"o,omitempty"`
-	// CacheRead is an optional nonnegative input-cache-read breakdown, not extra spend.
-	CacheRead *int64 `cbor:"r,omitempty"`
-	// CacheWrite is an optional nonnegative input-cache-write breakdown, not extra spend.
-	CacheWrite *int64 `cbor:"w,omitempty"`
-	// Reasoning is an optional nonnegative reasoning breakdown, not extra spend.
-	Reasoning *int64 `cbor:"n,omitempty"`
-	// Raw is optional usage-only producer evidence. It is absent when nil and must
-	// not contain a response body; codec traversal validates its local metadata.
-	Raw *OpaqueProviderData `cbor:"x,omitempty"`
-}
-
-// Validate checks nonnegative reported counters and raw metadata, not accounting
-// equations or whether a provider actually charged for an invocation.
-func (v InvocationUsage) Validate() error {
-	if err := v.validateLocal(); err != nil {
-		return err
-	}
-	if v.Raw != nil {
-		return v.Raw.Validate()
-	}
-	return nil
-}
-
-// validateLocal checks counters after bounded codec traversal validates Raw.
-func (v InvocationUsage) validateLocal() error {
-	for _, n := range []*int64{v.Input, v.Output, v.CacheRead, v.CacheWrite, v.Reasoning} {
-		if n != nil && *n < 0 {
-			return errors.New("usage count must be nonnegative")
-		}
-	}
-	return nil
-}
-
 // ObservedEvidence retains optional diagnostic observations associated with an
 // invocation. Detail is diagnostic context (for example, an adapter-observed
 // transport status), whereas an InvocationFailure or RunEnded Explanation is the

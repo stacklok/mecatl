@@ -11,139 +11,108 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			id := s.state.view.lifecycle.pending
 			evidence := &ObservedEvidence{Detail: new(""), Correlation: new("safe")}
-			usage := &InvocationUsage{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4)), Raw: &OpaqueProviderData{Producer: "p", Format: "unknown-usage", Version: 19, Data: []byte{0xff, 0}}}
-			wantEvidence, wantUsage := evidence.Clone(), usage.Clone()
+			report := UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0)), Output: new(int64(1)), CacheRead: new(int64(2)), CacheWrite: new(int64(3)), Reasoning: new(int64(4))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "unknown-usage", Version: 19, Data: []byte{0xff, 0}}}
+			want := report.Clone()
 			explanation := ""
-			b, err := s.BeginCommit()
-			interactionCheck(t, err)
+			b := beginBatch(t, s)
+			_, err := b.AddUsage(nil, &id, UsagePurposeMain, report)
+			mustBatch(t, err)
 			if kind == "failure" {
-				interactionCheck(t, b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureLocal, Explanation: &explanation, Evidence: evidence, Usage: usage}))
+				mustBatch(t, b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureLocal, Explanation: &explanation, Evidence: evidence}))
 			} else {
-				interactionCheck(t, b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: evidence, Usage: usage}}))
+				mustBatch(t, b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Explanation: &explanation, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: evidence}}))
 			}
 			explanation = "changed"
-			*evidence.Detail = "changed"
-			*evidence.Correlation = "changed"
-			for _, p := range []*int64{usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite, usage.Reasoning} {
+			*evidence.Detail, *evidence.Correlation = "changed", "changed"
+			c := report.Buckets[0].Counters
+			for _, p := range []*int64{c.Input, c.Output, c.CacheRead, c.CacheWrite, c.Reasoning} {
 				*p = 99
 			}
-			usage.Raw.Data[0] = 0
-			if usage.Equal(wantUsage) || evidence.Equal(wantEvidence) {
-				t.Fatal("mutation control failed")
-			}
-			_, err = s.SubmitCommit(t.Context(), b)
-			interactionCheck(t, err)
-			record := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1)
-			verify := func() {
+			clear(report.Raw.Data)
+			submitBatch(t, s, b)
+			pinned := s.Snapshot()
+			verify := func(v Snapshot) {
+				record := v.RecordAt(pinned.RecordCount() - 1)
+				var e ObservedEvidenceView
 				if kind == "capture" {
-					v, _ := record.RunEnded()
-					if detail, ok := v.Explanation(); !ok || detail != "" {
-						t.Fatal("empty ending explanation lost")
+					ending, _ := record.RunEnded()
+					if text, ok := ending.Explanation(); !ok || text != "" {
+						t.Fatal("ending explanation lost")
 					}
-					capture, _ := v.Capture()
-					if capture.RequestID() != id {
-						t.Fatal("capture request identity changed")
+					capture, ok := ending.Capture()
+					if !ok || capture.RequestID() != id {
+						t.Fatal("capture scope lost")
 					}
-					captureEvidence, evidencePresent := capture.Evidence()
-					captureUsage, usagePresent := capture.Usage()
-					detail, detailPresent := captureEvidence.Detail()
-					correlation, correlationPresent := captureEvidence.Correlation()
-					input, inputPresent := captureUsage.Input()
-					output, outputPresent := captureUsage.Output()
-					cacheRead, cacheReadPresent := captureUsage.CacheRead()
-					cacheWrite, cacheWritePresent := captureUsage.CacheWrite()
-					reasoning, reasoningPresent := captureUsage.Reasoning()
-					if !evidencePresent || !usagePresent || !detailPresent || detail != "" || !correlationPresent || correlation != "safe" || !inputPresent || input != 0 || !outputPresent || output != 1 || !cacheReadPresent || cacheRead != 2 || !cacheWritePresent || cacheWrite != 3 || !reasoningPresent || reasoning != 4 {
-						t.Fatal("capture evidence changed")
+					e, _ = capture.Evidence()
+				} else {
+					failure, _ := record.InvocationFailure()
+					if text, ok := failure.Explanation(); !ok || text != "" {
+						t.Fatal("failure explanation lost")
 					}
-					return
+					e, _ = failure.Evidence()
 				}
-				v, _ := record.InvocationFailure()
-				if detail, ok := v.Explanation(); !ok || detail != "" {
-					t.Fatal("empty failure explanation lost")
+				if text, ok := e.Detail(); !ok || text != "" {
+					t.Fatal("empty diagnostic lost")
 				}
-				e, ok := v.Evidence()
-				if !ok {
-					t.Fatal("missing evidence")
+				if text, ok := e.Correlation(); !ok || text != "safe" {
+					t.Fatal("correlation changed")
 				}
-				if detail, ok := e.Detail(); !ok || detail != "" {
-					t.Fatal("empty evidence detail lost")
+				usage, ok := v.RecordAt(pinned.RecordCount() - 2).Usage()
+				if !ok || !usage.Report().MutableClone().Equal(want) {
+					t.Fatal("accounting changed")
 				}
-				if correlation, ok := e.Correlation(); !ok || correlation != "safe" {
-					t.Fatal("evidence correlation changed")
+				definition, _ := usage.Definition()
+				if request, ok := definition.RequestID(); !ok || request != id {
+					t.Fatal("usage scope lost")
 				}
-				u, ok := v.Usage()
-				if !ok {
-					t.Fatal("missing usage")
-				}
-				for _, counter := range []struct {
-					get  func() (int64, bool)
-					want int64
-				}{
-					{u.Input, 0}, {u.Output, 1}, {u.CacheRead, 2}, {u.CacheWrite, 3}, {u.Reasoning, 4},
-				} {
-					if got, ok := counter.get(); !ok || got != counter.want {
-						t.Fatalf("usage counter = %d, %t", got, ok)
+				counters := usage.Report().Buckets().At(0).Counters()
+				for n, get := range []func() (int64, bool){counters.Input, counters.Output, counters.CacheRead, counters.CacheWrite, counters.Reasoning} {
+					if got, ok := get(); !ok || got != int64(n) {
+						t.Fatal("counter presence changed")
 					}
 				}
-				raw, ok := u.Raw()
-				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data().Copy(), wantUsage.Raw.Data) {
-					t.Fatal("raw evidence changed")
+				raw, ok := usage.Report().Raw()
+				if !ok || raw.Producer() != "p" || raw.Format() != "unknown-usage" || raw.Version() != 19 || !bytes.Equal(raw.Data().Copy(), want.Raw.Data) {
+					t.Fatal("raw usage changed")
 				}
-				data := raw.Data().Copy()
-				clear(data)
+				clear(raw.Data().Copy())
 			}
-			verify()
-			dto := record.MutableClone()
-			clear(dto.Payload)
-			verify()
-			before := s.Snapshot()
+			verify(pinned)
+			clear(pinned.RecordAt(pinned.RecordCount() - 1).MutableClone().Payload)
+			verify(pinned)
 			if kind == "failure" {
-				interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.EndRun(RunEndedError)) })
+				interactionSubmit(t, s, func(b *SessionCommit) { mustBatch(t, b.EndRun(RunEndedError)) })
 			}
-			interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
-			verify()
-			if before.RecordAt(before.RecordCount()-1) != record {
-				t.Fatal("successor changed pinned evidence")
-			}
-			interactionReplay(t, s)
+			interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); mustBatch(t, err) })
+			verify(pinned)
+			loaded, err := Load(t.Context(), s.history, pinned.HistoryID(), s.policy)
+			mustBatch(t, err)
+			verify(loaded.Snapshot())
 		})
 	}
 }
 
 func TestInvocationEvidenceViewsAbsentAndZero(t *testing.T) {
-	var usage InvocationUsageView
 	var evidence ObservedEvidenceView
 	var raw OpaqueProviderDataView
-	for _, counter := range []func() (int64, bool){usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite, usage.Reasoning} {
-		if value, ok := counter(); ok || value != 0 {
-			t.Fatal("zero usage counter")
-		}
+	if text, ok := evidence.Detail(); ok || text != "" {
+		t.Fatal("zero detail")
 	}
-	if value, ok := evidence.Detail(); ok || value != "" {
-		t.Fatal("zero evidence detail")
-	}
-	if value, ok := evidence.Correlation(); ok || value != "" {
-		t.Fatal("zero evidence correlation")
-	}
-	if value, ok := usage.Raw(); ok || value != (OpaqueProviderDataView{}) {
-		t.Fatal("zero raw")
+	if text, ok := evidence.Correlation(); ok || text != "" {
+		t.Fatal("zero correlation")
 	}
 	if raw.Producer() != "" || raw.Format() != "" || raw.Version() != 0 || raw.Data().Copy() != nil {
-		t.Fatal("zero provider data")
+		t.Fatal("zero opaque")
 	}
 	s := interactionFixture(t, "pending")
 	interactionSubmit(t, s, func(b *SessionCommit) {
-		interactionCheck(t, b.AddInvocationFailure(s.state.view.lifecycle.pending, InvocationFailure{Class: InvocationFailureLocal}))
+		mustBatch(t, b.AddInvocationFailure(s.state.view.lifecycle.pending, InvocationFailure{Class: InvocationFailureLocal}))
 	})
 	view, ok := s.Snapshot().RecordAt(s.Snapshot().RecordCount() - 1).InvocationFailure()
 	if !ok {
-		t.Fatal("failure view")
+		t.Fatal("missing failure")
 	}
-	if value, ok := view.Evidence(); ok || value != (ObservedEvidenceView{}) {
+	if e, ok := view.Evidence(); ok || e != (ObservedEvidenceView{}) {
 		t.Fatal("absent evidence")
-	}
-	if value, ok := view.Usage(); ok || value != (InvocationUsageView{}) {
-		t.Fatal("absent usage")
 	}
 }
