@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
@@ -84,10 +86,23 @@ func (f *openFixture) token(t *testing.T, user string) identitybroker.Token {
 	return f.as1.SignIn(t, as1servertest.SignIn{User: user})
 }
 
-// crafted mints an access token at the harness's AS-1 as spec describes, for
-// checks that refuse it before AS-1 is called.
-func (f *openFixture) crafted(spec identityharness.AccessTokenSpec) identitybroker.Token {
-	return identitybroker.NewToken(f.as1.Harness.AS1.MintAccessToken(spec))
+// crafted is Alice's access token from AS-1 with f's changes, signed again
+// with AS-1's key unless f.ForeignKey is set.
+func (f *openFixture) crafted(t *testing.T, forgery as1servertest.Forgery) identitybroker.Token {
+	t.Helper()
+	return f.as1.Forge(t, f.token(t, identityharness.Alice), forgery)
+}
+
+// withSubID is a forgery replacing sub_id with subID, or removing it when
+// subID is nil.
+func withSubID(subID any) as1servertest.Forgery {
+	return as1servertest.Forgery{Claims: func(c jwt.MapClaims) {
+		if subID == nil {
+			delete(c, "sub_id")
+			return
+		}
+		c["sub_id"] = subID
+	}}
 }
 
 func (f *openFixture) open(host string, owner identitybroker.Owner, token identitybroker.Token) (identitybroker.Session, error) {
@@ -334,17 +349,17 @@ func TestSessionOpenIgnoresTokensWithoutAnAuthServer(t *testing.T) {
 	}
 }
 
-// TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1 crafts the malformed
-// tokens at the harness's AS-1: the broker refuses them before AS-1 is called.
+// TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1 forges the malformed
+// tokens from AS-1's own: the broker refuses them before AS-1 is called.
 func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
 	subID := func(members map[string]string) func(*testing.T, *openFixture) identitybroker.Token {
-		return func(_ *testing.T, f *openFixture) identitybroker.Token {
+		return func(t *testing.T, f *openFixture) identitybroker.Token {
 			for k, v := range members {
 				if v == "IDP" {
 					members[k] = f.as1.Harness.IdP.Issuer()
 				}
 			}
-			return f.crafted(identityharness.AccessTokenSpec{SubID: members})
+			return f.crafted(t, withSubID(members))
 		}
 	}
 	tests := []struct {
@@ -355,11 +370,11 @@ func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
 	}{
 		{"another user's token", func(t *testing.T, f *openFixture) identitybroker.Token { return f.token(t, identityharness.Bob) },
 			identitybroker.CodePermissionDenied, identitybroker.ReasonOwnerMismatch},
-		{"no sub_id", func(_ *testing.T, f *openFixture) identitybroker.Token {
-			return f.crafted(identityharness.AccessTokenSpec{OmitSubID: true})
+		{"no sub_id", func(t *testing.T, f *openFixture) identitybroker.Token {
+			return f.crafted(t, withSubID(nil))
 		}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
-		{"sub_id as a string", func(_ *testing.T, f *openFixture) identitybroker.Token {
-			return f.crafted(identityharness.AccessTokenSpec{SubID: identityharness.Alice})
+		{"sub_id as a string", func(t *testing.T, f *openFixture) identitybroker.Token {
+			return f.crafted(t, withSubID(identityharness.Alice))
 		}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
 		{"sub_id of another format", subID(map[string]string{"format": "email", "iss": "IDP", "sub": identityharness.Alice}),
 			identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid},
@@ -856,8 +871,8 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 	}{
 		{
 			name: "a token AS-1 did not sign: subject_token_invalid is subject_invalid",
-			token: func(_ *testing.T, f *openFixture) identitybroker.Token {
-				return f.crafted(identityharness.AccessTokenSpec{ForeignKey: true, Issuer: f.as1.Issuer()})
+			token: func(t *testing.T, f *openFixture) identitybroker.Token {
+				return f.crafted(t, as1servertest.Forgery{ForeignKey: true})
 			},
 			as1Code: "invalid_request", as1Reason: "subject_token_invalid",
 			code: identitybroker.CodeUnauthenticated, reason: identitybroker.ReasonSubjectInvalid,

@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
@@ -114,6 +115,9 @@ type Server struct {
 	// actors checks ID-JAG requests' actor tokens; nil when the delegate
 	// client issues no ID-JAGs.
 	actors *actorValidator
+	// store is the storage the authorization server uses, which the
+	// test-only RevokeGrant revokes grants in.
+	store *cappedStorage
 	// release releases the authorization server, then its storage, once.
 	release func() error
 }
@@ -205,7 +209,7 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("as1server: create authorization server: %w", err)
 	}
-	s := &Server{issuerID: cfg.Issuer, issuer: issuer, actors: actors, release: sync.OnceValue(func() error {
+	s := &Server{issuerID: cfg.Issuer, issuer: issuer, actors: actors, store: store, release: sync.OnceValue(func() error {
 		return errors.Join(auth.Close(), store.Close())
 	})}
 	s.routes, s.handler = signInRoutes(issuer, auth.Handler())
@@ -409,3 +413,33 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // Close releases the authorization server and its storage. It is idempotent.
 func (s *Server) Close() error { return s.release() }
+
+// ErrUnknownGrant reports a refresh token RevokeGrant cannot revoke: it is
+// malformed, or it names no live grant of AS-1.
+var ErrUnknownGrant = errors.New("as1server: unknown grant")
+
+// RevokeGrant is test-only. It revokes the grant behind refreshToken, a
+// refresh token AS-1 issued the delegate client at session open, directly in
+// AS-1's storage, so tests can see AS-1 answer revoked for it. It bypasses
+// AS-1's handler, client authentication, and ownership checks, so nothing
+// outside tests may call it (a forbidigo rule enforces this); production
+// revocation goes through AS-1's RFC 7009 route (stacklok/toolhive#6966).
+// Revoking a revoked grant succeeds. A malformed token, a public client's
+// refresh token, or an unknown grant is ErrUnknownGrant. Errors never carry
+// the token.
+func (s *Server) RevokeGrant(ctx context.Context, refreshToken string) error {
+	// AS-1 keys a grant by the HMAC signature of its refresh token, the part
+	// after the '.' (fosite's HMAC strategy, which ToolHive uses).
+	_, signature, ok := strings.Cut(refreshToken, ".")
+	if !ok || signature == "" {
+		return ErrUnknownGrant
+	}
+	err := s.store.RevokeExchangeGrant(ctx, signature, time.Now())
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		return ErrUnknownGrant
+	case err != nil:
+		return fmt.Errorf("as1server: revoke grant: %w", err)
+	}
+	return nil
+}

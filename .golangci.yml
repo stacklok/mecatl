@@ -1045,9 +1045,9 @@ linters:
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient$
             - github.com/stacklok/mecatl/internal/testutil/identityharness$
-        # The identity harness stands in for the IdP, AS-1, AS-2, and the
-        # gateway; it never imports the code under test, so a broker bug
-        # cannot also bend the stand-in. Its external tests import the harness
+        # The identity harness stands in for the IdP and the gateway; it
+        # never imports the code under test, so a broker bug cannot also bend
+        # the stand-in. Its external tests import the harness
         # itself, the one Mecatl package allowed.
         internal-testutil-identityharness:
           list-mode: lax
@@ -1287,6 +1287,13 @@ linters:
           msg: 'global slog is banned in engine/ and internal/: only cmd/ mains may install a slog default (the third-party-slog bridge). Everything else must take a port.Diagnostics.'
         - pattern: 'slog\.(Info|Warn|Debug|Error)(Context)?\b'
           msg: 'package-level slog.* is banned in engine/ and internal/: log through the injected port.Diagnostics seam, not the global logger.'
+        # as1server.Server.RevokeGrant revokes in AS-1's storage, past AS-1's
+        # handler, client authentication, and ownership checks. It exists so
+        # tests can see AS-1 answer revoked; production revokes through
+        # AS-1's RFC 7009 route (stacklok/toolhive#6966). Tests are
+        # excluded below.
+        - pattern: '\.RevokeGrant\b'
+          msg: 'RevokeGrant is test-only: it bypasses AS-1''s handler and client authentication. Production revokes through AS-1''s RFC 7009 route (stacklok/toolhive#6966).'
     goconst:
       ignore-tests: true
       min-occurrences: 5
@@ -1450,9 +1457,11 @@ linters:
       # redirects the default to a file — so they MUST be allowed
       # slog.Default/SetDefault. The ban exists to keep the engine and the adapters
       # on the injected port.Diagnostics seam, not to police the mains.
+      # The text match keeps the RevokeGrant ban in force in cmd/.
       - linters:
           - forbidigo
         path: (^|.*/)cmd/
+        text: slog
       # Test files may name the banned patterns in literals/messages (e.g. the guard
       # test asserting the rule bites, or doc-comments referencing slog.Warn).
       - linters:

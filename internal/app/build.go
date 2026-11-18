@@ -1001,8 +1001,8 @@ type Config struct {
 	IdentityBrokerAS2Trust as2Trust
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
 	// AS-1, where it converts users' access tokens. No flag sets it; with a
-	// hosted AS-1, Build fills it for that AS-1. Only an offline harness test
-	// sets it directly, pointing the broker at an external AS-1.
+	// hosted AS-1, Build fills it for that AS-1. Only tests set it directly,
+	// pointing the broker at an AS-1 they run outside mecak8s.
 	IdentityBrokerAS1 *IdentityBrokerAS1
 	// IdentityBrokerHostedAS1 hosts AS-1 beside the identity broker; nil hosts
 	// none. Only mecak8s sets it. Build points session open at the hosted AS-1,

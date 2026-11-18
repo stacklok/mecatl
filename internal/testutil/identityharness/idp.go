@@ -34,8 +34,6 @@ const (
 type IdP struct {
 	server *httptest.Server
 	key    *rsa.PrivateKey
-	now    func() time.Time
-	faults faults
 
 	mu      sync.Mutex
 	users   []string
@@ -56,15 +54,16 @@ type idpCode struct {
 	expires                                          time.Time
 }
 
-func newIdP(t testing.TB, opts Options) *IdP {
+// newIdP starts an IdP that knows Alice, its default user, and Bob.
+func newIdP(t testing.TB) *IdP {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("identityharness: IdP key: %v", err)
 	}
 	idp := &IdP{
-		key: key, now: opts.Now,
-		users:   slices.Clone(opts.Users),
+		key:     key,
+		users:   []string{Alice, Bob},
 		clients: make(map[string]idpClient),
 		codes:   make(map[string]idpCode),
 		offline: make(map[string]int),
@@ -86,18 +85,9 @@ func (p *IdP) Issuer() string { return p.server.URL }
 // oid claim, as Entra ID does. It differs from subject.
 func OID(subject string) string { return "oid-" + subject }
 
-// AddUser lets the IdP sign in subject.
-func (p *IdP) AddUser(subject string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !slices.Contains(p.users, subject) {
-		p.users = append(p.users, subject)
-	}
-}
-
 // RegisterClient registers a confidential OIDC client that authenticates to
-// the token endpoint with client_secret_basic or client_secret_post. AS-1
-// registers itself this way; a test hosting a real AS-1 registers that one.
+// the token endpoint with client_secret_basic or client_secret_post. A test
+// running a real AS-1 registers it this way (Harness.RegisterAS1Upstream).
 func (p *IdP) RegisterClient(id, secret, redirectURI string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -124,13 +114,6 @@ func (p *IdP) ClearSignInNextAs() {
 	defer p.mu.Unlock()
 	p.next = nil
 }
-
-// FailNextAuthorization makes the next authorization request redirect back
-// with fault.Error, such as access_denied, instead of signing the user in.
-func (p *IdP) FailNextAuthorization(fault Fault) { p.faults.push("authorize", fault) }
-
-// FailNextToken makes the next token request fail with fault.
-func (p *IdP) FailNextToken(fault Fault) { p.faults.push("token", fault) }
 
 // RefreshTokensIssued reports how many upstream refresh tokens the IdP issued
 // for subject, which shows whether AS-1 asked for offline access.
@@ -175,10 +158,6 @@ func (p *IdP) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	// Redirect to the registered value, not the request's copy of it.
 	redirectURI = client.redirectURI
-	if fault, ok := p.faults.pop("authorize"); ok {
-		redirectWithError(w, r, redirectURI, state, fault.Error)
-		return
-	}
 	scopes := strings.Fields(q.Get("scope"))
 	method := q.Get("code_challenge_method")
 	switch {
@@ -203,7 +182,7 @@ func (p *IdP) authorize(w http.ResponseWriter, r *http.Request) {
 		clientID: clientID, redirectURI: redirectURI, challenge: q.Get("code_challenge"),
 		nonce: q.Get("nonce"), subject: subject,
 		offline: slices.Contains(scopes, "offline_access") && slices.Contains(strings.Fields(q.Get("prompt")), "consent"),
-		expires: p.now().Add(idpCodeLifetime),
+		expires: time.Now().Add(idpCodeLifetime),
 	}
 	p.mu.Unlock()
 	back := url.Values{"code": {code}}
@@ -239,20 +218,16 @@ func (p *IdP) user(hint string) (string, bool) {
 
 func (p *IdP) token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	clientID, ok := p.authenticateClient(r)
 	if !ok {
-		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "")
-		return
-	}
-	if fault, ok := p.faults.pop("token"); ok {
-		writeOAuthError(w, fault.Status, fault.Error, fault.Reason)
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client")
 		return
 	}
 	if r.PostForm.Get("grant_type") != grantAuthorizationCode {
-		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "")
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type")
 		return
 	}
 	p.mu.Lock()
@@ -260,11 +235,11 @@ func (p *IdP) token(w http.ResponseWriter, r *http.Request) {
 	delete(p.codes, r.PostForm.Get("code")) // single use
 	p.mu.Unlock()
 	if !found || code.clientID != clientID || code.redirectURI != r.PostForm.Get("redirect_uri") ||
-		!p.now().Before(code.expires) || code.challenge != "" && s256(r.PostForm.Get("code_verifier")) != code.challenge {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "")
+		!time.Now().Before(code.expires) || code.challenge != "" && s256(r.PostForm.Get("code_verifier")) != code.challenge {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
-	now := p.now()
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"iss": p.server.URL, "sub": code.subject, "aud": clientID,
 		"iat": now.Unix(), "exp": now.Add(idpIDTokenLife).Unix(),
@@ -278,7 +253,7 @@ func (p *IdP) token(w http.ResponseWriter, r *http.Request) {
 	idToken.Header["kid"] = idpKeyID
 	signed, err := idToken.SignedString(p.key)
 	if err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "")
+		writeOAuthError(w, http.StatusInternalServerError, "server_error")
 		return
 	}
 	body := map[string]any{

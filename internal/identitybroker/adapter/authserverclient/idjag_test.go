@@ -179,6 +179,33 @@ func TestIssueIDJAGAgainstRealAS1(t *testing.T) {
 	}
 }
 
+// TestIssueIDJAGAgainstRealAS1RefusesAnUnconfiguredResource checks design
+// step (7)'s check 3 at the real AS-1: the audience is the configured AS-2,
+// but the resource is not one of its vMCPs, so AS-1 refuses with
+// invalid_target and issues no ID-JAG.
+func TestIssueIDJAGAgainstRealAS1RefusesAnUnconfiguredResource(t *testing.T) {
+	x := startIDJAGAS1(t, testAS2Issuer, testVMCP)
+	_, err := x.client.IssueIDJAG(t.Context(), x.request(testAS2Issuer, testAS2Issuer+"/other-mcp"))
+	var refusal *identitybroker.ServerRefusal
+	if !errors.As(err, &refusal) || refusal.Status != http.StatusBadRequest || refusal.Code != "invalid_target" ||
+		!identitybroker.IsConfigurationFault(err) {
+		t.Fatalf("IssueIDJAG for an unconfigured resource = %v, want a 400 invalid_target configuration fault", err)
+	}
+	var exchanges int
+	for _, r := range x.faults.Requests() {
+		if r.Kind != identityharness.KindIDJAG {
+			continue
+		}
+		exchanges++
+		if r.Status != http.StatusBadRequest || r.IssuedToken != "" {
+			t.Fatalf("AS-1 answered the ID-JAG exchange with status %d, issuing a token: %v; want 400 and none", r.Status, r.IssuedToken != "")
+		}
+	}
+	if exchanges != 1 {
+		t.Fatalf("AS-1 answered %d ID-JAG exchanges, want 1", exchanges)
+	}
+}
+
 func TestIssueIDJAGSendsTheForm(t *testing.T) {
 	var form url.Values
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

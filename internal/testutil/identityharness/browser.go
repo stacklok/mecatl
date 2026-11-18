@@ -19,9 +19,9 @@ var (
 
 // AuthorizeWithConsent plays the browser for a real client's authorization
 // request at a real AS-1 that shows a consent page, as ToolHive's embedded
-// authorization server does for public clients. Unlike Authorize, it keeps
-// cookies for the one sign-in (ToolHive binds the sign-in to the browser with
-// a cookie), follows 302 and 303 redirects, and approves each consent page by
+// authorization server does for public clients. It keeps cookies for the one
+// sign-in (ToolHive binds the sign-in to the browser with a cookie), follows
+// 302 and 303 redirects, and approves each consent page by
 // posting its form with the page's Origin, as a browser would. It returns the
 // query of the redirect to the request's redirect_uri (code, state, or error)
 // without contacting the client's redirect URI.

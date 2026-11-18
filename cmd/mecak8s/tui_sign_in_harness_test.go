@@ -21,6 +21,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -130,15 +132,18 @@ func (r *resourceRecorder) grantsWithResource(want string) map[string]int {
 }
 
 // TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken signs the TUI's real
-// client code in at the offline AS-1 (authorization code + PKCE, RFC 8707
-// resource as mecak8s's protected-resource metadata asks), then drives mecak8s over gRPC through the TUI client with the
-// clientauth refresh source: each session create carries a freshly refreshed
-// token with its own jti, and mecak8s accepts each and opens a broker session
-// owned by the signed-in company identity.
+// client code in at the real AS-1, run outside mecak8s and named by
+// --oidc-issuer (authorization code + PKCE, RFC 8707 resource as mecak8s's
+// protected-resource metadata asks), then drives mecak8s over gRPC through
+// the TUI client with the clientauth refresh source: each session create
+// carries a freshly refreshed token with its own jti, and mecak8s accepts
+// each and opens a broker session owned by the signed-in company identity.
+// TestHostedAS1SignsTheTUIIn does the same with the AS-1 mecak8s hosts.
 func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
-	h := identityharness.New(t, identityharness.Options{Clients: []identityharness.Client{
-		{ID: identityharness.DefaultClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}},
-	}})
+	h := identityharness.New(t, identityharness.Options{})
+	a := as1servertest.Start(t, h, func(c *as1server.Config, _ *as1server.DelegateClient) {
+		c.PublicClients = append(c.PublicClients, as1server.PublicClient{ID: identityharness.DefaultClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}})
+	})
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell",
@@ -147,8 +152,8 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 		"--http-addr", freeLoopbackPort(t),
 		"--drain-addr", freeLoopbackPort(t),
 		"--session-lease-k8s-namespace", "",
-		"--oidc-issuer", h.AS1.Issuer(),
-		"--oidc-audience", h.AS1.Audience(),
+		"--oidc-issuer", a.Issuer(),
+		"--oidc-audience", as1servertest.Audience,
 		"--oidc-allow-private-https-issuer",
 		"--oidc-ca-cert-file", h.WriteCACert(t, t.TempDir()),
 		"--oidc-owner-identity=sub_id",
@@ -176,7 +181,7 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	// The client learns its sign-in profile, including whether to send the
 	// RFC 8707 resource, from mecak8s's protected-resource metadata.
 	profile := fetchProtectedResourceProfile(t, http.DefaultClient, "http://"+cfg.httpAddr+"/.well-known/oauth-protected-resource")
-	if len(profile.AuthorizationServers) != 1 || profile.AuthorizationServers[0] != h.AS1.Issuer() || profile.Audience != h.AS1.Audience() || profile.ClientID != identityharness.DefaultClientID {
+	if len(profile.AuthorizationServers) != 1 || profile.AuthorizationServers[0] != a.Issuer() || profile.Audience != as1servertest.Audience || profile.ClientID != identityharness.DefaultClientID {
 		t.Fatalf("protected-resource metadata = %+v, want the AS-1 issuer, audience, and client", profile)
 	}
 	if !profile.IdentityBrokerSignIn {
@@ -184,7 +189,7 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	}
 	identity := clientauth.Identity{
 		Target: cfg.grpcAddr, Issuer: profile.AuthorizationServers[0], ClientID: profile.ClientID,
-		Audience: profile.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: []string{"openid"},
+		Audience: profile.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: []string{"openid", "offline_access"},
 	}
 	asClient := h.HTTPClient()
 	tokenRequests := &resourceRecorder{next: asClient.Transport}
@@ -193,9 +198,12 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 		if u, err := url.Parse(authorizationURL); err != nil || u.Query().Get("resource") != profile.Audience {
 			return oauthlogin.Result{}, errors.New("authorization request did not name the audience as resource")
 		}
-		back, err := h.Authorize(ctx, authorizationURL)
+		back, err := h.AuthorizeWithConsent(ctx, authorizationURL)
 		if err != nil {
 			return oauthlogin.Result{}, err
+		}
+		if back.Get("error") != "" {
+			return oauthlogin.Result{}, errors.New("authorization refused: " + back.Get("error"))
 		}
 		return oauthlogin.Result{Code: back.Get("code"), State: back.Get("state"), Iss: back.Get("iss")}, nil
 	})

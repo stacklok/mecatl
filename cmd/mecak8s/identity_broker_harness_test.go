@@ -3,9 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,58 +35,32 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
-// TestIdentityBrokerAgainstOfflineHarness starts mecak8s with the identity
-// broker on and AS-1 as its token issuer, all offline. Users sign in through
-// the harness's AS-1 and upstream IdP; their AS-1 access tokens authenticate
-// API requests and own the sessions they create, and tokens AS-1 would not
+// TestIdentityBrokerOwnsSessionsAgainstRealAS1 starts mecak8s with the
+// identity broker on and the real AS-1, built by the test with the harness
+// IdP as its upstream, as its token issuer, all offline. Users sign in at
+// AS-1, through two accepted clients; their access tokens authenticate API
+// requests and own the sessions they create, and tokens AS-1 would not
 // issue are refused. Session open converts each user's access token at AS-1
-// into a refresh token the broker holds for the session. Later identity work
-// extends this test as it adds steps.
-//
-// It stays on the harness's AS-1, not the real one, because it mints a second
-// client's access token and moves AS-1's clock with the broker's.
-// TestIdentityBrokerAgainstRealAS1 proves the session close and hard-expiry
-// reopen against the real AS-1, and TestIdentityBrokerGatewayCallAgainstRealAS1
-// the gateway calls.
-func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
-	// The broker authenticates to AS-1 with its client key, which AS-1 holds
-	// registered for the broker's client.
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// AS-1 and the broker share one clock, which the test moves past the
-	// sessions' hard expiry; AS-1 checks the broker's client assertions
-	// against it, so the broker's AS-1 client uses it too.
-	var clockOffset atomic.Int64
-	now := func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
-	const grantMaxLifetime = 5 * time.Minute
-	h := identityharness.New(t, identityharness.Options{
-		BrokerKeys:       []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
-		Now:              now,
-		GrantMaxLifetime: grantMaxLifetime,
+// into a refresh token the broker holds for the session.
+// TestIdentityBrokerAgainstRealAS1 proves the hard-expiry close and reopen,
+// and TestIdentityBrokerGatewayCallAgainstRealAS1 the gateway calls.
+func TestIdentityBrokerOwnsSessionsAgainstRealAS1(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	studio := as1server.PublicClient{ID: "studio", RedirectURIs: []string{"http://127.0.0.1:18474/oauth/callback"}}
+	a := as1servertest.Start(t, h, func(c *as1server.Config, _ *as1server.DelegateClient) {
+		c.PublicClients = append(c.PublicClients, studio)
 	})
 	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
-		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: h.WriteCACert(t, t.TempDir()),
-		clientIDs: identityharness.DefaultClientID + ",studio",
+		issuer: a.Issuer(), audience: as1servertest.Audience, caFile: h.WriteCACert(t, t.TempDir()),
+		clientIDs: as1servertest.PublicClientID + "," + studio.ID,
 	}, &app.IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey, Now: now, AssertionNow: now,
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
 	}, nil, nil)
 
-	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
-	if err != nil {
-		t.Fatalf("Alice signs in: %v", err)
-	}
-	bob, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Bob})
-	if err != nil {
-		t.Fatalf("Bob signs in: %v", err)
-	}
+	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}).Value()
+	bob := a.SignIn(t, as1servertest.SignIn{User: identityharness.Bob}).Value()
 
-	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", alice.AccessToken, "{}")
+	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", alice, "{}")
 	if status != http.StatusCreated && status != http.StatusOK {
 		t.Fatalf("Alice creates a session: status %d: %s", status, body)
 	}
@@ -103,15 +74,15 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	// issuer and pseudonymous subject.
 	aliceCompany := identitybroker.Owner{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice}
 	bobCompany := identitybroker.Owner{Issuer: h.IdP.Issuer(), Subject: identityharness.Bob}
-	if owners := listSessionOwners(t, api, alice.AccessToken); owners[created.ID] != aliceCompany {
+	if owners := listSessionOwners(t, api, alice); owners[created.ID] != aliceCompany {
 		t.Errorf("Alice's sessions %v: %s owner = %+v, want %+v", owners, created.ID, owners[created.ID], aliceCompany)
 	}
 	// The second accepted client carries the same identity.
-	studio := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, ClientID: "studio"})
-	if owners := listSessionOwners(t, api, studio); owners[created.ID] != aliceCompany {
+	throughStudio := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice, Client: studio}).Value()
+	if owners := listSessionOwners(t, api, throughStudio); owners[created.ID] != aliceCompany {
 		t.Errorf("Alice through studio: sessions %v, want %s owned by %+v", owners, created.ID, aliceCompany)
 	}
-	if _, listed := listSessionOwners(t, api, bob.AccessToken)[created.ID]; listed {
+	if _, listed := listSessionOwners(t, api, bob)[created.ID]; listed {
 		t.Errorf("Bob's sessions include Alice's %s", created.ID)
 	}
 
@@ -134,12 +105,12 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		t.Errorf("broker session owner = %+v, want Alice's company identity %+v", opened.Owner, aliceCompany)
 	}
 	// Creating the session converted Alice's sign-in at AS-1: the broker holds
-	// a refresh token for it, from AS-1's one grant.
-	if !opened.HoldsRefreshToken || h.AS1.GrantsIssued() != 1 {
-		t.Fatalf("Alice's broker session %+v after %d grants; want it holding the refresh token of AS-1's one grant", opened, h.AS1.GrantsIssued())
+	// a refresh token for it, from AS-1's one conversion.
+	if !opened.HoldsRefreshToken || a.Faults.Conversions() != 1 {
+		t.Fatalf("Alice's broker session %+v after %d conversions; want it holding the refresh token of AS-1's one conversion", opened, a.Faults.Conversions())
 	}
 
-	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions", bob.AccessToken, "{}")
+	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions", bob, "{}")
 	if status != http.StatusCreated && status != http.StatusOK {
 		t.Fatalf("Bob creates a session: status %d: %s", status, body)
 	}
@@ -152,22 +123,22 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if bobs, ok := findBrokerSession(bobCreated.ID); !ok || bobs.Owner != bobCompany || !bobs.HoldsRefreshToken {
 		t.Errorf("Bob's broker session = %+v, %v; want one owned by %+v holding a refresh token", bobs, ok, bobCompany)
 	}
-	grants := h.AS1.GrantsIssued()
+	conversions := a.Faults.Conversions()
 
 	// The run passes run entry, which finds the open broker session and keeps it.
 	const aliceTitle, alicePrompt = "alice-private-title", "alice-private-prompt"
-	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/rename", alice.AccessToken, `{"title":"`+aliceTitle+`"}`); status != http.StatusOK {
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/rename", alice, `{"title":"`+aliceTitle+`"}`); status != http.StatusOK {
 		t.Fatalf("Alice renames her session: status %d: %s", status, body)
 	}
-	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice.AccessToken, `{"text":"`+alicePrompt+`"}`); status != http.StatusOK {
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/prompt", alice, `{"text":"`+alicePrompt+`"}`); status != http.StatusOK {
 		t.Fatalf("Alice prompts her session: status %d: %s", status, body)
 	}
 	if got, ok := findBrokerSession(created.ID); !ok || got != opened {
 		t.Errorf("after a run, broker session = %+v, %v; want %+v", got, ok, opened)
 	}
 	// A session that holds a refresh token does not spend later requests' tokens.
-	if n := h.AS1.GrantsIssued(); n != grants {
-		t.Errorf("the run converted a token: %d grants, want %d", n, grants)
+	if n := a.Faults.Conversions(); n != conversions {
+		t.Errorf("the run converted a token: %d conversions, want %d", n, conversions)
 	}
 
 	// Another user's session is not found, never forbidden, so its existence,
@@ -187,7 +158,7 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		if c.method == http.MethodPost {
 			body = "{}"
 		}
-		status, resp := apiCall(t, c.method, api+"/v1/sessions/"+created.ID+c.path, bob.AccessToken, body)
+		status, resp := apiCall(t, c.method, api+"/v1/sessions/"+created.ID+c.path, bob, body)
 		if status != c.want || (c.want == http.StatusNotFound && !strings.Contains(resp, "session_not_found")) {
 			t.Errorf("Bob %s %s on Alice's session: status %d: %s; want %d", c.method, c.path, status, resp, c.want)
 		}
@@ -195,26 +166,26 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 			t.Errorf("Bob %s %s on Alice's session disclosed her title or prompt: %s", c.method, c.path, resp)
 		}
 	}
-	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID, alice.AccessToken, ""); status != http.StatusOK || !strings.Contains(resp, aliceTitle) {
+	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID, alice, ""); status != http.StatusOK || !strings.Contains(resp, aliceTitle) {
 		t.Errorf("after Bob's delete, Alice gets her session: status %d: %s; want it intact", status, resp)
 	}
-	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID+"/transcript", alice.AccessToken, ""); status != http.StatusOK || !strings.Contains(resp, alicePrompt) {
+	if status, resp := apiCall(t, http.MethodGet, api+"/v1/sessions/"+created.ID+"/transcript", alice, ""); status != http.StatusOK || !strings.Contains(resp, alicePrompt) {
 		t.Errorf("Alice reads her transcript: status %d: %s; want her prompt", status, resp)
 	}
 
 	// Alice's sign-in token was converted for her first session, and a token
 	// converts once: a fork with it is refused, retryably, before it creates
 	// anything.
-	sessionsBefore := len(listSessionOwners(t, api, alice.AccessToken))
-	status, body, challenge := apiRequest(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/fork", alice.AccessToken, "{}")
+	sessionsBefore := len(listSessionOwners(t, api, alice))
+	status, body, challenge := apiRequest(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/fork", alice, "{}")
 	if status != http.StatusUnauthorized || !strings.Contains(body, `"bearer_rejected"`) || challenge != `Bearer error="invalid_token"` {
 		t.Fatalf("Alice forks with her spent token: status %d, challenge %q: %s; want 401 bearer_rejected with an invalid_token challenge", status, challenge, body)
 	}
-	if n := len(listSessionOwners(t, api, alice.AccessToken)); n != sessionsBefore {
+	if n := len(listSessionOwners(t, api, alice)); n != sessionsBefore {
 		t.Fatalf("the refused fork created a session: %d sessions, want %d", n, sessionsBefore)
 	}
-	// Her client refreshes its token and retries.
-	refreshed := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})
+	// Her client gets a new token and retries.
+	refreshed := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}).Value()
 	status, body = apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/fork", refreshed, "{}")
 	if status != http.StatusCreated && status != http.StatusOK {
 		t.Fatalf("Alice forks her session: status %d: %s", status, body)
@@ -229,33 +200,60 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 		t.Errorf("fork's broker session = %+v, %v; want its own, owned by Alice, holding a refresh token", fork, ok)
 	}
 
-	if status, body := apiCall(t, http.MethodDelete, api+"/v1/sessions/"+created.ID, alice.AccessToken, ""); status >= 300 {
+	if status, body := apiCall(t, http.MethodDelete, api+"/v1/sessions/"+created.ID, alice, ""); status >= 300 {
 		t.Fatalf("Alice releases her session: status %d: %s", status, body)
 	}
 	if got, ok := findBrokerSession(created.ID); !ok || got != opened {
 		t.Errorf("after releasing the session, broker session = %+v, %v; want %+v", got, ok, opened)
 	}
-	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/delete", alice.AccessToken, ""); status >= 300 {
+	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+created.ID+"/delete", alice, ""); status >= 300 {
 		t.Fatalf("Alice deletes her session: status %d: %s", status, body)
 	}
 	if _, ok := findBrokerSession(created.ID); ok {
 		t.Error("deleting Alice's session left its broker session open")
 	}
 
+	// Tokens AS-1 would not issue are refused. Each forgery changes one thing
+	// in an access token AS-1 issued and, unless it changes the key, is
+	// signed again with AS-1's key, so it is refused for that change alone:
+	// the unchanged re-signed token is accepted.
+	issued := identitybroker.NewToken(refreshed)
+	forge := func(f as1servertest.Forgery) string { return a.Forge(t, issued, f).Value() }
+	claim := func(name string, value any) as1servertest.Forgery {
+		return as1servertest.Forgery{Claims: func(c jwt.MapClaims) {
+			if value == nil {
+				delete(c, name)
+				return
+			}
+			c[name] = value
+		}}
+	}
+	typ := func(value string) as1servertest.Forgery {
+		return as1servertest.Forgery{Header: func(h map[string]any) {
+			if value == "" {
+				delete(h, "typ")
+				return
+			}
+			h["typ"] = value
+		}}
+	}
+	if status, body := apiCall(t, http.MethodGet, api+"/v1/sessions", forge(as1servertest.Forgery{}), ""); status != http.StatusOK {
+		t.Fatalf("an AS-1 access token signed again unchanged: status %d: %s; want 200", status, body)
+	}
 	for name, token := range map[string]string{
 		"no token":       "",
-		"foreign key":    h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ForeignKey: true}),
-		"other audience": h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Audience: "https://other.test/api"}),
-		"other issuer":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Issuer: h.IdP.Issuer()}),
-		"expired":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Lifetime: -time.Hour}),
-		"typ JWT":        h.AS1.MintAccessToken(identityharness.AccessTokenSpec{Type: "JWT"}),
-		"no typ":         h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitType: true}),
-		"alg none":       unsignedToken(t, h.AS1.Issuer(), h.AS1.Audience()), // toolhive-core's fixed algorithm allowlist rejects this
-		"other client":   h.AS1.MintAccessToken(identityharness.AccessTokenSpec{ClientID: "rogue"}),
-		"no sub_id":      h.AS1.MintAccessToken(identityharness.AccessTokenSpec{OmitSubID: true}),
-		"sub_id format":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice}}),
-		"sub_id string":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: identityharness.Alice}),
-		"sub_id no sub":  h.AS1.MintAccessToken(identityharness.AccessTokenSpec{SubID: map[string]string{"format": "iss_sub", "iss": h.IdP.Issuer()}}),
+		"foreign key":    forge(as1servertest.Forgery{ForeignKey: true}),
+		"other audience": forge(claim("aud", "https://other.test/api")),
+		"other issuer":   forge(claim("iss", h.IdP.Issuer())),
+		"expired":        a.ExpiredAccessToken(t, issued).Value(),
+		"typ JWT":        forge(typ("JWT")),
+		"no typ":         forge(typ("")),
+		"alg none":       unsignedToken(t, issued.Value()), // toolhive-core's fixed algorithm allowlist rejects this
+		"other client":   forge(claim("client_id", "rogue")),
+		"no sub_id":      forge(claim("sub_id", nil)),
+		"sub_id format":  forge(claim("sub_id", map[string]string{"format": "email", "iss": h.IdP.Issuer(), "sub": identityharness.Alice})),
+		"sub_id string":  forge(claim("sub_id", identityharness.Alice)),
+		"sub_id no sub":  forge(claim("sub_id", map[string]string{"format": "iss_sub", "iss": h.IdP.Issuer()})),
 	} {
 		status, _, challenge := apiRequest(t, http.MethodGet, api+"/v1/sessions", token, "")
 		if status != http.StatusUnauthorized {
@@ -278,70 +276,11 @@ func TestIdentityBrokerAgainstOfflineHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create a session under the company IdP identity: %v", err)
 	}
-	if status, body := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), alice.AccessToken, ""); status != http.StatusOK {
+	if status, body := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), alice, ""); status != http.StatusOK {
 		t.Errorf("Alice through AS-1 gets her pre-AS-1 session: status %d: %s", status, body)
 	}
-	if status, _ := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), bob.AccessToken, ""); status != http.StatusNotFound {
+	if status, _ := apiCall(t, http.MethodGet, api+"/v1/sessions/"+string(legacy.ID), bob, ""); status != http.StatusNotFound {
 		t.Errorf("Bob gets Alice's pre-AS-1 session: status %d, want 404", status)
-	}
-
-	// Hard expiry: a broker session holding a refresh token closes when the
-	// grant expires, and the user's next request opens a new one for the same
-	// agent. The fork and Bob's session each converted a token, so each has a
-	// hard expiry.
-	expiring, ok := findBrokerSession(forked.ID)
-	if !ok || !expiring.HoldsRefreshToken {
-		t.Fatalf("fork's broker session = %+v, %v; want one holding a refresh token", expiring, ok)
-	}
-	bobsExpiring, ok := findBrokerSession(bobCreated.ID)
-	if !ok || !bobsExpiring.HoldsRefreshToken {
-		t.Fatalf("Bob's broker session = %+v, %v; want one holding a refresh token", bobsExpiring, ok)
-	}
-	registerMain := func(brokerSession string) (identitybroker.Registration, error) {
-		return built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
-			SessionID: brokerSession, HostSessionID: forked.ID, Owner: aliceCompany, Incarnation: expiring.Incarnation,
-			Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
-		})
-	}
-	before, err := registerMain(expiring.ID)
-	if err != nil {
-		t.Fatalf("register the fork's main agent: %v", err)
-	}
-	clockOffset.Store(int64(grantMaxLifetime + time.Second))
-	closed := identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")
-	if _, err := registerMain(expiring.ID); !errors.Is(err, closed) {
-		t.Errorf("register in the expired broker session = %v, want %v", err, closed)
-	}
-	if _, err := built.IdentityBroker.AuthorizeCall(t.Context(), identitybroker.AuthorizeCallRequest{
-		SessionID: expiring.ID, Credential: before.Credential, OperationID: "op-1", RunID: "R42", RunOwner: aliceCompany,
-		Method: identitybroker.MethodToolsCall, Server: "gateway", Tool: "search", ArgumentsSHA256: strings.Repeat("ab", 32),
-	}); !errors.Is(err, closed) {
-		t.Errorf("authorize in the expired broker session = %v, want %v", err, closed)
-	}
-	// A fresh token is issued now by the API's clock, which the test did not
-	// move; it is still live on AS-1's, as the move is shorter than its
-	// lifetime.
-	fresh := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice, IssuedAt: time.Now()})
-	if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+forked.ID+"/prompt", fresh, `{"text":"after expiry"}`); status != http.StatusOK {
-		t.Fatalf("Alice prompts her fork after its broker session expired: status %d: %s", status, body)
-	}
-	reopened, ok := findBrokerSession(forked.ID)
-	if !ok || reopened.ID == expiring.ID || !reopened.HoldsRefreshToken {
-		t.Fatalf("fork's broker session after expiry = %+v, %v; want a new one holding a refresh token", reopened, ok)
-	}
-	// The 200 means the prompt's run entry registered the main agent in the
-	// new broker session (TestIdentityBrokerRegistersAgainInAReopenedBrokerSession
-	// pins that at the server); registering again here returns its agent.
-	if after, err := registerMain(reopened.ID); err != nil || after.Agent != before.Agent {
-		t.Errorf("register in the new broker session = %+v, %v; want agent %+v", after.Agent, err, before.Agent)
-	}
-	// A tokenless open after the expiry pairs a new session that holds no
-	// refresh token.
-	bobsReopened, err := built.IdentityBroker.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
-		HostSessionID: bobCreated.ID, Incarnation: bobsExpiring.Incarnation, Owner: bobCompany,
-	})
-	if err != nil || bobsReopened.ID == bobsExpiring.ID || bobsReopened.HoldsRefreshToken {
-		t.Errorf("Bob's tokenless open after expiry = %+v, %v; want a new broker session holding no refresh token", bobsReopened, err)
 	}
 }
 
@@ -1150,15 +1089,15 @@ func apiRequest(t *testing.T, method, url, token, body string) (int, string, str
 	return resp.StatusCode, string(raw), resp.Header.Get("WWW-Authenticate")
 }
 
-// unsignedToken is an otherwise well-formed AS-1 access token with alg none.
-func unsignedToken(t *testing.T, issuer, audience string) string {
+// unsignedToken is issued, an AS-1 access token, with its claims and typ
+// unchanged but unsigned with alg none.
+func unsignedToken(t *testing.T, issued string) string {
 	t.Helper()
-	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodNone, jwt.MapClaims{
-		"iss": issuer, "sub": "u-alice", "aud": audience, "client_id": identityharness.DefaultClientID,
-		"sub_id": map[string]string{"format": "iss_sub", "iss": "https://login.example.com", "sub": identityharness.Alice},
-		"iat":    now.Unix(), "exp": now.Add(time.Minute).Unix(),
-	})
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(issued, claims); err != nil {
+		t.Fatalf("parse the issued access token: %v", err)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
 	token.Header["typ"] = "at+jwt"
 	signed, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if err != nil {
