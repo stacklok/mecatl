@@ -23,12 +23,14 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+
+	"github.com/stacklok/mecatl/internal/executionexecutor"
 )
 
 const testProviderClientURI = "spiffe://mecatl.test/provider/executor-client"
 
 type platformPKI struct {
-	pool      *x509.CertPool
+	caPEM     []byte
 	clientDir string
 }
 
@@ -74,9 +76,8 @@ func newPlatformPKI(t *testing.T, clientURI string) platformPKI {
 			t.Fatal(err)
 		}
 	}
-	pool := x509.NewCertPool()
-	pool.AddCert(ca)
-	return platformPKI{pool: pool, clientDir: dir}
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	return platformPKI{caPEM: caPEM, clientDir: dir}
 }
 
 type executorServer struct {
@@ -84,33 +85,37 @@ type executorServer struct {
 	fingerprint string
 }
 
-// startExecutorServer stands in for #2699: it serves certPEM and admits only the provider URI.
-// Any chain certificates are sent after the executor certificate.
+// startExecutorServer runs the executor's server TLS against pki; chain
+// certificates follow the executor certificate.
 func startExecutorServer(
-	t *testing.T, env string, pki platformPKI, chain ...[]byte,
+	t *testing.T,
+	env string,
+	pki platformPKI,
+	chain ...[]byte,
 ) executorServer {
 	t.Helper()
 	certPEM, keyPEM, fingerprint, err := generateExecutorCertificate(env, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	for _, der := range chain {
+		block := &pem.Block{Type: "CERTIFICATE", Bytes: der}
+		certPEM = append(certPEM, pem.EncodeToMemory(block)...)
+	}
+	certDir, trustDir := t.TempDir(), t.TempDir()
+	for path, data := range map[string][]byte{
+		filepath.Join(certDir, "tls.crt"):            certPEM,
+		filepath.Join(certDir, "tls.key"):            keyPEM,
+		filepath.Join(trustDir, providerTrustCAFile): pki.caPEM,
+		filepath.Join(trustDir, providerTrustURIKey): []byte(testProviderClientURI),
+	} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := executionexecutor.ServerTLSConfig(certDir, trustDir)
 	if err != nil {
 		t.Fatal(err)
-	}
-	cert.Certificate = append(cert.Certificate, chain...)
-	cfg := &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    pki.pool,
-		VerifyPeerCertificate: func(_ [][]byte, chains [][]*x509.Certificate) error {
-			id, err := canonicalClientIdentity(chains[0][0])
-			if err != nil || id != testProviderClientURI {
-				return errors.New("not the provider")
-			}
-			return nil
-		},
 	}
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {

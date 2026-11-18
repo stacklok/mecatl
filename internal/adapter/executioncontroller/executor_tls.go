@@ -23,15 +23,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 const (
 	serverTLSVolume         = "server-tls"
-	serverTLSMountPath      = "/etc/mecatl-executor/tls"
+	serverTLSMountPath      = executionenv.ExecutorServerTLSDir
 	providerTrustVolume     = "provider-trust"
-	providerTrustMountPath  = "/etc/mecatl-executor/provider"
-	providerTrustCAFile     = "ca.crt"
-	providerTrustURIKey     = "client-uri"
+	providerTrustMountPath  = executionenv.ExecutorProviderTrustDir
+	providerTrustCAFile     = executionenv.ExecutorTrustCAFile
+	providerTrustURIKey     = executionenv.ExecutorTrustURIFile
 	executorTLSLabel        = "execution.mecatl.dev/executor-tls"
 	serverCertificateField  = "serverCertificate"
 	executorCertificateLife = 10 * 365 * 24 * time.Hour

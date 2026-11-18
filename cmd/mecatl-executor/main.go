@@ -1,8 +1,8 @@
 // Command mecatl-executor runs the fixed credential-free workload helper.
 //
 // Without arguments it serves one Pod exec request. "serve" runs the executor
-// gRPC server with the Files and Commands services enabled by -files and
-// -commands; "supervise-command" is that server's per-command helper.
+// gRPC server over mutual TLS with the Files and Commands services enabled by
+// -files and -commands; "supervise-command" is that server's per-command helper.
 package main
 
 import (

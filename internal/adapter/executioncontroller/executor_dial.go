@@ -15,6 +15,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 var (
@@ -178,7 +180,7 @@ func (d *ExecutorDialer) loadClientCertificate(root *os.Root) (*tls.Certificate,
 		return nil, errors.New(
 			"executor client certificate is not currently valid for client authentication")
 	}
-	if id, err := canonicalClientIdentity(leaf); err != nil || id != d.clientURI {
+	if id, err := executionenv.ClientIdentity(leaf); err != nil || id != d.clientURI {
 		return nil, errors.New(
 			"executor client certificate does not name the configured provider URI")
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -42,6 +43,16 @@ func runServeMode(ctx context.Context, args []string) error {
 		executionenv.MaxFileBytes,
 		"largest file the Files service reads or writes, from the template",
 	)
+	tlsDir := flags.String(
+		"tls-dir",
+		executionenv.ExecutorServerTLSDir,
+		"directory holding the server tls.crt and tls.key",
+	)
+	trustDir := flags.String(
+		"provider-trust-dir",
+		executionenv.ExecutorProviderTrustDir,
+		"directory holding the provider's ca.crt and client-uri",
+	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -54,11 +65,15 @@ func runServeMode(ctx context.Context, args []string) error {
 	if cfg.maxFileBytes <= 0 || cfg.maxFileBytes > executionenv.MaxFileBytes {
 		return fmt.Errorf("serve: -max-file-bytes must be in 1..%d", executionenv.MaxFileBytes)
 	}
+	tlsConfig, err := executionexecutor.ServerTLSConfig(*tlsDir, *trustDir)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
 	if runtime.GOOS != "linux" {
 		return errors.New("serve requires Linux")
 	}
 
-	srv, err := newExecutorServer(ctx, workspaceRoot, cfg)
+	srv, err := newExecutorServer(ctx, workspaceRoot, cfg, credentials.NewTLS(tlsConfig))
 	if err != nil {
 		return err
 	}
@@ -75,8 +90,13 @@ func runServeMode(ctx context.Context, args []string) error {
 
 // newExecutorServer registers only the enabled services; with Commands
 // disabled nothing starts a process.
-func newExecutorServer(ctx context.Context, root string, cfg serveConfig) (*grpc.Server, error) {
-	srv := grpc.NewServer(grpc.WaitForHandlers(true))
+func newExecutorServer(
+	ctx context.Context,
+	root string,
+	cfg serveConfig,
+	creds credentials.TransportCredentials,
+) (*grpc.Server, error) {
+	srv := grpc.NewServer(grpc.Creds(creds), grpc.WaitForHandlers(true))
 	if cfg.files {
 		files, err := newFileServer(root, cfg.maxFileBytes)
 		if err != nil {
