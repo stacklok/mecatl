@@ -51,10 +51,10 @@ The per-call flow, with every request, token, and check, is in [credentials and 
 Two separate facts decide redemption. The first is which native user the AS-1 subject is (mapping). The second is whether client `mecatl` may use that user's connections at this gateway (approval). A valid mapping is not an approval. In embedded mode, both follow from configuration: AS-2 trusts AS-1 as an ID-JAG issuer and resolves the user through the company IdP they share, and approval is implicit. In external mode, AS-2 looks up both in one approval record:
 
 ```text
-(gateway, local user, client, actor_iss, revoked)
+(gateway, local user, client, source iss, actor_iss, revoked)
 ```
 
-There is one row per (gateway, local user, client, `actor_iss`). On each redemption, AS-2 finds the local user from the ID-JAG's `upstream_subject`. It uses the shared login or, under administrator pre-approval, the directory-synced mapping. AS-2 does not store AS-1's subject. Mecatl's approvals name AS-1 as `actor_iss`, so one approval covers any Mecatl agent. Two ways create an approval:
+There is one row per (gateway, local user, client, source `iss`, `actor_iss`). On each redemption, AS-2 finds the local user from the ID-JAG's `upstream_subject`. It uses the shared login or, under administrator pre-approval, the directory-synced mapping. AS-2 does not store AS-1's subject. Mecatl's approvals name AS-1's issuer as the source `iss` and the agent trust domain as `actor_iss`, so one approval covers any agent of that Mecatl deployment. The source `iss` is needed because trust domain names are not unique across deployments. Two ways create an approval:
 
 - **Alice approves (the default).** Alice opens an approval link, signs in at AS-2, and approves "Allow Mecatl (any Mecatl agent) to use your connections". AS-2 activates the approval only if her company IdP identity matches the ID-JAG's. So a compromised AS-1 can act only for users who approved. See the [implementation companion](implementation.md#external-consent-link).
 - **An administrator pre-approves (opt-in).** The gateway administrator explicitly approves client `mecatl` for a group. The mapping from AS-1 subjects to native users is created on first use from AS-1's `upstream_subject`, or imported by directory sync. This rests on AS-1's word, so a compromised AS-1 reaches every covered user, whether or not the user used Mecatl. This is embedded-mode trust ([implementation companion](implementation.md#external-consent-link)).
@@ -95,7 +95,7 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.4 states, becaus
 
 ## Integration requirements and evidence limits
 
-AS-1 must accept `RT-A42` as `subject_token` and the registered agent-instance JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks that the grant is not revoked and has not expired, re-checks the user's upstream refresh token when due, has the broker's actor-token validator check the SVID and that the owner of the instance's session equals the grant's `sub_id`, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `ag_` identifier.
+AS-1 must accept `RT-A42` as `subject_token` and the registered agent-instance JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks that the grant is not revoked and has not expired, re-checks the user's upstream refresh token when due, has the broker's actor-token validator check the SVID and that the owner of the instance's session equals the grant's `sub_id`, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque SPIFFE ID, with `act.iss` set to the agent trust domain.
 
 AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, apply the issuer's ID-JAG reuse policy, and resolve the native user: directly in embedded mode, and only for an approved user in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unapproved subjects fail closed.
 
