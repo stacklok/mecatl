@@ -563,9 +563,9 @@ linters:
             - '!$test'
           allow:
             - $gostd
-            - github.com/stacklok/mecatl/engine/adapter/frontmatterdiag
             - github.com/stacklok/mecatl/engine/tool
-            - github.com/goccy/go-yaml
+            # The definition format shared with the identity broker.
+            - github.com/stacklok/mecatl/agentdef$
           deny:
             - pkg: os/exec
               desc: 'agentfs discovers agent-def files via os.ReadDir/ReadFile; it must never spawn processes'

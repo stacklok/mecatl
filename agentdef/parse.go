@@ -11,10 +11,6 @@ import (
 	"github.com/goccy/go-yaml/token"
 )
 
-// The parser below is the engine's agentfs parser (engine/adapter/agentfs,
-// discover.go and carry.go) moved here. agentfs keeps its copy until it is
-// switched to this package; change both together until then.
-
 // Parse reads one definition file's bytes. It returns the definition and a
 // note for each adjustment it made to a definition it kept, such as a
 // truncated description, a skipped mcpServers entry, or an ignored memory

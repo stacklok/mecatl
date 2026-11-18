@@ -7,6 +7,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jcalabro/atmos v0.8.0
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/stacklok/mecatl/agentdef v0.1.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.25.0

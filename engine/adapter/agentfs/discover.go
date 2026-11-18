@@ -8,289 +8,14 @@ import (
 	"sort"
 	"strings"
 
-	yaml "github.com/goccy/go-yaml"
-	"github.com/goccy/go-yaml/ast"
-
-	"github.com/stacklok/mecatl/engine/adapter/frontmatterdiag"
+	"github.com/stacklok/mecatl/agentdef"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // AgentFileExt is the conventional extension of an agent-definition file. A def
 // lives at <dir>/<name>.md (a FLAT file, not a <name>/AGENT.md subdir), matching
 // Claude Code's .claude/agents/ layout.
-const AgentFileExt = ".md"
-
-// maxDescriptionBytes is the package-internal alias of the CANONICAL
-// description cap, which lives next to the port
-// (tool.MaxAgentDescriptionBytes) so every source — this frontmatter parser
-// AND the remote-driver client — enforces the same number (the
-// maxDescriptionLen = MaxCommandDescriptionRunes pattern). parseAgentDef
-// truncates (rune-safe, with an ellipsis) and records a non-fatal warning
-// when it trims.
-const maxDescriptionBytes = tool.MaxAgentDescriptionBytes
-
-// maxPromptBodyBytes is the package-internal alias of tool.MaxAgentBodyBytes
-// (see maxDescriptionBytes for the canonical-cap rationale). parseAgentDef
-// truncates and warns.
-const maxPromptBodyBytes = tool.MaxAgentBodyBytes
-
-// frontmatter is the parsed YAML header of an agent-def file. Only name and
-// description are required; the rest are optional. Unknown/extra keys are ignored
-// (forward-compat). The `tools`/`disallowedTools` fields use stringOrSlice so a
-// real Claude-Code `.claude/agents` file ("tools: Read, Edit") parses the same as
-// the YAML-array form.
-type frontmatter struct {
-	Name            string            `yaml:"name"`
-	Description     string            `yaml:"description"`
-	Tools           stringOrSlice     `yaml:"tools"`
-	DisallowedTools stringOrSlice     `yaml:"disallowedTools"`
-	Model           string            `yaml:"model"`
-	Provider        string            `yaml:"provider"`
-	PermissionMode  string            `yaml:"permissionMode"`
-	MaxTurns        int               `yaml:"maxTurns"`
-	MaxToolCalls    int               `yaml:"maxToolCalls"`
-	Color           string            `yaml:"color"`
-	Skills          stringOrSlice     `yaml:"skills"`
-	MCPServers      mcpServerList     `yaml:"mcpServers"`
-	Hooks           map[string]string `yaml:"hooks"`
-	Memory          string            `yaml:"memory"`
-}
-
-func (f *frontmatter) UnmarshalYAML(node ast.Node) error {
-	type decoded frontmatter
-	var value decoded
-	if err := yaml.NodeToValue(node, &value); err != nil {
-		return err
-	}
-	*f = frontmatter(value)
-	for _, field := range []struct {
-		name string
-		dst  *stringOrSlice
-	}{
-		{"tools", &f.Tools},
-		{"disallowedTools", &f.DisallowedTools},
-		{"skills", &f.Skills},
-	} {
-		if value := frontmatterMappingValue(node, field.name); value != nil {
-			if err := field.dst.UnmarshalYAML(value); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func frontmatterMappingValue(node ast.Node, name string) ast.Node {
-	mapping, ok := node.(*ast.MappingNode)
-	if !ok {
-		return nil
-	}
-	for _, value := range mapping.Values {
-		if value.Key.GetToken().Value == name {
-			return value.Value
-		}
-	}
-	return nil
-}
-
-// mcpServerList is the parsed `mcpServers` frontmatter. It accepts THREE forms
-// interchangeably (Claude-Code tolerance, extended for inline servers):
-//
-//   - a scalar string ("a, b") → references to configured main servers;
-//   - a YAML array of scalars (["a", "b"]) → references;
-//   - a YAML array of mappings ({name, url, headers, ...}) → inline servers (or a
-//     reference when the mapping carries only a name / no url).
-//
-// A mapping may also be MIXED with scalars in the same array. UnmarshalYAML
-// normalises every entry into an AgentMCPServer (empty URL = reference) and records
-// per-entry SKIP notes for entries it cannot use (an inline entry that is plainly a
-// non-HTTP/stdio transport, or a nameless entry). The notes ride alongside the
-// parsed servers so parseAgentDef can surface them as non-fatal diagnostics — a bad
-// MCP entry never fails the whole def.
-type mcpServerList struct {
-	servers []AgentMCPServer
-	notes   []string
-}
-
-// rawMCPMapping is one inline `mcpServers` mapping entry. Only name/url/headers are
-// used; type/transport/command are inspected solely to REJECT a non-HTTP (e.g.
-// stdio) entry with a diagnostic, per the streamable-HTTP-only constraint.
-type rawMCPMapping struct {
-	Name      string            `yaml:"name"`
-	URL       string            `yaml:"url"`
-	Headers   map[string]string `yaml:"headers"`
-	Type      string            `yaml:"type"`
-	Transport string            `yaml:"transport"`
-	Command   string            `yaml:"command"`
-}
-
-func (l *mcpServerList) UnmarshalYAML(node ast.Node) error {
-	switch node.Type() {
-	case ast.StringType:
-		var name string
-		if err := yaml.NodeToValue(node, &name); err != nil {
-			return err
-		}
-		for _, name := range splitList(name) {
-			l.servers = append(l.servers, AgentMCPServer{Name: name})
-		}
-		return nil
-	case ast.SequenceType:
-		sequence, ok := node.(*ast.SequenceNode)
-		if !ok {
-			return fmt.Errorf("mcpServers: invalid sequence")
-		}
-		for _, item := range sequence.Values {
-			switch item.Type() {
-			case ast.StringType:
-				var name string
-				if err := yaml.NodeToValue(item, &name); err != nil {
-					return err
-				}
-				for _, name := range splitList(name) {
-					l.servers = append(l.servers, AgentMCPServer{Name: name})
-				}
-			case ast.MappingType:
-				var mapping rawMCPMapping
-				if err := yaml.NodeToValue(item, &mapping); err != nil {
-					return err
-				}
-				l.appendMapping(mapping)
-			default:
-				return fmt.Errorf("mcpServers entry: expected a string or a mapping")
-			}
-		}
-		return nil
-	default:
-		return fmt.Errorf("mcpServers: expected a string, a list, or a list of mappings")
-	}
-}
-
-// appendMapping normalises one inline mapping into an AgentMCPServer, recording a
-// skip note (and dropping the entry) when it is unusable: nameless, or an inline
-// server declaring a non-HTTP transport (stdio/command) — only streamable-HTTP is
-// supported (CLAUDE.md: no stdio MCP, ever).
-func (l *mcpServerList) appendMapping(m rawMCPMapping) {
-	name := strings.TrimSpace(m.Name)
-	url := strings.TrimSpace(m.URL)
-	transport := strings.ToLower(strings.TrimSpace(m.Transport))
-	typ := strings.ToLower(strings.TrimSpace(m.Type))
-	if name == "" {
-		l.notes = append(l.notes, "mcpServers entry skipped: missing a non-empty \"name\"")
-		return
-	}
-	// Reject any inline entry that names a non-HTTP transport, or supplies a
-	// command (the stdio shape), even if a url is also present — streamable-HTTP is
-	// the only supported transport.
-	if strings.TrimSpace(m.Command) != "" || isNonHTTPTransport(transport) || isNonHTTPTransport(typ) {
-		l.notes = append(l.notes, fmt.Sprintf(
-			"mcpServers entry %q skipped: only the streamable-HTTP transport is supported (stdio/command/non-HTTP transports are rejected)", name))
-		return
-	}
-	l.servers = append(l.servers, AgentMCPServer{Name: name, URL: url, Headers: NormalizeHeaders(m.Headers)})
-}
-
-// isNonHTTPTransport reports whether a `type`/`transport` value names a transport
-// this harness refuses. Empty, "http", "streamable-http", "streamable_http", and
-// "sse" are accepted (all HTTP-family); anything else (notably "stdio") is rejected.
-func isNonHTTPTransport(v string) bool {
-	switch v {
-	case "", "http", "streamable-http", "streamable_http", "streamablehttp", "sse":
-		return false
-	default:
-		return true
-	}
-}
-
-// NormalizeHeaders trims keys/values and drops empties, returning nil for an
-// empty/absent map so a server with no headers carries a nil Headers. Exported
-// so the remote-driver client applies the SAME normalization to wire headers
-// (the values are SECRET-SHAPED and are never logged anywhere; see
-// tool.AgentMCPServer.Headers).
-func NormalizeHeaders(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		key := strings.TrimSpace(k)
-		val := strings.TrimSpace(v)
-		if key == "" || val == "" {
-			continue
-		}
-		out[key] = val
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// stringOrSlice is a YAML field that accepts BOTH a sequence (["Read","Grep"])
-// AND a single comma/space-separated scalar ("Read, Grep" or "Read Grep") for
-// Claude-Code compatibility — CC's agent frontmatter writes `tools` as a string
-// in some versions and an array in others. UnmarshalYAML normalises either form
-// into a trimmed, empty-free []string.
-type stringOrSlice []string
-
-func (s *stringOrSlice) UnmarshalYAML(node ast.Node) error {
-	if text, ok := frontmatterScalarText(node); ok {
-		*s = splitList(text)
-		return nil
-	}
-	if node.Type() != ast.SequenceType {
-		return fmt.Errorf("expected a string or a list")
-	}
-	sequence, ok := node.(*ast.SequenceNode)
-	if !ok {
-		return fmt.Errorf("expected a string or a list")
-	}
-	values := make([]string, 0, len(sequence.Values))
-	for _, item := range sequence.Values {
-		text, ok := frontmatterScalarText(item)
-		if !ok {
-			return fmt.Errorf("expected a string or a list of strings")
-		}
-		values = append(values, text)
-	}
-	*s = splitList(values...)
-	return nil
-}
-
-// frontmatterScalarText preserves yaml.v3's scalar-as-text frontmatter
-// compatibility while avoiding parser-rendered error text at this boundary.
-func frontmatterScalarText(node ast.Node) (string, bool) {
-	switch node.Type() {
-	case ast.StringType, ast.LiteralType:
-		var text string
-		if err := yaml.NodeToValue(node, &text); err != nil {
-			return "", false
-		}
-		return text, true
-	case ast.BoolType, ast.IntegerType, ast.FloatType, ast.NullType, ast.InfinityType, ast.NanType:
-		if parserToken := node.GetToken(); parserToken != nil {
-			return parserToken.Value, true
-		}
-	}
-	return "", false
-}
-
-// splitList flattens its inputs, splitting any entry on commas and whitespace,
-// trimming each token and dropping empties. It is the single normaliser for both
-// the array and scalar `tools`/`disallowedTools` forms.
-func splitList(in ...string) []string {
-	var out []string
-	for _, raw := range in {
-		for _, tok := range strings.FieldsFunc(raw, func(r rune) bool {
-			return r == ',' || r == ' ' || r == '\t' || r == '\n'
-		}) {
-			if t := strings.TrimSpace(tok); t != "" {
-				out = append(out, t)
-			}
-		}
-	}
-	return out
-}
+const AgentFileExt = agentdef.FileExt
 
 // DirSource is the local-OS-filesystem implementation of AgentSource: it produces
 // the defs laid out as <Dir>/<name>.md (flat files) under a single directory.
@@ -402,88 +127,68 @@ func (s DirSource) Agents(_ context.Context) ([]Discovered, []SkipError, error) 
 	return out, skips, nil
 }
 
-// parseAgentDef splits raw into YAML frontmatter and a markdown body and
-// validates the required header fields. It returns a fatal reason string (with a
-// zero AgentDef) on any structural problem so the caller records a SkipError and
-// EXCLUDES the def (reason is "" on success), plus a slice of non-fatal warning
-// notes for a def that IS kept (e.g. truncation). It is filesystem-free so every
-// Source implementation can reuse it. The path parameter is retained for
-// diagnostic messages; the parsed value object carries NO locator (the caller
-// records the path on its Discovered.Detail / SkipError.Path channels).
+// parseAgentDef parses raw with the shared agentdef format, the parser the
+// identity broker's definition loader uses too, and maps the result to the
+// port value object. It returns a fatal reason string (with a zero AgentDef)
+// when raw is not a definition, so the caller records a SkipError and EXCLUDES
+// the def (reason is "" on success), plus the non-fatal notes for a def that IS
+// kept (e.g. truncation). The path parameter is retained for diagnostic
+// messages; the parsed value object carries NO locator (the caller records the
+// path on its Discovered.Detail / SkipError.Path channels).
 //
 // Tool names in Tools/DisallowedTools are NOT validated here — the parser is
 // catalog-free. An unknown tool name becomes a resolve-time diagnostic in
 // internal/app (against a concrete catalog), never a parse failure.
 func parseAgentDef(raw []byte, _ string) (AgentDef, string, []string) {
-	fmText, body, ok := SplitFrontmatter(string(raw))
-	if !ok {
-		return AgentDef{}, "missing YAML frontmatter (expected a leading '---' delimited block)", nil
+	def, notes, err := agentdef.Parse(raw)
+	if err != nil {
+		return AgentDef{}, err.Error(), notes
 	}
-	var fm frontmatter
-	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
-		return AgentDef{}, frontmatterdiag.FrontmatterParseError(err), nil
+	var servers []AgentMCPServer
+	for _, s := range def.MCPServers {
+		servers = append(servers, AgentMCPServer{Name: s.Name, URL: s.URL, Headers: s.Headers})
 	}
-	name := strings.TrimSpace(fm.Name)
-	if name == "" {
-		return AgentDef{}, "frontmatter is missing a non-empty \"name\"", nil
-	}
-	desc := strings.TrimSpace(fm.Description)
-	if desc == "" {
-		return AgentDef{}, "frontmatter is missing a non-empty \"description\"", nil
-	}
-
-	var notes []string
-	if len(desc) > maxDescriptionBytes {
-		notes = append(notes, fmt.Sprintf(
-			"description is %d bytes; truncated to the always-in-context cap of %d bytes",
-			len(desc), maxDescriptionBytes))
-		desc = TruncateRunes(desc, maxDescriptionBytes)
-	}
-
-	trimmedBody := strings.TrimSpace(body)
-	if len(trimmedBody) > maxPromptBodyBytes {
-		notes = append(notes, fmt.Sprintf(
-			"body is %d bytes; truncated to the prompt-body cap of %d bytes (it is in-context every turn)",
-			len(trimmedBody), maxPromptBodyBytes))
-		trimmedBody = TruncateRunes(trimmedBody, maxPromptBodyBytes)
-	}
-
-	// Per-entry mcpServers diagnostics (a skipped stdio/nameless entry) are
-	// non-fatal: the def is still kept, minus the unusable entry.
-	notes = append(notes, fm.MCPServers.notes...)
-
-	// `memory:` is a forgiving tier selector (mirrors the mcpServers skip-note
-	// posture): only "" / "user" / "project" are accepted. "local" is DELIBERATELY
-	// rejected (scoped local-only memory is not implemented). Any other value is a
-	// non-fatal note and falls back to "" (no memory), so a shared .claude/agents
-	// file naming a tier this harness doesn't support never fails the whole def.
-	mem := strings.ToLower(strings.TrimSpace(fm.Memory))
-	switch mem {
-	case "", "user", "project":
-		// accepted
-	default:
-		notes = append(notes, fmt.Sprintf(
-			"memory: %q is not supported (use \"user\" or \"project\"); ignored", fm.Memory))
-		mem = ""
-	}
-
 	return AgentDef{
-		Name:            name,
-		Description:     desc,
-		Tools:           canonicalToolNames(fm.Tools),
-		DisallowedTools: canonicalToolNames(fm.DisallowedTools),
-		Model:           strings.TrimSpace(fm.Model),
-		Provider:        strings.TrimSpace(fm.Provider),
-		PermissionMode:  strings.TrimSpace(fm.PermissionMode),
-		MaxTurns:        fm.MaxTurns,
-		MaxToolCalls:    fm.MaxToolCalls,
-		Color:           strings.TrimSpace(fm.Color),
-		Skills:          []string(fm.Skills),
-		MCPServers:      fm.MCPServers.servers,
-		Hooks:           NormalizeHooks(fm.Hooks),
-		Memory:          mem,
-		Body:            trimmedBody,
+		Name:            def.Name,
+		Description:     def.Description,
+		Tools:           def.Tools,
+		DisallowedTools: def.DisallowedTools,
+		Model:           def.Model,
+		Provider:        def.Provider,
+		PermissionMode:  def.PermissionMode,
+		MaxTurns:        def.MaxTurns,
+		MaxToolCalls:    def.MaxToolCalls,
+		Color:           def.Color,
+		Skills:          def.Skills,
+		MCPServers:      servers,
+		Hooks:           def.Hooks,
+		Memory:          def.Memory,
+		Body:            def.Body,
 	}, "", notes
+}
+
+// NormalizeHeaders trims keys/values and drops empties, returning nil for an
+// empty/absent map so a server with no headers carries a nil Headers. Exported
+// so the remote-driver client applies the SAME normalization to wire headers
+// (the values are SECRET-SHAPED and are never logged anywhere; see
+// tool.AgentMCPServer.Headers).
+func NormalizeHeaders(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		key := strings.TrimSpace(k)
+		val := strings.TrimSpace(v)
+		if key == "" || val == "" {
+			continue
+		}
+		out[key] = val
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // NormalizeHooks trims each phase key and command value and drops any entry whose
@@ -508,16 +213,6 @@ func NormalizeHooks(in map[string]string) map[string]string {
 	}
 	if len(out) == 0 {
 		return nil
-	}
-	return out
-}
-
-func canonicalToolNames(names []string) []string {
-	out := append([]string(nil), names...)
-	for i := range out {
-		if out[i] == "Bash" {
-			out[i] = tool.ShellToolName
-		}
 	}
 	return out
 }

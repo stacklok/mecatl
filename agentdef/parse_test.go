@@ -7,10 +7,9 @@ import (
 	"unicode/utf8"
 )
 
-// The parse tests below are carried from the engine's agentfs parser tests
-// (engine/adapter/agentfs/discover_test.go), unchanged apart from type names, so
-// the two parsers stay pinned to the same behavior until agentfs uses this
-// package. parseAgentDef adapts Parse to the agentfs signature they call.
+// The parse tests below came from the engine's agentfs parser tests, when the
+// parser moved here, unchanged apart from type names. parseAgentDef adapts
+// Parse to the signature they call.
 func parseAgentDef(raw []byte, _ string) (Definition, string, []string) {
 	def, notes, err := Parse(raw)
 	if err != nil {
@@ -568,5 +567,25 @@ func TestLegacyBashToolListNormalizesToShell(t *testing.T) {
 	}
 	if got, want := strings.Join(def.DisallowedTools, ","), "Shell"; got != want {
 		t.Fatalf("disallowed tools = %q, want %q", got, want)
+	}
+}
+
+// TestSemanticMatrixAgentFrontmatter carries the agent frontmatter cases of the
+// engine's YAML compatibility fixtures (engine/testdata/semantic-matrix.yaml,
+// reader "agentfs"), so this module checks the outcomes itself rather than only
+// through the engine. Keep it in step with the fixtures.
+func TestSemanticMatrixAgentFrontmatter(t *testing.T) {
+	for name, tc := range map[string]struct {
+		document string
+		accept   bool
+	}{
+		"agentfs-malformed-frontmatter": {document: "---\nname: [unterminated\n---\nbody\n", accept: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := Parse([]byte(tc.document))
+			if accepted := err == nil; accepted != tc.accept {
+				t.Fatalf("Parse accepted=%v, want %v (err=%v)", accepted, tc.accept, err)
+			}
+		})
 	}
 }
