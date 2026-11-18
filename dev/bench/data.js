@@ -431347,6 +431347,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795016938802,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fe18ebf0afd9b83c67789e9aba556a61d5832400",
+          "message": "refactor(agentfs): parse agent definitions with agentdef (#2864)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T10:50:31-05:00",
+          "tree_id": "3741a47548519eda134b97b25e83dadf8646470d",
+          "url": "https://github.com/stacklok/mecatl/commit/fe18ebf0afd9b83c67789e9aba556a61d5832400"
+        },
+        "date": 1795017782890,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -561801,6 +561840,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795017778871,
+  "lastUpdate": 1795017784133,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
