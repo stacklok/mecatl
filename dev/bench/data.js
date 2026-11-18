@@ -389182,6 +389182,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795016933969,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fe18ebf0afd9b83c67789e9aba556a61d5832400",
+          "message": "refactor(agentfs): parse agent definitions with agentdef (#2864)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T10:50:31-05:00",
+          "tree_id": "3741a47548519eda134b97b25e83dadf8646470d",
+          "url": "https://github.com/stacklok/mecatl/commit/fe18ebf0afd9b83c67789e9aba556a61d5832400"
+        },
+        "date": 1795017777880,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -561767,6 +561801,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795017774120,
+  "lastUpdate": 1795017778871,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
