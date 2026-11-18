@@ -386318,6 +386318,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794961272199,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4f7016aac77494a7dc82aa434e10be034d4e855",
+          "message": "feat(contracts): stream file content in the executor FileService (#2832)\n\n`ReadFile` now streams its response and `CreateFile` and `ReplaceFile`\nstream their requests, in chunks of at most 3 MiB. Every client, proxy,\nand server keeps gRPC's default 4 MiB message limit, and the protocol\nsets no file size limit.\n\nA write's first message carries the context, path, and expected\nversion. The server spools chunks to a temporary file and renames it\ninto place only after the client closes its side of the stream, so an\ninterrupted write leaves nothing behind. A read's last message carries\nthe version, which covers exactly the bytes sent.\n\nThe agent tools keep the whole-file `Workspace` methods. An optional\n`WorkspaceStreamer` extension for unbuffered transfers, which fails\nsoft when a workspace lacks it, is documented in\n`docs/drafts/kubernetes-execution/executor-protocol.md` and left to a\nfollow-up.\n\nThis is a breaking change to `mecatl.executor.v1`; nothing implements\nor calls `FileService` yet.\n\nCloses #2770",
+          "timestamp": "2026-11-18T10:49:58+01:00",
+          "tree_id": "bc0e24b504f355269080c689bea8d35b43e4781c",
+          "url": "https://github.com/stacklok/mecatl/commit/e4f7016aac77494a7dc82aa434e10be034d4e855"
+        },
+        "date": 1794996206876,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -557679,6 +557713,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794996203246,
+  "lastUpdate": 1794996207845,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
