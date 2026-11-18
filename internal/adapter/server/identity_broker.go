@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
@@ -44,20 +43,13 @@ func identityBrokerOwner(owner *session.Principal) (identitybroker.Owner, bool) 
 	return identitybroker.Owner{Issuer: owner.Issuer, Subject: owner.Subject}, true
 }
 
-// identityAgent is the credential held for a root session's main agent. It is
-// kept in memory only, never persisted and never given to the engine or the
-// model, so the MCP broker can present it later.
-type identityAgent struct {
-	// incarnation is the session incarnation the agent was registered with.
-	incarnation string
-	// brokerSessionID is the broker session the agent was registered to; the
-	// credential verifies only there.
-	brokerSessionID string
-	registration    identitybroker.Registration
-	// renewAt is when half the credential's lifetime has passed, after which
-	// run entry registers again. The design renews on next use; renewal on
-	// each call comes with the gateway calls that present the credential.
-	renewAt time.Time
+// identityAgentsFor returns cfg's credential holder, creating one when cfg has
+// an identity broker and no holder. cfg.Now must be set.
+func identityAgentsFor(cfg Config) *agentcredential.Holder {
+	if cfg.IdentityBroker == nil || cfg.IdentityAgents != nil {
+		return cfg.IdentityAgents
+	}
+	return agentcredential.New(cfg.IdentityBroker, cfg.Now)
 }
 
 // openIdentityBrokerSession opens sess's broker session, or confirms the one
@@ -313,81 +305,78 @@ var errIdentityBrokerSessionClosed = errors.New("identity broker session closed"
 // The returned agent must be the one registered: its SPIFFE ID ends in the
 // incarnation, and registering again returns the same ID.
 func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Session, owner identitybroker.Owner, brokerSession identitybroker.Session) error {
-	host, incarnation := string(sess.ID), string(sess.Incarnation())
-	now := s.cfg.Now()
-	s.mu.Lock()
-	held, ok := s.identityAgents[sess.ID]
-	s.mu.Unlock()
-	// A credential held for another incarnation of this session ID belongs to
-	// an agent that no longer exists here: replace it rather than compare.
-	ok = ok && held.incarnation == incarnation
-	if ok && held.brokerSessionID == brokerSession.ID && now.Before(held.renewAt) {
-		return nil
+	host := string(sess.ID)
+	// admit runs only once a registration passed the holder's checks, so it
+	// also marks that one happened.
+	var registered bool
+	var admitErr error
+	admit := func() error {
+		registered = true
+		admitErr = s.admitIdentityAgent(sess.ID)
+		return admitErr
 	}
-	reg, err := s.cfg.IdentityBroker.RegisterAgent(ctx, identitybroker.RegisterAgentRequest{
+	err := s.cfg.IdentityAgents.Ensure(ctx, agentcredential.Key{RootSessionID: host, AgentSessionID: host}, identitybroker.RegisterAgentRequest{
 		SessionID:     brokerSession.ID,
 		HostSessionID: host,
 		Owner:         owner,
-		Incarnation:   incarnation,
+		Incarnation:   string(sess.Incarnation()),
 		Definition:    identityAgentDefinition(sess),
-	})
-	if errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")) {
-		s.logIdentityBroker(ctx, "broker session closed during registration", host, brokerSession.ID)
-		return errIdentityBrokerSessionClosed
-	}
-	if err != nil {
-		return s.identityBrokerFailure(ctx, "register", host, brokerSession.ID, err)
-	}
-	// The in-process broker never returns an expired credential; this guards a
-	// remote broker, whose credential would otherwise be renewed at no point.
-	if !reg.ExpiresAt.After(now) {
+	}, admit)
+	switch {
+	case err == nil:
+		if registered {
+			s.logIdentityBroker(ctx, "registered agent", host, brokerSession.ID)
+		}
+		return nil
+	case admitErr != nil:
+		return admitErr
+	case errors.Is(err, agentcredential.ErrDropped):
+		// Dropped while the broker call was in flight: by a lease loss or Close,
+		// which admit's checks now report, or by the session's broker session
+		// closing, such as a delete in flight. Report the last as retryable,
+		// like an unavailable broker.
+		if err := s.admitIdentityAgent(sess.ID); err != nil {
+			return err
+		}
+		s.logIdentityBroker(ctx, "agent credential dropped during registration", host, brokerSession.ID)
+		return ErrIdentityBrokerUnavailable
+	case errors.Is(err, agentcredential.ErrExpired):
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker returned an expired credential",
 			"session", host, "broker_session", brokerSession.ID)
 		return fmt.Errorf("%w: identity broker returned an expired credential", ErrInternal)
-	}
-	// A mismatch keeps the held credential, so every later run fails the same
-	// way until the session is released. That is deliberate: in this phase the
-	// ID is built from the incarnation, so it changes only if the broker
-	// misbehaves, and dropping the held agent would let the next run accept
-	// the wrong one. While the broker runs in process, a legitimate change,
-	// such as another trust domain or per-agent identities, comes with a
-	// restart, which clears what is held; a remote broker can change without
-	// one. The comparison lasts only while this process holds the credential;
-	// across a restart, release, or lease loss the suffix check is the
-	// guarantee, as the server does not know the broker's trust domain to
-	// predict the full ID. The suffix check is enough only while agent IDs end
-	// in .../shared/inst/<incarnation>; per-agent IDs need a full-ID match that
-	// the broker package owns.
-	if !strings.HasSuffix(reg.Agent.Subject, "/inst/"+incarnation) || (ok && reg.Agent != held.registration.Agent) {
+	case errors.Is(err, agentcredential.ErrOtherAgent):
+		// The holder keeps the held credential, so every later run fails the
+		// same way until the session is released (see the holder's checks).
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker returned another agent",
 			"session", host, "broker_session", brokerSession.ID)
 		return fmt.Errorf("%w: identity broker returned another agent", ErrInternal)
+	case errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")):
+		s.logIdentityBroker(ctx, "broker session closed during registration", host, brokerSession.ID)
+		return errIdentityBrokerSessionClosed
+	default:
+		return s.identityBrokerFailure(ctx, "register", host, brokerSession.ID, err)
 	}
+}
+
+// admitIdentityAgent reports whether a registration for session id may be
+// stored and its run start.
+func (s *Service) admitIdentityAgent(id session.SessionID) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Losing the session's lease takes leaseLossMu, not runEntryMu, so it can
 	// land while the broker call is in flight. Another process now runs the
 	// session's agent, so this one keeps no credential for it and refuses the
 	// run rather than start the agent without one.
-	if _, lost := s.lostOwnership[sess.ID]; lost {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, sess.ID)
+	if _, lost := s.lostOwnership[id]; lost {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	// Close cancels shutdownCtx before it clears identityAgents under s.mu, so
-	// a registration that finishes once shutdown began stores nothing, and one
+	// Close cancels shutdownCtx before it closes the credential holder, so a
+	// registration that finishes once shutdown began stores nothing, and one
 	// that stored earlier is cleared. It refuses the run, as a draining server
 	// does, rather than start the agent without a credential.
 	if s.shutdownCtx.Err() != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %q", ErrUnavailable, sess.ID)
+		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
-	s.identityAgents[sess.ID] = identityAgent{
-		incarnation:     incarnation,
-		brokerSessionID: brokerSession.ID,
-		registration:    reg,
-		renewAt:         now.Add(reg.ExpiresAt.Sub(now) / 2),
-	}
-	s.mu.Unlock()
-	s.logIdentityBroker(ctx, "registered agent", host, brokerSession.ID)
 	return nil
 }
 
@@ -489,7 +478,7 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 	// finished before it, which EndScheduledRun does not exclude, is dropped too.
 	defer func() {
 		s.mu.Lock()
-		delete(s.identityAgents, id)
+		s.cfg.IdentityAgents.Drop(string(id))
 		s.mu.Unlock()
 	}()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)

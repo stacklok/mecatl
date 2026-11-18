@@ -120,7 +120,8 @@ type Service interface {
 	//     CodePermissionDenied, ReasonDenied;
 	//   - the session closed during the call: its closing reason;
 	//   - AS-1's svid_expired, denied, signed_out, upstream_revoked, or
-	//     owner_action_required: that reason;
+	//     owner_action_required: that reason; its actor_token_expired:
+	//     ReasonSVIDExpired; its approval_required: ReasonDenied;
 	//   - a revoked grant, unless the session holds a newer one:
 	//     ReasonSessionClosed, closing the session;
 	//   - consent the gateway requires: CodeFailedPrecondition,

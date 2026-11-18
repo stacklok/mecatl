@@ -60,14 +60,16 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 		}
 	})
 
-	t.Run("resource preview retains its source-line truncation within width", func(t *testing.T) {
+	t.Run("resource preview browses wrapped physical lines within width", func(t *testing.T) {
 		preview := strings.Join([]string{long, long, long, long, long, long, long, long, long, long, long, long, long}, "\n")
-		state := &mcpState{view: mcpResourcePrev, preview: preview, deps: surfaceDeps{theme: th, marks: hk}}
+		state := &mcpState{view: mcpResourcePrev, preview: preview, previewDisplay: connectDisplay(preview), previewLoaded: true, deps: surfaceDeps{theme: th, marks: hk, keys: defaultKeys()}}
 		out, _ := state.Render(width, 20)
 		assertFits(t, "resource preview", out)
+		state.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+		out, _ = state.Render(width, 20)
 		plain := stripANSIstr(out)
-		if !strings.Contains(plain, "+1 more line") || strings.Contains(plain, hk.toolcalls) {
-			t.Fatalf("resource preview should keep a plain truncation count without a dead shortcut: %q", plain)
+		if !strings.Contains(plain, "↓ 0 lines") || strings.Contains(plain, hk.toolcalls) || state.previewViewport.Offset() == 0 {
+			t.Fatalf("resource preview did not browse to the end without a dead shortcut: %q", plain)
 		}
 	})
 }

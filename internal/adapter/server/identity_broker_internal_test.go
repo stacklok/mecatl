@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
@@ -136,27 +137,36 @@ func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, 
 }
 
 func TestACredentialHeldForAnotherIncarnationIsReplaced(t *testing.T) {
-	svc, sess := newRegisteringService(t)
+	broker := &hookedBroker{}
+	svc, sess := newRegisteringService(t, withHookedBroker(broker))
 	// Left from an earlier incarnation of this session ID, as a session
 	// recreated elsewhere would leave it.
-	stale := identityAgent{
-		incarnation:     string(session.NewIncarnationID()),
-		brokerSessionID: "bs_stale",
-		registration:    identitybroker.Registration{Agent: identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/stale"}},
-		renewAt:         time.Now().Add(time.Hour),
+	staleIncarnation := string(session.NewIncarnationID())
+	stale := identitybroker.Registration{
+		Agent:      identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/" + staleIncarnation},
+		Credential: identitybroker.NewToken("stale-credential"),
+		ExpiresAt:  time.Now().Add(time.Hour),
 	}
-	svc.mu.Lock()
-	svc.identityAgents[sess.ID] = stale
-	svc.mu.Unlock()
+	broker.register = func(identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) { return stale, nil }
+	key := agentcredential.Key{RootSessionID: string(sess.ID), AgentSessionID: string(sess.ID)}
+	if err := svc.cfg.IdentityAgents.Ensure(t.Context(), key, identitybroker.RegisterAgentRequest{
+		SessionID: "bs_stale", HostSessionID: string(sess.ID), Incarnation: staleIncarnation,
+	}, func() error { return nil }); err != nil {
+		t.Fatalf("plant the stale credential: %v", err)
+	}
+	broker.register = nil
 	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
 		t.Fatalf("openIdentityBrokerSession with a stale credential held: %v", err)
 	}
-	svc.mu.Lock()
-	got := svc.identityAgents[sess.ID]
-	svc.mu.Unlock()
-	if got.incarnation != string(sess.Incarnation()) || got.registration.Agent == stale.registration.Agent {
-		t.Fatalf("held credential = %+v, want the current incarnation's agent", got)
+	got, _ := heldIdentityAgent(svc, sess.ID)
+	if !strings.HasSuffix(got.Agent.Subject, "/inst/"+string(sess.Incarnation())) || got.Agent == stale.Agent {
+		t.Fatalf("held credential's agent = %q, want the current incarnation's agent", got.Agent.Subject)
 	}
+}
+
+// heldIdentityAgent returns the credential held for session id's main agent.
+func heldIdentityAgent(svc *Service, id session.SessionID) (agentcredential.Credential, bool) {
+	return svc.cfg.IdentityAgents.Held(agentcredential.Key{RootSessionID: string(id), AgentSessionID: string(id)})
 }
 
 func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
@@ -165,9 +175,7 @@ func TestClosingASessionDropsItsHeldCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	held := func() bool {
-		svc.mu.Lock()
-		defer svc.mu.Unlock()
-		_, ok := svc.identityAgents[sess.ID]
+		_, ok := heldIdentityAgent(svc, sess.ID)
 		return ok
 	}
 	if !held() {
@@ -186,9 +194,7 @@ func TestEndingAScheduledRunDropsItsHeldCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.EndScheduledRun(t.Context(), sess)
-	svc.mu.Lock()
-	_, ok := svc.identityAgents[sess.ID]
-	svc.mu.Unlock()
+	_, ok := heldIdentityAgent(svc, sess.ID)
 	if ok {
 		t.Fatal("an ended scheduled run kept its agent's credential")
 	}
@@ -240,12 +246,17 @@ func TestTeamRootRegistrationReportsAStoreFailureAsInternal(t *testing.T) {
 type hookedBroker struct {
 	identitybroker.Service
 	beforeRegister func()
-	stallFind      bool
+	// register, if set, answers RegisterAgent instead of the broker.
+	register  func(identitybroker.RegisterAgentRequest) (identitybroker.Registration, error)
+	stallFind bool
 }
 
 func (b *hookedBroker) RegisterAgent(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
 	if b.beforeRegister != nil {
 		b.beforeRegister()
+	}
+	if b.register != nil {
+		return b.register(req)
 	}
 	return b.Service.RegisterAgent(ctx, req)
 }
@@ -355,11 +366,27 @@ func TestARegistrationFinishingAfterCloseStoresNothing(t *testing.T) {
 	if err := svc.openIdentityBrokerSession(t.Context(), sess); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("registration finishing after Close = %v, want ErrUnavailable", err)
 	}
-	svc.mu.Lock()
-	_, held := svc.identityAgents[sess.ID]
-	svc.mu.Unlock()
+	_, held := heldIdentityAgent(svc, sess.ID)
 	if held {
 		t.Fatal("a registration that finished after Close stored its credential")
+	}
+}
+
+func TestARegistrationDroppedInFlightIsUnavailable(t *testing.T) {
+	diag := &attemptRecordingDiagnostics{}
+	broker := &hookedBroker{}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag }, withHookedBroker(broker))
+	// The session's credentials are dropped while the broker call is in
+	// flight, with no lease loss or Close, as a delete in flight would.
+	broker.beforeRegister = func() { svc.cfg.IdentityAgents.Drop(string(sess.ID)) }
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); !errors.Is(err, ErrIdentityBrokerUnavailable) {
+		t.Fatalf("registration dropped in flight = %v, want ErrIdentityBrokerUnavailable", err)
+	}
+	if _, held := heldIdentityAgent(svc, sess.ID); held {
+		t.Fatal("a registration dropped in flight stored its credential")
+	}
+	if !slices.Contains(diag.entries, "agent credential dropped during registration") {
+		t.Fatalf("the drop was not logged: %q", diag.entries)
 	}
 }
 
@@ -395,9 +422,7 @@ func TestALostLeaseKeepsNoCredential(t *testing.T) {
 	if err := svc.openIdentityBrokerSession(t.Context(), sess); !errors.Is(err, ErrSessionLeasedElsewhere) {
 		t.Fatalf("registration after a lost lease = %v, want ErrSessionLeasedElsewhere", err)
 	}
-	svc.mu.Lock()
-	_, held := svc.identityAgents[sess.ID]
-	svc.mu.Unlock()
+	_, held := heldIdentityAgent(svc, sess.ID)
 	if held {
 		t.Fatal("a session whose lease was lost holds its agent's credential")
 	}
@@ -415,9 +440,7 @@ func TestLosingTheLeaseDropsTheHeldCredential(t *testing.T) {
 	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	svc.mu.Lock()
-	_, held := svc.identityAgents[sess.ID]
-	svc.mu.Unlock()
+	_, held := heldIdentityAgent(svc, sess.ID)
 	if !held {
 		t.Fatal("no credential is held after registration")
 	}
@@ -428,7 +451,7 @@ func TestLosingTheLeaseDropsTheHeldCredential(t *testing.T) {
 	for {
 		svc.mu.Lock()
 		_, lost := svc.lostOwnership[sess.ID]
-		_, held = svc.identityAgents[sess.ID]
+		_, held = heldIdentityAgent(svc, sess.ID)
 		svc.mu.Unlock()
 		if lost {
 			break

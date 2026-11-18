@@ -172,7 +172,14 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 		}
 		return session.NewToolError(in.ID, fmt.Sprintf("mcp call failed: %v", callErr)), nil
 	}
+	return mapCallToolResult(in.ID, res, t.outputSchema, t.spec.Name, t.server.Name()), nil
+}
 
+// mapCallToolResult maps a remote tool's result to the model-facing
+// ToolResult: content blocks, structured content checked against
+// outputSchema (nil skips the check), the output cap, and the block caps.
+// toolName and serverName only name the call in the over-cap error.
+func mapCallToolResult(id session.ToolCallID, res *mcpsdk.CallToolResult, outputSchema json.RawMessage, toolName, serverName string) session.ToolResult {
 	modelStr, blocks := mapContent(res.Content)
 
 	// Structured content: the spec's SHOULD is that a tool returning
@@ -192,7 +199,7 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 			// does NOT validate, so this catches a misbehaving server. A failure
 			// is surfaced as a model-facing NOTE — never a silent drop, never a
 			// hard error (the structured content still rides through as a block).
-			if note := validateStructuredContent(t.outputSchema, res.StructuredContent); note != "" {
+			if note := validateStructuredContent(outputSchema, res.StructuredContent); note != "" {
 				modelStr += "\n" + note
 			}
 		}
@@ -210,8 +217,8 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	// truncate call. Error results (res.IsError) are deliberately NOT
 	// fail-closed: an error payload stays string-only and is truncated as today,
 	// so the model still reads the error text and self-corrects.
-	if !res.IsError && len(modelStr) > toolkit.MaxOutputBytes && isStructuredResult(t.outputSchema, res, res.Content) {
-		return session.NewToolError(in.ID, structuredTooLargeError(t.spec.Name, t.server.Name())), nil
+	if !res.IsError && len(modelStr) > toolkit.MaxOutputBytes && isStructuredResult(outputSchema, res, res.Content) {
+		return session.NewToolError(id, structuredTooLargeError(toolName, serverName))
 	}
 
 	content := toolkit.Truncate(modelStr, toolkit.MaxOutputBytes)
@@ -234,9 +241,9 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 		// Error results stay string-only (devex finding #6): the model reads the
 		// error text directly and self-corrects, and a typed block on an error
 		// result is a v1 scope limit we deliberately keep simple.
-		return session.NewToolError(in.ID, content), nil
+		return session.NewToolError(id, content)
 	}
-	return session.NewToolResultWithParts(in.ID, content, parts), nil
+	return session.NewToolResultWithParts(id, content, parts)
 }
 
 // argsFor decodes the model's raw JSON args into the any value the SDK marshals

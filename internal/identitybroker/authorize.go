@@ -204,7 +204,8 @@ func (t *sessionTable) exchangeFailure(ctx context.Context, s *brokerSession, g 
 // an exchange: a session closed during the redemption ends the call with its
 // closing reason, whatever AS-2 said. Otherwise a lost response is retried, as is an
 // invalid_grant without a reason code; consent_required is the user's to
-// give; anything else, including a 502 or 504, is mapped by redeemError.
+// give; access_denied with actor_denied denies the call, as AS-1's denied
+// does; anything else, including a 502 or 504, is mapped by redeemError.
 func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err error) (rule retryRule, retry, final error) {
 	if closed := t.stillOpen(s); closed != nil {
 		return 0, nil, closed
@@ -217,6 +218,8 @@ func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err 
 	// Shortcut: AS-2's error_uri is dropped (ServerRefusal keeps only the status, code and reason), so no approval link reaches the user; removed by #2735 (the approval link, shown under step (8)'s rule, through an ErrorURI the AS-2 port sets).
 	case isRefusal && !r.transient() && r.Reason == string(ReasonConsentRequired):
 		return 0, nil, ReasonError(ReasonConsentRequired, "the gateway's authorization server requires the user's consent")
+	case isRefusal && !r.transient() && r.Code == "access_denied" && r.Reason == "actor_denied":
+		return 0, nil, ReasonError(ReasonDenied, "the gateway's authorization server refused the acting agent")
 	case isRefusal && !r.transient() && r.Code == "invalid_grant" && (r.Reason == "" || r.Reason == unknownCode):
 		// AS-2 sends no reason codes until stacklok/toolhive#7030, so every
 		// invalid_grant takes this path (the #2533 AS-2 shortcut).
@@ -350,7 +353,11 @@ func revoked(err error) bool {
 // idjagError maps a failed ID-JAG exchange, other than a lost response or a
 // revocation, to the Service error the design's error reasons assign. Its
 // detail is a ServerRefusal's text, which holds only known codes, or fixed
-// text.
+// text. AS-1's actor_token_expired (svid_expired before ToolHive v0.66.0) maps
+// to ReasonSVIDExpired, and approval_required, for which the broker has no
+// approval flow, to ReasonDenied. AS-1's issuance refusals
+// (upstream_subject_missing, sub_id_missing, dpop_not_supported, and
+// bound_elapsed) are CodeInternal, named in the detail.
 func idjagError(err error) error {
 	var r *ServerRefusal
 	isRefusal := errors.As(err, &r)
@@ -362,6 +369,10 @@ func idjagError(err error) error {
 			return NewError(CodeUnavailable, "", r.Error())
 		}
 		return NewError(CodeUnavailable, "", "no response from the authorization server")
+	case isRefusal && r.Reason == "actor_token_expired":
+		return ReasonError(ReasonSVIDExpired, "the authorization server refused the ID-JAG exchange")
+	case isRefusal && r.Reason == "approval_required":
+		return ReasonError(ReasonDenied, "the authorization server refused the ID-JAG exchange")
 	case isRefusal && (r.Reason == string(ReasonSVIDExpired) || r.Reason == string(ReasonDenied) || r.Reason == string(ReasonSignedOut)):
 		return ReasonError(Reason(r.Reason), "the authorization server refused the ID-JAG exchange")
 	case isRefusal && (r.Reason == string(ReasonUpstreamRevoked) || r.Reason == string(ReasonOwnerActionRequired)):

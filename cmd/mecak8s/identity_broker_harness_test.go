@@ -1,26 +1,34 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
+	"github.com/stacklok/mecatl/internal/adapter/mockscript"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
@@ -385,55 +393,28 @@ const gatewaySettings = `mcp:
 // endpoint; a second call gets another token; and once Alice deletes the
 // session, calls are refused with its closing reason.
 //
-// Stand-ins and what retires them:
+// Stand-ins and what retires them, here and in
+// TestIdentityBrokerSessionToolCallThroughGateway:
 //
 //	stand-in                                       retired by
 //	harness AS-1 issuing per-call ID-JAGs, and     #2654, after stacklok/toolhive#6898
 //	  validating actor tokens through                (PR stacklok/toolhive#7130) and
 //	  IdentityBrokerAS1.UseCredentialVerifier        stacklok/toolhive#6899
-//	test-only AS-2 trust and gateway seam          #2533
+//	test-only AS-2 trust and gateway seam          #2533 and #2538
 //	  (IdentityBrokerAS2Trust,
 //	  IdentityBrokerGatewayServers)
+//	the embedded vMCP as the gateway, reached      #2812
+//	  in process
 //	no gateway stand-in: the vMCP is real, but     #2537
 //	  it finds no provider credential for the
 //	  caller, so initialize succeeds without
-//	  the backend
+//	  the backend and a call does not reach it
+//	in-memory send-once record                     #2730
 //
 // It is not parallel: the protected route's client secret is read from an
 // environment variable.
 func TestIdentityBrokerGatewayCallAgainstOfflineHarness(t *testing.T) {
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := identityharness.New(t, identityharness.Options{
-		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
-	})
-	h.AS1.AddIDJAGTarget(gatewayAS2Issuer, gatewayResource)
-	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
-	settings := filepath.Join(t.TempDir(), "settings.yaml")
-	if err := os.WriteFile(settings, []byte(gatewaySettings), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	caFile := h.WriteCACert(t, t.TempDir())
-	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
-		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: caFile, clientIDs: identityharness.DefaultClientID,
-	}, &app.IdentityBrokerAS1{
-		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
-		UseCredentialVerifier: func(v identitybroker.CredentialVerifier) {
-			h.AS1.SetActorValidator(as1servertest.HarnessActorValidator(v))
-		},
-	}, []string{"--permission-config", settings}, func(cfg *app.Config) {
-		cfg.IdentityBrokerGatewayServers = []string{"calendar"}
-		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: caFile,
-			Subjects: []string{h.AS1.Subject(identityharness.Alice)},
-		})
-	})
+	h, api, built := serveGatewayIdentityBroker(t, "", nil, nil)
 
 	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
 	if err != nil {
@@ -537,6 +518,337 @@ func TestIdentityBrokerGatewayCallAgainstOfflineHarness(t *testing.T) {
 	}
 }
 
+// serveGatewayIdentityBroker serves mecak8s, offline, with the identity
+// broker on at the harness's AS-1, the calendar route of gatewaySettings plus
+// extraSettings, and a gateway entry routing calendar, whose AS-2 trusts the
+// harness's AS-1 for Alice. extraArgs are further flags, and edit, when set,
+// changes the application configuration after that.
+func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []string, edit func(*app.Config)) (*identityharness.Harness, string, *app.Built) {
+	t.Helper()
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := identityharness.New(t, identityharness.Options{
+		BrokerKeys: []identityharness.BrokerKey{{KeyID: signer.JWKS().Keys[0].KeyID, Public: &clientKey.PublicKey}},
+	})
+	h.AS1.AddIDJAGTarget(gatewayAS2Issuer, gatewayResource)
+	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte(gatewaySettings+extraSettings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caFile := h.WriteCACert(t, t.TempDir())
+	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
+		issuer: h.AS1.Issuer(), audience: h.AS1.Audience(), caFile: caFile, clientIDs: identityharness.DefaultClientID,
+	}, &app.IdentityBrokerAS1{
+		Issuer: h.AS1.Issuer(), TokenEndpoint: h.AS1.TokenEndpoint(), HTTPClient: h.HTTPClient(), ClientKey: clientKey,
+		UseCredentialVerifier: func(v identitybroker.CredentialVerifier) {
+			h.AS1.SetActorValidator(as1servertest.HarnessActorValidator(v))
+		},
+	}, append([]string{"--permission-config", settings}, extraArgs...), func(cfg *app.Config) {
+		cfg.IdentityBrokerGatewayServers = []string{"calendar"}
+		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
+			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: caFile,
+			Subjects: []string{h.AS1.Subject(identityharness.Alice)},
+		})
+		if edit != nil {
+			edit(cfg)
+		}
+	})
+	return h, api, built
+}
+
+// gatewayToolScript is a mock model whose first and third turns call the
+// gateway route's echo tool, each with its own call ID.
+const gatewayToolScript = `{"turns":[
+  {"tool_calls":[{"id":"call-open","name":"mcp__calendar__echo","args":{"a":1}}]},
+  {"text":"done"},
+  {"tool_calls":[{"id":"call-closed","name":"mcp__calendar__echo","args":{"a":1}}]},
+  {"text":"done"}
+]}`
+
+// TestIdentityBrokerSessionToolCallThroughGateway runs a real session's tool
+// call through mecak8s's startup to the gateway, offline: the model calls the
+// gateway route's tool, the user approves it, and the MCP broker has the
+// identity broker authorize the call for the session's main agent, getting an
+// ID-JAG at AS-1 for the call's operation and a gateway token at AS-2, then
+// sends it to the embedded vMCP, which accepts the token. When the broker
+// session closes while a later call waits for approval, the approved call is
+// refused with the closing reason, without an ID-JAG and without reopening
+// the broker session. Approval resolves the live run without passing run
+// entry, which would open a new broker session. Its stand-ins are listed on
+// TestIdentityBrokerGatewayCallAgainstOfflineHarness.
+func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "script.json")
+	if err := os.WriteFile(script, []byte(gatewayToolScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The vMCP ends a session in which no backend answers, and the calendar
+	// backend never does without a provider credential, so an anonymous
+	// backend, offline, keeps the call's vMCP session open.
+	notes := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "v1"}, nil)
+	mcpsdk.AddTool(notes, &mcpsdk.Tool{Name: "ping"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{}, nil, nil
+	})
+	notesServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return notes }, nil))
+	t.Cleanup(notesServer.Close)
+	diag := &gatewayCallDiagnostics{}
+	// Every call of the echo tool asks, so the test acts between the model's
+	// call and its dispatch.
+	extraSettings := "    - name: notes\n      url: " + notesServer.URL + "\n      auth: {mode: none}\n" +
+		"permissions:\n  ask: [mcp__calendar__echo]\n"
+	h, api, built := serveGatewayIdentityBroker(t, extraSettings,
+		[]string{"--mock-script", script}, func(cfg *app.Config) { cfg.Diagnostics = diag })
+
+	alice, err := h.SignIn(t.Context(), identityharness.SignInRequest{User: identityharness.Alice})
+	if err != nil {
+		t.Fatalf("Alice signs in: %v", err)
+	}
+	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", alice.AccessToken, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("Alice creates a session: status %d: %s", status, body)
+	}
+	var created struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
+		t.Fatalf("create session response %s: %v", body, err)
+	}
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice, GrantType: session.GrantTypeUser})
+	toolResult := func(call session.ToolCallID) session.ToolResult {
+		t.Helper()
+		sess, err := built.Service.GetSession(owner, session.SessionID(created.ID))
+		if err != nil {
+			t.Fatalf("GetSession: %v", err)
+		}
+		for _, m := range sess.Conversation.Messages {
+			if m.ToolResult != nil && m.ToolResult.CallID == call {
+				return *m.ToolResult
+			}
+		}
+		t.Fatalf("the transcript has no result for %s", call)
+		return session.ToolResult{}
+	}
+	// operations is each gateway call's operation, in call order, as its
+	// gateway_call diagnostic names it.
+	operations := map[session.ToolCallID]string{}
+	nextOperation := func(call session.ToolCallID) string {
+		t.Helper()
+		ops := diag.operations(created.ID)
+		if len(ops) != len(operations)+1 {
+			t.Fatalf("gateway call diagnostics name operations %v, want one more than %v", ops, operations)
+		}
+		operations[call] = ops[len(ops)-1]
+		return operations[call]
+	}
+	operation := func(call session.ToolCallID) string { return operations[call] }
+
+	// The run's entry registers the main agent; the approved call goes
+	// through the gateway.
+	if asks := promptApprovingAsks(t, api, alice.AccessToken, created.ID, "call the calendar", nil); asks != 1 {
+		t.Fatalf("the run asked %d times, want once for the tool call", asks)
+	}
+	nextOperation("call-open")
+	opened, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID})
+	if err != nil || !ok || !opened.HoldsRefreshToken {
+		t.Fatalf("Alice's broker session = %+v, %v, %v; want one holding a refresh token", opened, ok, err)
+	}
+	issued := h.AS1.IDJAGsIssued()
+	if len(issued) != 1 || issued[0].Operation != operation("call-open") || !strings.HasPrefix(issued[0].AgentID, "ag_") ||
+		issued[0].Audience != gatewayAS2Issuer || issued[0].Resource != gatewayResource {
+		t.Fatalf("AS-1 issued ID-JAGs %+v, want one for the call's operation %s for an ag_ agent addressed to AS-2 for the vMCP", issued, operation("call-open"))
+	}
+	// The broker allowed the call: only an allowed decision issues an
+	// attempt, and the call completed at the vMCP with it.
+	if got := diag.call(operation("call-open")); got["code"] != "completed" || got["outcome"] != "completed" || got["attempts"] == "" || strings.Contains(got["attempts"], ",") {
+		t.Fatalf("gateway call diagnostics %v; want one attempt the vMCP completed", got)
+	}
+	// The vMCP accepted the token. Without a provider credential it does not
+	// reach the backend, so its answer is whatever it returns then; only a
+	// refusal or a rejected token would be the gateway path failing.
+	if res := toolResult("call-open"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
+		t.Fatalf("the call's result is a refusal: %q", res.Content)
+	}
+
+	// The broker session closes while the next call waits for approval.
+	closeBroker := func() {
+		if err := built.IdentityBroker.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: opened.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			t.Errorf("close the broker session: %v", err)
+		}
+	}
+	if asks := promptApprovingAsks(t, api, alice.AccessToken, created.ID, "call it again", closeBroker); asks != 1 {
+		t.Fatalf("the second run asked %d times, want once for the tool call", asks)
+	}
+	if nextOperation("call-closed") == operation("call-open") {
+		t.Fatal("both calls name the same operation")
+	}
+	const sessionClosed = "MCP gateway call refused: the session's authority is closed and is not reopened for this call (code session_closed)."
+	if res := toolResult("call-closed"); !res.IsError || res.Content != sessionClosed {
+		t.Fatalf("the call after the close = %+v, want the session_closed refusal", res)
+	}
+	if got := diag.call(operation("call-closed")); got["code"] != "session_closed" || got["attempts"] != "" {
+		t.Fatalf("gateway call diagnostics %v; want session_closed with no attempt", got)
+	}
+	if n := len(h.AS1.IDJAGsIssued()); n != 1 {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want none after the session closed", n)
+	}
+	if reopened, ok, err := built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: created.ID}); err != nil || ok {
+		t.Fatalf("after the refused call, broker session = %+v, %v, %v; want none: the call must not reopen it", reopened, ok, err)
+	}
+
+	// No token reaches the transcript, the events, or the gateway call
+	// diagnostics. The gateway token AS-2 issued for the call is a JWT that
+	// never leaves the process, so the scan refuses every JWT there.
+	sess, err := built.Service.GetSession(owner, session.SessionID(created.ID))
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "%+v %+v\n", sess, sess.Conversation.Messages)
+	if raw, err := json.Marshal(sess); err == nil {
+		out.Write(raw)
+	}
+	stream, err := built.Service.StreamSessionEvents(owner, session.SessionID(created.ID))
+	if err != nil {
+		t.Fatalf("StreamSessionEvents: %v", err)
+	}
+	events := 0
+	for ev, err := range stream {
+		events++
+		fmt.Fprintf(&out, "%+v %v\n", ev, err)
+	}
+	if events == 0 {
+		t.Fatal("the session has no events")
+	}
+	fmt.Fprintf(&out, "%v\n", diag.operations(created.ID))
+	for _, call := range []session.ToolCallID{"call-open", "call-closed"} {
+		fmt.Fprintf(&out, "%v\n", diag.call(operation(call)))
+	}
+	jwtShaped := regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+	// Positive control: a JWT planted in the scanned text is found.
+	if !jwtShaped.MatchString(out.String() + alice.AccessToken) {
+		t.Fatal("the scan missed a planted JWT")
+	}
+	if jwtShaped.MatchString(out.String()) || strings.Contains(out.String(), alice.AccessToken) {
+		t.Fatal("the transcript, the events, or the gateway call diagnostics carry a token")
+	}
+}
+
+// promptApprovingAsks prompts the session over the streaming prompt endpoint
+// with token and allows each permission ask once, after beforeApprove when
+// set, until the run ends. It returns the number of asks.
+func promptApprovingAsks(t *testing.T, api, token, id, text string, beforeApprove func()) int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, api+"/v1/sessions/"+id+"/prompt", strings.NewReader(`{"text":`+strconv.Quote(text)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("prompt: status %d: %s", resp.StatusCode, raw)
+	}
+	asks := 0
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var ev struct {
+			Type  string `json:"type"`
+			RunID string `json:"run_id"`
+			Ask   struct {
+				AskID string `json:"ask_id"`
+			} `json:"ask"`
+		}
+		if json.Unmarshal([]byte(data), &ev) != nil || ev.Type != string(session.EvPermissionAsk) {
+			continue
+		}
+		asks++
+		if beforeApprove != nil {
+			beforeApprove()
+		}
+		resolve, err := json.Marshal(map[string]string{"expected_run_id": ev.RunID, "ask_id": ev.Ask.AskID, "verdict": session.VerdictStringAllowOnce})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status, body := apiCall(t, http.MethodPost, api+"/v1/sessions/"+id+"/controls/resolve-ask", token, string(resolve)); status != http.StatusOK {
+			t.Fatalf("resolve the ask: status %d: %s", status, body)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read the prompt's events: %v", err)
+	}
+	return asks
+}
+
+// gatewayCallDiagnostics keeps the MCP broker's gateway call diagnostics.
+type gatewayCallDiagnostics struct {
+	mu    sync.Mutex
+	calls []map[string]string
+}
+
+func (d *gatewayCallDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	if msg != "mcp broker gateway call" {
+		return
+	}
+	fields := make(map[string]string, len(args)/2)
+	for i := 0; i+1 < len(args); i += 2 {
+		fields[fmt.Sprint(args[i])] = fmt.Sprint(args[i+1])
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls = append(d.calls, fields)
+}
+
+func (d *gatewayCallDiagnostics) With(...any) port.Diagnostics { return d }
+
+// call returns the fields of the one gateway call logged for operation, or
+// nil unless exactly one was.
+func (d *gatewayCallDiagnostics) call(operation string) map[string]string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var found map[string]string
+	for _, c := range d.calls {
+		if c["operation"] == operation {
+			if found != nil {
+				return nil
+			}
+			found = c
+		}
+	}
+	return found
+}
+
+// operations is the operation of each gateway call logged for sessionID, in
+// the order they were logged.
+func (d *gatewayCallDiagnostics) operations(sessionID string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var ops []string
+	for _, c := range d.calls {
+		if c["session"] == sessionID {
+			ops = append(ops, c["operation"])
+		}
+	}
+	return ops
+}
+
 // vmcpInitialize is the status of an MCP initialize at the vMCP mecak8s
 // serves under api, with token, when set, as its Bearer token; a 200 must
 // carry a JSON-RPC result. A session it opens is ended, so the vMCP lets its
@@ -611,6 +923,12 @@ func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.
 	}, extraArgs...))
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.mockScript != "" {
+		// As run loads it.
+		if cfg.mockProvider, err = mockscript.Load(cfg.mockScript); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cfg.diagnostics = port.NopDiagnostics{}
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})

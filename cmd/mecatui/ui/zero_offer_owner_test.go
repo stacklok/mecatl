@@ -190,9 +190,9 @@ func TestZeroOfferMCPKeysBeforeFirstView(t *testing.T) {
 			t.Fatal("hidden resource preview inserted text")
 		}
 		m = resize(m, 100, 30)
-		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		m = feedMCPInsertion(t, mm.(Model), cmd)
-		if !strings.Contains(m.prompt.Value(), "the resource body") {
+		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = mm.(Model)
+		if m.modal != nil || !strings.Contains(m.prompt.Value(), "the resource body") {
 			t.Fatal("restored resource preview did not insert text")
 		}
 	})
@@ -201,7 +201,7 @@ func TestZeroOfferMCPKeysBeforeFirstView(t *testing.T) {
 		m := newMCPModel(t, aztec(), samplePromptMCP())
 		mm, cmd := m.runMCPPrompts()
 		m = feedCmd(t, mm.(Model), cmd)
-		mcpActive(m).prCursor = 1 // summarize has no required arguments.
+		mcpActive(m).prList.SetCursor(1) // summarize has no required arguments.
 		m = resize(m, 0, 0)
 		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		m = mm.(Model)

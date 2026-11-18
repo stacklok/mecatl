@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,6 +85,38 @@ func visitDependencies(root *packages.Package, visit func(*packages.Package)) {
 		visit(pkg)
 	}
 	walk(root)
+}
+
+// ownerCache shares owner overlays between loads of one render with equal targets.
+type ownerCache map[string]cachedOwners
+
+type cachedOwners struct {
+	owners  map[string]*ownerDeclaration
+	overlay map[string][]byte
+}
+
+func (c ownerCache) overlays(
+	ctx context.Context,
+	targets []LoadConfig,
+	excluded map[string][]byte,
+) (map[string]*ownerDeclaration, map[string][]byte, error) {
+	key := fmt.Sprintf("%q", targets)
+	cached, ok := c[key]
+	if !ok {
+		owners, overlay, err := ownerOverlays(ctx, targets, excluded)
+		if err != nil {
+			return nil, nil, err
+		}
+		cached = cachedOwners{owners, overlay}
+		c[key] = cached
+	}
+	// loadPrerequisites replaces Wire and Names, so each load gets its own declarations.
+	owners := make(map[string]*ownerDeclaration, len(cached.owners))
+	for pkgPath, owner := range cached.owners {
+		declaration := *owner
+		owners[pkgPath] = &declaration
+	}
+	return owners, maps.Clone(cached.overlay), nil
 }
 
 // ownerOverlays replaces every declared artifact with load-only signatures before

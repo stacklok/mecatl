@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func (m Model) runMCP() (tea.Model, tea.Cmd)          { return m.openMCP(mcpPanel) }
@@ -75,9 +77,13 @@ func (m Model) openMCP(v mcpView) (tea.Model, tea.Cmd) {
 			client.ListToolHiveGroupsCmd(m.deps.Ctx, m.deps.MCP),
 		)
 	case mcpResources:
-		return m, client.ListMcpResourcesCmd(m.deps.Ctx, m.deps.MCP, "")
+		return m, state.pickerRequest("list resources", func(ctx context.Context) tea.Cmd {
+			return client.ListMcpResourcesCmd(ctx, state.mcp, "")
+		})
 	case mcpPrompts:
-		return m, client.ListMcpPromptsCmd(m.deps.Ctx, m.deps.MCP, "")
+		return m, state.pickerRequest("list prompts", func(ctx context.Context) tea.Cmd {
+			return client.ListMcpPromptsCmd(ctx, state.mcp, "")
+		})
 	default:
 		m.closeModal()
 		_ = m.prompt.Focus()
@@ -102,6 +108,7 @@ type mcpState struct {
 	view mcpView
 
 	zeroOffer bool // true after Render receives no usable surface geometry
+	compact   bool // picker body or required controls do not fit
 
 	loading bool   // an RPC is in flight (panel/list/read/get)
 	errMsg  string // last classified MCP error, rendered distinctly
@@ -136,20 +143,83 @@ type mcpState struct {
 	refreshed  bool
 
 	// Resource picker.
-	resources []client.MCPResource
-	resCursor int
-	preview   string // the read resource text shown in mcpResourcePrev
+	resources       []client.MCPResource
+	resList         bounded.List
+	preview         string             // exact insertion payload, separate from display
+	previewResource client.MCPResource // captured when the read starts
+	previewLoaded   bool
+	previewViewport bounded.Viewport
+	previewDisplay  string
+	previewRows     []string
+	previewWidth    int
 
 	// Prompt picker.
-	prompts   []client.MCPPrompt
-	prCursor  int
-	argPrompt client.MCPPrompt // the prompt awaiting argument entry
-	argFields []argField       // one input per required argument
-	argCursor int              // focused arg field
+	prompts            []client.MCPPrompt
+	prList             bounded.List
+	argPrompt          client.MCPPrompt // the prompt awaiting argument entry
+	argFields          []argField       // one input per required argument
+	argCursor          int              // fields, then Cancel and Submit
+	argOffset          int              // physical row offset in the field stack
+	argFormGeneration  uint64
+	argFocusGeneration uint64
 
 	deps surfaceDeps // the shared ambient base (incl. ctx), set once at Open
 	mcp  client.MCP  // the surface-specific RPC client, set once at Open
 
+	pickerGeneration uint64
+	pickerOp         string
+	pickerCancel     context.CancelFunc
+	intent           surfaceIntent
+
+	// view cache: controls and regions from the latest Render offer.
+	hitControls map[HitID]int
+	regions     []ClickableRegion
+}
+
+// mcpPickerResult wraps existing client messages without changing the wire API.
+// Its provenance is captured when the command is built, never on completion.
+type mcpPickerResult struct {
+	owner      *mcpState
+	generation uint64
+	op         string
+	view       mcpView
+	result     tea.Msg
+}
+
+type promptInsertIntent struct{ text, label string }
+
+func (promptInsertIntent) isSurfaceIntent() {}
+
+func (s *mcpState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
+func (s *mcpState) cancelPickerRequest() {
+	if s.pickerCancel != nil {
+		s.pickerCancel()
+		s.pickerCancel = nil
+	}
+	s.pickerGeneration++
+	s.pickerOp = ""
+	s.loading = false
+}
+
+func (s *mcpState) pickerRequest(op string, build func(context.Context) tea.Cmd) tea.Cmd {
+	s.cancelPickerRequest()
+	ctx, cancel := context.WithCancel(s.deps.ctx)
+	s.pickerCancel = cancel
+	s.loading = true
+	s.errMsg = ""
+	s.pickerOp = op
+	receipt := mcpPickerResult{owner: s, generation: s.pickerGeneration, op: op, view: s.view}
+	cmd := build(ctx)
+	return func() tea.Msg {
+		result := receipt
+		result.result = cmd()
+		return result
+	}
 }
 
 // mcpActive returns the open MCP modal state, if any.
@@ -199,25 +269,35 @@ type argField struct {
 
 // Render returns the MCP surface body; the parent centers it.
 func (s *mcpState) Render(width, height int) (string, []ClickableRegion) {
+	s.hitControls = make(map[HitID]int)
+	s.regions = nil
+	wasCompact := s.compact
+	defer func() {
+		if s.view == mcpPromptArgs && s.compact && !wasCompact {
+			s.argFocusGeneration++
+		}
+	}()
 	if width <= 0 || height <= 0 {
 		s.zeroOffer = true
+		s.compact = true
 		return "", nil
 	}
 	s.zeroOffer = false
+	s.compact = false
 	th := s.deps.theme
 	caps := s.deps.caps
 	hk := s.deps.marks
 	switch s.view {
 	case mcpPanel:
 		return renderMCPPanel(th, *s, caps, hk, width), nil
-	case mcpResources:
-		return renderResourceList(th, *s, caps, hk, width), nil
+	case mcpResources, mcpPrompts:
+		body := s.renderPickerList(width, height)
+		return body, s.regions
 	case mcpResourcePrev:
-		return renderResourcePreview(th, *s, hk, width), nil
-	case mcpPrompts:
-		return renderPromptList(th, *s, caps, hk, width), nil
+		return s.renderResourcePreview(width, height), nil
 	case mcpPromptArgs:
-		return renderPromptArgs(th, *s, hk), nil
+		body := s.renderPromptArgs(width, height)
+		return body, s.regions
 	default:
 		return "", nil
 	}
@@ -228,10 +308,10 @@ func (s *mcpState) Render(width, height int) (string, []ClickableRegion) {
 // first, and closes the panel/list at the top level (closed=true). Every key is
 // handled=true (the modal owns the keyboard). Key bindings read from s.deps.keys.
 func (s *mcpState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
-	if s.zeroOffer {
-		if key.Matches(msg, s.deps.keys.Close) {
-			return nil, true, true
-		}
+	if s.view != mcpPanel && s.loading && !key.Matches(msg, s.deps.keys.Close) {
+		return nil, true, false
+	}
+	if (s.zeroOffer || s.compact) && !key.Matches(msg, s.deps.keys.Close) {
 		return nil, true, false
 	}
 	switch s.view {
@@ -262,7 +342,7 @@ func (s *mcpState) handlePanelKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled boo
 		msg := mcpWorkspaceEnrollmentActionMsg{action: connectAction, source: s, sessionID: s.sessionID, gen: s.setup.gen}
 		return func() tea.Msg { return msg }, true, false
 	case msg.String() == "x" && s.brokerMode && s.setup.pending && !s.setup.busy:
-		msg := mcpWorkspaceEnrollmentActionMsg{action: "cancel", source: s, sessionID: s.sessionID, gen: s.setup.gen}
+		msg := mcpWorkspaceEnrollmentActionMsg{action: mcpPickerActionCancel, source: s, sessionID: s.sessionID, gen: s.setup.gen}
 		return func() tea.Msg { return msg }, true, false
 	}
 	return nil, true, false
@@ -299,48 +379,34 @@ func (s *mcpState) handleResourceKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled 
 	if s.view == mcpResourcePrev {
 		switch {
 		case key.Matches(msg, s.deps.keys.Close):
+			s.cancelPickerRequest()
 			s.view = mcpResources
 			s.preview = ""
 			return nil, true, false
-		case key.Matches(msg, s.deps.keys.Choose):
-			// Insert the preview into the prompt input — a Model-side mutation the
-			// surface cannot perform. Snapshot it into the insertion marker cmd;
-			// the Model's updateMCPMsg (HandleMsg passes it through handled=false)
-			// performs the insert and nils the modal.
-			return func() tea.Msg { return mcpInsertResourceMsg{preview: s.preview} }, true, false
+		case key.Matches(msg, s.deps.keys.Choose) && s.previewLoaded:
+			s.intent = promptInsertIntent{text: s.preview, label: "loaded resource"}
+			return nil, true, false
+		}
+		if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
+			s.previewViewport.Move(move, len(s.previewRows))
 		}
 		return nil, true, false
 	}
-	switch {
-	case key.Matches(msg, s.deps.keys.Close):
+	if key.Matches(msg, s.deps.keys.Close) {
 		return nil, true, true
-	case key.Matches(msg, s.deps.keys.Up):
-		if s.resCursor > 0 {
-			s.resCursor--
-		}
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Down):
-		if s.resCursor < len(s.resources)-1 {
-			s.resCursor++
-		}
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Choose):
-		if s.resCursor >= len(s.resources) {
-			return nil, true, false
-		}
-		r := s.resources[s.resCursor]
-		s.loading = true
-		s.errMsg = ""
-		return client.ReadMcpResourceCmd(s.deps.ctx, s.mcp, r.Server, r.URI), true, false
+	}
+	if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
+		s.resList.Move(move)
+	} else if key.Matches(msg, s.deps.keys.Choose) && len(s.resources) > 0 {
+		r := s.resources[s.resList.Cursor()]
+		s.previewResource = r
+		s.previewLoaded = false
+		return s.pickerRequest("read resource", func(ctx context.Context) tea.Cmd {
+			return client.ReadMcpResourceCmd(ctx, s.mcp, r.Server, r.URI)
+		}), true, false
 	}
 	return nil, true, false
 }
-
-// mcpInsertResourceMsg is the resource-preview insertion marker: it carries the
-// read resource's preview text so the Model's updateMCPMsg can drop it into the
-// prompt input after the surface closes (the preview lives on the surface, so it
-// is snapshotted into the marker at key time).
-type mcpInsertResourceMsg struct{ preview string }
 
 // mcpWorkspaceEnrollmentActionMsg asks the Model to use its existing
 // whole-bundle enrollment controls from the broker inventory.
@@ -354,24 +420,13 @@ type mcpWorkspaceEnrollmentActionMsg struct {
 // the selected prompt has required args, it transitions to arg entry; otherwise
 // it gets the prompt straight away. esc closes.
 func (s *mcpState) handlePromptListKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Close):
+	if key.Matches(msg, s.deps.keys.Close) {
 		return nil, true, true
-	case key.Matches(msg, s.deps.keys.Up):
-		if s.prCursor > 0 {
-			s.prCursor--
-		}
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Down):
-		if s.prCursor < len(s.prompts)-1 {
-			s.prCursor++
-		}
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Choose):
-		if s.prCursor >= len(s.prompts) {
-			return nil, true, false
-		}
-		return s.selectPrompt(s.prompts[s.prCursor]), true, false
+	}
+	if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
+		s.prList.Move(move)
+	} else if key.Matches(msg, s.deps.keys.Choose) && len(s.prompts) > 0 {
+		return s.selectPrompt(s.prompts[s.prList.Cursor()]), true, false
 	}
 	return nil, true, false
 }
@@ -385,67 +440,22 @@ func (s *mcpState) selectPrompt(p client.MCPPrompt) tea.Cmd {
 			continue
 		}
 		ti := textinput.New()
-		ti.Placeholder = a.Name
+		ti.Prompt = ""
+		ti.Placeholder = "required value"
 		fields = append(fields, argField{name: a.Name, input: ti})
 	}
 	if len(fields) == 0 {
-		s.loading = true
-		s.errMsg = ""
-		return client.GetMcpPromptCmd(s.deps.ctx, s.mcp, p.Server, p.Name, nil)
+		return s.pickerRequest("get prompt", func(ctx context.Context) tea.Cmd {
+			return client.GetMcpPromptCmd(ctx, s.mcp, p.Server, p.Name, nil)
+		})
 	}
-	fields[0].input.Focus()
+	s.cancelPickerRequest()
 	s.view = mcpPromptArgs
 	s.argPrompt = p
 	s.argFields = fields
-	s.argCursor = 0
-	return textinput.Blink
-}
-
-// handlePromptArgsKey drives the required-arg entry: up/down move between fields,
-// enter on the last field submits GetMcpPrompt with the collected args, esc steps
-// back to the prompt list (handled, NOT closed — it is a sub-view, not the top
-// level). Other keys feed the focused input.
-func (s *mcpState) handlePromptArgsKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Close):
-		s.view = mcpPrompts
-		s.argFields = nil
-		return nil, true, false
-	case msg.String() == keyMenuUp, msg.String() == "shift+tab":
-		s.focusArg(s.argCursor - 1)
-		return nil, true, false
-	case msg.String() == keyMenuDown, msg.String() == "tab":
-		s.focusArg(s.argCursor + 1)
-		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Choose):
-		// enter on any field but the last advances; on the last, submits.
-		if s.argCursor < len(s.argFields)-1 {
-			s.focusArg(s.argCursor + 1)
-			return nil, true, false
-		}
-		return s.submitPromptArgs(), true, false
-	}
-	var inputCmd tea.Cmd
-	s.argFields[s.argCursor].input, inputCmd = s.argFields[s.argCursor].input.Update(msg)
-	return inputCmd, true, false
-}
-
-// focusArg moves focus to field i (clamped), blurring the rest.
-func (s *mcpState) focusArg(i int) {
-	if i < 0 {
-		i = 0
-	}
-	if i > len(s.argFields)-1 {
-		i = len(s.argFields) - 1
-	}
-	for j := range s.argFields {
-		if j == i {
-			s.argFields[j].input.Focus()
-		} else {
-			s.argFields[j].input.Blur()
-		}
-	}
-	s.argCursor = i
+	s.argOffset = 0
+	s.argFormGeneration++
+	return s.focusArg(0)
 }
 
 // submitPromptArgs validates the entered values and fires GetMcpPrompt. Every
@@ -454,6 +464,9 @@ func (s *mcpState) focusArg(i int) {
 // (errCls=MCPErrInput), keep the form open, and focus the first empty field —
 // without making the RPC round-trip.
 func (s *mcpState) submitPromptArgs() tea.Cmd {
+	if s.loading || s.compact || s.zeroOffer {
+		return nil
+	}
 	args := make(map[string]string, len(s.argFields))
 	firstEmpty := -1
 	for i, f := range s.argFields {
@@ -466,28 +479,95 @@ func (s *mcpState) submitPromptArgs() tea.Cmd {
 	if firstEmpty >= 0 {
 		s.errCls = client.MCPErrInput
 		s.errMsg = "required argument \"" + s.argFields[firstEmpty].name + "\" is empty"
-		s.focusArg(firstEmpty)
-		return nil
+		return s.focusArg(firstEmpty)
 	}
+	s.argFocusGeneration++
 	p := s.argPrompt
-	s.loading = true
-	s.errMsg = ""
-	return client.GetMcpPromptCmd(s.deps.ctx, s.mcp, p.Server, p.Name, args)
+	return s.pickerRequest("get prompt", func(ctx context.Context) tea.Cmd {
+		return client.GetMcpPromptCmd(ctx, s.mcp, p.Server, p.Name, args)
+	})
 }
 
-// HandleWheel consumes the wheel while the MCP modal is open: the modal captures
-// input and has no wheel-scrollable pane of its own (the lists are cursor-driven,
-// key-driven), so it returns handled=true (default-consume, mirroring soul).
-func (*mcpState) HandleWheel(tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
+// HandleWheel browses only the visible picker region, never changing selection.
+func (s *mcpState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled bool) {
+	if !s.compact && !s.zeroOffer && !s.loading {
+		if move, ok := boundedWheelMove(msg); ok {
+			switch s.view {
+			case mcpResources:
+				s.resList.Scroll(move)
+			case mcpPrompts:
+				s.prList.Scroll(move)
+			case mcpResourcePrev:
+				s.previewViewport.Move(move, len(s.previewRows))
+			}
+		}
+	}
 	return nil, true
 }
 
-// HandleMsg reduces MCP messages into surface state. Insertion messages pass
-// through to the Model for textarea mutation.
+// handlePickerResult accepts only the active request in its originating view.
+func (s *mcpState) handlePickerResult(receipt mcpPickerResult) {
+	if receipt.owner != s || receipt.generation != s.pickerGeneration || receipt.op != s.pickerOp ||
+		receipt.view != s.view || !s.loading {
+		return
+	}
+	s.cancelPickerRequest()
+	switch msg := receipt.result.(type) {
+	case client.MCPResourcesMsg:
+		s.setResources(msg.Resources)
+	case client.MCPResourceReadMsg:
+		s.preview = joinContents(msg.Contents)
+		s.previewDisplay = connectDisplay(s.preview)
+		s.previewRows, s.previewWidth = nil, 0
+		s.previewViewport.Reset()
+		s.previewLoaded = true
+		s.view = mcpResourcePrev
+	case client.MCPPromptsMsg:
+		s.setPrompts(msg.Prompts)
+	case client.MCPPromptGotMsg:
+		s.intent = promptInsertIntent{text: joinPromptMessages(msg.Messages), label: "loaded prompt " + connectDisplay(msg.Name)}
+	case client.MCPErrMsg:
+		s.errCls = msg.Class
+		s.errMsg = terminaltext.Sanitize(msg.Op + ": " + msg.Err.Error())
+	}
+}
+
+// HandleMsg reduces owned picker receipts and existing panel messages.
 //
 //nolint:gocyclo // multiple MCP message types share one reducer
 func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	switch msg := msg.(type) {
+	case surfaceHitMsg:
+		control, current := s.hitControls[msg.ID]
+		if !current || s.loading || s.compact || s.zeroOffer {
+			return nil, true, false
+		}
+		s.hitControls = nil
+		switch s.view {
+		case mcpResources:
+			s.resList.SetCursor(control)
+		case mcpPrompts:
+			s.prList.SetCursor(control)
+		case mcpPromptArgs:
+			if control == len(s.argFields) {
+				s.leavePromptArgs()
+			} else {
+				return s.submitPromptArgs(), true, false
+			}
+		}
+		return nil, true, false
+	case mcpArgumentEditorMsg:
+		if msg.owner != s || msg.form != s.argFormGeneration || msg.focus != s.argFocusGeneration || msg.field != s.argCursor {
+			return nil, true, false
+		}
+		return s.updateArgument(msg.msg), true, false
+	case tea.PasteMsg:
+		return s.updateArgument(msg), true, false
+	case mcpPickerResult:
+		s.handlePickerResult(msg)
+		return nil, true, false
+	case client.MCPResourcesMsg, client.MCPResourceReadMsg, client.MCPPromptsMsg, client.MCPPromptGotMsg:
+		return nil, true, false
 	case client.MCPConnectorStatusMsg:
 		if !s.brokerMode || msg.RequestToken != s.requestToken || msg.SessionID != s.sessionID || msg.Generation != s.brokerGeneration {
 			return nil, true, false
@@ -507,6 +587,9 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		s.errMsg = "list broker catalogue: " + msg.Err.Error()
 		return nil, true, false
 	case client.MCPSourcesMsg:
+		if s.view != mcpPanel {
+			return nil, true, false
+		}
 		s.loading = false
 		if s.refreshing {
 			s.refreshing = false
@@ -518,48 +601,22 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 		s.reconciling = msg.Reconciling
 		return nil, true, false
 	case client.MCPGroupsMsg:
+		if s.view != mcpPanel {
+			return nil, true, false
+		}
 		s.groups = msg.Groups
 		s.groupsDone = true
 		return nil, true, false
-	case client.MCPResourcesMsg:
-		s.loading = false
-		s.resources = msg.Resources
-		if s.resCursor >= len(s.resources) {
-			s.resCursor = 0
-		}
-		return nil, true, false
-	case client.MCPResourceReadMsg:
-		s.loading = false
-		s.preview = joinContents(msg.Contents)
-		s.view = mcpResourcePrev
-		return nil, true, false
-	case client.MCPPromptsMsg:
-		s.loading = false
-		s.prompts = msg.Prompts
-		if s.prCursor >= len(s.prompts) {
-			s.prCursor = 0
-		}
-		return nil, true, false
-	case client.MCPPromptGotMsg:
-		// Rendered prompt → prompt input buffer; close the surface so the user can
-		// review/edit and send it as a normal Converse turn with enter. handled=false
-		// makes dispatchSurfaceMsg return before its closed path, so this msg falls
-		// through to the Model's updateMCPMsg, whose insertIntoInput nils the modal;
-		// closed=true records that the surface is done with it.
-		return nil, false, true
-	case mcpInsertResourceMsg:
-		// The resource-preview insertion marker: same shape as PromptGot —
-		// handled=false falls through to the Model's updateMCPMsg insertion arm;
-		// closed=true records the surface is done with it.
-		return nil, false, true
 	case workspaceEnrollmentMsg:
 		return nil, false, false
 	case mcpWorkspaceEnrollmentActionMsg:
 		return nil, false, false
 	case client.MCPErrMsg:
+		if s.view != mcpPanel || (msg.Op != "list sources" && msg.Op != "list groups") {
+			return nil, true, false
+		}
 		// A failed ToolHive-groups fetch is best-effort: degrade quietly so the
-		// inventory panel still renders. The shared error seam is reserved for the
-		// primary RPC of each view (sources/resources/prompts/get).
+		// inventory panel still renders. Picker errors require owned receipts above.
 		if msg.Op == "list groups" {
 			s.groupsErr = true
 			s.groupsDone = true
@@ -575,20 +632,21 @@ func (s *mcpState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed boo
 	}
 }
 
-func (*mcpState) Close() {}
+func (s *mcpState) Close() {
+	s.argFormGeneration++
+	for i := range s.argFields {
+		s.argFields[i].input.Blur()
+	}
+	s.cancelPickerRequest()
+	s.intent = nil
+}
 
-// updateMCPMsg handles insertion messages that require Model-owned textarea mutation.
+// updateMCPMsg preserves the unrelated authorization and enrollment reducers.
 func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if model, cmd, handled := m.updateMCPAuthorizationMsg(msg); handled {
 		return model, cmd, true
 	}
 	switch msg := msg.(type) {
-	case client.MCPPromptGotMsg:
-		mm, cmd := m.insertIntoInput(joinPromptMessages(msg.Messages), "loaded prompt "+msg.Name)
-		return mm, cmd, true
-	case mcpInsertResourceMsg:
-		mm, cmd := m.insertIntoInput(msg.preview, "loaded resource")
-		return mm, cmd, true
 	case mcpWorkspaceEnrollmentActionMsg:
 		state := mcpActive(m)
 		if state == nil || state != msg.source || msg.sessionID != m.sessionID || msg.gen != m.enrollment.controlGen {
@@ -596,7 +654,7 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.syncMCPSetup()
 		if m.enrollment.busy || (msg.action == connectAction && !state.canConnect()) ||
-			(msg.action == "cancel" && !state.setup.pending) {
+			(msg.action == mcpPickerActionCancel && !state.setup.pending) {
 			return m, nil, true
 		}
 		var mm tea.Model
@@ -604,7 +662,7 @@ func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		switch msg.action {
 		case connectAction:
 			mm, cmd = m.runToolsConnect()
-		case "cancel":
+		case mcpPickerActionCancel:
 			mm, cmd = m.runToolsCancel()
 		default:
 			return m, nil, true
@@ -867,105 +925,6 @@ func renderGroupsLine(th theme.Theme, st mcpState, widths ...int) string {
 		clean[i] = terminaltext.Sanitize(g)
 	}
 	return "\n" + renderMCPInventoryRow(th, "toolName", "ToolHive groups: "+strings.Join(clean, ", "), width) + "\n"
-}
-
-// renderResourceList renders the scrollable resource picker.
-func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, widths ...int) string {
-	width := 0
-	if len(widths) > 0 {
-		width = widths[0]
-	}
-	var b strings.Builder
-	empty := !st.loading && len(st.resources) == 0 && st.errMsg == ""
-	b.WriteString(renderMCPListHeader(th, st, caps, "MCP resources", empty, "No resources advertised by the connected MCP servers."))
-	for i, r := range st.resources {
-		label := r.Name
-		if label == "" {
-			label = r.URI
-		}
-		line := fmt.Sprintf("%s  %s", terminaltext.Sanitize(label), terminaltext.Sanitize(r.Server))
-		b.WriteString(renderRow(th, line, i == st.resCursor, width) + "\n")
-	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" read · "+hk.closeOnly+" close"))
-	return b.String()
-}
-
-// renderResourcePreview renders a read resource's text in a preview pane. width
-// is the parent card body's effective width; the truncated source is wrapped
-// before the style can pad it.
-// hk carries the LIVE keyMap markings for the insert/back footer.
-func renderResourcePreview(th theme.Theme, st mcpState, hk helpKeys, widths ...int) string {
-	width := 0
-	if len(widths) > 0 {
-		width = widths[0]
-	}
-	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render("resource preview") + "\n\n")
-	preview := truncateLinesTailMark(st.preview, maxToolResultLines, "", "")
-	b.WriteString(renderToolCardText(th.Style("toolArgs"), preview, width) + "\n")
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+" insert into prompt · "+focusBackHint(hk)))
-	return b.String()
-}
-
-// renderPromptList renders the scrollable prompt picker.
-func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk helpKeys, widths ...int) string {
-	width := 0
-	if len(widths) > 0 {
-		width = widths[0]
-	}
-	var b strings.Builder
-	empty := !st.loading && len(st.prompts) == 0 && st.errMsg == ""
-	b.WriteString(renderMCPListHeader(th, st, caps, "MCP prompts", empty, "No prompts advertised by the connected MCP servers."))
-	for i, p := range st.prompts {
-		marker := ""
-		if hasRequiredArgs(p) {
-			marker = "  (args)"
-		}
-		line := fmt.Sprintf("%s  %s%s", terminaltext.Sanitize(p.Name), terminaltext.Sanitize(p.Server), marker)
-		b.WriteString(renderRow(th, line, i == st.prCursor, width) + "\n")
-	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" select · "+hk.closeOnly+" close"))
-	return b.String()
-}
-
-// renderPromptArgs renders the required-argument entry form.
-func renderPromptArgs(th theme.Theme, st mcpState, hk helpKeys) string {
-	var b strings.Builder
-	b.WriteString(th.Style("askTitle").Render(
-		"arguments for "+terminaltext.Sanitize(st.argPrompt.Name)) + "\n")
-	if line := mcpStatusLine(th, st); line != "" {
-		b.WriteString(line + "\n")
-	}
-	b.WriteString("\n")
-	for i, f := range st.argFields {
-		label := th.Style("toolName").Render(terminaltext.Sanitize(f.name))
-		if i == st.argCursor {
-			label = "› " + label
-		} else {
-			label = "  " + label
-		}
-		b.WriteString(label + "\n  " + f.input.View() + "\n")
-	}
-	// Arrow field navigation is a genuinely fixed form control (handlePromptArgsKey
-	// consumes the raw up/down strings); Choose and Close are keyMap-backed.
-	b.WriteString("\n" + th.Style("muted").Render("↑/↓ field · "+hk.choose+" next/submit · "+focusBackHint(hk)))
-	return b.String()
-}
-
-// renderRow renders one selectable list row, highlighting the cursor row.
-func renderRow(th theme.Theme, text string, selected bool, widths ...int) string {
-	width := 0
-	if len(widths) > 0 {
-		width = widths[0]
-	}
-	prefix, style := "  ", th.Style("toolArgs")
-	if selected {
-		prefix, style = "› ", th.Style("askButtonActive")
-	}
-	if width > 0 {
-		width -= style.GetHorizontalFrameSize()
-	}
-	return renderToolCardText(style, prefix+text, width)
 }
 
 // mcpStatusLine renders the overlay's loading/error status: a classified error

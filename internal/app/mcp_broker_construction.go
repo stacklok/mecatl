@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -63,8 +64,11 @@ type mcpBrokerParts struct {
 	handlers     brokercontract.HTTPHandlers
 	callbackPath string
 	// as2 is set only when the bundled process set up AS-2.
-	as2    *identityBrokerAS2
-	closer func() error
+	as2 *identityBrokerAS2
+	// gatewayServers are the servers whose calls the broker sends through the
+	// identity broker's gateway; nil when it sends none.
+	gatewayServers []string
+	closer         func() error
 }
 
 // mcpBrokerIdentity is what the identity broker gives the MCP broker; the
@@ -77,6 +81,34 @@ type mcpBrokerIdentity struct {
 	// as1Issuer is AS-1's issuer, which AS-2's must differ from; empty when
 	// the identity broker has no AS-1.
 	as1Issuer string
+	// gatewayCalls is nil when the identity broker has no gateway path.
+	gatewayCalls *mcpBrokerGatewayCalls
+}
+
+// mcpBrokerGatewayCalls is what the MCP broker needs to send gateway calls
+// through the identity broker.
+type mcpBrokerGatewayCalls struct {
+	service identitybroker.Service
+	// credentials is the holder the server registers agents into.
+	credentials *agentcredential.Holder
+	// servers are the servers the identity broker's gateway routes.
+	servers []string
+}
+
+// gatewayInProcessClient reaches the embedded vMCP at endpoint straight from
+// its handler, streaming its responses, and refuses every other URL. It sets
+// no timeout: a call's context bounds it.
+func gatewayInProcessClient(vmcp http.Handler, endpoint string) (*http.Client, error) {
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("gateway endpoint: %w", err)
+	}
+	return inprocesshttp.NewStreamingClient(vmcp, func(u *url.URL) error {
+		if u.Scheme != target.Scheme || u.Host != target.Host || u.User != nil || u.Path != target.Path {
+			return fmt.Errorf("gateway in-process client refuses %s://%s%s: not the gateway endpoint", u.Scheme, u.Host, u.Path)
+		}
+		return nil
+	}), nil
 }
 
 // as2InProcessClient reaches AS-2's token endpoint straight from the embedded
@@ -123,10 +155,31 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
 	}
 	config.AS2Trust = cfg.IdentityBrokerAS2Trust
+	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {
+		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production configures none until AS-2 trusts AS-1, so production is unchanged; removed by #2533 (production gateway) and #2538 (operator gateway entries).
+		config.GatewayCalls = &mcpbroker.GatewayCalls{
+			Authorizer:  calls.service,
+			Credentials: calls.credentials,
+			Servers:     append([]string(nil), calls.servers...),
+		}
+		config.EmbeddedGatewayClient = gatewayInProcessClient
+	}
 	process, err := mcpbroker.NewToolHiveProcess(ctx, config)
 	if err != nil {
 		authStorageClose()
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
+	}
+	gatewayEndpoint := process.GatewayEndpoint
+	if gatewayEndpoint != "" && (process.AS2 == nil || process.AS2.Resource != gatewayEndpoint) {
+		// The identity broker's gateway tokens are issued for AS-2's resource,
+		// so the gateway the calls go to must be that resource.
+		_ = process.Close()
+		authStorageClose()
+		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errGatewayIsNotAS2Resource)
+	}
+	var gatewayServers []string
+	if gatewayEndpoint != "" {
+		gatewayServers = config.GatewayCalls.Servers
 	}
 	var as2 *identityBrokerAS2
 	if process.AS2 != nil {
@@ -149,6 +202,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		workspaceEnrollment: process.WorkspaceEnrollmentRequired(),
 		callbackPath:        process.CallbackPath,
 		as2:                 as2,
+		gatewayServers:      gatewayServers,
 		// The process closes the Redis client only through its embedded auth
 		// server, which exists only for protected upstreams. Close it here too;
 		// go-redis Close is idempotent.

@@ -14,7 +14,8 @@ const unknownCode = "unknown"
 // knownErrorCodes are the OAuth error codes the broker may receive from AS-1
 // and AS-2: RFC 6749 §5.2 and its server_error and temporarily_unavailable,
 // RFC 8693 invalid_target, RFC 9396 invalid_authorization_details, and
-// RFC 7009 unsupported_token_type.
+// RFC 7009 unsupported_token_type, and AS-2's access_denied (ID-JAG -06
+// §4.4.3).
 var knownErrorCodes = map[string]bool{
 	"invalid_request": true, "invalid_client": true, "invalid_grant": true,
 	"unauthorized_client": true, "unsupported_grant_type": true, "invalid_scope": true,
@@ -22,6 +23,7 @@ var knownErrorCodes = map[string]bool{
 	"invalid_target":                true,
 	"invalid_authorization_details": true,
 	"unsupported_token_type":        true,
+	"access_denied":                 true,
 }
 
 // knownReasons are the reason codes of the design's error reasons
@@ -29,7 +31,14 @@ var knownErrorCodes = map[string]bool{
 // only token_used, revoked, parent_revoked, and not_issuable for grants, and
 // subject_token_invalid, subject_token_audience, subject_token_source_client,
 // subject_token_offline_access, and grant_invalid for the tokens a request
-// presents; subject_invalid,
+// presents. Since ToolHive v0.66.0 it also returns actor_token_expired,
+// approval_required, and denied for the actor token of an ID-JAG exchange, and
+// upstream_subject_missing, sub_id_missing, dpop_not_supported, and
+// bound_elapsed for its issuance. AS-2 returns subject_unknown, actor_denied,
+// and resource_denied with access_denied, and invalid_assertion with
+// invalid_grant. svid_expired is the broker's own reason,
+// which AS-1 versions before v0.66.0 also sent for an expired actor token;
+// subject_invalid,
 // owner_mismatch, session_owned, session_closed, schedule_ended, and no_grant
 // are the broker's own, kept so a server sending one is not taken for a
 // configuration fault.
@@ -42,16 +51,28 @@ var knownReasons = map[string]bool{
 	"consent_required": true, "invalid_assertion": true,
 	"subject_token_invalid": true, "subject_token_audience": true,
 	"subject_token_source_client": true, "subject_token_offline_access": true,
-	"grant_invalid": true,
+	"grant_invalid":       true,
+	"actor_token_expired": true, "approval_required": true,
+	"upstream_subject_missing": true, "sub_id_missing": true,
+	"dpop_not_supported": true, "bound_elapsed": true,
+	"subject_unknown": true, "actor_denied": true, "resource_denied": true,
 }
 
 // configurationFaultReasons are the known reasons that still mean a
 // configuration fault or broker bug: a subject token for another audience,
 // from a client AS-1 does not accept, or issued without offline_access (the
-// signing-in client did not request it), and an unknown or expired grant.
+// signing-in client did not request it), an unknown or expired grant, and an
+// ID-JAG issuance AS-1 cannot complete: no upstream subject or sub_id for the
+// grant, a DPoP-bound request it does not support, or a grant that expired
+// while the actor validator ran, and a gateway policy that does not let the
+// broker's client reach the resource (resource_denied). actor_denied is not
+// one: it is a denial.
 var configurationFaultReasons = map[string]bool{
 	"subject_token_audience": true, "subject_token_source_client": true,
 	"subject_token_offline_access": true, "grant_invalid": true,
+	"upstream_subject_missing": true, "sub_id_missing": true,
+	"dpop_not_supported": true, "bound_elapsed": true,
+	"resource_denied": true,
 }
 
 // transientStatuses are the HTTP statuses ServerRefusal.transient treats as
@@ -128,8 +149,9 @@ func (r *ServerRefusal) Error() string {
 // reasons treat as a configuration fault or broker bug (gRPC INTERNAL):
 // ErrTransportConfiguration, or a refusal with invalid_client,
 // unauthorized_client, or invalid_target, or with the reason
-// subject_token_audience, subject_token_source_client, or grant_invalid, or
-// any other refusal without a known reason code. A description that does not
+// subject_token_audience, subject_token_source_client, grant_invalid,
+// upstream_subject_missing, sub_id_missing, dpop_not_supported,
+// bound_elapsed, or resource_denied, or any other refusal without a known reason code. A description that does not
 // follow the reason-code convention, such as prose, counts as no reason. A
 // transient refusal (see IsUnavailable) never is. A failed client
 // authentication is always invalid_client. A caller needing a

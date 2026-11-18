@@ -617,7 +617,13 @@ func TestAuthorizeCallMapsAS1RefusalsAtAS1(t *testing.T) {
 		code   identitybroker.Code
 		reason identitybroker.Reason
 	}{
+		{identityharness.Fault{Error: "invalid_request", Reason: "actor_token_expired"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
 		{identityharness.Fault{Error: "invalid_request", Reason: "svid_expired"}, identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired},
+		{identityharness.Fault{Error: "invalid_request", Reason: "approval_required"}, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied},
+		{identityharness.Fault{Error: "invalid_request", Reason: "upstream_subject_missing"}, identitybroker.CodeInternal, ""},
+		{identityharness.Fault{Error: "invalid_request", Reason: "sub_id_missing"}, identitybroker.CodeInternal, ""},
+		{identityharness.Fault{Error: "invalid_request", Reason: "dpop_not_supported"}, identitybroker.CodeInternal, ""},
+		{identityharness.Fault{Error: "invalid_grant", Reason: "bound_elapsed"}, identitybroker.CodeInternal, ""},
 		{identityharness.Fault{Error: "invalid_request", Reason: "denied"}, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied},
 		{identityharness.Fault{Error: "invalid_request", Reason: "signed_out"}, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSignedOut},
 		{identityharness.Fault{Error: "invalid_request", Reason: "upstream_revoked"}, identitybroker.CodePermissionDenied, identitybroker.ReasonUpstreamRevoked},
@@ -635,6 +641,9 @@ func TestAuthorizeCallMapsAS1RefusalsAtAS1(t *testing.T) {
 			f.as1.FailNext(identityharness.KindIDJAG, tc.fault)
 			_, err := f.authorize(callRequest(f.s.ID, f.cred))
 			wantError(t, err, tc.code, tc.reason, f.cred)
+			if tc.code == identitybroker.CodeInternal && tc.fault.Reason != "" && !strings.Contains(err.Error(), "("+tc.fault.Reason+")") {
+				t.Fatalf("AuthorizeCall = %v, want the reason %s named", err, tc.fault.Reason)
+			}
 			f.wantCounts(t, exchanges+1, redemptions)
 			d := f.rec.Decisions()
 			if len(d) != decisions+1 || d[decisions].Code != tc.code || d[decisions].Reason != tc.reason {

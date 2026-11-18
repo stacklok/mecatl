@@ -29,16 +29,8 @@ A session can instead select `execution.none` for research, coordination, or
 remote deployments that must not expose a local filesystem. When advertised by
 the server, `execution.template` pins an eligible operator-approved ID and
 revision; catalog listing does not reserve capacity and selection is rechecked
-on creation. Each catalog row lists the template's declared `capabilities`:
-`filesystem` and `foreground-command` (built-in Shell). Studio and the TUI label
-these as **declared**: they neither reserve capacity nor grant tools. The bound
-session reports its effective capabilities in `session_capabilities.execution`,
-which can be narrower because of deployment flags such as `--no-shell`, host
-tooling, or session authority. Selecting a template uses its declared set
-narrowed by deployment configuration. A selection can also list
-`capabilities`; on Kubernetes the server grants exactly that list or refuses
-the session, never a narrower set. File-only sessions aren't supported yet, so
-a list must name both capabilities.
+on creation. Each catalog row lists the template's declared
+[execution capabilities](#execution-capabilities).
 
 If creation rejects a stale revision or unavailable capacity, Studio keeps the
 draft and exact selection. Use **Refresh templates** or choose another revision;
@@ -78,6 +70,52 @@ file-less tool set and cannot create a shell or fork a workspace.
 The selection is fixed at session creation. The model cannot switch it during a
 run. See [Core tools](/features/sessions/tools.md) for the complete catalog.
 
+## Execution capabilities
+
+Execution capabilities name what a session's environment provides: `filesystem`
+for the file tools and `foreground-command` for the built-in `Shell`. Each
+template revision declares the most its environments provide, and catalog rows
+list that declared set. Studio and the TUI label it **declared**, because
+listing a template neither reserves capacity nor grants tools.
+
+The session reports its effective capabilities in
+`session_capabilities.execution`. They can be narrower than the declared set:
+`--no-shell`, the tools the server registers, and an agent definition's
+authority each remove capabilities. On a `--no-shell` deployment, a Kubernetes
+session has no `Shell` tool and no command runner.
+
+A client that needs specific capabilities lists them when it selects a
+template:
+
+```json
+{
+  "execution": {
+    "template": {
+      "id": "coding",
+      "revision": "<REVISION>",
+      "capabilities": ["filesystem", "foreground-command"]
+    }
+  }
+}
+```
+
+The server grants exactly that list or refuses to create the session; it never
+grants a narrower set. Only `mecak8s` with Kubernetes execution can honor a
+request. File-only sessions aren't supported yet, so a request must list both
+names, and a deployment running with `--no-shell` refuses every request. The
+server also refuses a request when:
+
+- The session's agent definition doesn't allow a requested capability.
+- The request creates a debug session.
+- The placement can't enforce capabilities, as with local, worktree, and
+  microVM placements.
+
+The error names the reason. Leave `capabilities` empty to accept the template's
+declared set narrowed by deployment configuration. The
+[gRPC](/reference/grpc-api.md#server-owned-execution) and
+[HTTP](/reference/http-sse-api.md) references own the exact fields and status
+codes.
+
 ## Child environments
 
 Different delegation modes use different environment strategies:
@@ -107,6 +145,14 @@ executor is offline; this does not grant permission to execute. When a session
 resumes, Mecatl reattaches the exact identity through the deployment's placement
 provider. If the provider cannot reattach it or returns a different environment,
 the run fails instead of falling back to a local workspace.
+
+On `mecak8s` with Kubernetes execution, resume reattaches with the session's
+recorded capabilities without requesting them again. The run fails if the
+environment no longer provides them. `/clear`, fork, and scheduled runs that
+borrow the session's workspace request the source session's recorded
+capabilities. The server refuses them when the source has `foreground-command`
+and the deployment now runs with `--no-shell`; `/clear` refuses before it
+cancels the source.
 
 ## Native Kubernetes lifecycle and retention
 

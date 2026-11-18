@@ -59,7 +59,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 26 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS build
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
@@ -84,14 +84,19 @@ COPY apps/ .
 RUN STUDIO_BUILD_ID="${STUDIO_BUILD_ID}" pnpm build
 # Reinstall production dependencies in place: pnpm deploy refuses the
 # checked-out SDK because its source lives outside the apps workspace.
-RUN pnpm install --prod --frozen-lockfile
+# Remove every node_modules first. An in-place `pnpm install --prod` unlinks
+# dev dependencies but leaves them in node_modules/.pnpm, and the runtime stage
+# copies that store. The store then ships build tools such as the TypeScript 7
+# native compiler (a Go binary) and @hey-api's js-yaml.
+RUN rm -rf node_modules contracts/node_modules server/node_modules web/node_modules \
+ && pnpm install --prod --frozen-lockfile --offline
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime (Chainguard node, pinned by digest)
 # ---------------------------------------------------------------------------
 # Multi-arch index digest of `latest` (linux/amd64 + linux/arm64); the digest is
 # what is pulled. Its Node major is checked against `engines` in CI, not here.
-FROM cgr.dev/chainguard/node:latest@sha256:e7c6a8ed332250fdbc96c9a995af20adb0243bbff0c7dcaca74c7254dbef795b
+FROM cgr.dev/chainguard/node:latest@sha256:f5ab32fec5c9d58f7b33a5177a91defd83027441be80e66d8b5dcbfc1226f2b6
 
 # A fresh root-owned directory: the base image's /app is world-writable, which
 # would let the non-root server replace its own code. WORKDIR creates the

@@ -2605,12 +2605,15 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
-	if intent, ok := intent.(connectSelectIntent); ok {
+	switch intent := intent.(type) {
+	case promptInsertIntent:
+		mm, cmd := m.insertIntoInput(intent.text, intent.label)
+		return mm, cmd, true
+	case connectSelectIntent:
 		m.connectIntent = &intent.restart
 		m.closeModal()
 		return m, tea.Quit, true
-	}
-	if intent, ok := intent.(scheduleTranscriptIntent); ok {
+	case scheduleTranscriptIntent:
 		previous := m.modal
 		mm, cmd, _ := m.loadSessionTranscript(client.SessionListItem{
 			ID: intent.sessionID, Kind: client.SessionKindScheduled,
@@ -2621,8 +2624,7 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 			viewer.returnTo = previous
 		}
 		return m, cmd, true
-	}
-	if intent, ok := intent.(worktreeSelectIntent); ok {
+	case worktreeSelectIntent:
 		if intent.sourceID != m.sessionID || m.phase != phaseIdle {
 			m.closeModal()
 			m.statusMsg = "worktree choice is stale; relist and try again"
@@ -2630,8 +2632,7 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 		}
 		mm, cmd := m.switchToWorktree(intent.worktree)
 		return mm, cmd, true
-	}
-	if intent, ok := intent.(effortSelectIntent); ok {
+	case effortSelectIntent:
 		sel := m.effortSelection(intent.effort)
 		m.closeModal()
 		mm, cmd, _ := m.switchEffort(sel)
