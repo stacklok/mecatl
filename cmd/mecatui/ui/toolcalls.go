@@ -56,6 +56,21 @@ type toolcallsDetailIntent struct {
 
 func (toolcallsDetailIntent) isSurfaceIntent() {}
 
+type toolcallsHitAction uint8
+
+const (
+	toolcallsHitSelect toolcallsHitAction = iota
+	toolcallsHitOpen
+	toolcallsHitBack
+	toolcallsHitClose
+)
+
+type toolcallsHit struct {
+	action  toolcallsHitAction
+	blockID scrollback.BlockID
+	detail  bool
+}
+
 type toolcallsState struct {
 	open        bool
 	deps        surfaceDeps
@@ -73,6 +88,7 @@ type toolcallsState struct {
 	listFollow  bool
 	compact     bool
 	hitItems    map[HitID]scrollback.BlockID // visible rows' parent block IDs
+	hitTargets  map[HitID]toolcallsHit       // frame-scoped row and footer actions
 }
 
 func (*toolcallsState) modalPlacement() modalPlacement { return modalPlacementFill }
@@ -84,36 +100,59 @@ func (s *toolcallsState) takeSurfaceIntent() surfaceIntent {
 	return intent
 }
 
-func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
-	hit, ok := msg.(surfaceHitMsg)
-	if !ok || !s.open || s.compact || s.detail {
-		return nil, false, false
-	}
-	blockID, current := s.hitItems[hit.ID]
-	if !current {
-		return nil, true, false
-	}
-	index := -1
-	for i, entry := range s.entries {
-		if entry.blockID == blockID {
-			index = i
-			break
-		}
-	}
-	if index < 0 || index >= len(s.entries) {
-		return nil, true, false
+func (s *toolcallsState) selectEntry(blockID scrollback.BlockID) {
+	index := stableToolcallSelection(s.entries, blockID)
+	if index < 0 {
+		return
 	}
 	s.selected = index
 	if s.list != nil {
 		s.list.SetCursor(index)
 		s.listFollow = index == len(s.entries)-1
 	}
+}
+
+func (s *toolcallsState) openDetail(blockID scrollback.BlockID) {
+	if s.detail || s.selected < 0 || s.selected >= len(s.entries) || s.entries[s.selected].blockID != blockID {
+		return
+	}
 	s.detail = true
-	s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
+	s.intent = toolcallsDetailIntent{blockID: blockID}
 	s.window = new(bounded.Viewport)
 	s.width = 0
 	s.anchor = 0
 	s.follow = false
+}
+
+func (s *toolcallsState) back() bool {
+	if !s.detail {
+		return false
+	}
+	s.detail = false
+	s.detailEntry = nil
+	return true
+}
+
+func (s *toolcallsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	hit, ok := msg.(surfaceHitMsg)
+	if !ok {
+		return nil, false, false
+	}
+	target, current := s.hitTargets[hit.ID]
+	s.hitTargets = nil
+	if !current || !s.open || s.compact || target.detail != s.detail {
+		return nil, true, false
+	}
+	switch target.action {
+	case toolcallsHitSelect:
+		s.selectEntry(target.blockID)
+	case toolcallsHitOpen:
+		s.openDetail(target.blockID)
+	case toolcallsHitBack:
+		s.back()
+	case toolcallsHitClose:
+		return nil, true, true
+	}
 	return nil, true, false
 }
 
@@ -325,6 +364,7 @@ func (m Model) toolcallEntriesSince(previous []toolcallEntry) []toolcallEntry {
 // A reader already following the newest row advances to the new newest row.
 func (s *toolcallsState) setEntries(entries []toolcallEntry, opening bool) {
 	s.hitItems = nil
+	s.hitTargets = nil
 	if opening {
 		s.listFollow = true
 	}
@@ -463,9 +503,96 @@ func (s *toolcallsState) restoreChildSummaryAnchor(previous *toolcallDetail) {
 	}
 }
 
+type toolcallsFooterAction struct {
+	label   string
+	action  toolcallsHitAction
+	enabled bool
+}
+
+type toolcallsFooterLine struct {
+	text    string
+	actions []toolcallsFooterAction
+	starts  []int
+}
+
+func toolcallsFooter(width int, actions []toolcallsFooterAction, hint string) ([]toolcallsFooterLine, bool) {
+	hint = terminaltext.SanitizeSingleLine(hint)
+	var lines []toolcallsFooterLine
+	line := toolcallsFooterLine{}
+	for _, action := range actions {
+		action.label = terminaltext.SanitizeSingleLine(action.label)
+		label := "[" + action.label + "]"
+		if !action.enabled {
+			label += " (unavailable)"
+		}
+		if ansi.StringWidth(label) > width {
+			return nil, false
+		}
+		separator := 0
+		if line.text != "" {
+			separator = 1
+		}
+		if ansi.StringWidth(line.text)+separator+ansi.StringWidth(label) > width {
+			lines = append(lines, line)
+			line = toolcallsFooterLine{}
+			separator = 0
+		}
+		line.starts = append(line.starts, ansi.StringWidth(line.text)+separator)
+		line.actions = append(line.actions, action)
+		line.text += strings.Repeat(" ", separator) + label
+	}
+	lines = append(lines, line)
+	if hint != "" && ansi.StringWidth(hint) <= width {
+		last := &lines[len(lines)-1]
+		if ansi.StringWidth(last.text)+5+ansi.StringWidth(hint) <= width {
+			last.text += "  ·  " + hint
+		} else {
+			lines = append(lines, toolcallsFooterLine{text: hint})
+		}
+	}
+	return lines, true
+}
+
+func (s *toolcallsState) renderFooter(lines []toolcallsFooterLine, width, y int, detail bool) ([]string, []ClickableRegion) {
+	text := make([]string, 0, len(lines))
+	var regions []ClickableRegion
+	muted := s.deps.theme.Style("muted")
+	control := s.deps.theme.Style("viewport").Bold(true)
+	for row, footer := range lines {
+		var styled strings.Builder
+		previous := 0
+		for i, action := range footer.actions {
+			start := footer.starts[i]
+			end := start + ansi.StringWidth("["+action.label+"]")
+			styled.WriteString(muted.Render(ansi.Cut(footer.text, previous, start)))
+			style := muted
+			if action.enabled {
+				style = control
+			}
+			styled.WriteString(style.Render(ansi.Cut(footer.text, start, end)))
+			previous = end
+			if !action.enabled || s.deps.hits == nil {
+				continue
+			}
+			id := s.deps.hits.allocate()
+			regions = append(regions, ClickableRegion{rect: cellRect{x0: start, x1: end, y0: y + row, y1: y + row + 1}, hit: id})
+			s.hitTargets[id] = toolcallsHit{action: action.action, detail: detail}
+			if action.action == toolcallsHitOpen && s.selected >= 0 && s.selected < len(s.entries) {
+				target := s.hitTargets[id]
+				target.blockID = s.entries[s.selected].blockID
+				s.hitTargets[id] = target
+			}
+		}
+		styled.WriteString(muted.Render(ansi.Cut(footer.text, previous, width)))
+		text = append(text, styled.String()+"\x1b[0m")
+	}
+	return text, regions
+}
+
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	s.compact = true
 	s.hitItems = nil
+	s.hitTargets = nil
 	if !s.open || width <= 0 || height <= 0 {
 		s.list = nil
 		return "", nil
@@ -480,28 +607,38 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
 	}
 	title := line(th.Style("askTitle"), "Tool calls")
+	var actions []toolcallsFooterAction
+	var hint string
+	openLabel, closeLabel, backLabel := "Open details", "Close", "Back"
+	if s.deps.keys.Choose.Enabled() {
+		openLabel = s.deps.marks.choose + " " + openLabel
+	}
+	if s.deps.keys.Close.Enabled() {
+		closeLabel = s.deps.marks.closeOnly + " " + closeLabel
+		backLabel = s.deps.marks.closeOnly + " " + backLabel
+	}
 	if s.detail {
-		hint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " · " + s.deps.marks.closeOnly + " back"
-		if ansi.StringWidth(hint) > width {
-			s.compact, s.list = true, nil
-			return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
-		}
-		return s.renderDetail(width, height, title, line), nil
+		actions = []toolcallsFooterAction{{label: backLabel, action: toolcallsHitBack, enabled: true}}
+		hint = s.deps.marks.navUp + "/" + s.deps.marks.navDown + " scroll · " + s.deps.marks.scroll + " page · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " jump"
+	} else {
+		actions = []toolcallsFooterAction{{label: openLabel, action: toolcallsHitOpen, enabled: len(s.entries) > 0}, {label: closeLabel, action: toolcallsHitClose, enabled: true}}
+		hint = s.deps.marks.navUp + "/" + s.deps.marks.navDown + " select · " + s.deps.marks.scroll + " scroll"
 	}
-	footerText := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.choose + " detail · " + s.deps.marks.closeOnly + " close"
-	if ansi.StringWidth(footerText) > width {
+	footer, fits := toolcallsFooter(width, actions, hint)
+	bodyHeight := height - len(footer) - 3
+	if !fits || bodyHeight < 1 {
 		s.compact, s.list = true, nil
 		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
 	}
-	footer := line(th.Style("muted"), footerText)
-	bodyHeight := height - 4
-	if bodyHeight < 1 {
-		s.compact, s.list = true, nil
-		return line(th.Style("muted"), toolcallsTooSmallHint(width, s.deps.marks.closeOnly)), nil
+	s.hitTargets = make(map[HitID]toolcallsHit)
+	if s.detail {
+		footerText, footerRegions := s.renderFooter(footer, width, height-len(footer), true)
+		return s.renderDetail(width, height, title, line, footerText), footerRegions
 	}
 	body := []string{title, ""}
+	footerText, footerRegions := s.renderFooter(footer, width, height-len(footer), false)
 	if len(s.entries) == 0 {
-		return toolcallsPanel(append(body, line(th.Style("muted"), "no tool calls in this session.")), height, footer), nil
+		return toolcallsPanel(append(body, line(th.Style("muted"), "no tool calls in this session.")), height, footerText), footerRegions
 	}
 	if s.list == nil {
 		s.list = new(bounded.List)
@@ -518,14 +655,14 @@ func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	view := s.list.ViewWithIndicators(bodyHeight, s.list.RevealPending())
 	body, regions := s.renderListRows(body, view, width, line)
-	return toolcallsPanel(body, height, footer), regions
+	return toolcallsPanel(body, height, footerText), append(regions, footerRegions...)
 }
 
-func toolcallsPanel(body []string, height int, footer string) string {
-	for len(body) < height-2 {
+func toolcallsPanel(body []string, height int, footer []string) string {
+	for len(body) < height-len(footer)-1 {
 		body = append(body, "")
 	}
-	return strings.Join(append(body, "", footer), "\n")
+	return strings.Join(append(append(body, ""), footer...), "\n")
 }
 
 func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, width int, line func(lipgloss.Style, string) string) ([]string, []ClickableRegion) {
@@ -551,6 +688,7 @@ func (s *toolcallsState) renderListRows(body []string, view bounded.ListView, wi
 		if x1 > 0 {
 			regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
 			s.hitItems[id] = s.entries[row.ItemIndex].blockID
+			s.hitTargets[id] = toolcallsHit{action: toolcallsHitSelect, blockID: s.entries[row.ItemIndex].blockID}
 		}
 	}
 	if view.Below > 0 {
@@ -570,9 +708,9 @@ func renderToolcallListRow(row listRowPresentation, status lipgloss.Style) strin
 	return row.Style.Render(string(runes[:1])) + glyphStyle.Render(string(runes[1:2])) + row.Style.Render(string(runes[2:]))
 }
 
-func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string) string {
+func (s *toolcallsState) renderDetail(width, height int, title string, line func(lipgloss.Style, string) string, footer []string) string {
 	if s.detailEntry == nil {
-		return strings.Join([]string{title, "", line(s.deps.theme.Style("muted"), "call unavailable · "+s.deps.marks.closeOnly+" back")}, "\n")
+		return toolcallsPanel([]string{title, "", line(s.deps.theme.Style("muted"), "call unavailable")}, height, footer)
 	}
 	entry := *s.detailEntry
 	if s.window == nil {
@@ -580,7 +718,6 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 		s.follow = true
 	}
 	header := []string{title, ""}
-	footer := line(s.deps.theme.Style("muted"), s.deps.marks.navUp+"/"+s.deps.marks.navDown+" · "+s.deps.marks.scroll+" · "+s.deps.marks.jumpTopFull+"/"+s.deps.marks.jumpEndFull+" · "+s.deps.marks.closeOnly+" back")
 	content := s.styledToolcallDetailLinesAtWidth(entry, width)
 	remapOffset, remapTotal := -1, 0
 	if !s.follow && s.width > 0 && s.width != width {
@@ -602,7 +739,7 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 		}
 	}
 	s.width = width
-	s.window.SetGeometry(width, height-len(header)-1, 0, bounded.Wrap)
+	s.window.SetGeometry(width, height-len(header)-len(footer), 0, bounded.Wrap)
 	if remapOffset >= 0 {
 		s.window.SetOffset(remapOffset, remapTotal)
 	}
@@ -616,10 +753,10 @@ func (s *toolcallsState) renderDetail(width, height int, title string, line func
 		view = s.window.View(content)
 	}
 	header = append(header, view.Rows...)
-	for len(header) < height-1 {
+	for len(header) < height-len(footer) {
 		header = append(header, "")
 	}
-	return strings.Join(append(header, footer), "\n")
+	return strings.Join(append(header, footer...), "\n")
 }
 
 func (s *toolcallsState) styledToolcallDetailLinesAtWidth(entry toolcallDetail, width int) []string {
@@ -908,9 +1045,7 @@ func readResultGutter(line string) string {
 
 func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if bubbleskey.Matches(msg, s.deps.keys.Close) {
-		if s.detail {
-			s.detail = false
-			s.detailEntry = nil
+		if s.back() {
 			return nil, true, false
 		}
 		return nil, true, true
@@ -921,12 +1056,7 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	move, navigation := boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top)
 	if !navigation {
 		if bubbleskey.Matches(msg, s.deps.keys.Choose) && !s.detail {
-			s.detail = true
-			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
-			s.window = new(bounded.Viewport)
-			s.width = 0
-			s.anchor = 0
-			s.follow = false
+			s.openDetail(s.entries[s.selected].blockID)
 		}
 		return nil, true, false
 	}

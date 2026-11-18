@@ -112,6 +112,7 @@ func TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus(t *testing.
 					beforeCalls[i] = m.conv.scrollback.SnapshotAt(i)
 				}
 				beforePhase, beforeDraft := m.phase, m.prompt.Value()
+				_ = m.View()
 				compactBefore := toolcallsForTest(t, m).compact
 				for _, key := range []tea.KeyPressMsg{{Code: 'x'}, {Code: tea.KeyEnter}} {
 					var cmd tea.Cmd
@@ -156,10 +157,11 @@ func TestMecatuiQuieterToolCalls_Scenario2_InspectorShortcutAndFocus(t *testing.
 				// Selection/detail behave as /toolcalls: enter opens detail and esc backs
 				// out. A frame too small for the list footer uses the shared compact state,
 				// where enter is consumed without opening detail.
-				_ = renderInspector(t, m, size.width, size.height)
+				_ = m.View()
 				compact := toolcallsForTest(t, m).compact
-				refState := toolcallsForTest(t, openToolcallsForTest(t, m))
-				refState.Render(size.width, size.height)
+				refModel := openToolcallsForTest(t, m)
+				_ = refModel.View()
+				refState := toolcallsForTest(t, refModel)
 				if compact != refState.compact {
 					t.Fatalf("compact = %v, /toolcalls compact = %v", compact, refState.compact)
 				}

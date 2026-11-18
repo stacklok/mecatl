@@ -222,23 +222,15 @@ func TestMecatuiToolcallsInspector_Scenario3_FullRegionAndCompactFallback(t *tes
 	if body, _ := s.Render(15, 3); !s.compact || stripANSIstr(body) != "too small · "+s.deps.marks.closeOnly {
 		t.Fatalf("width 15 lost full too-small hint: %q", body)
 	}
-	// The normal navigation hint is wider than this offer. Do not clip Escape:
-	// switch to the close-only fallback before rendering the list.
-	compact, _ = s.Render(30, 20)
-	if !s.compact || !strings.Contains(stripANSIstr(compact), s.deps.marks.closeOnly) {
-		t.Fatalf("narrow fallback clipped close hint: %q", compact)
+	// The normal navigation hint is wider than this offer, but controls remain
+	// available without it.
+	normal, _ := s.Render(30, 20)
+	if s.compact || !strings.Contains(stripANSIstr(normal), "[enter Open details]") || !strings.Contains(stripANSIstr(normal), "[esc Close]") {
+		t.Fatalf("narrow controls did not preserve the list: %q", normal)
 	}
-	normal, _ := s.Render(80, 20)
+	normal, _ = s.Render(80, 20)
 	if s.compact || !strings.Contains(stripANSIstr(normal), "Tool calls") {
 		t.Fatalf("normal geometry did not restore the list: %q", normal)
-	}
-	listHint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.choose + " detail · " + s.deps.marks.closeOnly + " close"
-	limit := ansi.StringWidth(listHint)
-	if body, _ := s.Render(limit-1, 20); !s.compact || strings.Contains(body, "Tool calls") {
-		t.Fatalf("below list hint threshold: %q", body)
-	}
-	if body, _ := s.Render(limit, 20); s.compact || !strings.Contains(body, s.deps.marks.closeOnly) {
-		t.Fatalf("at list hint threshold: %q", body)
 	}
 	if s.selected != 0 || s.list == nil || !strings.Contains(stripANSIstr(normal), "▶") {
 		t.Fatalf("resize lost selection or non-color marker: selected=%d list=%v body=%q", s.selected, s.list, normal)
@@ -258,19 +250,12 @@ func TestMecatuiToolcallsInspector_Scenario3_FullRegionAndCompactFallback(t *tes
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	s = toolcallsForTest(t, m)
-	detailHint := s.deps.marks.navUp + "/" + s.deps.marks.navDown + " · " + s.deps.marks.scroll + " · " + s.deps.marks.jumpTopFull + "/" + s.deps.marks.jumpEndFull + " · " + s.deps.marks.closeOnly + " back"
-	limit = ansi.StringWidth(detailHint)
-	if body, _ := s.Render(limit-1, 20); !s.compact || strings.Contains(body, "Tool calls") {
-		t.Fatalf("below detail hint threshold: %q", body)
-	}
-	if body, _ := s.Render(limit, 20); s.compact || !strings.Contains(body, s.deps.marks.closeOnly) {
-		t.Fatalf("at detail hint threshold: %q", body)
+	body, _ := s.Render(30, 20)
+	if s.compact || !strings.Contains(stripANSIstr(body), "[esc Back]") {
+		t.Fatalf("detail controls did not preserve detail: %q", body)
 	}
 	for _, width := range []int{1, 10, 30, 80} {
-		body, _ := s.Render(width, 20)
-		if width == 30 && (!s.compact || !strings.Contains(stripANSIstr(body), s.deps.marks.closeOnly)) {
-			t.Fatalf("detail narrow hint clipped: %q", body)
-		}
+		s.Render(width, 20)
 	}
 }
 
@@ -728,23 +713,23 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickSelectsVisibleCall(t *testing.
 	if s.list.CursorID() != fmt.Sprintf("%d", wantBlock) {
 		t.Fatalf("click did not reveal selected block %d", wantBlock)
 	}
-	if !s.detail {
-		t.Fatal("click did not open detail")
+	if s.detail {
+		t.Fatal("click opened detail")
 	}
 	if got := m.vp.YOffset(); got != beforeConversation {
 		t.Fatalf("click moved hidden conversation from %d to %d", beforeConversation, got)
-	}
-	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m = updated.(Model)
-	s = toolcallsForTest(t, m)
-	if s.detail || s.entries[s.selected].blockID != wantBlock {
-		t.Fatalf("Escape did not return click-activated detail to its selected list row: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
 	}
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	s = toolcallsForTest(t, m)
 	if !s.detail || s.entries[s.selected].blockID != wantBlock {
 		t.Fatalf("Enter did not open selected call detail: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	s = toolcallsForTest(t, m)
+	if s.detail || s.entries[s.selected].blockID != wantBlock {
+		t.Fatalf("Escape did not return detail to its selected list row: detail=%t block=%d, want %d", s.detail, s.entries[s.selected].blockID, wantBlock)
 	}
 }
 
@@ -921,7 +906,7 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testi
 	stale := m.hits.frame[0].id
 	before := s.selected
 
-	for _, point := range [][2]int{{0, m.metrics.contentOrigin.y}, {0, m.metrics.contentBounds.y1 - 1}, {m.width - 1, m.metrics.contentOrigin.y + 1}} {
+	for _, point := range [][2]int{{0, m.metrics.contentOrigin.y}, {m.width - 1, m.metrics.contentOrigin.y + 1}} {
 		updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: point[0], Y: point[1]})
 		m = updated.(Model)
 		if got := toolcallsForTest(t, m).selected; got != before {
@@ -990,8 +975,8 @@ func TestMecatuiToolcallsInspector_Scenario5_ClickIsolationAndStaleHits(t *testi
 	if got := toolcallsForTest(t, reused).entries[toolcallsForTest(t, reused).selected].blockID; got != wantBlock {
 		t.Fatalf("reused ID click selected block %d, want later block %d", got, wantBlock)
 	}
-	if !toolcallsForTest(t, reused).detail {
-		t.Fatal("reused ID click did not open the selected call detail")
+	if toolcallsForTest(t, reused).detail {
+		t.Fatal("reused ID click opened detail")
 	}
 }
 

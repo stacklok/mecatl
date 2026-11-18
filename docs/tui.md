@@ -122,15 +122,30 @@ window keeps multiple matches visible with both indicators present.
 
 Include mouse support when adding or modernizing a modal or surface. Apply this
 standard to the surface being changed; migrating unrelated surfaces is separate
-work. Keep every action keyboard-operable and respect `--no-mouse`.
+work. Keep every action keyboard-operable and respect `--no-mouse`. Full
+mouse-only operation is not required; favor a small, useful set of controls over
+an action-dense toolbar.
 
 - A single left-click on an enabled list row selects and reveals that item
-  without activating it, including when it is already selected. Every visible
+  without activating it, including when it is already selected. Repeated clicks
+  do not become double-click activation, even for read-only details. Every visible
   wrapped or multiline continuation maps to the same logical item. Wheel
   browsing changes the window without changing selection.
+- Put an explicit primary action, such as Open details or Use model, outside the
+  scrolling list. Use a small set of meaningfully labeled secondary buttons where
+  pointer access helps, including less-common or fiddly actions; leave other
+  actions as keyboard shortcuts when more controls would crowd the view. Avoid
+  per-row action buttons. Keep controls in a stable footer area, measure them
+  before budgeting the viewport, and reduce decoration before useful content.
 - Visible action buttons invoke the same action and validation as their keyboard
-  equivalents. Keep activation separate from row selection and retain explicit
-  confirmation for consequential actions. Keybinding hints are not buttons.
+  equivalents. Existing shortcuts provide keyboard access; list footers do not
+  need a separate Tab focus cycle. Forms retain their field/button traversal.
+  Keep activation separate from row selection and retain existing confirmation
+  boundaries for consequential actions. Include the shortcut in its clickable
+  label, such as `[enter Open details]`, instead of repeating that action in the
+  help text. Give enabled targets normal text with bold emphasis; keep navigation
+  hints muted and separate them with a delimiter or their own line. Unbracketed
+  navigation hints remain non-clickable.
 - Publish hit regions only for the displayed frame, deriving them from rendered
   controls and the parent's placement. Invalidate them on resize, undisplayed
   preparation, and view replacement. Border, padding, overflow indicators, and

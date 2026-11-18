@@ -229,6 +229,8 @@ func TestMecatuiToolcallsInspector_DetailActivationIntentRefreshesSelectedCall(t
 	x, y := clicked.metrics.localToGlobal(region.rect.x0, region.rect.y0)
 	updated, _ = clicked.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	clicked = updated.(Model)
+	updated, _ = clicked.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	clicked = updated.(Model)
 	if detail := toolcallsForTest(t, clicked).detailEntry; detail == nil || detail.callID != "second" || !strings.Contains(ansi.Strip(clicked.View().Content), "Path: clicked.go") {
 		t.Fatalf("clicked detail did not refresh the selected call: %#v", detail)
 	}
@@ -274,8 +276,13 @@ func TestMecatuiToolcallsInspector_Scenario5_NormalResizeStaleHitAndNoMouse(t *t
 	if s.selected != len(s.entries)-1 || s.entries[s.selected].blockID != target {
 		t.Fatalf("click selected unstable block: selected=%d entries=%#v", s.selected, s.entries)
 	}
+	if s.detail {
+		t.Fatal("fresh resized row click opened detail")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
 	if !s.detail {
-		t.Fatal("fresh resized row click did not open detail")
+		t.Fatal("Enter did not open the selected detail")
 	}
 	plain := ansi.Strip(m.View().Content)
 	if !strings.Contains(plain, "Arguments:") || !strings.Contains(plain, "Path: after-reuse.go") || strings.Contains(plain, "call unavailable") {
