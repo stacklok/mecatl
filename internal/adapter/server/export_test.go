@@ -153,3 +153,7 @@ func ClassifyErrorCodeForTest(err error) string {
 func WatchTerminalForTest(gapped bool, recorded error) error {
 	return watchTerminal(gapped, recorded)
 }
+
+// UnsignedCredentialForTest returns an unsigned JWT naming subject: a
+// credential the holder accepts as naming that agent, which no broker issued.
+var UnsignedCredentialForTest = unsignedTestCredential

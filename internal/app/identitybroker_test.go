@@ -592,7 +592,7 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	})
 	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store, Now: time.Now, DefaultCapabilities: llm.Capabilities(),
-		EventLog: store, Diagnostics: port.NopDiagnostics{}, IdentityBroker: broker, IdentityDefinitions: ib.definitions,
+		EventLog: store, Diagnostics: port.NopDiagnostics{}, IdentityBroker: broker, IdentityDefinitions: definitionRefs(ib.definitions),
 	})
 	if err != nil {
 		t.Fatal(err)

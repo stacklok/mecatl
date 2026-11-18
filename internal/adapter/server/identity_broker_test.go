@@ -5,8 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -176,7 +174,7 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	}
 	if err == nil && renamed {
 		reg.Agent.Subject = reg.Agent.Subject[:strings.LastIndex(reg.Agent.Subject, "/")+1] + "ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
-		reg.Credential = unsignedCredential(reg.Agent.Subject)
+		reg.Credential = server.UnsignedCredentialForTest(reg.Agent.Subject)
 	}
 	if err == nil && edit != nil {
 		edit(&reg)
@@ -247,7 +245,7 @@ func newIdentityBrokerService(t *testing.T, broker identitybroker.Service, llm *
 	cfg := server.Config{
 		Engine:         eng,
 		Store:          store,
-		IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(),
+		IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
 		Now: func() time.Time { return time.Unix(0, 0) },
 	}
 	for _, f := range configure {
@@ -629,7 +627,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			svc, err := server.NewService(server.Config{
 				Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
 				PlacementProvider: delegationPlacementProvider{binding: server.PlacementBinding{Environment: env, Ref: ref}},
-				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(),
+				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -661,12 +659,4 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			wantRegistered(t, broker, wantBrokerSession(t, broker, source), source)
 		})
 	}
-}
-
-// unsignedCredential returns an unsigned JWT naming subject: a credential
-// the holder accepts as naming that agent, which no broker issued.
-func unsignedCredential(subject string) identitybroker.Token {
-	enc := base64.RawURLEncoding
-	claims, _ := json.Marshal(map[string]string{"sub": subject})
-	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
 }

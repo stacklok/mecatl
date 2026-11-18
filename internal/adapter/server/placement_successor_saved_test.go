@@ -49,7 +49,7 @@ func newSavedSuccessorFixture(t *testing.T) savedSuccessorFixture {
 	var next atomic.Int32
 	svc, err := NewService(Config{
 		Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/owned",
-		IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(), Now: time.Now,
+		IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition}, Now: time.Now,
 		NewID: func() session.SessionID { return ids[next.Add(1)-1] },
 	})
 	if err != nil {

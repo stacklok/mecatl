@@ -371,7 +371,7 @@ func TestIdentityBrokerTeamRunCarriesTheRequestAccessToken(t *testing.T) {
 			svc, err := server.NewService(server.Config{
 				Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
 				PlacementProvider: delegationPlacementProvider{binding: server.PlacementBinding{Environment: env, Ref: ref}},
-				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: conformance.Definitions(),
+				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
 			})
 			if err != nil {
 				t.Fatal(err)

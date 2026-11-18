@@ -8,7 +8,7 @@ import (
 )
 
 var testCall = callKey{
-	operationID: "op-1", agent: "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain,
+	operationID: "op-1", agent: "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 	method: MethodToolsCall, server: "github", tool: "github.pull_request_read",
 	argumentsSHA256: "abababababababababababababababababababababababababababababababab",
 }
@@ -56,7 +56,7 @@ func TestMemoryAttemptsMatchTheCall(t *testing.T) {
 		change func(*callKey)
 	}{
 		{"operation ID", func(c *callKey) { c.operationID = "op-2" }},
-		{"agent", func(c *callKey) { c.agent = "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incOther }},
+		{"agent", func(c *callKey) { c.agent = "spiffe://agents.example.com/agent/ag_bbbbbbbbbbbbbbbbbbbbbbbbbb" }},
 		{"method", func(c *callKey) { c.method = MethodToolsList }},
 		{"server", func(c *callKey) { c.server = "calendar" }},
 		{"tool", func(c *callKey) { c.tool = "github.create_pull_request" }},

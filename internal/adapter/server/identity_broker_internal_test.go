@@ -39,7 +39,7 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    broker, IdentityDefinitions: conformance.Definitions(),
+		IdentityBroker:    broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -93,19 +93,20 @@ func TestIdentityAgentDefinition(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	main := identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1.2.3"}
 	reviewer := identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "reviewer", Revision: "r7"}
-	loaded := []identitybroker.DefinitionRecord{
-		{Ref: identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinExplorer, Revision: "v1.2.3"}},
-		{Ref: main},
-		{Ref: reviewer},
+	loaded := []identitybroker.DefinitionRef{
+		{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinExplorer, Revision: "v1.2.3"},
+		main,
+		reviewer,
 	}
 	cases := []struct {
-		name   string
-		def    string
-		loaded []identitybroker.DefinitionRecord
-		want   identitybroker.DefinitionRef
+		name       string
+		def        string
+		loaded     []identitybroker.DefinitionRef
+		want       identitybroker.DefinitionRef
+		wantLoaded bool
 	}{
-		{name: "an ordinary session runs the loaded built-in main", loaded: loaded, want: main},
-		{name: "a named session runs the loaded global definition", def: "reviewer", loaded: loaded, want: reviewer},
+		{name: "an ordinary session runs the loaded built-in main", loaded: loaded, want: main, wantLoaded: true},
+		{name: "a named session runs the loaded global definition", def: "reviewer", loaded: loaded, want: reviewer, wantLoaded: true},
 		{name: "a name the broker did not load is sent by name only", def: "planner", loaded: loaded, want: identitybroker.DefinitionRef{Name: "planner"}},
 		{name: "a name is never matched to a built-in", def: identitybroker.BuiltinExplorer, loaded: loaded, want: identitybroker.DefinitionRef{Name: identitybroker.BuiltinExplorer}},
 		{name: "with nothing loaded the built-in main has no revision", want: identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain}},
@@ -114,10 +115,35 @@ func TestIdentityAgentDefinition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sess := session.New("s", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 			sess.AgentDefinitionName = tc.def
-			if got := identityAgentDefinition(tc.loaded, sess); got != tc.want {
-				t.Fatalf("definition = %+v, want %+v", got, tc.want)
+			if got, ok := identityAgentDefinition(tc.loaded, sess); got != tc.want || ok != tc.wantLoaded {
+				t.Fatalf("definition = %+v, %v; want %+v, %v", got, ok, tc.want, tc.wantLoaded)
 			}
 		})
+	}
+}
+
+func TestAnUnloadedDefinitionIsLoggedAndRefused(t *testing.T) {
+	const logged = "identity broker loaded no definition the session's agent runs; the broker refuses its registration"
+	diag := &attemptRecordingDiagnostics{}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag })
+	// Positive control: the built-in main is loaded, registers, and logs nothing.
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatalf("registration of the built-in main: %v", err)
+	}
+	if slices.Contains(diag.entries, logged) {
+		t.Fatalf("a loaded definition was logged as unloaded: %q", diag.entries)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	named := session.New("named", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	named.AgentDefinitionName = "planner"
+	if err := named.RestoreLabels(&session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.openIdentityBrokerSession(t.Context(), named); err == nil {
+		t.Fatal("a session running a definition the broker did not load registered its agent")
+	}
+	if !slices.Contains(diag.entries, logged) {
+		t.Fatalf("the unloaded definition was not logged: %q", diag.entries)
 	}
 }
 
@@ -141,7 +167,7 @@ func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, 
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), IdentityDefinitions: conformance.Definitions(),
+		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
 	}
 	for _, c := range configure {
 		c(&cfg)

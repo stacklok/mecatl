@@ -816,11 +816,13 @@ type Config struct {
 	// IdentityBroker; the MCP broker presents them on gateway calls. NewService
 	// creates one when IdentityBroker is set and it is nil. Close closes it.
 	IdentityAgents *agentcredential.Holder
-	// IdentityDefinitions are the definition records IdentityBroker loaded.
-	// A session's main agent registers with the reference of the one it
-	// runs: the global definition of its name, or the built-in main. With
+	// IdentityDefinitions are the references of the definitions IdentityBroker
+	// loaded. A session's main agent registers with the reference of the one
+	// it runs: the global definition of its name, or the built-in main. With
 	// none for it, the agent registers by name only, which the broker refuses.
-	IdentityDefinitions []identitybroker.DefinitionRecord
+	//
+	// Shortcut: sessions know their definition by name only, so the server looks up the reference the broker loaded; removed by #2548 (sessions record their exact reference).
+	IdentityDefinitions []identitybroker.DefinitionRef
 	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
 	MCPConnectorInspector brokercontract.ConnectorInspector
 	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.

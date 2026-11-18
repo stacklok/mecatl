@@ -3033,7 +3033,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
 	svcCfg.IdentityBroker = ib.service
-	svcCfg.IdentityDefinitions = ib.definitions
+	svcCfg.IdentityDefinitions = definitionRefs(ib.definitions)
 	svcCfg.IdentityAgents = agentCredentials
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no

@@ -195,12 +195,12 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		"malformed": {func(*testing.T, *credentialFixture) Token { return NewToken("not.a.jwt") }, denied},
 		"subject in another trust domain": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://other.example.com/mecatl/agent/shared/inst/inc_main"
+			c["sub"] = "spiffe://other.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"subject not a SPIFFE ID": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "agents.example.com/mecatl/agent/shared/inst/inc_main"
+			c["sub"] = "agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"no kid": {func(t *testing.T, f *credentialFixture) Token {
@@ -246,7 +246,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"unregistered subject": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://agents.example.com/mecatl/agent/shared/inst/inc_unknown"
+			c["sub"] = "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"registered to another session": {func(t *testing.T, f *credentialFixture) Token {
@@ -262,7 +262,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"expired and unregistered": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://agents.example.com/mecatl/agent/shared/inst/inc_unknown"
+			c["sub"] = "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			c["exp"] = f.now.Add(-time.Hour).Unix()
 			return f.forge(t, f.validHeader(), c, nil)
 		}, expired},
@@ -281,12 +281,12 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"expired with a subject in another trust domain": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.expiredClaims()
-			c["sub"] = "spiffe://other.example.com/mecatl/agent/shared/inst/" + incMain
+			c["sub"] = "spiffe://other.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"expired with a subject that is not a SPIFFE ID": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.expiredClaims()
-			c["sub"] = "agents.example.com/mecatl/agent/shared/inst/" + incMain
+			c["sub"] = "agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 	}
@@ -650,12 +650,18 @@ func TestReregistrationKeepsItsDefinitionAfterTheBrokerStopsLoadingIt(t *testing
 	if again := f.register(t, f.session, incMain); again.Agent != f.reg.Agent {
 		t.Fatalf("registering again returned agent %+v, want %+v", again.Agent, f.reg.Agent)
 	}
-	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
+	child := RegisterAgentRequest{
 		SessionID: f.session.ID, HostSessionID: "hostS42-child", Owner: f.session.Owner,
 		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: testMainRef, Parent: f.reg.Agent,
-	})
+	}
+	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, child)
 	if !errors.Is(err, NewError(CodePermissionDenied, "", "")) {
 		t.Fatalf("a new instance of a definition no longer loaded = %v, want PERMISSION_DENIED", err)
+	}
+	// Positive control: the same child registers with a definition still loaded.
+	child.Definition = testDeployerRef
+	if _, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, child); err != nil {
+		t.Fatalf("a new instance of a loaded definition: %v", err)
 	}
 }
 
@@ -753,31 +759,46 @@ func TestCheckRegistration(t *testing.T) {
 	if err := CheckRegistration(f.reg); err != nil {
 		t.Fatalf("CheckRegistration of a registration = %v, want nil", err)
 	}
-	other, _, err := f.broker.issuer.issue(f.broker.issuer.subject("ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"), f.now)
-	if err != nil {
-		t.Fatalf("issue: %v", err)
+	issue := func(subject string) Token {
+		t.Helper()
+		credential, _, err := f.broker.issuer.issue(subject, f.now)
+		if err != nil {
+			t.Fatalf("issue: %v", err)
+		}
+		return credential
 	}
-	for name, edit := range map[string]func(*Registration){
-		"an ID derived from the incarnation": func(r *Registration) {
-			r.Agent.Subject = "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain
-		},
-		"no spiffe scheme": func(r *Registration) { r.Agent.Subject = strings.TrimPrefix(r.Agent.Subject, "spiffe://") },
-		"no trust domain": func(r *Registration) {
-			r.Agent.Subject = "spiffe:///agent/" + r.Agent.Subject[len(r.Agent.Subject)-29:]
-		},
-		"a nested path":          func(r *Registration) { r.Agent.Subject = strings.Replace(r.Agent.Subject, "/agent/", "/x/agent/", 1) },
-		"a short agent ID":       func(r *Registration) { r.Agent.Subject = r.Agent.Subject[:len(r.Agent.Subject)-1] },
-		"an uppercase agent ID":  func(r *Registration) { r.Agent.Subject = strings.ToUpper(r.Agent.Subject) },
-		"no agent":               func(r *Registration) { r.Agent = AgentRef{} },
-		"a credential not a JWT": func(r *Registration) { r.Credential = NewToken("credential") },
-		"a credential for another agent": func(r *Registration) {
-			r.Credential = other
-		},
+	agentID := f.reg.Agent.Subject[len(f.reg.Agent.Subject)-26:]
+	// Each malformed subject comes with a credential naming it, so only the
+	// subject's form can fail the check.
+	for name, subject := range map[string]string{
+		"an ID derived from the incarnation": "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain,
+		"no spiffe scheme":                   "agents.example.com/agent/ag_" + agentID,
+		"no trust domain":                    "spiffe:///agent/ag_" + agentID,
+		"an uppercase trust domain":          "spiffe://AGENTS.example.com/agent/ag_" + agentID,
+		"a trust domain with a port":         "spiffe://agents.example.com:443/agent/ag_" + agentID,
+		"a nested path":                      "spiffe://agents.example.com/x/agent/ag_" + agentID,
+		"a short agent ID":                   "spiffe://agents.example.com/agent/ag_" + agentID[1:],
+		"an uppercase agent ID":              "spiffe://agents.example.com/agent/ag_" + strings.ToUpper(agentID),
+		"an agent ID outside base32":         "spiffe://agents.example.com/agent/ag_01890189018901890189018901",
+		"no ag_ prefix":                      "spiffe://agents.example.com/agent/" + agentID,
 	} {
-		reg := f.reg
-		edit(&reg)
+		reg := Registration{Agent: AgentRef{Subject: subject}, Credential: issue(subject), ExpiresAt: f.reg.ExpiresAt}
 		if err := CheckRegistration(reg); err == nil {
 			t.Errorf("CheckRegistration with %s = nil, want an error", name)
 		}
+	}
+	for name, credential := range map[string]Token{
+		"no credential":                  {},
+		"a credential not a JWT":         NewToken("credential"),
+		"a credential for another agent": issue(f.broker.issuer.subject("ag_aaaaaaaaaaaaaaaaaaaaaaaaaa")),
+	} {
+		reg := f.reg
+		reg.Credential = credential
+		if err := CheckRegistration(reg); err == nil {
+			t.Errorf("CheckRegistration with %s = nil, want an error", name)
+		}
+	}
+	if err := CheckRegistration(Registration{Credential: f.reg.Credential}); err == nil {
+		t.Error("CheckRegistration with no agent = nil, want an error")
 	}
 }

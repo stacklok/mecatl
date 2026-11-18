@@ -214,8 +214,9 @@ func isAgentID(s string) bool {
 // registration of the same incarnation also checks that reg names the same
 // agent, since the ID carries nothing a caller could predict.
 func CheckRegistration(reg Registration) error {
-	trustDomain, agentID, ok := strings.Cut(strings.TrimPrefix(reg.Agent.Subject, "spiffe://"), agentPath+"/")
-	if !strings.HasPrefix(reg.Agent.Subject, "spiffe://") || !ok || trustDomain == "" || strings.Contains(trustDomain, "/") || !isAgentID(agentID) {
+	rest, scheme := strings.CutPrefix(reg.Agent.Subject, "spiffe://")
+	trustDomain, agentID, cut := strings.Cut(rest, agentPath+"/")
+	if !scheme || !cut || ValidateTrustDomain(trustDomain) != nil || !isAgentID(agentID) {
 		return fmt.Errorf("the agent %q is not an agent instance's SPIFFE ID", reg.Agent.Subject)
 	}
 	var claims jwt.RegisteredClaims

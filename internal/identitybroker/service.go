@@ -40,7 +40,9 @@ import (
 //     reference, or parent fails with CodeAlreadyExists and changes nothing.
 //     An agent registering again is not checked against the definitions
 //     loaded now: it keeps the definition it registered with.
-//   - A failed registration leaves any earlier registration as it was.
+//   - A failed registration leaves any earlier registration as it was. A
+//     registration that keeps losing a race to other registrations of the
+//     same incarnation fails with CodeAborted; registering again succeeds.
 //   - Agents with different incarnations are different agents. An agent's
 //     subject is its SPIFFE ID, spiffe://<trust domain>/agent/<ag_
 //     identifier>, which carries no definition name, incarnation, or

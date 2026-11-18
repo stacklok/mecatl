@@ -546,3 +546,12 @@ func loadIdentityBrokerDefinitions(ctx context.Context, cfg Config) ([]identityb
 	}
 	return records, nil
 }
+
+// definitionRefs returns the references of records.
+func definitionRefs(records []identitybroker.DefinitionRecord) []identitybroker.DefinitionRef {
+	refs := make([]identitybroker.DefinitionRef, len(records))
+	for i, rec := range records {
+		refs[i] = rec.Ref
+	}
+	return refs
+}
