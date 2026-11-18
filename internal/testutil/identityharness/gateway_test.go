@@ -2,12 +2,15 @@ package identityharness_test
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -34,6 +37,26 @@ func rpc(t *testing.T, h *identityharness.Harness, g *identityharness.Gateway, t
 	return resp.StatusCode, resp.Header.Get("WWW-Authenticate"), out
 }
 
+// unsignedJWT is a JWT with claims and alg none, for the gateway stand-in,
+// which reads a bearer token's jti without verifying it.
+func unsignedJWT(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodNone, claims).SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
 const (
 	initializeBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
 	listBody       = `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
@@ -46,7 +69,8 @@ func TestGatewayServesWithABearerToken(t *testing.T) {
 	if !strings.HasPrefix(g.URL(), "https://") || !strings.HasSuffix(g.URL(), "/mcp") {
 		t.Fatalf("URL = %q", g.URL())
 	}
-	token := h.AS1.MintAccessToken(identityharness.AccessTokenSpec{})
+	jti := rand.Text()
+	token := unsignedJWT(t, jwt.MapClaims{"jti": jti})
 	if status, _, body := rpc(t, h, g, token, initializeBody); status != http.StatusOK || body["result"] == nil {
 		t.Fatalf("initialize = %d, %v", status, body)
 	}
@@ -62,8 +86,6 @@ func TestGatewayServesWithABearerToken(t *testing.T) {
 	if status != http.StatusUnauthorized || challenge != "Bearer" {
 		t.Fatalf("no token = %d, %q; want 401 Bearer", status, challenge)
 	}
-	_, claims := verify(t, h, token)
-	jti := claims["jti"].(string)
 	want := []identityharness.GatewayCall{
 		{Method: "initialize", Status: 200, TokenJTI: jti},
 		{Method: "tools/list", Status: 200, TokenJTI: jti},

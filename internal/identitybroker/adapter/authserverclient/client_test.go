@@ -101,31 +101,28 @@ func aliceSignsIn(t *testing.T, a *as1servertest.AS1) string {
 	return a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}).Value()
 }
 
-// fixture is the harness's AS-1, kept for revocation, which the real AS-1
-// does not serve yet: retired by stacklok/toolhive#6966 and
-// stacklok/toolhive#6972 (mecatl #2568).
-type fixture struct {
-	h      *identityharness.Harness
-	signer *identitybroker.ClientAssertionSigner
+// revocationStub stands in for an RFC 7009 revocation endpoint, which the
+// real AS-1 does not serve until stacklok/toolhive#6966. It authenticates
+// the broker client by private_key_jwt only: a jwt-bearer client assertion
+// signed with ES256 by the registered key under its kid. The assertion's
+// claims are not checked here; TestSessionOpenAuthenticatesWithTheBrokerKey
+// checks them at the real AS-1. It records each token it revokes.
+type revocationStub struct {
+	issuer   string
+	endpoint string
+	client   *http.Client
+	key      *ecdsa.PublicKey
+	kid      string
+
+	mu      sync.Mutex
+	revoked []url.Values
 }
 
-func newFixture(t *testing.T) *fixture {
+// startRevocationStub serves a revocation endpoint that registers signer's
+// one key, the way a server would from the broker's published JWKS.
+func startRevocationStub(t *testing.T, signer *identitybroker.ClientAssertionSigner) *revocationStub {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Register the key as a server would: from the published JWKS.
-	h := identityharness.New(t, identityharness.Options{BrokerKeys: []identityharness.BrokerKey{jwksKey(t, signer.JWKS())}})
-	return &fixture{h: h, signer: signer}
-}
-
-func jwksKey(t *testing.T, set identitybroker.JWKSet) identityharness.BrokerKey {
-	t.Helper()
+	set := signer.JWKS()
 	if len(set.Keys) != 1 {
 		t.Fatalf("JWKS has %d keys, want 1", len(set.Keys))
 	}
@@ -139,29 +136,83 @@ func jwksKey(t *testing.T, set identitybroker.JWKSet) identityharness.BrokerKey 
 	if err != nil {
 		t.Fatalf("JWK key: %v", err)
 	}
-	return identityharness.BrokerKey{KeyID: k.KeyID, Public: pub}
+	stub := &revocationStub{key: pub, kid: k.KeyID}
+	server := httptest.NewTLSServer(http.HandlerFunc(stub.serve))
+	t.Cleanup(server.Close)
+	stub.issuer, stub.endpoint, stub.client = server.URL+"/as1", server.URL+"/as1/oauth/revoke", server.Client()
+	return stub
 }
 
-// client returns a client for AS-1 whose assertions r records, after edit
-// changes its configuration.
-func (f *fixture) client(t *testing.T, r *recorder, edit func(*authserverclient.Config)) *authserverclient.Client {
+func (s *revocationStub) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/as1/oauth/revoke" || r.ParseForm() != nil || r.PostForm.Get("token") == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !s.authenticated(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+		return
+	}
+	s.mu.Lock()
+	s.revoked = append(s.revoked, url.Values{"token": r.PostForm["token"], "token_type_hint": r.PostForm["token_type_hint"]})
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+// authenticated reports whether r authenticates the broker client.
+func (s *revocationStub) authenticated(r *http.Request) bool {
+	form := r.PostForm
+	if form.Has("client_secret") || r.Header.Get("Authorization") != "" ||
+		form.Get("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ||
+		(form.Has("client_id") && form.Get("client_id") != identitybroker.BrokerClientID) {
+		return false
+	}
+	_, err := jwt.Parse(form.Get("client_assertion"), func(token *jwt.Token) (any, error) {
+		if token.Header["kid"] != s.kid {
+			return nil, jwt.ErrTokenUnverifiable
+		}
+		return s.key, nil
+	}, jwt.WithValidMethods([]string{"ES256"}), jwt.WithoutClaimsValidation())
+	return err == nil
+}
+
+func (s *revocationStub) revocations() []url.Values {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]url.Values(nil), s.revoked...)
+}
+
+// newClient returns a client for the stub's issuer that signs assertions
+// with signer, recorded by r.
+func (s *revocationStub) newClient(t *testing.T, r *recorder, signer authserverclient.Assertions) *authserverclient.Client {
 	t.Helper()
-	r.signer = f.signer
-	cfg := authserverclient.Config{
-		Issuer:             f.h.AS1.Issuer(),
-		TokenEndpoint:      f.h.AS1.TokenEndpoint(),
-		RevocationEndpoint: f.h.AS1.RevocationEndpoint(),
+	r.signer = signer
+	c, err := authserverclient.New(authserverclient.Config{
+		Issuer:             s.issuer,
+		TokenEndpoint:      s.issuer + "/oauth/token",
+		RevocationEndpoint: s.endpoint,
 		Assertions:         r,
-		HTTPClient:         f.h.HTTPClient(),
-	}
-	if edit != nil {
-		edit(&cfg)
-	}
-	c, err := authserverclient.New(cfg)
+		HTTPClient:         s.client,
+	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	return c
+}
+
+// newBrokerSigner is a broker client assertion signer with a fresh key.
+func newBrokerSigner(t *testing.T) *identitybroker.ClientAssertionSigner {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
 }
 
 // sessionOpenForm is a session-open exchange (design step (3)): one
@@ -181,10 +232,6 @@ func sessionOpenForm(t *testing.T, accessToken string) url.Values {
 		"requested_token_type":  {tokenTypeRefresh},
 		"authorization_details": {string(details)},
 	}
-}
-
-func (f *fixture) aliceToken() string {
-	return f.h.AS1.MintAccessToken(identityharness.AccessTokenSpec{User: identityharness.Alice})
 }
 
 type sessionOpenResult struct {
@@ -258,21 +305,34 @@ func TestSessionOpenAuthenticatesWithTheBrokerKey(t *testing.T) {
 	}
 }
 
-// TestRevocationAuthenticates stays on the harness's AS-1, as the real AS-1
-// serves no revocation yet: retired by stacklok/toolhive#6966 and
-// stacklok/toolhive#6972 (mecatl #2568).
+// TestRevocationAuthenticates revokes at a stub RFC 7009 endpoint, as the real
+// AS-1 serves none until stacklok/toolhive#6966: the request authenticates
+// the broker client with private_key_jwt, and one signed with a key the
+// endpoint does not know is refused as a configuration fault.
 func TestRevocationAuthenticates(t *testing.T) {
-	f := newFixture(t)
-	c := f.client(t, &recorder{}, nil)
-	var res sessionOpenResult
-	if err := c.Token(t.Context(), sessionOpenForm(t, f.aliceToken()), &res); err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	if err := c.Revoke(t.Context(), url.Values{"token": {res.RefreshToken}, "token_type_hint": {"refresh_token"}}); err != nil {
+	signer := newBrokerSigner(t)
+	stub := startRevocationStub(t, signer)
+	const refreshToken = "ory_rt_grant.signature" // #nosec G101 -- test value, not a credential.
+	r := &recorder{}
+	if err := stub.newClient(t, r, signer).Revoke(t.Context(), url.Values{"token": {refreshToken}, "token_type_hint": {"refresh_token"}}); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if grant, _ := f.h.AS1.Grant(res.RefreshToken); grant.Active || grant.Reason != "revoked" {
-		t.Fatalf("grant = %+v after revocation, want revoked", grant)
+	if got := stub.revocations(); len(got) != 1 || got[0].Get("token") != refreshToken || got[0].Get("token_type_hint") != "refresh_token" {
+		t.Fatalf("the endpoint revoked %d tokens, want the one refresh token with its hint", len(got))
+	}
+	if len(r.all()) != 1 {
+		t.Fatalf("minted %d assertions, want 1", len(r.all()))
+	}
+
+	unregistered := &recorder{}
+	err := stub.newClient(t, unregistered, newBrokerSigner(t)).Revoke(t.Context(), url.Values{"token": {refreshToken}})
+	var oe *identitybroker.ServerRefusal
+	if !errors.As(err, &oe) || oe.Status != http.StatusUnauthorized || oe.Code != "invalid_client" || !identitybroker.IsConfigurationFault(err) {
+		t.Fatalf("Revoke with an unregistered key = %v, want a 401 invalid_client configuration fault", err)
+	}
+	assertNoSecrets(t, err, append(values(unregistered.all()), refreshToken)...)
+	if n := len(stub.revocations()); n != 1 {
+		t.Fatalf("the endpoint revoked %d tokens after the refusal, want 1", n)
 	}
 }
 
@@ -295,14 +355,7 @@ func (o overLongAssertions) ClientAssertion(audience string, now time.Time) (ide
 }
 
 func TestClientAuthenticationRefusals(t *testing.T) {
-	unregistered, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unregisteredSigner, err := identitybroker.NewClientAssertionSigner(unregistered, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	unregisteredSigner := newBrokerSigner(t)
 	tests := []struct {
 		name string
 		// signer replaces the registered broker key's signer.
@@ -605,34 +658,28 @@ func TestOversizedRefusalKeepsItsStatus(t *testing.T) {
 // newStubClient returns a client for a stand-in server at base.
 func newStubClient(t *testing.T, base string, hc *http.Client) *authserverclient.Client {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := authserverclient.New(authserverclient.Config{Issuer: base, TokenEndpoint: base + "/token", Assertions: signer, HTTPClient: hc})
+	c, err := authserverclient.New(authserverclient.Config{Issuer: base, TokenEndpoint: base + "/token", Assertions: newBrokerSigner(t), HTTPClient: hc})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
 }
 
-// TestFormMustNotCarryClientCredentials revokes, so it stays on the harness's
-// AS-1: retired by stacklok/toolhive#6966 and stacklok/toolhive#6972.
+// TestFormMustNotCarryClientCredentials revokes at the stub RFC 7009
+// endpoint: a form carrying its own client credentials is refused before an
+// assertion is minted or anything is sent.
 func TestFormMustNotCarryClientCredentials(t *testing.T) {
-	f := newFixture(t)
+	signer := newBrokerSigner(t)
+	stub := startRevocationStub(t, signer)
 	r := &recorder{}
-	c := f.client(t, r, nil)
+	c := stub.newClient(t, r, signer)
 	for _, name := range []string{"client_secret", "client_id", "client_assertion", "client_assertion_type"} {
 		if err := c.Revoke(t.Context(), url.Values{"token": {"x"}, name: {"v"}}); err == nil {
 			t.Errorf("a form carrying %s was sent", name)
 		}
 	}
-	if len(r.all()) != 0 {
-		t.Fatal("assertions were minted for refused forms")
+	if len(r.all()) != 0 || len(stub.revocations()) != 0 {
+		t.Fatal("assertions were minted or revocations sent for refused forms")
 	}
 }
 
@@ -676,15 +723,7 @@ func (blockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestTransportErrorTextIsNeverReturned(t *testing.T) {
-	r := &recorder{}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.signer, err = identitybroker.NewClientAssertionSigner(key, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := &recorder{signer: newBrokerSigner(t)}
 	c, err := authserverclient.New(authserverclient.Config{
 		Issuer: "https://as.example.com", TokenEndpoint: "https://as.example.com/token",
 		Assertions: r, HTTPClient: &http.Client{Transport: echoingTransport{}},

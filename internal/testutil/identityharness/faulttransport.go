@@ -14,7 +14,11 @@ import (
 	"sync"
 )
 
-const grantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer" // #nosec G101 -- RFC 7523 grant type URN, not a credential.
+const (
+	grantJWTBearer     = "urn:ietf:params:oauth:grant-type:jwt-bearer"     // #nosec G101 -- RFC 7523 grant type URN, not a credential.
+	grantTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC 8693 grant type URN, not a credential.
+	tokenTypeIDJAG     = "urn:ietf:params:oauth:token-type:id-jag"         // #nosec G101 -- token type URN, not a credential.
+)
 
 // GrantKind is the kind of a token endpoint request FaultTransport tells
 // apart.
@@ -44,9 +48,20 @@ const (
 // as a connection closed without a response.
 var errConnectionClosed = fmt.Errorf("identityharness: connection closed without a response: %w", io.ErrUnexpectedEOF)
 
+// Fault is an answer FailNext has a FaultTransport return once instead of
+// forwarding the request.
+type Fault struct {
+	// Status is the HTTP status. Zero selects 400.
+	Status int
+	// Error is the OAuth error code, such as invalid_request or invalid_grant.
+	Error string
+	// Reason starts error_description, as the design's error reasons do.
+	Reason string
+}
+
 // FaultTransport is an http.RoundTripper in front of an authorization
-// server's transport, such as HTTPClient's for AS-1 or an in-process client
-// for AS-2. It forwards every request, records each one for the token
+// server's transport, such as as1servertest's HTTPClient for AS-1 or an
+// in-process client for AS-2. It forwards every request, records each one for the token
 // endpoint, and applies the faults a test queued, one per request of the
 // fault's kind in the order queued. It is a transport rather than a handler
 // wrapper because a lost connection can only be modelled on the caller's
@@ -166,7 +181,7 @@ func (f *FaultTransport) record(r GrantRequest) {
 func grantKind(form url.Values) GrantKind {
 	switch form.Get("grant_type") {
 	case grantTokenExchange:
-		if form.Get("requested_token_type") == TokenTypeIDJAG {
+		if form.Get("requested_token_type") == tokenTypeIDJAG {
 			return KindIDJAG
 		}
 		return ""

@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -73,20 +74,11 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 	h := identityharness.New(t, identityharness.Options{})
 	f := &gatewayFixture{h: h, g: h.StartGateway(t, identityharness.GatewayOptions{})}
 	f.wire = &recordingTransport{base: h.HTTPClient().Transport}
-	f.token = h.AS1.MintAccessToken(identityharness.AccessTokenSpec{})
-	// The stand-in records the token's jti.
-	parts := strings.Split(f.token, ".")
-	claims, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var c struct {
-		JTI string `json:"jti"`
-	}
-	if err := json.Unmarshal(claims, &c); err != nil || c.JTI == "" {
-		t.Fatalf("token jti: %v", err)
-	}
-	f.jti = c.JTI
+	// The stand-in does not verify the token; it records its jti, read
+	// without verifying it, so an unsigned JWT with a jti serves.
+	f.jti = rand.Text()
+	f.token = base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`)) + "." +
+		base64.RawURLEncoding.EncodeToString([]byte(`{"jti":"`+f.jti+`"}`)) + "."
 	return f
 }
 

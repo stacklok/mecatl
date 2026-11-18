@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,6 +33,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/internal/testutil/oauthbrowser"
@@ -112,21 +114,62 @@ func postAS2Token(t *testing.T, as2 *AS2, form url.Values) (int, map[string]any)
 	return resp.StatusCode, body
 }
 
-// as2TestAct is the act claim of the ID-JAGs the tests mint, in the design's
-// shape (credentials-and-lifecycle.md, step (7)): the instance's ag_
-// identifier, and AS-1, which minted act, as its issuer.
-func as2TestAct(h *identityharness.Harness) map[string]any {
-	return map[string]any{"iss": h.AS1.Issuer(), "sub": "ag_7hq2x9"}
+// trustedAS1 is the real AS-1, with the harness IdP as its upstream, and
+// Alice's and Bob's access tokens from it. The tests forge their assertions
+// from Alice's token and sign them with AS-1's key.
+type trustedAS1 struct {
+	a          *as1servertest.AS1
+	alice, bob identitybroker.Token
 }
 
-// mintAS2IDJAG is an ID-JAG for Alice from the harness's AS-1, for the broker
-// client at as2.
-func mintAS2IDJAG(h *identityharness.Harness, as2 *AS2) string {
-	return h.AS1.MintAccessToken(identityharness.AccessTokenSpec{
-		User: identityharness.Alice, ClientID: identitybroker.BrokerClientID, Audience: as2.Issuer,
-		Type: idJAGType, Lifetime: 5 * time.Minute,
-		Claims: map[string]any{"resource": as2.Resource, "act": as2TestAct(h)},
-	})
+// startTrustedAS1 starts the real AS-1 and signs Alice and Bob in.
+func startTrustedAS1(t *testing.T) trustedAS1 {
+	t.Helper()
+	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), nil)
+	return trustedAS1{
+		a:     a,
+		alice: a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}),
+		bob:   a.SignIn(t, as1servertest.SignIn{User: identityharness.Bob}),
+	}
+}
+
+// act is the act claim of the ID-JAGs the tests mint, in the design's shape
+// (credentials-and-lifecycle.md, step (7)): the instance's ag_ identifier,
+// and AS-1, which minted act, as its issuer.
+func (s trustedAS1) act() map[string]any {
+	return map[string]any{"iss": s.a.Issuer(), "sub": "ag_7hq2x9"}
+}
+
+// jwt is Alice's access token turned into a JWT AS-1 signs for the broker
+// client: aud audience, typ typ (none when empty), a fresh jti, five
+// minutes to live, and an ID-JAG's resource and act claims for as2 unless
+// claims replaces them.
+func (s trustedAS1) jwt(t *testing.T, as2 *AS2, audience, typ string, claims map[string]any) string {
+	t.Helper()
+	if claims == nil {
+		claims = map[string]any{"resource": as2.Resource, "act": s.act()}
+	}
+	now := time.Now()
+	return s.a.Forge(t, s.alice, as1servertest.Forgery{
+		Claims: func(c jwt.MapClaims) {
+			c["aud"], c["client_id"], c["jti"] = audience, identitybroker.BrokerClientID, rand.Text()
+			c["iat"], c["exp"] = now.Unix(), now.Add(5*time.Minute).Unix()
+			maps.Copy(c, claims)
+		},
+		Header: func(h map[string]any) {
+			if typ == "" {
+				delete(h, "typ")
+				return
+			}
+			h["typ"] = typ
+		},
+	}).Value()
+}
+
+// idJAG is an ID-JAG for Alice from AS-1, for the broker client at as2.
+func (s trustedAS1) idJAG(t *testing.T, as2 *AS2) string {
+	t.Helper()
+	return s.jwt(t, as2, as2.Issuer, idJAGType, nil)
 }
 
 // unverifiedClaims decodes a JWT's claims without verifying it.
@@ -632,21 +675,21 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 	}
 }
 
-// newTrustingAS2 is AS-2 configured to trust the harness's AS-1, for Alice
-// and Bob, through the test-only seam, ToolHiveConfig.AS2Trust. It is this
+// newTrustingAS2 is AS-2 configured to trust the real AS-1, for Alice and
+// Bob, through the test-only seam, ToolHiveConfig.AS2Trust. It is this
 // package's counterpart of mcpbrokertest.StartAS2, which these tests cannot
 // call: mcpbrokertest imports this package, and the tests here use its
 // unexported helpers. Both build the trust with as2trust.Trust.WithDefaults.
-func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *Process) {
+func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
-	h := identityharness.New(t, identityharness.Options{})
+	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: broker.config,
 		AS2Trust: NewAS2Trust(as2trust.Trust{
-			Issuer: h.AS1.Issuer(), JWKSURL: h.AS1.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
-			Subjects: []string{h.AS1.Subject(identityharness.Alice), h.AS1.Subject(identityharness.Bob)},
+			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: as1.a.Harness.WriteCACert(t, t.TempDir()),
+			Subjects: []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
 		}.WithDefaults()),
 	})
 	if err != nil {
@@ -656,16 +699,16 @@ func newTrustingAS2(t *testing.T) (*identityharness.Harness, as2BrokerClient, *P
 	if process.AS2 == nil {
 		t.Fatal("AS-2 is not set up")
 	}
-	return h, broker, process
+	return as1, broker, process
 }
 
-// TestAS2RedeemsAHarnessIDJAG configures AS-2 to trust the harness's AS-1
-// through the test-only seam and redeems ID-JAGs it signs, then checks the
-// broker client's assertions.
-func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
-	h, broker, process := newTrustingAS2(t)
+// TestAS2RedeemsAnAS1IDJAG configures AS-2 to trust the real AS-1 through
+// the test-only seam and redeems ID-JAGs signed with AS-1's key, then checks
+// the broker client's assertions.
+func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
+	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
-	idJAG := func() string { return mintAS2IDJAG(h, as2) }
+	idJAG := func() string { return as1.idJAG(t, as2) }
 	redeem := func(assertion, clientAssertion string) (int, map[string]any) {
 		return postAS2Token(t, as2, url.Values{
 			"grant_type":            {oauthproto.GrantTypeJWTBearer},
@@ -689,10 +732,10 @@ func TestAS2RedeemsAHarnessIDJAG(t *testing.T) {
 	if claims["client_id"] != identitybroker.BrokerClientID {
 		t.Errorf("gateway token client_id = %v, want %s", claims["client_id"], identitybroker.BrokerClientID)
 	}
-	if want := as2TestAct(h); !reflect.DeepEqual(claims["act"], want) {
+	if want := as1.act(); !reflect.DeepEqual(claims["act"], want) {
 		t.Errorf("gateway token act = %v, want %v", claims["act"], want)
 	}
-	if sub, _ := claims.GetSubject(); sub != h.AS1.Issuer()+"#"+h.AS1.Subject(identityharness.Alice) {
+	if sub, _ := claims.GetSubject(); sub != as1.a.Issuer()+"#"+as1servertest.Subject(t, as1.alice) {
 		t.Errorf("gateway token sub = %q, want issuer#sub", sub)
 	}
 	if aud, _ := claims.GetAudience(); !slices.Equal([]string(aud), []string{as2.Resource}) {
@@ -782,16 +825,6 @@ func as2Redemption(t *testing.T, as2 *AS2, broker as2BrokerClient, assertion str
 	return postAS2Token(t, as2, form)
 }
 
-// as1JWT signs a JWT for Alice from the harness's AS-1 per spec, with an
-// ID-JAG's resource and act claims unless spec sets its own.
-func as1JWT(h *identityharness.Harness, as2 *AS2, spec identityharness.AccessTokenSpec) string {
-	spec.User, spec.ClientID, spec.Lifetime = identityharness.Alice, identitybroker.BrokerClientID, 5*time.Minute
-	if spec.Claims == nil {
-		spec.Claims = map[string]any{"resource": as2.Resource, "act": as2TestAct(h)}
-	}
-	return h.AS1.MintAccessToken(spec)
-}
-
 // TestAS2RefusesRedemptionsOutsideItsConfiguration shows that AS-2 refuses
 // what its configuration leaves out, not only that it redeems what it allows:
 // a resource, requested or taken from the ID-JAG's claim, other than the
@@ -800,19 +833,16 @@ func as1JWT(h *identityharness.Harness, as2 *AS2, spec identityharness.AccessTok
 // checks that keep an AS-1 access token from being redeemed once #2533 trusts
 // AS-1 in production, and that a ToolHive bump must not loosen.
 func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
-	h, broker, process := newTrustingAS2(t)
+	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
-	idJAG := func(audience string) string {
-		return as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: audience, Type: idJAGType})
-	}
+	idJAG := func(audience string) string { return as1.jwt(t, as2, audience, idJAGType, nil) }
 	resource := func(value string) *string { return &value }
 
 	if status, body := as2Redemption(t, as2, broker, idJAG(as2.Issuer), resource(as2.Resource), true); status != http.StatusOK {
 		t.Fatalf("valid ID-JAG: status %d, body %v", status, body)
 	}
-	accessToken := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer})
-	otherClaim := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer, Type: idJAGType,
-		Claims: map[string]any{"resource": "https://other.example/mcp", "act": as2TestAct(h)}})
+	accessToken := as1.jwt(t, as2, as2.Issuer, "at+jwt", nil)
+	otherClaim := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": "https://other.example/mcp", "act": as1.act()})
 	for _, test := range []struct {
 		name       string
 		assertion  string
@@ -842,7 +872,7 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 // tickets that close them flip these cases to refusals rather than finding the
 // behaviour by accident.
 func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
-	h, broker, process := newTrustingAS2(t)
+	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
 	vmcp := as2.Resource
 
@@ -850,8 +880,7 @@ func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
 	// (stacklok/toolhive#6892, stacklok/toolhive#6983; #2533). The broker
 	// client's audiences allow only the vMCP resource, so the request's
 	// resource still limits the token.
-	otherClaim := as1JWT(h, as2, identityharness.AccessTokenSpec{Audience: as2.Issuer, Type: idJAGType,
-		Claims: map[string]any{"resource": "https://other.example/mcp", "act": as2TestAct(h)}})
+	otherClaim := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": "https://other.example/mcp", "act": as1.act()})
 	if status, body := as2Redemption(t, as2, broker, otherClaim, &vmcp, true); status != http.StatusOK {
 		t.Errorf("ID-JAG whose resource claim names another server: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", status, body)
 	}
@@ -860,11 +889,11 @@ func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
 	// assertions from it, without client authentication. #2533 trusts AS-1 for
 	// ID-JAGs only (acceptedAssertionTypes [id_jag], PR
 	// stacklok/toolhive#6678), which refuses these.
-	for name, spec := range map[string]identityharness.AccessTokenSpec{
-		"typ JWT":    {Audience: as2.Issuer, Type: "JWT"},
-		"typ absent": {Audience: as2.Issuer, OmitType: true},
+	for name, typ := range map[string]string{
+		"typ JWT":    "JWT",
+		"typ absent": "",
 	} {
-		if status, body := as2Redemption(t, as2, broker, as1JWT(h, as2, spec), &vmcp, false); status != http.StatusOK {
+		if status, body := as2Redemption(t, as2, broker, as1.jwt(t, as2, as2.Issuer, typ, nil), &vmcp, false); status != http.StatusOK {
 			t.Errorf("plain AS-1 assertion (%s) without client authentication: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", name, status, body)
 		}
 	}
@@ -872,7 +901,7 @@ func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
 
 func TestAS2TrustsNoIssuerWithoutTheTestSeam(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
-	h := identityharness.New(t, identityharness.Options{})
+	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: broker.config,
@@ -883,7 +912,7 @@ func TestAS2TrustsNoIssuerWithoutTheTestSeam(t *testing.T) {
 	t.Cleanup(func() { _ = process.Close() })
 	status, body := postAS2Token(t, process.AS2, url.Values{
 		"grant_type":            {oauthproto.GrantTypeJWTBearer},
-		"assertion":             {mintAS2IDJAG(h, process.AS2)},
+		"assertion":             {as1.idJAG(t, process.AS2)},
 		"resource":              {process.AS2.Resource},
 		"client_assertion_type": {clientAssertionTyp},
 		"client_assertion":      {broker.assertion(t, process.AS2.Issuer)},

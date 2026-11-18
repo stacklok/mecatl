@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -341,15 +342,10 @@ func accessTokenClaims(t testing.TB, accessToken identitybroker.Token) jwt.MapCl
 
 // ExpiredAccessToken returns accessToken, an access token AS-1 issued, with
 // its iat and exp moved an hour into the past and signed again with AS-1's
-// signing key, so AS-1 verifies it and refuses it only for its expiry. It
-// needs Config.SigningKeyFile to hold a key identityharness's WriteSigningKey
-// wrote, as Start's does.
+// signing key, so AS-1 verifies it and refuses it only for its expiry.
 func (a *AS1) ExpiredAccessToken(t testing.TB, accessToken identitybroker.Token) identitybroker.Token {
 	t.Helper()
-	if a.signingKeyFile == "" {
-		t.Fatal("as1servertest: AS-1 has no signing key file")
-	}
-	return identitybroker.NewToken(identityharness.ResignAccessToken(t, a.signingKeyFile, accessToken.Value(), func(claims jwt.MapClaims) {
+	return a.Forge(t, accessToken, Forgery{Claims: func(claims jwt.MapClaims) {
 		iat, errIat := claims.GetIssuedAt()
 		exp, errExp := claims.GetExpirationTime()
 		if errIat != nil || errExp != nil || iat == nil || exp == nil {
@@ -357,5 +353,57 @@ func (a *AS1) ExpiredAccessToken(t testing.TB, accessToken identitybroker.Token)
 		}
 		end := time.Now().Add(-time.Hour)
 		claims["iat"], claims["exp"] = end.Add(-exp.Sub(iat.Time)).Unix(), end.Unix()
-	}))
+	}})
+}
+
+// Forgery is how Forge alters a token. The zero value changes nothing.
+type Forgery struct {
+	// Claims, when set, edits the claims.
+	Claims func(jwt.MapClaims)
+	// Header, when set, edits the JOSE header, such as its typ. A forgery
+	// keeps alg ES256 and, unless Header changes it, AS-1's kid.
+	Header func(map[string]any)
+	// ForeignKey signs with a fresh key AS-1 never published, under the same
+	// kid, instead of AS-1's signing key.
+	ForeignKey bool
+}
+
+// Forge returns token, a JWT AS-1 issued such as a user's access token, with
+// f's changes, signed again with AS-1's own signing key unless f.ForeignKey
+// is set. A forgery signed with AS-1's key verifies against AS-1's key set,
+// so its verifier judges it by the changes alone. It needs
+// Config.SigningKeyFile to hold a key identityharness's WriteSigningKey
+// wrote, as Start's does.
+func (a *AS1) Forge(t testing.TB, token identitybroker.Token, f Forgery) identitybroker.Token {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	parsed, _, err := jwt.NewParser().ParseUnverified(token.Value(), claims)
+	if err != nil {
+		t.Fatalf("as1servertest: parse token to forge: %v", err)
+	}
+	if f.Claims != nil {
+		f.Claims(claims)
+	}
+	forged := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	forged.Header = maps.Clone(parsed.Header)
+	forged.Header["alg"] = jwt.SigningMethodES256.Alg()
+	if f.Header != nil {
+		f.Header(forged.Header)
+	}
+	var key *ecdsa.PrivateKey
+	if f.ForeignKey {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			t.Fatalf("as1servertest: foreign key: %v", err)
+		}
+	} else {
+		if a.signingKeyFile == "" {
+			t.Fatal("as1servertest: AS-1 has no signing key file")
+		}
+		key = identityharness.ReadSigningKey(t, a.signingKeyFile)
+	}
+	signed, err := forged.SignedString(key)
+	if err != nil {
+		t.Fatalf("as1servertest: sign forged token: %v", err)
+	}
+	return identitybroker.NewToken(signed)
 }

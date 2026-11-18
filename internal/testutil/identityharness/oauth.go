@@ -1,7 +1,6 @@
 package identityharness
 
 import (
-	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,12 +12,11 @@ import (
 	"strings"
 )
 
-// OAuth protocol values shared by the stand-ins.
+// OAuth protocol values the IdP uses.
 const (
 	paramClientID          = "client_id"
 	responseTypeCode       = "code"
 	grantAuthorizationCode = "authorization_code"
-	grantRefreshToken      = "refresh_token"
 	pkceS256               = "S256"
 )
 
@@ -30,21 +28,12 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// writeOAuthError writes an RFC 6749 §5.2 error. A nonempty reason starts
-// error_description, as the design's error reasons require; it is never a
-// token or claim value.
-func writeOAuthError(w http.ResponseWriter, status int, code, reason string) {
-	if status == 0 {
-		status = http.StatusBadRequest
-	}
+// writeOAuthError writes an RFC 6749 §5.2 error with no description.
+func writeOAuthError(w http.ResponseWriter, status int, code string) {
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Basic realm="token"`)
 	}
-	body := map[string]string{"error": code}
-	if reason != "" {
-		body["error_description"] = reason
-	}
-	writeJSON(w, status, body)
+	writeJSON(w, status, map[string]string{"error": code})
 }
 
 // redirectWithError sends an authorization error back to a validated redirect
@@ -93,38 +82,10 @@ func s256(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// validVerifier reports whether v is an RFC 7636 §4.1 code verifier.
-func validVerifier(v string) bool {
-	if len(v) < 43 || len(v) > 128 {
-		return false
-	}
-	for _, c := range v {
-		unreserved := c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~", c)
-		if !unreserved {
-			return false
-		}
-	}
-	return true
-}
-
 func rsaJWK(kid string, key *rsa.PublicKey) map[string]string {
 	return map[string]string{
 		"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
 		"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 		"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-	}
-}
-
-func ecJWK(kid string, key *ecdsa.PublicKey) map[string]string {
-	// The uncompressed P-256 point is 0x04 || X || Y, each coordinate 32
-	// bytes (RFC 7518 §6.2.1.2).
-	point, err := key.Bytes()
-	if err != nil {
-		panic("identityharness: encode EC key: " + err.Error())
-	}
-	return map[string]string{
-		"kty": "EC", "use": "sig", "alg": "ES256", "kid": kid, "crv": "P-256",
-		"x": base64.RawURLEncoding.EncodeToString(point[1:33]),
-		"y": base64.RawURLEncoding.EncodeToString(point[33:65]),
 	}
 }

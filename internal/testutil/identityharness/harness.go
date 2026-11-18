@@ -1,72 +1,22 @@
-// Package identityharness stands in, offline, for the external parties of the
-// agent identity credential flow: the upstream company IdP and AS-1, Mecatl's
-// sign-in authorization server. It follows
+// Package identityharness is what tests of the agent identity credential
+// flow need offline around the real authorization servers: AS-1 and AS-2 are
+// ToolHive's embedded authorization servers, run by the tests themselves
+// (AS-1 through as1servertest), and the harness supplies the rest, following
 // docs/drafts/agent-identity/credentials-and-lifecycle.md for every step it
-// covers, so identity broker tests and Mecatl composition tests share one
-// stand-in instead of each inventing its own.
+// covers:
 //
-// The harness covers:
-//
-//   - user sign-in: authorization code with PKCE at AS-1, which signs the
-//     user in at the upstream IdP as an ordinary OIDC client, and AS-1 access
-//     tokens as design step (1) describes them (as1.go, signin.go);
-//   - broker client authentication, design step (5): the confidential client
-//     BrokerClientID with private_key_jwt, checking the registered key, iss
-//     and sub, aud equal to AS-1's issuer, exp and iat with
-//     ClientAssertionClockSkew allowed, exp - iat, and a jti used once and
-//     kept until exp plus the skew; a client secret is refused (clientauth.go);
-//   - AS-1's conversion of a sign-in at session open, design step (3), kept
-//     only as the grant fixture for tests of revocation and its reasons,
-//     which the real AS-1 does not serve yet (#2568), and for mecak8s's
-//     TestIdentityBrokerAgainstOfflineHarness, which mints a second client's
-//     access token and moves AS-1's clock. Session-open
-//     behaviour itself, including refusals and faults, is tested against the
-//     real AS-1 (as1servertest). The RFC 8693 exchange turns an AS-1 access
-//     token into a non-rotating refresh token of a generic grant
-//     (stacklok/toolhive#6897) that names the client and the user, never a
-//     Mecatl session or owner, and issues only ID-JAGs. The request carries
-//     one exchange-grant entry whose optional expires_at AS-1 caps at its
-//     maximum and echoes. Each access-token jti converts once; a refused
-//     access token gets subject_token_invalid, not the real AS-1's reasons.
-//     The grant's refresh token is refused at the refresh-token grant
-//     (sessionopen.go);
-//   - AS-1's per-call ID-JAG exchange, design step (7), kept only for tests
-//     of revocation reasons until the real AS-1 sends them (#2568): a
-//     grant's refresh token with the agent's SVID as
-//     the actor token, for a configured AS-2 audience and vMCP resource. The
-//     actor checks are a test-supplied ActorValidator; the upstream re-check
-//     is not modelled, so tests inject its reasons as faults (idjag.go);
-//   - RFC 7009 revocation of grant refresh tokens, until
-//     stacklok/toolhive#6966 and stacklok/toolhive#6972 (revoke.go);
-//   - ScriptedBroker, a hand-driven caller holding the broker's credentials
-//     for exercising AS-1 directly (broker.go). Production code under test
-//     uses its own client, not ScriptedBroker;
-//   - one-shot IdP faults for sign-in (idp.go), and FaultTransport, which
-//     fails, drops, loses, duplicates, or intercepts session-open, ID-JAG,
-//     and redemption requests on the caller's side of any authorization
-//     server (faulttransport.go);
+//   - the upstream company IdP, which AS-1 signs users in at as an ordinary
+//     OIDC client (idp.go);
+//   - a browser that keeps cookies and approves ToolHive's consent page
+//     (browser.go);
+//   - FaultTransport, which fails, drops, loses, duplicates, or intercepts
+//     ID-JAG and redemption requests on the caller's side of any
+//     authorization server (faulttransport.go);
 //   - a gateway stand-in, a minimal MCP server that needs a bearer token and
-//     can reject it or ask the user to connect a server (gateway.go);
-//   - a browser for tests hosting the real AS-1, which keeps cookies and
-//     approves ToolHive's consent page (browser.go).
-//
-// Keeping one live refresh token per session, checking the owner, and
-// refusing to reopen a closed session are the broker's job, so AS-1 does
-// none of them. Later work adds child grants (with parent_revoked and
-// not_issuable) and client refresh-token revocation, each in its own files.
-// AS-2 is deliberately absent: tests use the real embedded ToolHive
-// authorization server for it.
-//
-// Where the design is silent the harness guesses, marked "Guess:" in the code:
-//
-//   - Revocation is RFC 7009 at {issuer}/revoke, callable only by the
-//     authenticated broker. Revoking a grant's refresh token revokes the
-//     grant; any other value changes nothing and answers 200.
-//   - A client assertion with an explicit typ other than
-//     client-authentication+jwt or JWT (golang-jwt's default) is refused; an
-//     untyped one is accepted; only ES256 is accepted. Because the harness
-//     accepts JWT, the production broker's own tests must check the typ it
-//     emits.
+//     can reject it or ask the user to connect a server, until #2537 and
+//     #2812 (gateway.go);
+//   - the loopback TLS certificate, CA, signing-key, and upstream-client
+//     helpers a real AS-1 needs to run against the IdP (harness.go).
 //
 // Everything runs on loopback TLS servers that close when the test ends. The
 // harness is test code; production packages never import it.
@@ -83,116 +33,55 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Defaults used when Options leaves a field empty.
+// Values shared by the tests that use the harness.
 const (
 	// DefaultAudience is the Mecatl API identifier AS-1 access tokens carry in
 	// aud. mecak8s must accept the same value (--oidc-audience).
 	DefaultAudience = "https://mecatl.test/api"
-	// DefaultClientID is the public client registered when Options.Clients is
-	// empty.
+	// DefaultClientID is the TUI's public client ID at AS-1.
 	DefaultClientID = "mecatui"
-	// DefaultRedirectURI is DefaultClientID's only redirect URI.
+	// DefaultRedirectURI is a redirect URI for DefaultClientID.
 	DefaultRedirectURI = "http://127.0.0.1:8765/callback"
-	// DefaultAccessTokenLifetime is the AS-1 access token lifetime.
-	DefaultAccessTokenLifetime = 15 * time.Minute
 	// Alice and Bob are the company identities the upstream IdP knows by
 	// default. Alice is the default user.
 	Alice = "alice-204"
 	Bob   = "bob-317"
 )
 
-// Client is a public OAuth client registered at AS-1, such as the TUI or
-// Studio. Redirect URIs match exactly.
-type Client struct {
-	ID           string
-	RedirectURIs []string
-}
-
-// Options configures a Harness. The zero value is usable.
-type Options struct {
-	// Audience is the Mecatl API identifier. Empty selects DefaultAudience.
-	Audience string
-	// Clients are AS-1's public clients. Empty registers DefaultClientID with
-	// DefaultRedirectURI.
-	Clients []Client
-	// Users are the company identities (IdP subjects) the upstream IdP can
-	// sign in. The first is the default user. Empty selects Alice and Bob.
-	Users []string
-	// AccessTokenLifetime is the AS-1 access token lifetime. Zero selects
-	// DefaultAccessTokenLifetime.
-	AccessTokenLifetime time.Duration
-	// Now is the clock for every issued token and code. Nil selects time.Now.
-	Now func() time.Time
-	// BrokerKeys are public keys registered for BrokerClientID in addition
-	// to the harness's own broker key, DefaultBrokerKeyID. Each needs a
-	// unique, nonempty KeyID other than DefaultBrokerKeyID and a P-256 key.
-	BrokerKeys []BrokerKey
-	// ClientAssertionMaxLifetime is the largest exp - iat AS-1 accepts in a
-	// client assertion. Zero selects DefaultClientAssertionMaxLifetime.
-	ClientAssertionMaxLifetime time.Duration
-	// GrantMaxLifetime is AS-1's maximum lifetime for a grant that issues
-	// ID-JAGs: the expiry when an exchange asks for none, and the cap on one
-	// it asks for. Zero selects DefaultGrantMaxLifetime.
-	GrantMaxLifetime time.Duration
-	// IDJAGLifetime is the lifetime of the ID-JAGs AS-1 issues, before the cap
-	// at the actor token's expiry. Zero selects DefaultIDJAGLifetime.
-	IDJAGLifetime time.Duration
-}
+// Options configures a Harness. It has no settings yet; the IdP knows Alice,
+// its default user, and Bob.
+type Options struct{}
 
 // Harness is a running set of stand-ins. Create it with New.
 type Harness struct {
 	IdP *IdP
-	AS1 *AS1
 
 	certPEM []byte
 }
 
-// New starts the stand-ins and stops them when t ends.
-func New(t testing.TB, opts Options) *Harness {
-	t.Helper()
-	if opts.Audience == "" {
-		opts.Audience = DefaultAudience
-	}
-	if len(opts.Clients) == 0 {
-		opts.Clients = []Client{{ID: DefaultClientID, RedirectURIs: []string{DefaultRedirectURI}}}
-	}
-	if len(opts.Users) == 0 {
-		opts.Users = []string{Alice, Bob}
-	}
-	if opts.AccessTokenLifetime <= 0 {
-		opts.AccessTokenLifetime = DefaultAccessTokenLifetime
-	}
-	if opts.Now == nil {
-		opts.Now = time.Now
-	}
-	if opts.ClientAssertionMaxLifetime <= 0 {
-		opts.ClientAssertionMaxLifetime = DefaultClientAssertionMaxLifetime
-	}
-	if opts.GrantMaxLifetime <= 0 {
-		opts.GrantMaxLifetime = DefaultGrantMaxLifetime
-	}
-	if opts.IDJAGLifetime <= 0 {
-		opts.IDJAGLifetime = DefaultIDJAGLifetime
-	}
+// Owner is a company identity: the upstream IdP's issuer and subject, as in
+// an AS-1 access token's sub_id.
+type Owner struct {
+	Issuer  string `json:"iss"`
+	Subject string `json:"sub"`
+}
 
-	idp := newIdP(t, opts)
-	as1 := newAS1(t, opts, idp)
+// New starts the stand-ins and stops them when t ends.
+func New(t testing.TB, _ Options) *Harness {
+	t.Helper()
+	idp := newIdP(t)
 	// httptest serves every TLS server with the same loopback certificate, so
-	// one client and one CA file cover both stand-ins.
-	h := &Harness{
+	// one client and one CA file cover every stand-in.
+	return &Harness{
 		IdP:     idp,
-		AS1:     as1,
 		certPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: idp.server.Certificate().Raw}),
 	}
-	as1.http = h.HTTPClient()
-	return h
 }
 
 // HTTPClient returns a client that trusts the stand-ins' TLS certificate and
@@ -211,11 +100,8 @@ func (h *Harness) HTTPClient() *http.Client {
 // access token's sub_id carries it.
 func (h *Harness) Owner(user string) Owner { return Owner{Issuer: h.IdP.Issuer(), Subject: user} }
 
-// CACertPEM returns the PEM certificate that verifies every stand-in.
-func (h *Harness) CACertPEM() []byte { return append([]byte(nil), h.certPEM...) }
-
-// WriteCACert writes CACertPEM to a file in dir and returns its path, for a
-// server's --oidc-ca-cert-file flag.
+// WriteCACert writes the PEM certificate that verifies every stand-in to a
+// file in dir and returns its path, for a server's --oidc-ca-cert-file flag.
 func (h *Harness) WriteCACert(t testing.TB, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "identityharness-ca.pem")
@@ -244,6 +130,24 @@ func (*Harness) WriteSigningKey(t testing.TB, dir string) string {
 	return path
 }
 
+// ReadSigningKey reads the private key WriteSigningKey wrote to file.
+func ReadSigningKey(t testing.TB, file string) *ecdsa.PrivateKey {
+	t.Helper()
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("identityharness: read signing key: %v", err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		t.Fatal("identityharness: the signing key file holds no PEM block")
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("identityharness: parse signing key: %v", err)
+	}
+	return key
+}
+
 // ResignAccessToken returns token, a JWT signed with the key WriteSigningKey
 // wrote to keyFile, with its claims changed by edit and signed again with that
 // key under the same header, so its issuer verifies it and judges it by the
@@ -256,21 +160,9 @@ func ResignAccessToken(t testing.TB, keyFile, token string, edit func(jwt.MapCla
 		t.Fatalf("identityharness: parse access token: %v", err)
 	}
 	edit(claims)
-	raw, err := os.ReadFile(keyFile)
-	if err != nil {
-		t.Fatalf("identityharness: read signing key: %v", err)
-	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		t.Fatal("identityharness: the signing key file holds no PEM block")
-	}
-	key, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("identityharness: parse signing key: %v", err)
-	}
 	resigned := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	resigned.Header = maps.Clone(parsed.Header)
-	signed, err := resigned.SignedString(key)
+	signed, err := resigned.SignedString(ReadSigningKey(t, keyFile))
 	if err != nil {
 		t.Fatalf("identityharness: sign access token: %v", err)
 	}
@@ -310,41 +202,4 @@ func (h *Harness) WriteServerKeyPair(t testing.TB, dir string) (certFile, keyFil
 		t.Fatalf("identityharness: write TLS key: %v", err)
 	}
 	return certFile, keyFile
-}
-
-// faults holds one-shot failures a test forces on an IdP endpoint.
-type faults struct {
-	mu      sync.Mutex
-	pending map[string][]Fault
-}
-
-// Fault is a failure the IdP or a FaultTransport returns once instead of the
-// normal response.
-type Fault struct {
-	// Status is the HTTP status for a token endpoint fault. Zero selects 400.
-	Status int
-	// Error is the OAuth error code, such as access_denied or invalid_grant.
-	Error string
-	// Reason starts error_description, as the design's error reasons do.
-	Reason string
-}
-
-func (f *faults) push(endpoint string, fault Fault) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.pending == nil {
-		f.pending = make(map[string][]Fault)
-	}
-	f.pending[endpoint] = append(f.pending[endpoint], fault)
-}
-
-func (f *faults) pop(endpoint string) (Fault, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	queue := f.pending[endpoint]
-	if len(queue) == 0 {
-		return Fault{}, false
-	}
-	f.pending[endpoint] = queue[1:]
-	return queue[0], true
 }

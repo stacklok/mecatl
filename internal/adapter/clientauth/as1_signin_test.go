@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -57,17 +59,21 @@ type as1Fixture struct {
 	authorizeURLs []*url.URL
 }
 
+// newAS1Fixture runs the real AS-1 with the TUI's client, mecatui, at the
+// loopback redirect URI oauthlogin uses, and an identity for it that asks
+// for offline access, without which AS-1 issues no refresh token.
 func newAS1Fixture(t *testing.T) *as1Fixture {
 	t.Helper()
-	h := identityharness.New(t, identityharness.Options{Clients: []identityharness.Client{
-		{ID: "mecatui", RedirectURIs: []string{oauthlogin.ExactRedirectURL}},
-	}})
+	h := identityharness.New(t, identityharness.Options{})
+	a := as1servertest.Start(t, h, func(c *as1server.Config, _ *as1server.DelegateClient) {
+		c.PublicClients = append(c.PublicClients, as1server.PublicClient{ID: "mecatui", RedirectURIs: []string{oauthlogin.ExactRedirectURL}})
+	})
 	client := h.HTTPClient()
 	recorder := &tokenFormRecorder{next: client.Transport}
 	client.Transport = recorder
 	id, err := Identity{
-		Target: "mecatl.test:443", Issuer: h.AS1.Issuer(), ClientID: "mecatui",
-		Audience: h.AS1.Audience(), RedirectURI: oauthlogin.ExactRedirectURL, Scopes: []string{"openid"},
+		Target: "mecatl.test:443", Issuer: a.Issuer(), ClientID: "mecatui",
+		Audience: as1servertest.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: []string{"openid", "offline_access"},
 	}.Canonical()
 	if err != nil {
 		t.Fatalf("identity: %v", err)
@@ -75,8 +81,8 @@ func newAS1Fixture(t *testing.T) *as1Fixture {
 	return &as1Fixture{harness: h, identity: id, client: client, recorder: recorder}
 }
 
-// presenter completes the browser step at the harness for the real
-// authorization URL Login built.
+// presenter completes the browser step, approving AS-1's consent page, for
+// the real authorization URL Login built.
 func (f *as1Fixture) presenter() Presenter {
 	return PresenterFunc(func(ctx context.Context, raw string) (oauthlogin.Result, error) {
 		u, err := url.Parse(raw)
@@ -84,16 +90,22 @@ func (f *as1Fixture) presenter() Presenter {
 			return oauthlogin.Result{}, err
 		}
 		f.authorizeURLs = append(f.authorizeURLs, u)
-		back, err := f.harness.Authorize(ctx, raw)
+		back, err := f.harness.AuthorizeWithConsent(ctx, raw)
 		if err != nil {
 			return oauthlogin.Result{}, err
 		}
 		if code := back.Get("error"); code != "" {
-			return oauthlogin.Result{}, errors.New("authorization refused: " + code)
+			return oauthlogin.Result{}, &authorizationRefused{code: code}
 		}
 		return oauthlogin.Result{Code: back.Get("code"), State: back.Get("state"), Iss: back.Get("iss")}, nil
 	})
 }
+
+// authorizationRefused is the presenter's error for an authorization
+// response that redirected back with an OAuth error code.
+type authorizationRefused struct{ code string }
+
+func (e *authorizationRefused) Error() string { return "authorization refused: " + e.code }
 
 func (f *as1Fixture) login(t *testing.T, identityBrokerSignIn bool) Token {
 	t.Helper()
@@ -104,7 +116,7 @@ func (f *as1Fixture) login(t *testing.T, identityBrokerSignIn bool) Token {
 	return tok
 }
 
-// TestLoginAtAS1SendsResourceAndRefreshRotates signs in at the AS-1 stand-in
+// TestLoginAtAS1SendsResourceAndRefreshRotates signs in at the real AS-1
 // with the real authorization code + PKCE flow and the resource indicator on,
 // then forces refreshes through a RefreshSource: every leg names the Mecatl API
 // as the RFC 8707 resource, each forced refresh yields a new access token and
@@ -187,12 +199,14 @@ func TestLoginAtAS1SendsResourceAndRefreshRotates(t *testing.T) {
 
 // TestLoginAtAS1RefusesAForeignResource is the negative control for the
 // resource assertion: a client configured with another audience is refused at
-// the authorization request.
+// the authorization request with AS-1's invalid_target.
 func TestLoginAtAS1RefusesAForeignResource(t *testing.T) {
 	f := newAS1Fixture(t)
 	f.identity.Audience = "https://other.test/api"
-	if _, err := Login(t.Context(), LoginConfig{Identity: f.identity, Presenter: f.presenter(), HTTPClient: f.client, IdentityBrokerSignIn: true}); !errors.Is(err, ErrAuthorization) {
-		t.Fatalf("Login with a foreign audience: err=%v, want ErrAuthorization", err)
+	_, err := Login(t.Context(), LoginConfig{Identity: f.identity, Presenter: f.presenter(), HTTPClient: f.client, IdentityBrokerSignIn: true})
+	var refused *authorizationRefused
+	if !errors.Is(err, ErrAuthorization) || !errors.As(err, &refused) || refused.code != "invalid_target" {
+		t.Fatalf("Login with a foreign audience: err=%v, want ErrAuthorization wrapping AS-1's invalid_target", err)
 	}
 }
 
