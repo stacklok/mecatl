@@ -3,11 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileconformance"
 )
@@ -55,10 +63,60 @@ func TestFileServiceOverOSFSBoundsFileSize(t *testing.T) {
 
 func TestServeRejectsInvalidMaxFileBytes(t *testing.T) {
 	for _, value := range []string{"0", "5242881"} {
-		args := []string{serveMode, "-listen", "127.0.0.1:0", "-max-file-bytes", value}
+		args := []string{serveMode, "-listen", "127.0.0.1:0", "-files", "-max-file-bytes", value}
 		err := runServeMode(context.Background(), args)
 		if err == nil || !strings.Contains(err.Error(), "max-file-bytes") {
 			t.Fatalf("-max-file-bytes %s: err = %v", value, err)
 		}
+	}
+}
+
+func TestServeRejectsNoEnabledService(t *testing.T) {
+	err := runServeMode(context.Background(), []string{serveMode, "-listen", "127.0.0.1:0"})
+	if err == nil || !strings.Contains(err.Error(), "enable at least one") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestServeWithoutCommandsLeavesCommandServiceUnimplemented(t *testing.T) {
+	ctx := context.Background()
+	cfg := serveConfig{files: true, maxFileBytes: 1 << 20}
+	srv, err := newExecutorServer(ctx, t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lis := bufconn.Listen(1 << 20)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	_, err = executorv1.NewFileServiceClient(conn).StatFile(
+		ctx,
+		&executorv1.StatFileRequest{Path: "missing"},
+	)
+	if status.Code(err) == codes.Unimplemented {
+		t.Fatalf("StatFile: %v", err)
+	}
+
+	stream, err := executorv1.NewCommandServiceClient(conn).RunCommand(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := &executorv1.RunCommandRequest_Start{
+		Start: &executorv1.StartCommand{Command: "true"},
+	}
+	_ = stream.Send(&executorv1.RunCommandRequest{Action: start})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("RunCommand: err = %v, want Unimplemented", err)
 	}
 }
