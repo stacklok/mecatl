@@ -164,15 +164,15 @@ module publication creates lightweight nested tags such as `engine/vX.Y.Z`.
 
 Before dispatching, confirm that `publish-modules.yml` is present on `main`, the
 `release` environment has the release GitHub App configured, and repository settings
-allow merge commits. Those are rollout prerequisites. This repository has no hosted
-publication or public-download evidence yet, so do not treat this procedure as proof
-that the required settings are live.
+allow merge commits. Dispatch authentication stays separate from the release App
+credential; the workflow supplies that credential only to its isolated writer jobs.
 
 1. Choose a reviewed commit that is reachable from `main` and supply its full SHA as
    `source`. Choose every release explicitly in the `versions` JSON map, including
    its exact version. For example,
    `{"engine":"v0.12.0","provider/openai":"v0.8.0"}` selects only those two
-   modules. The workflow never infers versions or expands the selection.
+   modules. Dependencies outside the map retain their published pins; the workflow
+   never infers versions or expands the selection.
 2. Dispatch `publish-modules.yml` from `main`. Its `preflight` job validates the
    source, versions, module inventory, and fixed dependency order, then runs the
    assembled workspace check once. A workspace result proves the coordinated source;
@@ -182,18 +182,19 @@ that the required settings are live.
    and published earlier in the chain, tidies metadata, and runs standalone checks
    with `GOWORK=off`. A missing prerequisite fails the run instead of adding a
    version to the map.
-4. `publish` commits the prepared dependency metadata to a temporary release branch
-   and creates the module's lightweight tag. Release commits contain metadata only,
-   never implementation source. A module with no metadata change tags its incoming
-   parent commit.
+4. The first selected `publish` writer creates a temporary release branch at `source`.
+   Each selected writer commits its prepared dependency metadata and creates the
+   module's lightweight tag. Release commits contain metadata only, never
+   implementation source. A module with no metadata change tags its incoming parent
+   commit.
 5. `prove` downloads the exact tagged version through the public proxy and checksum
    database, then compiles an owned minimal import. It must finish before the next
    selected module can run. This is the public publication evidence that standalone
    checks cannot provide.
 6. After every selected module passes public proof, `reconcile` updates the selected
-   version pins in remaining repository modules. It changes metadata only and does
-   not tag those modules. `adoption-pr` commits that metadata and opens one PR to
-   `main`.
+   version pins in root, runtime, test, and unselected publishable modules. It preserves
+   development replacements, changes metadata only, and does not tag those modules.
+   `adoption-pr` commits that metadata and opens one PR to `main`.
 7. A human merges the adoption PR with a merge commit. Never squash or rebase it.
    This makes every tagged release commit an ancestor of `main`. The workflow opens
    the PR but never merges it.
@@ -202,54 +203,12 @@ During publication, tags point at metadata commits on the release branch. The ad
 merge later brings those commits into `main`; `main` never receives intermediate pins
 for versions that are not publicly available.
 
-### Workflow and job map
+### Workflow maintenance
 
-[`publish-modules.yml`](../.github/workflows/publish-modules.yml) coordinates the
-release and calls [`publish-module.yml`](../.github/workflows/publish-module.yml) for
-each module.
-
-| Work | Workflow and job | Credential boundary |
-| --- | --- | --- |
-| Validate the request and test assembled source | `publish-modules.yml`: `preflight` | Read-only |
-| Process the fixed module order | `publish-modules.yml`: `engine` through `adapters` | Calls the reusable workflow |
-| Prepare metadata and run standalone checks | `publish-module.yml`: `prepare` | Read-only |
-| Commit prepared metadata and create a lightweight tag | `publish-module.yml`: `publish` | Release App contents-write token |
-| Download the published module and compile the smoke consumer | `publish-module.yml`: `prove` | Read-only |
-| Update remaining repository metadata | `publish-modules.yml`: `reconcile` | Read-only |
-| Commit final metadata and open the adoption PR | `publish-modules.yml`: `adoption-pr` | Release App contents- and pull-requests-write token |
-| Merge the adoption PR | Human action in GitHub | Human only |
-
-Read-only jobs have no release environment or writer credential. Writer jobs run only
-trusted workflow tooling and use the GitHub API to write prepared metadata; they do not
-check out or execute candidate source. Dispatch authentication is separate from the
-release App credential and must not enter candidate execution.
-
-The current fixed order is `engine`, generated driver, `provider/ssefilter`,
-`internal/adaptersupport`, `authn/oidc`, `provider/anthropic`, `provider/openai`,
-`provider/openaichat`, and `adapters`. Every call runs. When its module is absent from
-the version map, it succeeds and returns its incoming commit SHA to the next call.
-Do not skip that job, because later modules still need the chain.
-
-### Add a publishable module
-
-1. Add the module to `go.work`, give it the correct module identity and dependency
-   requirements, and decide its version under its compatibility policy. Runtime and
-   test modules remain consumers unless they are deliberately added as publication
-   targets.
-2. Add the module to the explicit eligibility, import, and dependency-order checks in
-   `.github/scripts/module-publication.py`. Add an owned public-download import
-   example. Keep the fixed inventory and dependency-first order validated against
-   `go.work` and `go.mod`.
-3. Add an unconditional reusable-workflow job in `publish-modules.yml` after its
-   published dependencies and before its callers. Pass the shared `source`,
-   `versions`, and `branch` values, set its `module` directory, and set `parent` to
-   the preceding job's `head` output.
-4. Thread its `head` output to the following module. If it becomes the last module,
-   make both `reconcile` and `adoption-pr` depend on it and use its `head` as their
-   parent. The first module continues to take `preflight.source` as its parent.
-5. Add focused coverage for the inventory and order, unselected pass-through, exact
-   pins, and proof before callers run. Do not introduce a dynamic workflow generator
-   for a new module.
+Job ownership, metadata-artifact and credential boundaries, and the instructions for
+adding or reordering a module live beside the implementation in
+[`publish-modules.yml`](../.github/workflows/publish-modules.yml) and
+[`publish-module.yml`](../.github/workflows/publish-module.yml).
 
 ### Handle a partial publication
 

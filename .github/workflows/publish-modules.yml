@@ -1,5 +1,11 @@
-# Operator-initiated; an agent may dispatch an explicitly approved source/version map.
-# Partial publication stops for manual inspection. Humans adopt with a MERGE COMMIT.
+# Operator procedure: docs/module-development.md, "Publish selected Go modules".
+# `source` fixes the reviewed main implementation; `parent` advances through
+# metadata-only release commits. Tooling always comes from the dispatch's github.sha,
+# not from either candidate revision. Exact versions are operator-selected: absent
+# map entries keep existing published pins; missing prerequisites fail the request.
+# Different modules may tag different commits. The final HUMAN MERGE COMMIT brings
+# those exact commits into main's ancestry; squash/rebase adoption is invalid.
+# A failed/cancelled run leaves existing tags/commits intact for manual recovery.
 name: Publish Go modules
 
 on:
@@ -23,6 +29,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Validate main reachability, inventory/order and absent tags, then test assembled
+  # source once. Choose the branch name here; the first selected writer creates it.
   preflight:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -59,8 +67,21 @@ jobs:
           python3 tooling/.github/scripts/module-publication.py preflight
           --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
 
-  # Each successful call returns the branch head AFTER public proof. Calls for
-  # unselected modules succeed and pass their parent through; never skip a call.
+  # Fixed dependency-first chain: GitHub matrices do not thread an evolving SHA
+  # through ordered calls. Each call returns head only AFTER its public proof.
+  # An unselected call must succeed with head=parent; caller-level skips break
+  # downstream jobs, including when the first or last module is unselected.
+  #
+  # Adding/reordering a publishable module:
+  # - Declare it in go.work/go.mod, and update ORDER/IMPORTS in module-publication.py.
+  #   Root, runtime and test-only modules remain consumers, not publication targets.
+  # - Insert an unconditional call after all its dependencies and before its callers.
+  #   Copy source/versions/branch, depend on preflight and the preceding module,
+  #   and take parent from that module's head. The first call uses preflight.source.
+  # - Rewire the following call's needs/parent to the new head. If the last call
+  #   changes, update BOTH reconcile and adoption-pr needs/PARENT, plus summary.needs.
+  # - Update fixed-order workflow assertions and inventory/order, unselected,
+  #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
   engine:
     needs: preflight
     uses: ./.github/workflows/publish-module.yml
@@ -151,6 +172,12 @@ jobs:
       branch: ${{ needs.preflight.outputs.branch }}
       parent: ${{ needs.openaichat.outputs.head }}
 
+  # Reached only after every selected module passes public proof. Reconcile all
+  # remaining consumers, including root/runtime/test and unselected publishable
+  # modules, preserving development replacements. No additional modules are tagged.
+  # Upload only metadata.json {parent, files: {go.mod/go.sum path: UTF-8 or null}};
+  # null represents a deleted sum file. This is a current-run Actions artifact,
+  # not a cache or executable patch; adoption-pr validates it on a fresh runner.
   reconcile:
     needs: [preflight, adapters]
     runs-on: ubuntu-24.04
@@ -192,6 +219,12 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The only writer with PR permission. Consume reconciliation's artifact by ID,
+  # commit validated metadata and open one adoption PR; never merge automatically.
+  # Before rollout, enable merge commits and configure the main-only release
+  # environment/App. Pre-merge CI checks prospective ancestry; after the human
+  # merge commit, tags must actually be ancestors of main. Concurrency above does
+  # not reserve a release across PR review waits: humans coordinate open adoptions.
   adoption-pr:
     needs: [preflight, adapters, reconcile]
     runs-on: ubuntu-24.04

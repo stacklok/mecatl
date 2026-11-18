@@ -1,5 +1,8 @@
-# Tooling is always the dispatch's immutable github.sha, never source/parent.
-# Writers use GitHub APIs only: no candidate checkout, Go, Task, hooks or caches.
+# One module's prepare -> publish -> prove boundary; called in a fixed chain by
+# publish-modules.yml. Tooling is always the dispatch's immutable github.sha.
+# Preparation/proof have no release credential; writers use GitHub APIs only:
+# no candidate checkout, Go, Task, hooks or caches. The reusable head output is
+# deliberately owned by prove, so a successful write alone cannot unlock a caller.
 name: Publish one Go module
 
 on:
@@ -38,6 +41,11 @@ env:
   BRANCH: ${{ inputs.branch }}
 
 jobs:
+  # Selection-only runs before candidate checkout. Selected preparation updates
+  # existing requirements for already-published selected dependencies, then tidies,
+  # builds and tests with GOWORK=off and no replacements in the published module.
+  # Capture the exact tested go.mod/go.sum delta only after source-integrity checks;
+  # upload it as data for the fresh writer, never as candidate programs or a cache.
   prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -86,6 +94,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Download only the current prepare artifact by ID. Validate parent/source,
+  # paths, directives and branch tip before API-only metadata writes. Create the
+  # branch at source on the first selected write; unchanged metadata tags parent.
+  # Branch updates are fast-forward only, tags create-only; conflicting refs fail.
   publish:
     needs: prepare
     if: needs.prepare.outputs.selected == 'true'
@@ -122,6 +134,9 @@ jobs:
           --module "$MODULE" --source "$SOURCE" --versions "$VERSIONS" --parent "$PARENT"
           --branch "$BRANCH" --metadata "$RUNNER_TEMP/prepared/metadata.json"
 
+  # Fresh public proxy/sumdb download and minimal import build, with exact
+  # module/version/tag identity checks and bounded propagation retries. Emit head
+  # only after this succeeds. Failure leaves the published tag but stops the chain.
   prove:
     needs: [prepare, publish]
     # A selected writer must succeed; only an unselected writer may be skipped.
