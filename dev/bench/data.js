@@ -428171,6 +428171,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794961276041,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e4f7016aac77494a7dc82aa434e10be034d4e855",
+          "message": "feat(contracts): stream file content in the executor FileService (#2832)\n\n`ReadFile` now streams its response and `CreateFile` and `ReplaceFile`\nstream their requests, in chunks of at most 3 MiB. Every client, proxy,\nand server keeps gRPC's default 4 MiB message limit, and the protocol\nsets no file size limit.\n\nA write's first message carries the context, path, and expected\nversion. The server spools chunks to a temporary file and renames it\ninto place only after the client closes its side of the stream, so an\ninterrupted write leaves nothing behind. A read's last message carries\nthe version, which covers exactly the bytes sent.\n\nThe agent tools keep the whole-file `Workspace` methods. An optional\n`WorkspaceStreamer` extension for unbuffered transfers, which fails\nsoft when a workspace lacks it, is documented in\n`docs/drafts/kubernetes-execution/executor-protocol.md` and left to a\nfollow-up.\n\nThis is a breaking change to `mecatl.executor.v1`; nothing implements\nor calls `FileService` yet.\n\nCloses #2770",
+          "timestamp": "2026-11-18T10:49:58+01:00",
+          "tree_id": "bc0e24b504f355269080c689bea8d35b43e4781c",
+          "url": "https://github.com/stacklok/mecatl/commit/e4f7016aac77494a7dc82aa434e10be034d4e855"
+        },
+        "date": 1794996211629,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13419,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -557713,6 +557752,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794996207845,
+  "lastUpdate": 1794996212650,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
