@@ -430950,6 +430950,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795016156167,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3828859e55d7a2c7ffe674e663e3d0aa921d6297",
+          "message": "feat(identitybroker): check AS-1's actor tokens with the broker's verifier (#2840)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T15:28:07Z",
+          "tree_id": "4ad479316a5756781a662fe08137629d5ca1b661",
+          "url": "https://github.com/stacklok/mecatl/commit/3828859e55d7a2c7ffe674e663e3d0aa921d6297"
+        },
+        "date": 1795016938802,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680.5,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -561290,6 +561329,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795016935126,
+  "lastUpdate": 1795016939930,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
