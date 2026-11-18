@@ -427774,6 +427774,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794959661820,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bb7767e161b81287fed2827397f5b2aca58f5870",
+          "message": "feat(mecatui): bound MCP resource and prompt browsers (#2763)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T00:09:18Z",
+          "tree_id": "c6602548f2b255c8ff04b95718de0a2621b29fbd",
+          "url": "https://github.com/stacklok/mecatl/commit/bb7767e161b81287fed2827397f5b2aca58f5870"
+        },
+        "date": 1794961276041,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13380,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12875,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -557202,6 +557241,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794961272836,
+  "lastUpdate": 1794961276788,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
