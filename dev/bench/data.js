@@ -432141,6 +432141,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795019209817,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a65a05ca760afa682876ec404cc0fc3a8088abd8",
+          "message": "feat(kernel): define model-usage accounting contracts (#2841)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T18:08:16Z",
+          "tree_id": "0889eaa99f8d5a6a1e3652e391d0bb7f8b32cd3c",
+          "url": "https://github.com/stacklok/mecatl/commit/a65a05ca760afa682876ec404cc0fc3a8088abd8"
+        },
+        "date": 1795026045695,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13400,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -562823,6 +562862,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795026042456,
+  "lastUpdate": 1795026046430,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
