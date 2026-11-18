@@ -429362,6 +429362,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794998147362,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2c0ecb36fec8732d28bd447f447a0f5f90142f22",
+          "message": "feat(executor): enable each executor service by its own flag (#2859)\n\n`mecatl-executor serve` now registers only the services enabled by\n`-files` and `-commands`. Both flags default to off, and starting\nwith neither is an error. Without `-commands` the server skips\n`EnableCommandExecution`, the command supervisor, and the orphan\nreaper. A file-only executor has no code path that starts a process,\nand a `CommandService` call returns `Unimplemented`.\n\nServer construction moves into `newExecutorServer`, so the file-only\ncase is tested over bufconn on every OS.\n\nCloses: #2696",
+          "timestamp": "2026-11-18T11:38:22Z",
+          "tree_id": "1b5f9f3808dbb809bb211746c666b54446c607d4",
+          "url": "https://github.com/stacklok/mecatl/commit/2c0ecb36fec8732d28bd447f447a0f5f90142f22"
+        },
+        "date": 1795002659471,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12913,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -559246,6 +559285,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795002655872,
+  "lastUpdate": 1795002660176,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
