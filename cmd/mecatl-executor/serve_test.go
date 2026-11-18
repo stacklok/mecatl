@@ -20,8 +20,8 @@ func TestFileServiceOverOSFSConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		return fileconformance.Target{
-			Client: fileconformance.Dial(t, srv),
-			Root:   root,
+			Conn: fileconformance.Dial(t, srv),
+			Root: root,
 			External: fsconformance.ExternalAccess{
 				Read: func(p string) ([]byte, error) {
 					return os.ReadFile(filepath.Join(root, p))

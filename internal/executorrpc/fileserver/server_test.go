@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileconformance"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileserver"
 )
@@ -44,22 +46,31 @@ func newServer(
 func dial(
 	t *testing.T,
 	opts ...fileserver.Option,
-) (*fileconformance.Workspace, executorv1.FileServiceClient, *memfs.FileSystem) {
+) (*executorclient.Workspace, executorv1.FileServiceClient, *memfs.FileSystem) {
+	t.Helper()
+	ws, conn, backend := dialConn(t, opts...)
+	return ws, executorv1.NewFileServiceClient(conn), backend
+}
+
+func dialConn(
+	t *testing.T,
+	opts ...fileserver.Option,
+) (*executorclient.Workspace, *grpc.ClientConn, *memfs.FileSystem) {
 	t.Helper()
 	backend := memfs.NewFileSystem(root)
-	client := fileconformance.Dial(
+	conn := fileconformance.Dial(
 		t,
 		newServer(t, memfs.NewWorkspaceOverFileSystem(backend), opts...),
 	)
-	return fileconformance.NewWorkspace(client, root), client, backend
+	return fileconformance.NewWorkspace(conn, root), conn, backend
 }
 
 func TestConformanceOverMemfs(t *testing.T) {
 	fileconformance.Run(t, func(t *testing.T) fileconformance.Target {
-		_, client, backend := dial(t)
+		_, conn, backend := dialConn(t)
 		return fileconformance.Target{
-			Client: client,
-			Root:   root,
+			Conn: conn,
+			Root: root,
 			External: fsconformance.ExternalAccess{
 				Read: func(p string) ([]byte, error) {
 					return backend.Read(context.Background(), p)

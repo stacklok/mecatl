@@ -32,12 +32,14 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/creatediag"
 	"github.com/stacklok/mecatl/internal/executionenv"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 )
 
 const (
@@ -891,20 +893,39 @@ func commandStateFromProto(v executionv1.CommandState) (executionenv.CommandStat
 
 // Provider adapts the execution service to server placement binding.
 type Provider struct {
-	client   *Client
-	profile  string
-	revision string
+	client           *Client
+	profile          string
+	revision         string
+	executorServices bool
+}
+
+// ProviderOption configures a Provider.
+type ProviderOption func(*Provider)
+
+// WithExecutorServices serves run environments through the executor FileService
+// and CommandService instead of ExecutionProviderService's file and command RPCs.
+func WithExecutorServices() ProviderOption {
+	return func(p *Provider) { p.executorServices = true }
 }
 
 // NewTemplateProvider pins the deployment default to an exact execution revision.
-func NewTemplateProvider(client *Client, id, revision string) (*Provider, error) {
+func NewTemplateProvider(
+	client *Client,
+	id string,
+	revision string,
+	opts ...ProviderOption,
+) (*Provider, error) {
 	if client == nil || id == "" || len(revision) != 67 || !strings.HasPrefix(revision, "v1-") || revision != strings.ToLower(revision) {
 		return nil, errors.New("execution client: template ID and exact v1 revision are required")
 	}
 	if _, err := hex.DecodeString(revision[3:]); err != nil {
 		return nil, errors.New("execution client: template ID and exact v1 revision are required")
 	}
-	return &Provider{client: client, profile: id, revision: revision}, nil
+	p := &Provider{client: client, profile: id, revision: revision}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
 }
 
 type referenceDeleteHandle struct {
@@ -1138,9 +1159,13 @@ func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunReques
 		return nil, server.ErrPlacementChanged
 	}
 	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}, expiresAt: claim.ExpiresAt}
-	ws := &workspace{credentials: credentials}
-	runner := &runner{credentials: credentials}
-	env, envErr := tool.NewEnvironment(req.Ref, ws, memledger.New(), runner)
+	var ws tool.Workspace = &workspace{credentials: credentials}
+	var commands tool.CommandRunner = &runner{credentials: credentials}
+	if p.executorServices {
+		ws = executorclient.NewWorkspace(p.client, remoteRoot, credentials.executorContext)
+		commands = executorclient.NewRunner(p.client, remoteRoot, credentials.executorContext)
+	}
+	env, envErr := tool.NewEnvironment(req.Ref, ws, memledger.New(), commands)
 	if envErr != nil {
 		return nil, server.ErrPlacementUnavailable
 	}
@@ -1450,6 +1475,25 @@ func (g *runContext) current(_ context.Context) (executionenv.RequestContext, er
 		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run lease unavailable", Retryable: true}
 	}
 	return g.context, nil
+}
+
+func (g *runContext) executorContext(ctx context.Context) (*executorv1.RequestContext, error) {
+	rc, err := g.current(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &executorv1.RequestContext{
+		Environment: &executorv1.EnvironmentRef{
+			Id:       rc.Environment.ID,
+			Revision: rc.Environment.Revision,
+		},
+		Owner:           &executorv1.Owner{Issuer: rc.Owner.Issuer, Subject: rc.Owner.Subject},
+		BindingId:       rc.BindingID,
+		Epoch:           rc.Epoch,
+		RunId:           rc.RunID,
+		ClaimId:         rc.ClaimID,
+		GrantGeneration: rc.GrantGeneration,
+	}, nil
 }
 
 func (g *runContext) refresh(ctx context.Context) (executionenv.RequestContext, error) {
