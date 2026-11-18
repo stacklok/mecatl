@@ -1054,9 +1054,9 @@ linters:
             - google.golang.org/protobuf
           deny:
             - pkg: os
-              desc: 'executor service adapters receive host access through their Runner'
+              desc: 'executor service adapters receive host access through their seam (Runner, Workspace)'
             - pkg: syscall
-              desc: 'executor service adapters receive host access through their Runner'
+              desc: 'executor service adapters receive host access through their seam (Runner, Workspace)'
         # Only the composition root wires the identity broker's adapters; the
         # rest of Mecatl reaches the broker through its authentication boundary.
         internal-identitybroker-adapter-importers:
