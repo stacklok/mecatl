@@ -3,12 +3,10 @@ package agentfs
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	yaml "github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -371,7 +369,7 @@ func (s DirSource) Agents(_ context.Context) ([]Discovered, []SkipError, error) 
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		raw, modTime, rerr := readFile(path)
+		raw, rerr := os.ReadFile(path)
 		if rerr != nil {
 			skips = append(skips, SkipError{Path: path, Reason: fmt.Sprintf("cannot read: %v", rerr), Fatal: true})
 			continue
@@ -397,35 +395,11 @@ func (s DirSource) Agents(_ context.Context) ([]Discovered, []SkipError, error) 
 		}
 		seen[def.Name] = path
 		def.Origin = s.origin()
-		out = append(out, Discovered{
-			Def:    def,
-			Detail: s.detail(path),
-			File:   &SourceFile{Path: path, Content: raw, ModTime: modTime},
-		})
+		out = append(out, Discovered{Def: def, Detail: s.detail(path)})
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Def.Name < out[j].Def.Name })
 	return out, skips, nil
-}
-
-// readFile reads path and returns its bytes with the modification time of the
-// same open file, so a symlink swap between the two reads cannot pair one
-// file's bytes with another's time.
-func readFile(path string) ([]byte, time.Time, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	return raw, info.ModTime(), nil
 }
 
 // parseAgentDef splits raw into YAML frontmatter and a markdown body and

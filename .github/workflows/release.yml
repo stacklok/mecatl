@@ -171,6 +171,7 @@ jobs:
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
             adapters/go.mod
+            agentdef/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -753,6 +754,7 @@ jobs:
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
             adapters/go.mod
+            agentdef/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -921,6 +923,7 @@ jobs:
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
             adapters/go.mod
+            agentdef/go.sum
             authn/oidc/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
@@ -1815,6 +1818,7 @@ jobs:
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
             adapters/go.mod
+            agentdef/go.sum
             authn/oidc/go.sum
 
       # GoReleaser shells out to cosign for signs: and syft for sboms:; neither

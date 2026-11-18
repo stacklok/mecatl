@@ -349,3 +349,5 @@ replace github.com/stacklok/mecatl/adapters => ../../adapters
 replace github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver => ../../contracts/gen/go/mecatl/driver
 
 replace github.com/stacklok/mecatl/internal/adaptersupport => ../../internal/adaptersupport
+
+replace github.com/stacklok/mecatl/agentdef => ../../agentdef

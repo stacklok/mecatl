@@ -4,6 +4,8 @@ use ./
 
 use ./adapters
 
+use ./agentdef
+
 use ./contracts/gen/go/mecatl/driver
 
 use ./internal/adaptersupport

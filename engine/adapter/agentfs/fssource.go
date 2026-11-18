@@ -40,10 +40,6 @@ func NewFSSource(ctx context.Context, sources ...AgentSource) (*FSSource, []Skip
 		details: make(map[string]string, len(discovered)),
 	}
 	for i := range src.list {
-		// The snapshot lives as long as the harness and serves only defs and
-		// details, so it does not keep the file bytes, which can hold an inline
-		// MCP server's secret-shaped headers.
-		src.list[i].File = nil
 		if src.list[i].Def.Origin == "" {
 			// A hand-constructed Source that did not stamp a tier: an
 			// operator-configured location.
@@ -68,10 +64,8 @@ func (s *FSSource) ListAgentDefs(_ context.Context) ([]AgentDef, error) {
 // --- Adapter-public NON-PORT detail API (composition-only consumers) --------
 
 // Discovered returns the name-sorted Discovered snapshot (def + adapter-private
-// Detail). File is always nil: the snapshot does not keep file bytes; a
-// consumer that needs them reads the sources with NewMultiSource. Adapter-public,
-// NON-PORT: it backs NewRegistryDiscovered in the composition layer, never the
-// port.
+// Detail). Adapter-public, NON-PORT: it backs NewRegistryDiscovered in the
+// composition layer, never the port.
 func (s *FSSource) Discovered() []Discovered {
 	out := make([]Discovered, len(s.list))
 	copy(out, s.list)

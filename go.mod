@@ -39,6 +39,7 @@ require (
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stacklok/mecatl/adapters v0.1.1
+	github.com/stacklok/mecatl/agentdef v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
 	github.com/stacklok/mecatl/engine v0.18.1
@@ -359,3 +360,5 @@ replace github.com/stacklok/mecatl/provider/openai => ./provider/openai
 replace github.com/stacklok/mecatl/provider/openaichat => ./provider/openaichat
 
 replace github.com/stacklok/mecatl/provider/ssefilter => ./provider/ssefilter
+
+replace github.com/stacklok/mecatl/agentdef => ./agentdef

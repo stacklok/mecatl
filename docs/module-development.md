@@ -19,6 +19,7 @@ within this repository are:
 | Module | Same-repository dependencies |
 | --- | --- |
 | `engine` | None |
+| `agentdef` | None |
 | `provider/ssefilter` | None |
 | `provider/anthropic` | `engine` |
 | `provider/openai`, `provider/openaichat` | `engine`, `provider/ssefilter` |
@@ -27,7 +28,7 @@ within this repository are:
 | `internal/adaptersupport` | `engine` |
 | `adapters` | `engine`, `internal/adaptersupport`, generated driver |
 | `environment/microvm` | `engine` |
-| Root host | Engine, providers, OIDC, persistence modules |
+| Root host | Engine, providers, OIDC, persistence modules, `agentdef` |
 | `integration/microvm` | Root host, engine, microVM runtime; host dependencies transitively |
 
 Classify public Go API changes under the [engine compatibility policy](../engine/COMPATIBILITY.md)

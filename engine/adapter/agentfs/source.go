@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 )
 
 // Discovered is one discovered agent definition together with its
@@ -16,27 +15,6 @@ import (
 type Discovered struct {
 	Def    AgentDef
 	Detail string
-	// File is the file a filesystem source parsed Def from. It is nil for a
-	// source with no file, such as a remote driver, and in FSSource's
-	// snapshot, which drops the bytes on purpose. Like Detail, it is a
-	// NON-PORT channel: it never crosses the tool.AgentDefSource port.
-	File *SourceFile
-}
-
-// SourceFile is the file one definition was read from: its path, the exact
-// bytes parsed, and the file's modification time when it was read. A loader
-// that records where a definition came from uses it, so it never reads the
-// file a second time and gets different bytes.
-//
-// Content is the file as read, before the parser truncates or drops anything:
-// a digest of it identifies the source bytes, not the adjusted definition. It
-// can hold an inline MCP server's secret-shaped headers, so it is never logged
-// or projected. The bytes and ModTime come from one open file; a symlink is
-// followed, so both describe its target.
-type SourceFile struct {
-	Path    string
-	Content []byte
-	ModTime time.Time
 }
 
 // AgentSource is the pluggable EXTENSIBILITY POINT for where agent definitions

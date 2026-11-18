@@ -1,18 +1,22 @@
 // Package definitionloader loads the agent definitions the identity broker
-// knows: the operator's global definitions, parsed with the harness's own
-// definition parser, and the built-in definitions each Mecatl release ships.
-// Each loaded Definition pairs the record identitybroker.New takes with the
-// accepted definition the harness builds the agent from, so the broker and
-// the harness work from one read. The broker core stays free of file access.
+// knows: the operator's global definitions and the built-in definitions each
+// Mecatl release ships. It returns the record identitybroker.New takes for
+// each. It parses definitions with the shared agentdef format and imports
+// nothing else from Mecatl but the broker core, so the broker can move into its
+// own service without the harness. The broker core stays free of file access.
 //
 // Global definitions come only from the operator's explicit directories (the
-// harness's explicit origin). The project and user tiers and remote drivers are
-// never loaded: only the explicit origin is operator-managed, and a driver
-// definition has no file bytes to digest. The harness gives a user-tier
-// definition its parent's authority rather than its own, so the broker does
-// not record it as global either; an operator who mounts definitions under an
-// XDG configuration root puts them in the user tier, where the broker does not
-// see them.
+// harness's --agents-dir). The harness also reads project and user directories
+// and remote drivers; the broker never loads those. Only the explicit
+// directories are operator-managed, and a driver definition has no file bytes
+// to digest. The harness gives a user-tier definition its parent's authority
+// rather than its own, so the broker does not record it as global either; an
+// operator who mounts definitions under an XDG configuration root puts them in
+// the user tier, where the broker does not see them.
+//
+// Until the harness builds agents from the broker's records (#2548), the
+// harness reads the same files separately, with the engine's own copy of the
+// agentdef parser.
 //
 // Shortcut: a global definition's revision is its file's modification time,
 // because a plain file has no revision of its own, and there is no provenance
@@ -29,22 +33,20 @@
 package definitionloader
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/engine/adapter/agentfs"
-	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/agentdef"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
@@ -88,8 +90,8 @@ func BuiltinRevision(buildID string) string {
 // its default main agent and anonymous child without them, so their digests
 // cover these stand-ins rather than what runs; removed by #2553 (the harness
 // builds system/main and system/explorer from these definitions).
-func builtins() []tool.AgentDef {
-	return []tool.AgentDef{
+func builtins() []agentdef.Definition {
+	return []agentdef.Definition{
 		{Name: identitybroker.BuiltinMain, Description: "The main agent of a session started without a named definition."},
 		{Name: identitybroker.BuiltinExplorer, Description: "The child agent of a subagent call that names no definition."},
 	}
@@ -101,32 +103,12 @@ type Config struct {
 	// precedence first: the same list the harness reads (its --agents-dir
 	// flag). Unlike the harness, Load fails on a configured directory that
 	// does not exist, so a mistyped path or an unmounted volume shows at
-	// startup rather than as a refused registration later. An empty Dirs loads
-	// the built-ins only.
+	// startup rather than as a refused registration later. A blank entry is
+	// skipped, as the harness skips it. An empty Dirs loads the built-ins only.
 	Dirs []string
 	// BuildID is the Mecatl build stamp (buildinfo.BuildID); see
 	// BuiltinRevision.
 	BuildID string
-}
-
-// Definition is one loaded definition.
-//
-// Its digests are plain SHA-256 over the definition, which can include an
-// inline MCP server's secret-shaped headers. They reveal no secret that has
-// enough randomness, but anyone who sees a digest and knows the rest of the
-// file can test guesses at a short one. Keep them out of logs and records
-// that people who know the rest of the file can read.
-type Definition struct {
-	// Record is what the broker checks registrations against; pass it to
-	// identitybroker.New.
-	Record identitybroker.DefinitionRecord
-	// Def is the accepted definition: the parsed value Record's
-	// DefinitionDigest covers, and the one the harness builds the agent from.
-	// The digest does not cover what the harness resolves later from other
-	// inputs, such as model aliases, the available tools, skill bodies, or
-	// memory. Building from a separate read of the source could build a
-	// definition the broker never recorded.
-	Def tool.AgentDef
 }
 
 // Problem reports one definition that was left out or adjusted while loading.
@@ -140,18 +122,30 @@ type Problem struct {
 	Dropped bool
 }
 
-// Load returns each built-in definition and each valid global definition,
-// sorted by source and name, with a Problem for each definition it left out or
-// adjusted. A definition the parser rejects, or whose record fails
-// identitybroker.DefinitionRecord.Validate, or whose file is not valid UTF-8,
-// is left out and loading continues. When two directories define the same
-// name, the earlier directory wins and the later definition is reported. Load
+// Load returns the record of each built-in definition and each valid global
+// definition, sorted by source and name, with a Problem for each definition it
+// left out or adjusted.
+//
+// It reads every <name>.md file directly in each configured directory and
+// parses it with agentdef.Parse. A file that cannot be read or parsed, whose
+// definition has no canonical form (agentdef.Canonical), or whose record fails
+// identitybroker.DefinitionRecord.Validate is left out and loading continues.
+// The first file to define a name wins it: directories in the order given, and
+// files in name order within one. Each later file is reported. A winner left
+// out for a bad record still holds the name, as it does in the harness, so no
+// later definition is recorded under it. Load
 // fails when a configured directory is missing, is not a directory, or cannot
-// be read; it then returns no definitions, built-ins included, and the
-// problems found before the failure.
-func Load(ctx context.Context, cfg Config) ([]Definition, []Problem, error) {
+// be read; it then returns no records, built-ins included, and the problems
+// found before the failure.
+//
+// The digests are plain SHA-256 over the definition, which can include an
+// inline MCP server's secret-shaped headers. They reveal no secret that has
+// enough randomness, but anyone who sees a digest and knows the rest of the
+// file can test guesses at a short one. Keep them out of logs and records that
+// people who know the rest of the file can read.
+func Load(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, []Problem, error) {
 	var (
-		defs     []Definition
+		records  []identitybroker.DefinitionRecord
 		problems []Problem
 	)
 	revision := BuiltinRevision(cfg.BuildID)
@@ -162,60 +156,128 @@ func Load(ctx context.Context, cfg Config) ([]Definition, []Problem, error) {
 			// that every test run would catch.
 			return nil, nil, fmt.Errorf("built-in definition %s/%s: %w", identitybroker.SourceSystem, def.Name, err)
 		}
-		defs = append(defs, Definition{Record: rec, Def: def})
+		records = append(records, rec)
 	}
 
+	kept := map[string]string{} // definition name -> path of the file that won it
 	for _, dir := range cfg.Dirs {
+		dir = strings.TrimSpace(dir)
 		if dir == "" {
-			// ResolveSources skips an empty entry too.
 			continue
 		}
-		// A path that is not a directory fails when it is read below.
-		if _, err := os.Stat(dir); err != nil {
-			return nil, nil, fmt.Errorf("configured agent definition directory: %w", err)
+		if err := ctx.Err(); err != nil {
+			return nil, problems, err
 		}
-	}
-
-	// Conventional stays false, so only the explicit directories are resolved:
-	// never the project or user tiers.
-	sources := agentfs.ResolveSources(agentfs.ResolveOptions{Explicit: cfg.Dirs})
-	discovered, skips, err := agentfs.NewMultiSource(sources...).Agents(ctx)
-	for _, s := range skips {
-		problems = append(problems, Problem{Location: s.Path, Reason: s.Reason, Dropped: s.Fatal})
-	}
-	if err != nil {
-		return nil, problems, fmt.Errorf("load global agent definitions: %w", err)
-	}
-	for _, d := range discovered {
-		rec, err := globalRecord(d)
+		files, dirProblems, err := readDir(dir)
+		problems = append(problems, dirProblems...)
 		if err != nil {
-			location := d.Detail
-			if d.File != nil {
-				location = d.File.Path
-			}
-			problems = append(problems, Problem{Location: location, Reason: err.Error(), Dropped: true})
-			continue
+			return nil, problems, err
 		}
-		defs = append(defs, Definition{Record: rec, Def: d.Def})
+		for _, f := range files {
+			if prev, taken := kept[f.def.Name]; taken {
+				problems = append(problems, Problem{
+					Location: f.path,
+					Reason:   fmt.Sprintf("duplicate agent name %q (already defined at %q)", f.def.Name, prev),
+					Dropped:  true,
+				})
+				continue
+			}
+			// The name is taken even when the record below fails: the harness
+			// runs this file's definition under the name, so the broker must
+			// not record a later file's definition for it.
+			kept[f.def.Name] = f.path
+			rec, err := globalRecord(f)
+			if err != nil {
+				problems = append(problems, Problem{Location: f.path, Reason: err.Error(), Dropped: true})
+				continue
+			}
+			records = append(records, rec)
+		}
 	}
 
-	slices.SortFunc(defs, func(a, b Definition) int {
+	slices.SortFunc(records, func(a, b identitybroker.DefinitionRecord) int {
 		return cmp.Or(
-			strings.Compare(a.Record.Ref.Source, b.Record.Ref.Source),
-			strings.Compare(a.Record.Ref.Name, b.Record.Ref.Name),
+			strings.Compare(a.Ref.Source, b.Ref.Source),
+			strings.Compare(a.Ref.Name, b.Ref.Name),
 		)
 	})
-	return defs, problems, nil
+	return records, problems, nil
 }
 
-func builtinRecord(def tool.AgentDef, revision string) (identitybroker.DefinitionRecord, error) {
-	accepted, err := acceptedForm(def)
+// file is one definition file read from a directory: its path, the exact
+// bytes read, their modification time, and the definition parsed from them.
+type file struct {
+	path    string
+	content []byte
+	modTime time.Time
+	def     agentdef.Definition
+}
+
+// readDir reads and parses every definition file directly in dir, in name
+// order. A subdirectory or a file without the agentdef.FileExt extension is
+// ignored. It returns an error only when dir itself cannot be read.
+func readDir(dir string) ([]file, []Problem, error) {
+	// os.ReadDir returns the entries sorted by name.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read agent definition directory: %w", err)
+	}
+	var (
+		files    []file
+		problems []Problem
+	)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), agentdef.FileExt) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		content, modTime, err := readFile(path)
+		if err != nil {
+			problems = append(problems, Problem{Location: path, Reason: fmt.Sprintf("cannot read: %v", err), Dropped: true})
+			continue
+		}
+		def, notes, err := agentdef.Parse(content)
+		if err != nil {
+			problems = append(problems, Problem{Location: path, Reason: err.Error(), Dropped: true})
+			continue
+		}
+		for _, n := range notes {
+			problems = append(problems, Problem{Location: path, Reason: n})
+		}
+		files = append(files, file{path: path, content: content, modTime: modTime, def: def})
+	}
+	return files, problems, nil
+}
+
+// readFile reads path and returns its bytes with the modification time of the
+// same open file, so a symlink swap between the two reads cannot pair one
+// file's bytes with another's time. A symlink is followed, so both describe
+// its target.
+func readFile(path string) ([]byte, time.Time, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return content, info.ModTime(), nil
+}
+
+func builtinRecord(def agentdef.Definition, revision string) (identitybroker.DefinitionRecord, error) {
+	form, err := agentdef.Canonical(def)
 	if err != nil {
 		return identitybroker.DefinitionRecord{}, err
 	}
 	// A built-in has no source file: the bytes it is built from are its
-	// accepted form, so both digests are the same.
-	digest := sha256Digest(accepted)
+	// canonical form, so both digests are the same.
+	digest := sha256Digest(form)
 	rec := identitybroker.DefinitionRecord{
 		Ref: identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: def.Name, Revision: revision},
 		Provenance: identitybroker.Provenance{
@@ -227,31 +289,26 @@ func builtinRecord(def tool.AgentDef, revision string) (identitybroker.Definitio
 	return rec, rec.Validate()
 }
 
-func globalRecord(d agentfs.Discovered) (identitybroker.DefinitionRecord, error) {
-	if d.File == nil {
-		return identitybroker.DefinitionRecord{}, fmt.Errorf("definition %q has no source file", d.Def.Name)
-	}
-	// The parser does not check UTF-8, and the JSON encoding of the accepted
-	// form replaces each invalid byte with U+FFFD, so two different files
-	// could share a DefinitionDigest.
-	if !utf8.Valid(d.File.Content) {
-		return identitybroker.DefinitionRecord{}, fmt.Errorf("definition %q is not valid UTF-8", d.Def.Name)
-	}
-	accepted, err := acceptedForm(d.Def)
+// globalRecord builds the record of a definition read from a file. Its
+// SourceDigest covers the bytes read; its DefinitionDigest covers the
+// definition's canonical form (agentdef.Canonical, agentdef.FormVersion), so
+// reformatting the file changes only SourceDigest.
+func globalRecord(f file) (identitybroker.DefinitionRecord, error) {
+	form, err := agentdef.Canonical(f.def)
 	if err != nil {
-		return identitybroker.DefinitionRecord{}, err
+		return identitybroker.DefinitionRecord{}, fmt.Errorf("definition %q: %w", f.def.Name, err)
 	}
 	rec := identitybroker.DefinitionRecord{
 		Ref: identitybroker.DefinitionRef{
 			Source:   identitybroker.SourceGlobal,
-			Name:     d.Def.Name,
-			Revision: fileRevision(d.File.ModTime),
+			Name:     f.def.Name,
+			Revision: fileRevision(f.modTime),
 		},
 		Provenance: identitybroker.Provenance{
 			Profile:          ProfileFile,
-			Metadata:         map[string]string{"path": d.File.Path},
-			SourceDigest:     sha256Digest(d.File.Content),
-			DefinitionDigest: sha256Digest(accepted),
+			Metadata:         map[string]string{"path": f.path},
+			SourceDigest:     sha256Digest(f.content),
+			DefinitionDigest: sha256Digest(form),
 		},
 	}
 	return rec, rec.Validate()
@@ -262,26 +319,6 @@ func globalRecord(d agentfs.Discovered) (identitybroker.DefinitionRecord, error)
 // process's time zone.
 func fileRevision(modTime time.Time) string {
 	return modTime.UTC().Format(time.RFC3339Nano)
-}
-
-// acceptedForm returns the canonical bytes of the definition the harness
-// builds an agent from: its JSON encoding, which has a fixed field order and
-// sorted map keys. Origin is cleared because it records how the definition was
-// admitted, not what it contains. tool.AgentDef has no JSON tags, so every
-// field is always encoded: a field added to or renamed in tool.AgentDef changes
-// every definition's digest, not only those that set it. The form is Go's
-// encoding/json output of tool.AgentDef (Go field names, a trailing newline,
-// null for nil and [] for empty): internal to Go and versioned with that
-// struct, not a portable hashing rule.
-func acceptedForm(def tool.AgentDef) ([]byte, error) {
-	def.Origin = ""
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(def); err != nil {
-		return nil, fmt.Errorf("encode accepted definition: %w", err)
-	}
-	return buf.Bytes(), nil
 }
 
 func sha256Digest(b []byte) identitybroker.Digest {
