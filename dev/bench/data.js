@@ -387034,6 +387034,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794997126163,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a9c4e00e2022f2a1bb961105fd891b919ea6ad0",
+          "message": "test(executorrpc): add an in-memory executor for the Files and Commands services (#2855)\n\n`memexecutor.Dial` serves `FileService` and `CommandService` on one\nin-process bufconn listener, so each stream can test against the\nexecutor contract without a real executor. A nil service in `Executor`\nstays unregistered and answers `Unimplemented`.\n\nFiles reuses `fileserver` over a `memfs` workspace, with\n`memfs.ErrPathEscape` registered as a path-escape error and\n`Executor.FileOptions` passed through. Commands is a scripted `Runner`\nbehind the real `commandserver.Server`: `Script` and `Refuse` register\ncommands, and `Exit`, `Stream`, `Block` and `OutcomeUnknown` cover\nstreamed output, blocking until the call closes, and an exit whose\ncleanup is unconfirmed.\n\nTests run `fileconformance` and `commandconformance` through `Dial`,\nand cover output streamed before exit, cancellation on call close,\n`OUTCOME_UNKNOWN` on exit and after `CancelCommand`, refused starts,\nand the path-escape mapping.\n\nCloses: #2691",
+          "timestamp": "2026-11-18T10:23:10Z",
+          "tree_id": "d3df4c2c27597287546f03376689b37626f0b377",
+          "url": "https://github.com/stacklok/mecatl/commit/3a9c4e00e2022f2a1bb961105fd891b919ea6ad0"
+        },
+        "date": 1794998142335,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -558701,6 +558735,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1794998137161,
+  "lastUpdate": 1794998143181,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
