@@ -558584,9 +558584,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1794997121704,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a9c4e00e2022f2a1bb961105fd891b919ea6ad0",
+          "message": "test(executorrpc): add an in-memory executor for the Files and Commands services (#2855)\n\n`memexecutor.Dial` serves `FileService` and `CommandService` on one\nin-process bufconn listener, so each stream can test against the\nexecutor contract without a real executor. A nil service in `Executor`\nstays unregistered and answers `Unimplemented`.\n\nFiles reuses `fileserver` over a `memfs` workspace, with\n`memfs.ErrPathEscape` registered as a path-escape error and\n`Executor.FileOptions` passed through. Commands is a scripted `Runner`\nbehind the real `commandserver.Server`: `Script` and `Refuse` register\ncommands, and `Exit`, `Stream`, `Block` and `OutcomeUnknown` cover\nstreamed output, blocking until the call closes, and an exit whose\ncleanup is unconfirmed.\n\nTests run `fileconformance` and `commandconformance` through `Dial`,\nand cover output streamed before exit, cancellation on call close,\n`OUTCOME_UNKNOWN` on exit and after `CancelCommand`, refused starts,\nand the path-escape mapping.\n\nCloses: #2691",
+          "timestamp": "2026-11-18T10:23:10Z",
+          "tree_id": "d3df4c2c27597287546f03376689b37626f0b377",
+          "url": "https://github.com/stacklok/mecatl/commit/3a9c4e00e2022f2a1bb961105fd891b919ea6ad0"
+        },
+        "date": 1794998136310,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 777,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32183,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1794998129822,
+  "lastUpdate": 1794998137161,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
