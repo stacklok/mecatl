@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"net/url"
@@ -412,17 +411,6 @@ func TestHandlerRejectsUnknownBackendCommandState(t *testing.T) {
 	q := &executionv1.CommandStartRequest{Context: &executionv1.RequestContext{Environment: claim.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", RunId: claim.RunId, ClaimId: claim.ClaimId, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}, Command: "true"}
 	if _, err := h.StartCommand(ctx, q); status.Code(err) != codes.Internal || status.Convert(err).Message() != "execution provider request failed" {
 		t.Fatalf("unexpected invalid-state result: code=%v message=%q", status.Code(err), status.Convert(err).Message())
-	}
-}
-
-func TestCanonicalClientIdentityRejectsCNAndAmbiguousURIs(t *testing.T) {
-	if _, err := canonicalClientIdentity(&x509.Certificate{Subject: pkix.Name{CommonName: "trusted"}}); err == nil {
-		t.Fatal("CN accepted")
-	}
-	u1, _ := url.Parse("spiffe://b/x")
-	u2, _ := url.Parse("spiffe://a/x")
-	if _, err := canonicalClientIdentity(&x509.Certificate{URIs: []*url.URL{u1, u2}}); err == nil {
-		t.Fatal("ambiguous URI SANs accepted")
 	}
 }
 

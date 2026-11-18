@@ -181,7 +181,7 @@ func (m *SecurityManager) authorize(ctx context.Context, chain []*x509.Certifica
 	if _, err := leaf.Verify(opts); err != nil {
 		return "", ClientPolicy{}, err
 	}
-	id, err := canonicalClientIdentity(leaf)
+	id, err := executionenv.ClientIdentity(leaf)
 	if err != nil {
 		return "", ClientPolicy{}, err
 	}
@@ -389,7 +389,7 @@ func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, 
 		if err != nil {
 			return nil, errors.New("client URI is invalid")
 		}
-		canonical, err := canonicalClientIdentity(&x509.Certificate{URIs: []*url.URL{uri}})
+		canonical, err := executionenv.ClientIdentity(&x509.Certificate{URIs: []*url.URL{uri}})
 		if err != nil || canonical != entry.URI {
 			return nil, errors.New("client URI is not canonical")
 		}
@@ -406,7 +406,7 @@ func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, 
 			if err != nil || strings.ContainsAny(creator, "*?") || strings.ContainsAny(uri.Path, "*?") {
 				return nil, errors.New("administrator creator URI is invalid")
 			}
-			canonical, err := canonicalClientIdentity(&x509.Certificate{URIs: []*url.URL{uri}})
+			canonical, err := executionenv.ClientIdentity(&x509.Certificate{URIs: []*url.URL{uri}})
 			if err != nil || canonical != creator || i > 0 && scope[i-1] == creator {
 				return nil, errors.New("administrator creator URI is not canonical or is duplicated")
 			}

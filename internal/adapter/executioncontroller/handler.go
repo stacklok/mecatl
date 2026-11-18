@@ -147,7 +147,7 @@ func (h *Handler) client(ctx context.Context) (authenticatedClient, error) {
 		}
 		return authenticatedClient{id: id, policy: policy}, nil
 	}
-	id, err := canonicalClientIdentity(leaf)
+	id, err := executionenv.ClientIdentity(leaf)
 	if err != nil {
 		return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
 	}
@@ -156,25 +156,6 @@ func (h *Handler) client(ctx context.Context) (authenticatedClient, error) {
 		return authenticatedClient{}, wireError(executionenv.CodeUnauthenticated, false)
 	}
 	return authenticatedClient{id: id, policy: policy}, nil
-}
-
-func canonicalClientIdentity(c *x509.Certificate) (string, error) {
-	if len(c.URIs) != 1 {
-		return "", errors.New("certificate must have exactly one URI SAN")
-	}
-	ids := make([]string, 0, 1)
-	for _, u := range c.URIs {
-		if u == nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			continue
-		}
-		v := *u
-		v.Scheme, v.Host = strings.ToLower(v.Scheme), strings.ToLower(v.Host)
-		ids = append(ids, v.String())
-	}
-	if len(ids) != 1 {
-		return "", errors.New("certificate must have exactly one canonical URI SAN")
-	}
-	return ids[0], nil
 }
 
 func (h *Handler) lifecycle() (lifecycleBackend, error) {
