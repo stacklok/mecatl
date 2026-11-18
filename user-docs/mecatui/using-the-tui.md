@@ -10,8 +10,8 @@ description:
 # Work in the TUI
 
 Press `ctrl+t` to open `/toolcalls` and inspect top-level calls during a run.
-Use `↑`/`↓` to choose a row, then `enter` or click it to open its detail;
-press `esc` to return to the list. The inspector also works when revisiting a
+Use `↑`/`↓` or click to select a row, then press `enter` or click **Open details**
+to inspect it; press `esc` to return to the list. The inspector also works when revisiting a
 session transcript. Running Edit and Write cards show their request diffs inline;
 settled calls keep their full arguments and results in the inspector. When
 `mecatui` receives a result before its final update, it keeps the card open

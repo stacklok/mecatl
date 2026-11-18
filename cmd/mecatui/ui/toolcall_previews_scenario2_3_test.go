@@ -623,7 +623,7 @@ func TestChildSummarySanitizesBoundedPreview(t *testing.T) {
 			}
 		}
 		s.window, s.width, s.follow = new(bounded.Viewport), 0, false
-		body := s.renderDetail(width, 24, "Tool calls", func(_ lipgloss.Style, text string) string { return text })
+		body := s.renderDetail(width, 24, "Tool calls", func(_ lipgloss.Style, text string) string { return text }, []string{"back"})
 		if strings.Contains(body, "\x1b[2J") {
 			t.Fatalf("width %d rendered unsafe child text: %q", width, body)
 		}
@@ -660,7 +660,7 @@ func TestChildSummaryResizePreservesAnchor(t *testing.T) {
 		t.Fatal("child summary did not remain a single physical row")
 	}
 	line := func(_ lipgloss.Style, text string) string { return text }
-	s.renderDetail(wide, 5, "Tool calls", line)
+	s.renderDetail(wide, 5, "Tool calls", line, []string{"back"})
 	s.follow = false
 	totalWide := 0
 	for _, count := range toolcallRowCounts(wideContent, wide) {
@@ -668,7 +668,7 @@ func TestChildSummaryResizePreservesAnchor(t *testing.T) {
 	}
 	s.window.SetOffset(wideStart, totalWide)
 	s.recordAnchor()
-	s.renderDetail(narrow, 5, "Tool calls", line)
+	s.renderDetail(narrow, 5, "Tool calls", line, []string{"back"})
 	wantOffset := narrowStart
 	if got := s.window.Offset(); got != wantOffset {
 		t.Fatalf("resize offset = %d, want child summary at %d", got, wantOffset)
