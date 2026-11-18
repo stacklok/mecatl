@@ -388108,6 +388108,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795007830043,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "63a9bf86387f420156cc9992dc60e21f958a5b1f",
+          "message": "feat(identitybroker): load agent definition records for the broker (#2829)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-18T08:44:00-05:00",
+          "tree_id": "bb5bbc41793dc840872929a9bd54506ed0396f5b",
+          "url": "https://github.com/stacklok/mecatl/commit/63a9bf86387f420156cc9992dc60e21f958a5b1f"
+        },
+        "date": 1795010210099,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -560234,6 +560268,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795010205693,
+  "lastUpdate": 1795010211858,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
