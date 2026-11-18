@@ -42,9 +42,10 @@ type actorValidator struct {
 var _ tokenexchange.ActorTokenValidator = (*actorValidator)(nil)
 
 // ValidateActor implements tokenexchange.ActorTokenValidator. An expired
-// credential is actor_token_expired, any other refusal by the broker, or a
-// request from another client, is denied, and everything else, including an
-// unbound verifier and a grant without an iss_sub sub_id, is a plain error.
+// credential is actor_token_expired, the broker's denied refusal, or a request
+// from another client, is denied, and everything else, including an unbound
+// verifier, a grant without an iss_sub sub_id, and any error outside
+// CredentialVerifier's contract, is a plain error.
 func (a *actorValidator) ValidateActor(ctx context.Context, req tokenexchange.ActorRequest) (tokenexchange.ActorResult, error) {
 	if req.ClientID != a.clientID {
 		return tokenexchange.ActorResult{}, &tokenexchange.ActorDeniedError{Reason: tokenexchange.ActorDeniedReasonDenied}
@@ -76,7 +77,7 @@ func (a *actorValidator) ValidateActor(ctx context.Context, req tokenexchange.Ac
 		}, nil
 	case errors.As(err, &e) && e.Code == identitybroker.CodeUnauthenticated && e.Reason == identitybroker.ReasonSVIDExpired:
 		return tokenexchange.ActorResult{}, &tokenexchange.ActorDeniedError{Reason: tokenexchange.ActorDeniedReasonActorTokenExpired}
-	case errors.As(err, &e) && e.Code == identitybroker.CodePermissionDenied:
+	case errors.As(err, &e) && e.Code == identitybroker.CodePermissionDenied && e.Reason == identitybroker.ReasonDenied:
 		return tokenexchange.ActorResult{}, &tokenexchange.ActorDeniedError{Reason: tokenexchange.ActorDeniedReasonDenied}
 	default:
 		return tokenexchange.ActorResult{}, errActorCheckFailed

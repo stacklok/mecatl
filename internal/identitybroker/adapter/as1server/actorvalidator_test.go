@@ -253,9 +253,11 @@ func TestIDJAGRefusalsFollowTheVerifier(t *testing.T) {
 			err:    identitybroker.ReasonError(identitybroker.ReasonDenied, "another owner "+leakMarker),
 			status: 400, code: "invalid_request", reason: "denied",
 		},
+		// CredentialVerifier refuses only with ReasonDenied; anything else is
+		// a check that could not be made, so it is retryable, not final.
 		"a denial with another reason": {
 			err:    identitybroker.NewError(identitybroker.CodePermissionDenied, identitybroker.ReasonSessionOwned, leakMarker),
-			status: 400, code: "invalid_request", reason: "denied",
+			status: 500, code: "server_error", reason: "unknown",
 		},
 		// A server_error's description is ToolHive's prose, so no known reason.
 		"an unauthenticated error that is not expiry": {

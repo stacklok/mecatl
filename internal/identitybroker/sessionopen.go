@@ -145,21 +145,26 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 // OwnerFromSubjectIdentifier parses raw, an RFC 9493 subject identifier as
 // JSON, such as an access token's or a grant's sub_id, into the owner it
 // names. Only format iss_sub with a valid issuer and subject is accepted,
-// the rule session open applies. A failure is a CodeInvalidArgument *Error
-// whose text never contains the identifier's values.
+// the rule session open applies. Members are read by exact name, as other
+// readers of sub_id do, not case-insensitively as decoding into a struct
+// would. A failure is a CodeInvalidArgument *Error whose text never contains
+// the identifier's values.
 func OwnerFromSubjectIdentifier(raw []byte) (Owner, error) {
-	var id *struct {
-		Format  string `json:"format"`
-		Issuer  string `json:"iss"`
-		Subject string `json:"sub"`
-	}
+	var id map[string]json.RawMessage
 	if json.Unmarshal(raw, &id) != nil || id == nil {
 		return Owner{}, invalid("the subject identifier is not a valid JSON object")
 	}
-	if id.Format != "iss_sub" {
+	member := func(name string) string {
+		var s string
+		if json.Unmarshal(id[name], &s) != nil {
+			return ""
+		}
+		return s
+	}
+	if member("format") != "iss_sub" {
 		return Owner{}, invalid("the subject identifier's format is not iss_sub")
 	}
-	owner := Owner{Issuer: id.Issuer, Subject: id.Subject}
+	owner := Owner{Issuer: member("iss"), Subject: member("sub")}
 	if err := owner.validate(); err != nil {
 		return Owner{}, err
 	}

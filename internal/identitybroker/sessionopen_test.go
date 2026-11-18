@@ -1604,6 +1604,16 @@ func TestOwnerFromSubjectIdentifier(t *testing.T) {
 		got != (identitybroker.Owner{Issuer: iss, Subject: sub}) {
 		t.Fatalf("OwnerFromSubjectIdentifier = %+v, %v; want the owner", got, err)
 	}
+	// A differently cased member never stands in for sub, whichever comes
+	// last, so this parser and authn/oidc's agree on the owner.
+	for _, raw := range []string{
+		`{"format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `","Sub":"mallory-1"}`,
+		`{"format":"iss_sub","iss":"` + iss + `","Sub":"mallory-1","sub":"` + sub + `"}`,
+	} {
+		if got, err := identitybroker.OwnerFromSubjectIdentifier([]byte(raw)); err != nil || got != (identitybroker.Owner{Issuer: iss, Subject: sub}) {
+			t.Fatalf("OwnerFromSubjectIdentifier(%s) = %+v, %v; want the exact sub member's owner", raw, got, err)
+		}
+	}
 	for name, raw := range map[string]string{
 		"another format":   `{"format":"email","email":"alice@example.com","iss":"` + iss + `","sub":"` + sub + `"}`,
 		"no format":        `{"iss":"` + iss + `","sub":"` + sub + `"}`,
@@ -1618,6 +1628,9 @@ func TestOwnerFromSubjectIdentifier(t *testing.T) {
 		"empty":            ``,
 		"an empty object":  `{}`,
 		"trailing garbage": `{"format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `"}x`,
+		"a cased format":   `{"Format":"iss_sub","iss":"` + iss + `","sub":"` + sub + `"}`,
+		"a cased issuer":   `{"format":"iss_sub","ISS":"` + iss + `","sub":"` + sub + `"}`,
+		"a cased subject":  `{"format":"iss_sub","iss":"` + iss + `","Sub":"` + sub + `"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := identitybroker.OwnerFromSubjectIdentifier([]byte(raw))
