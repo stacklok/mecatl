@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -25,6 +27,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -576,6 +579,39 @@ func TestSigningKeyFileSurvivesRestart(t *testing.T) {
 	}
 }
 
+// With operator keys, AS-1 publishes the same key set after a restart: its
+// signing key and its fallbacks, each in its own directory as separately
+// mounted Secrets are. A token the fallback key signed before a rotation
+// verifies against it.
+func TestOperatorKeySetIsStableAcrossRestartAndIncludesFallbacks(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	oldKey := h.WriteSigningKey(t, t.TempDir())
+	before := startAS1(t, h, func(cfg *Config) { cfg.SigningKeyFile = oldKey })
+	oldToken := before.signIn(t, testAudience).AccessToken
+
+	// Rotate: a new signing key, the old one a fallback.
+	newKey := h.WriteSigningKey(t, t.TempDir())
+	rotated := func(cfg *Config) { cfg.SigningKeyFile, cfg.FallbackKeyFiles = newKey, []string{oldKey} }
+	first := newTestServer(t, h, before.issuer, rotated)
+	restarted := newTestServer(t, h, before.issuer, rotated)
+
+	published, again := jwks(t, first), jwks(t, restarted)
+	if len(published) != 2 {
+		t.Fatalf("key set has %d keys, want the signing key and its fallback", len(published))
+	}
+	for kid, key := range published {
+		if other, ok := again[kid]; !ok || !other.Equal(key) {
+			t.Errorf("key %q is not in the restarted instance's key set", kid)
+		}
+	}
+	if len(again) != len(published) {
+		t.Errorf("restarted key set has %d keys, want %d", len(again), len(published))
+	}
+	if err := verify(oldToken, again); err != nil {
+		t.Errorf("token signed by the fallback key does not verify against the published key set: %v", err)
+	}
+}
+
 func TestGeneratedSigningKeysDifferPerInstance(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	f := startAS1(t, h, nil)
@@ -831,6 +867,17 @@ func TestConfigValidation(t *testing.T) {
 		Upstream: UpstreamConfig{Issuer: "https://idp.example", ClientID: "mecatl-as1"},
 	}
 	client := PublicClient{ID: testClientID, RedirectURIs: []string{testRedirect}}
+	dir := t.TempDir()
+	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(dir, "jwks.json"), brokerconfigtest.NewKey(t))
+	withDelegate := func(edit func(*DelegateClient)) func(*Config) { return withDelegateKeySet(keySet, edit) }
+	keySetFile := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	notASet, emptySet, malformed := keySetFile("array.json", `[]`), keySetFile("empty.json", `{"keys":[]}`), keySetFile("malformed.json", `{"keys":`)
 	for name, edit := range map[string]func(*Config){
 		"empty issuer":            func(c *Config) { c.Issuer = "" },
 		"http issuer":             func(c *Config) { c.Issuer = "http://as1.mecatl.test/as1" },
@@ -853,8 +900,15 @@ func TestConfigValidation(t *testing.T) {
 		"upstream issuer no host": func(c *Config) { c.Upstream.Issuer = "https:///tenant" },
 		"delegate without ID":     withDelegate(func(d *DelegateClient) { d.ID = "" }),
 		"delegate is public":      withDelegate(func(d *DelegateClient) { d.ID = testClientID }),
-		"delegate without keys":   withDelegate(func(d *DelegateClient) { d.KeySet = []byte(`{"keys":[]}`) }),
-		"delegate bad key set":    withDelegate(func(d *DelegateClient) { d.KeySet = []byte("not json") }),
+		"delegate without keys":   withDelegate(func(d *DelegateClient) { d.KeySetFile = "" }),
+		"delegate relative keys":  withDelegate(func(d *DelegateClient) { d.KeySetFile = "jwks.json" }),
+		"delegate absent keys":    withDelegate(func(d *DelegateClient) { d.KeySetFile = filepath.Join(dir, "absent.json") }),
+		"delegate not a JWK Set":  withDelegate(func(d *DelegateClient) { d.KeySetFile = notASet }),
+		"delegate empty JWK Set":  withDelegate(func(d *DelegateClient) { d.KeySetFile = emptySet }),
+		"delegate malformed JSON": withDelegate(func(d *DelegateClient) { d.KeySetFile = malformed }),
+		"fallback without key":    func(c *Config) { c.FallbackKeyFiles = []string{"/keys/old.pem"} },
+		"relative signing key":    func(c *Config) { c.SigningKeyFile = "keys/as1.pem" },
+		"relative fallback key":   func(c *Config) { c.SigningKeyFile, c.FallbackKeyFiles = "/keys/as1.pem", []string{"old.pem"} },
 		"delegate without source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = nil }),
 		"delegate unknown source": withDelegate(func(d *DelegateClient) { d.AllowedSourceClients = []string{testClientID, "web"} }),
 		"delegate zero lifetime":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = 0 }),
@@ -885,12 +939,13 @@ func TestConfigValidation(t *testing.T) {
 	})
 }
 
-// withDelegate is a Config edit that adds a valid delegate client after edit.
-func withDelegate(edit func(*DelegateClient)) func(*Config) {
+// withDelegateKeySet is a Config edit that adds a valid delegate client,
+// whose key set is keySetFile, after edit.
+func withDelegateKeySet(keySetFile string, edit func(*DelegateClient)) func(*Config) {
 	return func(c *Config) {
 		d := DelegateClient{
 			ID:                   identitybroker.BrokerClientID,
-			KeySet:               []byte(`{"keys":[{"kty":"EC","crv":"P-256","kid":"k"}]}`),
+			KeySetFile:           keySetFile,
 			AllowedSourceClients: []string{testClientID},
 			IDJAGMaxLifetime:     time.Hour,
 		}

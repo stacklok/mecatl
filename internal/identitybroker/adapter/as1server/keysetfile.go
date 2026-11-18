@@ -7,41 +7,31 @@ import (
 	"path/filepath"
 )
 
-// TEMPORARY, DELIBERATE DUPLICATE: hasKeys and writeKeySet have a twin in
+// DELIBERATE DUPLICATE: checkKeySetFile has a twin in
 // internal/adapter/mcpbroker/keysetfile.go, which registers the broker client
 // at the embedded AS-2; fix both together. They are not shared because the
-// identity broker must move into its own service as one tree
-// (docs/drafts/agent-identity/implementation.md, "Modulith constraints"), so
-// this package imports nothing from Mecatl outside internal/identitybroker.
-// Both copies exist only because the broker client key is generated at
-// startup: https://github.com/stacklok/mecatl/issues/2538 replaces it with an
-// operator-supplied key-set file whose path both servers read, and deletes
-// both copies.
+// identity broker must move into its own service as one tree, so this
+// package imports nothing from Mecatl outside internal/identitybroker.
 
-// hasKeys reports whether raw is a JSON JWK Set with at least one key.
-func hasKeys(raw []byte) bool {
+// checkKeySetFile refuses path unless it is absolute and holds a JSON JWK Set
+// with at least one key, so a bad file fails before ToolHive reads it.
+// Errors never contain the file's contents.
+func checkKeySetFile(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("JWK Set file %q is not an absolute path", path)
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- the operator names the file.
+	if err != nil {
+		return fmt.Errorf("JWK Set file: %w", err)
+	}
 	var set struct {
 		Keys []json.RawMessage `json:"keys"`
 	}
-	return json.Unmarshal(raw, &set) == nil && len(set.Keys) > 0
-}
-
-// writeKeySet writes the key set raw to a new owner-only file in a new private
-// temporary directory named with prefix, for ToolHive, which reads a delegate
-// client's keys only from a file. It returns the file's path and a function
-// that removes the directory. ToolHive reads the file once, at construction,
-// so callers remove it as soon as construction returns. Errors never contain
-// raw.
-func writeKeySet(prefix string, raw []byte) (string, func(), error) {
-	dir, err := os.MkdirTemp("", prefix)
-	if err != nil {
-		return "", nil, fmt.Errorf("key set directory: %w", err)
+	if json.Unmarshal(raw, &set) != nil {
+		return fmt.Errorf("JWK Set file %s is not a JSON JWK Set", path)
 	}
-	remove := func() { _ = os.RemoveAll(dir) }
-	file := filepath.Join(dir, "jwks.json")
-	if err := os.WriteFile(file, raw, 0o600); err != nil {
-		remove()
-		return "", nil, fmt.Errorf("write key set: %w", err)
+	if len(set.Keys) == 0 {
+		return fmt.Errorf("JWK Set file %s holds no key", path)
 	}
-	return file, remove, nil
+	return nil
 }

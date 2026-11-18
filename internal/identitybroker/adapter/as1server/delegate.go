@@ -23,9 +23,12 @@ import (
 type DelegateClient struct {
 	// ID is the client ID. It must differ from every public client's.
 	ID string
-	// KeySet is the client's public signing keys as a JSON JWK Set (RFC 7517
-	// section 5). ToolHive derives the signing algorithm from them.
-	KeySet []byte
+	// KeySetFile is the absolute path of the client's public signing keys as
+	// a JSON JWK Set (RFC 7517 section 5), which must hold at least one key
+	// and which ToolHive reads once, at construction, and derives the signing
+	// algorithm from. It may hold an old and a new key while the client
+	// rotates.
+	KeySetFile string
 	// AllowedSourceClients are the public clients whose users' access tokens
 	// the client may exchange. At least one is required.
 	AllowedSourceClients []string
@@ -86,13 +89,12 @@ const maxIDJAGLifetime = 720 * time.Hour
 // this is the narrowest one.
 var delegateScopes = []string{"openid"}
 
-// delegateRunConfig is ToolHive's configuration of d, whose public key set
-// is in jwksFile, for AS-1's audience.
-func delegateRunConfig(d DelegateClient, jwksFile, audience string) authserver.DelegateClientRunConfig {
+// delegateRunConfig is ToolHive's configuration of d for AS-1's audience.
+func delegateRunConfig(d DelegateClient, audience string) authserver.DelegateClientRunConfig {
 	rc := authserver.DelegateClientRunConfig{
 		ClientID:                d.ID,
 		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodPrivateKeyJWT,
-		JWKSFile:                jwksFile,
+		JWKSFile:                d.KeySetFile,
 		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange},
 		Scopes:                  slices.Clone(delegateScopes),
 		// No Audiences: the client gets only refresh tokens, never an access
@@ -135,8 +137,8 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		return fmt.Errorf("%w: delegate client ID is required", ErrInvalidConfig)
 	case publicClients[d.ID]:
 		return fmt.Errorf("%w: delegate client ID %q is also a public client's", ErrInvalidConfig, d.ID)
-	case !hasKeys(d.KeySet):
-		return fmt.Errorf("%w: delegate client %q needs a JWK Set with at least one key", ErrInvalidConfig, d.ID)
+	case d.KeySetFile == "":
+		return fmt.Errorf("%w: delegate client %q needs a JWK Set file", ErrInvalidConfig, d.ID)
 	case len(d.AllowedSourceClients) == 0:
 		return fmt.Errorf("%w: delegate client %q needs at least one allowed source client", ErrInvalidConfig, d.ID)
 	case d.IDJAGMaxLifetime < time.Second || d.IDJAGMaxLifetime > maxIDJAGLifetime:
@@ -148,7 +150,13 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		}
 	}
 	if d.IDJAG != nil {
-		return d.IDJAG.validate(d.ID)
+		if err := d.IDJAG.validate(d.ID); err != nil {
+			return err
+		}
+	}
+	// Read last, so a configuration error is reported without file access.
+	if err := checkKeySetFile(d.KeySetFile); err != nil {
+		return fmt.Errorf("%w: delegate client %q: %v", ErrInvalidConfig, d.ID, err)
 	}
 	return nil
 }

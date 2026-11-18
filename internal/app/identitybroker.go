@@ -2,10 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 )
 
@@ -29,19 +26,25 @@ import (
 // verified identity.
 const identityBrokerWorkload = "mecak8s-unverified"
 
-// interimIdentityBrokerConfig is the identity broker's configuration until
-// operator configuration and keys exist. The .invalid names keep its agent
-// credentials from being mistaken for a real deployment's.
-var interimIdentityBrokerConfig = identitybroker.Config{
-	TrustDomain:        "agents.mecatl.invalid",
-	Audience:           "https://identity-broker.mecatl.invalid",
-	CredentialLifetime: time.Hour,
-}
+// errNoIdentityBrokerConfigFile refuses the identity broker without its
+// configuration file, which holds its keys.
+var errNoIdentityBrokerConfigFile = errors.New("the identity broker requires its configuration file (--identity-broker-config), which names its agent trust domain, audience, and keys")
+
+// errIdentityBrokerConfigFileWithoutBroker refuses a configuration file for an
+// identity broker that is not enabled.
+var errIdentityBrokerConfigFileWithoutBroker = errors.New("the identity broker's configuration file (--identity-broker-config) requires the identity broker (--enable-identity-broker)")
 
 // errIdentityBrokerWithShell refuses the identity broker while sessions can run
-// a shell in this process: a model-driven shell could read the agent issuer's
-// signing key from the process's memory or environment.
-var errIdentityBrokerWithShell = errors.New("the identity broker holds its signing key in this process, so it cannot run while sessions have a shell in this process; use --no-shell, or --shell \"\" with Kubernetes execution to keep the remote Shell")
+// a shell in this process: a model-driven shell could read the broker's key
+// files, or its keys from the process's memory.
+var errIdentityBrokerWithShell = errors.New("the identity broker's keys are files in this process's filesystem and keys in its memory, so it cannot run while sessions have a shell in this process; use --no-shell, or --shell \"\" with Kubernetes execution to keep the remote Shell")
+
+// errIdentityBrokerWithLocalWorkspace refuses the identity broker while
+// sessions' file tools reach this process's filesystem, where its key files
+// are: out-of-root reads are allowed at some permission modes.
+//
+// Shortcut: the identity broker's keys are files in this process's filesystem, so it refuses a local workspace; removed by #2807 (the broker runs as its own service).
+var errIdentityBrokerWithLocalWorkspace = errors.New("the identity broker's keys are files in this process's filesystem, so it cannot run while sessions have a local workspace (--workspace); run without a workspace, with --redis-filesystem, or with Kubernetes execution")
 
 // IdentityBrokerAS1Config hosts AS-1, the identity broker's sign-in
 // authorization server, in this process. It requires Config.IdentityBroker.
@@ -51,9 +54,6 @@ type IdentityBrokerAS1Config struct {
 	Issuer string
 	// Audience is the Mecatl API audience AS-1 issues access tokens for.
 	Audience string
-	// SigningKeyFile is a PEM key that signs access tokens. Empty generates
-	// one, so tokens stop verifying when the process restarts.
-	SigningKeyFile string
 	// PublicClients are the sign-in clients AS-1 registers: no secret, PKCE,
 	// and tokens for Audience. At least one is required.
 	PublicClients []IdentityBrokerAS1PublicClient
@@ -182,7 +182,7 @@ func effectivePort(u *url.URL) string {
 
 // hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
 // issues at session open, and so a broker session's hard expiry. Twelve hours
-// covers a working session while bounding unattended authority; #2538 makes
+// covers a working session while bounding unattended authority; #2813 makes
 // it configurable.
 const hostedAS1IDJAGMaxLifetime = 12 * time.Hour
 
@@ -195,8 +195,12 @@ type identityBrokerParts struct {
 	// hostedServer is the hosted AS-1 itself, for tests; nil when none is
 	// configured.
 	hostedServer *as1server.Server
-	// client signs the broker's client assertions; nil for an injected core.
+	// client signs the broker's client assertions; nil for an injected core
+	// or without a broker client key.
 	client *identitybroker.ClientAssertionSigner
+	// clientKeySetFile is the broker client's public key set file, which
+	// AS-2 registers; empty without a broker client key.
+	clientKeySetFile string
 	// core is the real broker; nil for an injected test core.
 	core *identitybroker.Broker
 	// definitions are the definition records core loaded, or, for an
@@ -242,31 +246,50 @@ func (p identityBrokerParts) bindAS2(as2 *identityBrokerAS2) (unbind func(), err
 // boundary, never the core behind it. A construction failure fails startup,
 // as does a configuration that gives sessions a shell.
 //
-// With a hosted AS-1 and no test override, session open converts users' access
-// tokens at that AS-1 in process: buildBrokerWithHostedAS1 creates the broker
-// client key first and registers it there as the confidential delegate, which
-// may obtain ID-JAGs for target when it is set.
+// The real broker starts from its configuration file and the operator keys it
+// names; no key is generated. With a hosted AS-1 and no test override, session
+// open converts users' access tokens at that AS-1 in process:
+// buildBrokerWithHostedAS1 registers the file's broker client key set there
+// for the confidential delegate, which may obtain ID-JAGs for target when it
+// is set.
 func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
 	if !cfg.IdentityBroker {
-		if cfg.IdentityBrokerHostedAS1 != nil {
+		switch {
+		case cfg.IdentityBrokerHostedAS1 != nil:
 			return identityBrokerParts{}, errIdentityBrokerAS1WithoutBroker
+		case cfg.IdentityBrokerConfigFile != "":
+			return identityBrokerParts{}, errIdentityBrokerConfigFileWithoutBroker
 		}
 		return identityBrokerParts{release: func() {}}, nil
 	}
 	if shellAvailable(cfg) {
 		return identityBrokerParts{}, errIdentityBrokerWithShell
 	}
-	// Production wiring: build the broker client key, host AS-1 with it as the
-	// delegate, then point the broker's session open at that AS-1. A test that
-	// replaces the core or sets IdentityBrokerAS1 explicitly keeps the paths
-	// below.
-	if cfg.identityBrokerCore == nil && cfg.IdentityBrokerAS1 == nil && cfg.IdentityBrokerHostedAS1 != nil {
-		return buildBrokerWithHostedAS1(ctx, cfg, target)
+	if localWorkspace(cfg) {
+		return identityBrokerParts{}, errIdentityBrokerWithLocalWorkspace
 	}
 	core := cfg.identityBrokerCore
+	// An injected test core needs no file; its hosted AS-1 generates its
+	// signing key.
+	var file brokerconfig.File
+	if core == nil {
+		if cfg.IdentityBrokerConfigFile == "" {
+			return identityBrokerParts{}, errNoIdentityBrokerConfigFile
+		}
+		var err error
+		if file, err = brokerconfig.Load(cfg.IdentityBrokerConfigFile, brokerconfig.Host{AS1: cfg.IdentityBrokerHostedAS1 != nil}); err != nil {
+			return identityBrokerParts{}, err
+		}
+	}
+	// Production wiring: host AS-1 with the broker client as the delegate,
+	// then point the broker's session open at that AS-1. A test that replaces
+	// the core or sets IdentityBrokerAS1 explicitly keeps the paths below.
+	if core == nil && cfg.IdentityBrokerAS1 == nil && cfg.IdentityBrokerHostedAS1 != nil {
+		return buildBrokerWithHostedAS1(ctx, cfg, file, target)
+	}
 	var parts identityBrokerParts
 	if core == nil {
-		broker, err := newIdentityBroker(ctx, cfg)
+		broker, err := newIdentityBroker(ctx, cfg, file)
 		if err != nil {
 			return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
 		}
@@ -287,7 +310,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 		parts.release = func() { _ = closer.Close() }
 	}
 	if as1 := cfg.IdentityBrokerHostedAS1; as1 != nil {
-		server, err := buildHostedAS1(ctx, as1, nil)
+		server, err := buildHostedAS1(ctx, as1, file, nil)
 		if err != nil {
 			parts.release()
 			return identityBrokerParts{}, err
@@ -299,45 +322,42 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 	return parts, nil
 }
 
+// localWorkspace reports whether sessions' file tools can reach this
+// process's own filesystem: a workspace served by the local placement, alone
+// or as remote execution's local fallback. The Redis filesystem excludes a
+// workspace, and another placement, such as a microVM, serves it elsewhere.
+func localWorkspace(cfg Config) bool {
+	return cfg.Workspace != "" && (cfg.PlacementProvider == nil || cfg.RemoteExecution)
+}
+
 // buildBrokerWithHostedAS1 is the production path when the broker and a hosted
-// AS-1 are both enabled: it creates the broker client key, hosts AS-1 with that
-// key as the confidential delegate client identitybroker.BrokerClientID, and
-// builds the broker with its session open pointed at that AS-1 in process.
-// With target, the delegate also obtains per-call ID-JAGs for it there, whose
-// actor tokens AS-1 checks with the broker's CredentialVerifier.
-func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
+// AS-1 are both enabled: it hosts AS-1 with the file's broker client key set
+// registered for the confidential delegate client
+// identitybroker.BrokerClientID, and builds the broker with its session open
+// pointed at that AS-1 in process. With target, the delegate also obtains
+// per-call ID-JAGs for it there, whose actor tokens AS-1 checks with the
+// broker's CredentialVerifier.
+func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig.File, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
 	as1 := cfg.IdentityBrokerHostedAS1
-	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return identityBrokerParts{}, fmt.Errorf("generate broker client key: %w", err)
-	}
-	signer, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		return identityBrokerParts{}, err
-	}
-	keySet, err := json.Marshal(signer.JWKS())
-	if err != nil {
-		return identityBrokerParts{}, fmt.Errorf("encode the broker client key set: %w", err)
-	}
 	sources := make([]string, len(as1.PublicClients))
 	for i, c := range as1.PublicClients {
 		sources[i] = c.ID
 	}
 	delegate := &as1server.DelegateClient{
 		ID:                   identitybroker.BrokerClientID,
-		KeySet:               keySet,
+		KeySetFile:           file.BrokerClientKeySetFile,
 		AllowedSourceClients: sources,
 		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
 	}
 	if target != nil {
 		// Shortcut: AS-1 issues ID-JAGs only for the AS-2 the test-only gateway servers configure, so production configures no target and no actor profile; removed by #2533 and #2538.
 		delegate.IDJAG = &as1server.IDJAGIssuance{
-			ActIssuer: identitybroker.ActorIssuer(identityBrokerConfig(cfg).TrustDomain),
+			ActIssuer: identitybroker.ActorIssuer(identityBrokerConfig(cfg, file).TrustDomain),
 			// Lifetime stays zero, ToolHive's default of a minute.
 			Targets: []as1server.IDJAGTarget{{Issuer: target.Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{target.Resource}}},
 		}
 	}
-	server, err := buildHostedAS1(ctx, as1, delegate)
+	server, err := buildHostedAS1(ctx, as1, file, delegate)
 	if err != nil {
 		return identityBrokerParts{}, err
 	}
@@ -346,12 +366,12 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayID
 	// Now and AssertionNow stay nil: production uses time.Now for the broker
 	// and its assertions.
 	cfg.IdentityBrokerAS1 = &IdentityBrokerAS1{
-		Issuer: server.Issuer(), TokenEndpoint: server.TokenEndpoint(), HTTPClient: httpClient, ClientKey: clientKey,
+		Issuer: server.Issuer(), TokenEndpoint: server.TokenEndpoint(), HTTPClient: httpClient,
 	}
 	if delegate.IDJAG != nil {
 		cfg.IdentityBrokerAS1.ActorTokens = server
 	}
-	broker, err := newIdentityBroker(ctx, cfg)
+	broker, err := newIdentityBroker(ctx, cfg, file)
 	if err != nil {
 		_ = server.Close()
 		return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
@@ -368,15 +388,17 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, target *gatewayID
 	return parts, nil
 }
 
-// buildHostedAS1 constructs the hosted AS-1 from as1, optionally registering
+// buildHostedAS1 constructs the hosted AS-1 from as1, signing with file's
+// AS-1 signing key and publishing its fallbacks, and optionally registering
 // delegate as its confidential delegate client.
-func buildHostedAS1(ctx context.Context, as1 *IdentityBrokerAS1Config, delegate *as1server.DelegateClient) (*as1server.Server, error) {
+func buildHostedAS1(ctx context.Context, as1 *IdentityBrokerAS1Config, file brokerconfig.File, delegate *as1server.DelegateClient) (*as1server.Server, error) {
 	clients := make([]as1server.PublicClient, len(as1.PublicClients))
 	for i, c := range as1.PublicClients {
 		clients[i] = as1server.PublicClient{ID: c.ID, RedirectURIs: c.RedirectURIs}
 	}
 	server, err := as1server.New(ctx, as1server.Config{
-		Issuer: as1.Issuer, Audience: as1.Audience, SigningKeyFile: as1.SigningKeyFile,
+		Issuer: as1.Issuer, Audience: as1.Audience,
+		SigningKeyFile: file.AS1SigningKeyFile, FallbackKeyFiles: file.AS1FallbackKeyFiles,
 		PublicClients: clients, Delegate: delegate,
 		Upstream: as1server.UpstreamConfig{
 			Issuer: as1.UpstreamIssuer, ClientID: as1.UpstreamClientID,
@@ -414,8 +436,10 @@ type identityBroker struct {
 	// definitions are the records core loaded.
 	definitions []identitybroker.DefinitionRecord
 	client      *identitybroker.ClientAssertionSigner
-	recorder    *identitybroker.MemoryRecorder
-	gateway     bool
+	// clientKeySetFile is the broker client's public key set file.
+	clientKeySetFile string
+	recorder         *identitybroker.MemoryRecorder
+	gateway          bool
 	// gatewayServers are the servers the gateway routes.
 	gatewayServers []string
 }
@@ -423,7 +447,10 @@ type identityBroker struct {
 // parts returns the identity broker's parts that b holds; the caller adds
 // the service, the hosted AS-1, and release.
 func (b identityBroker) parts() identityBrokerParts {
-	return identityBrokerParts{client: b.client, core: b.core, definitions: b.definitions, recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers}
+	return identityBrokerParts{
+		client: b.client, clientKeySetFile: b.clientKeySetFile, core: b.core, definitions: b.definitions,
+		recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers,
+	}
 }
 
 // IdentityBrokerAS1 is the AS-1 the identity broker converts access tokens
@@ -432,10 +459,6 @@ type IdentityBrokerAS1 struct {
 	Issuer        string
 	TokenEndpoint string
 	HTTPClient    *http.Client
-	// ClientKey replaces the generated broker client key, so whoever builds
-	// AS-1 first can register its public key there before the broker is
-	// built: the hosted-AS-1 wiring and tests.
-	ClientKey *ecdsa.PrivateKey
 	// Now replaces the broker's clock, so a test can move past a broker
 	// session's hard expiry. It does not date client assertions. Nil selects
 	// time.Now.
@@ -453,60 +476,50 @@ type IdentityBrokerAS1 struct {
 	}
 }
 
-// identityBrokerConfig is the identity broker's configuration: the interim
-// one, or a test's replacement.
-func identityBrokerConfig(cfg Config) identitybroker.Config {
+// identityBrokerConfig is the identity broker's configuration: its
+// configuration file's, or a test's replacement.
+func identityBrokerConfig(cfg Config, file brokerconfig.File) identitybroker.Config {
 	if cfg.identityBrokerConfig != nil {
 		return *cfg.identityBrokerConfig
 	}
-	return interimIdentityBrokerConfig
+	return file.Config
 }
 
-// newIdentityBroker constructs the real identity broker with the interim
-// configuration and, one key per role, an agent issuer key and a broker
-// client key generated for this process. It loads the built-in definitions
-// and the operator's global definitions from cfg.AgentsDirs, the directories
-// the harness reads first; a directory that cannot be read fails startup, and
-// each definition left out or adjusted is logged. With
-// cfg.IdentityBrokerAS1, session open converts access tokens at that AS-1,
-// authenticating with the broker client key, and calls get their ID-JAGs
-// there; a gateway is configured only then, and only when a test sets
+// errNoBrokerClientKey refuses an AS-1 the broker has no client key for.
+var errNoBrokerClientKey = errors.New("the identity broker's configuration file names no broker client key, which it authenticates with at AS-1")
+
+// newIdentityBroker constructs the real identity broker from its
+// configuration file's trust domain, audience, and keys, one per role: the
+// agent issuer key, with its fallbacks, and the broker client key. It loads
+// the built-in definitions and the operator's global definitions from
+// cfg.AgentsDirs, the directories the harness reads first; a directory that
+// cannot be read fails startup, and each definition left out or adjusted is
+// logged. With cfg.IdentityBrokerAS1, session open converts access tokens at
+// that AS-1, authenticating with the broker client key, and calls get their
+// ID-JAGs there; a gateway is configured only then, and only when a test sets
 // cfg.IdentityBrokerGatewayServers.
-//
-// The broker client key lasts only as long as the process until an operator
-// key replaces it (#2538): an external server registered with its JWKS inline
-// would refuse the broker after a restart, while in-process servers register
-// it again at each build.
-func newIdentityBroker(ctx context.Context, cfg Config) (identityBroker, error) {
-	config := identityBrokerConfig(cfg)
+func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) (identityBroker, error) {
+	config := identityBrokerConfig(cfg, file)
 	definitions, err := loadIdentityBrokerDefinitions(ctx, cfg)
 	if err != nil {
 		return identityBroker{}, err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return identityBroker{}, fmt.Errorf("generate signing key: %w", err)
-	}
 	as1 := cfg.IdentityBrokerAS1
-	var clientKey *ecdsa.PrivateKey
-	if as1 != nil {
-		clientKey = as1.ClientKey
-	}
-	if clientKey == nil {
-		if clientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
-			return identityBroker{}, fmt.Errorf("generate broker client key: %w", err)
+	var client *identitybroker.ClientAssertionSigner
+	if file.Keys.BrokerClient != nil {
+		if client, err = identitybroker.NewClientAssertionSigner(file.Keys.BrokerClient, 0); err != nil {
+			return identityBroker{}, err
 		}
-	}
-	client, err := identitybroker.NewClientAssertionSigner(clientKey, 0)
-	if err != nil {
-		return identityBroker{}, err
 	}
 	// Records are kept in memory (the shortcut on identitybroker.MemoryRecorder).
 	recorder := identitybroker.NewMemoryRecorder()
-	opts := []identitybroker.Option{identitybroker.WithRecorder(recorder)}
+	opts := []identitybroker.Option{identitybroker.WithRecorder(recorder), identitybroker.WithAgentIssuerFallbacks(file.Keys.AgentIssuerFallbacks...)}
 	gateway := false
 	var gatewayServers []string
 	if as1 != nil {
+		if client == nil {
+			return identityBroker{}, errNoBrokerClientKey
+		}
 		as1Client, err := authserverclient.New(authserverclient.Config{
 			Issuer: as1.Issuer, TokenEndpoint: as1.TokenEndpoint, Assertions: client, HTTPClient: as1.HTTPClient, Now: as1.AssertionNow,
 		})
@@ -525,7 +538,7 @@ func newIdentityBroker(ctx context.Context, cfg Config) (identityBroker, error) 
 			gateway, gatewayServers = true, append([]string(nil), cfg.IdentityBrokerGatewayServers...)
 		}
 	}
-	core, err := identitybroker.New(config, definitions, key, opts...)
+	core, err := identitybroker.New(config, definitions, file.Keys.AgentIssuer, opts...)
 	if err != nil {
 		return identityBroker{}, err
 	}
@@ -534,7 +547,10 @@ func newIdentityBroker(ctx context.Context, cfg Config) (identityBroker, error) 
 			return identityBroker{}, fmt.Errorf("bind AS-1's actor-token check: %w", err)
 		}
 	}
-	return identityBroker{core: core, definitions: definitions, client: client, recorder: recorder, gateway: gateway, gatewayServers: gatewayServers}, nil
+	return identityBroker{
+		core: core, definitions: definitions, client: client, clientKeySetFile: file.BrokerClientKeySetFile,
+		recorder: recorder, gateway: gateway, gatewayServers: gatewayServers,
+	}, nil
 }
 
 // loadIdentityBrokerDefinitions loads the identity broker's definition

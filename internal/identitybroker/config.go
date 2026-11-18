@@ -33,7 +33,9 @@ type Config struct {
 	CredentialLifetime time.Duration
 }
 
-func (c Config) validate() error {
+// Validate checks c as New does, so a configuration loader can refuse a bad
+// value before the broker is built. Errors name the field.
+func (c Config) Validate() error {
 	if err := ValidateTrustDomain(c.TrustDomain); err != nil {
 		return err
 	}

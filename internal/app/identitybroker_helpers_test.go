@@ -85,7 +85,7 @@ func TestIdentityBrokerRegistersHelperAgents(t *testing.T) {
 			)
 			diag := &lockedDiag{}
 			built, err := buildIsolated(t, t.Context(), Config{
-				Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true,
+				MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t),
 				AgentsDirs: []string{agentsDir}, AllowAllTools: true, GuardrailsDisabled: true, Diagnostics: diag,
 			})
 			if err != nil {
@@ -179,7 +179,7 @@ func TestIdentityBrokerRegistersBranchesAndTeamMembers(t *testing.T) {
 			llm := mockllm.New(append([]mockllm.Turn{mockllm.ToolCallTurn(session.NewToolCall("delegate", tc.tool, []byte(tc.args)))}, filler...)...)
 			diag := &lockedDiag{}
 			cfg := Config{
-				Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true,
+				MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t),
 				AllowAllTools: true, GuardrailsDisabled: true, Diagnostics: diag,
 			}
 			tc.configure(&cfg)

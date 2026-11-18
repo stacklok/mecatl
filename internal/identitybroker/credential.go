@@ -20,7 +20,7 @@ import (
 // party's: a verifier's from the credential issuer's when checking a
 // credential's expiry, and the broker's from AS-1's at a session's hard
 // expiry. The value is an interim choice until operator configuration sets it
-// (one clock-skew setting, #2538).
+// (one clock-skew setting, #2813).
 const credentialClockSkew = 30 * time.Second
 
 // es256 is the only algorithm agent credentials use.
@@ -37,9 +37,12 @@ type credentialIssuer struct {
 	audience    string
 	lifetime    time.Duration
 	signer      crypto.Signer
-	publicKey   *ecdsa.PublicKey
-	// kid is the RFC 7638 JWK thumbprint of publicKey.
+	// kid is the RFC 7638 JWK thumbprint of the signer's public key.
 	kid string
+	// keys are the public keys credentials verify with, by kid: the signer's
+	// and its fallbacks', earlier agent issuer keys whose credentials still
+	// verify during a rotation.
+	keys map[string]*ecdsa.PublicKey
 }
 
 func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicKey) (credentialIssuer, error) {
@@ -52,9 +55,26 @@ func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicK
 		audience:    config.Audience,
 		lifetime:    config.CredentialLifetime,
 		signer:      signer,
-		publicKey:   pub,
 		kid:         jwk.KeyID,
+		keys:        map[string]*ecdsa.PublicKey{jwk.KeyID: pub},
 	}, nil
+}
+
+// addFallbacks has c also verify credentials signed by the fallback keys,
+// each an ECDSA P-256 public key, which it copies.
+func (c credentialIssuer) addFallbacks(fallbacks []crypto.PublicKey) error {
+	for i, fallback := range fallbacks {
+		dup, err := copyP256Public(fallback)
+		if err != nil {
+			return fmt.Errorf("agent issuer fallback key %d: %w", i, err)
+		}
+		jwk, err := publicJWK(dup)
+		if err != nil {
+			return err
+		}
+		c.keys[jwk.KeyID] = dup
+	}
+	return nil
 }
 
 // subject returns the SPIFFE ID of the agent instance with ag_ identifier
@@ -89,8 +109,8 @@ type verifiedCredential struct {
 }
 
 // verify applies the design's credential checks 1 to 6, in order: the subject
-// is a SPIFFE ID in the agent trust domain, kid selects the agent issuer key,
-// alg is ES256, the signature verifies, aud is exactly the broker audience,
+// is a SPIFFE ID in the agent trust domain, kid selects the agent issuer key
+// or one of its fallbacks, alg is ES256, the signature verifies, aud is exactly the broker audience,
 // and exp has not passed (allowing clock skew) and is no further away than
 // the credential lifetime. An expired credential fails with
 // ReasonSVIDExpired; every other failure with ReasonDenied.
@@ -101,13 +121,15 @@ func (c credentialIssuer) verify(credential Token, now time.Time) (verifiedCrede
 		if !strings.HasPrefix(sub, "spiffe://"+c.trustDomain+"/") {
 			return nil, errors.New("the subject is not a SPIFFE ID in the agent trust domain")
 		}
-		if kid, _ := t.Header["kid"].(string); kid != c.kid {
+		kid, _ := t.Header["kid"].(string)
+		key, ok := c.keys[kid]
+		if !ok {
 			return nil, errors.New("the key ID does not select the agent issuer key")
 		}
 		if t.Method.Alg() != es256 {
 			return nil, errors.New("the algorithm is not allowed")
 		}
-		return c.publicKey, nil
+		return key, nil
 	}, jwt.WithoutClaimsValidation())
 	if err != nil {
 		return verifiedCredential{}, credentialDenied("the credential is not valid")
