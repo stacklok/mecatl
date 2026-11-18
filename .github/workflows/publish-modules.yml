@@ -1,0 +1,284 @@
+# Operator procedure: docs/module-development.md, "Publish selected Go modules".
+# `source` fixes the reviewed main implementation; `parent` advances through
+# metadata-only release commits. Tooling always comes from the dispatch's github.sha,
+# not from either candidate revision. Exact versions are operator-selected: absent
+# map entries keep existing published pins; missing prerequisites fail the request.
+# Different modules may tag different commits. The final HUMAN MERGE COMMIT brings
+# those exact commits into main's ancestry; squash/rebase adoption is invalid.
+# A failed/cancelled run leaves existing tags/commits intact for manual recovery.
+name: Publish Go modules
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Full main commit SHA containing the reviewed implementation'
+        type: string
+        required: true
+      versions:
+        description: 'Explicit JSON mapping of module directories to exact versions'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Serializes execution, not the wait for a human to review the final metadata PR.
+concurrency:
+  group: publish-go-modules
+  cancel-in-progress: false
+
+jobs:
+  # Validate main reachability, inventory/order and absent tags, then test assembled
+  # source once. Choose the branch name here; the first selected writer creates it.
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      source: ${{ steps.preflight.outputs.source }}
+      versions: ${{ steps.preflight.outputs.versions }}
+      branch: ${{ steps.preflight.outputs.branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - name: Refresh main and tags without persisted credentials
+        run: git -C candidate fetch --force origin main --tags
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: tooling/go.work
+          cache: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - name: Validate request and test assembled source
+        id: preflight
+        env:
+          SOURCE: ${{ inputs.source }}
+          VERSIONS: ${{ inputs.versions }}
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+
+  # Fixed dependency-first chain: GitHub matrices do not thread an evolving SHA
+  # through ordered calls. Each call returns head only AFTER its public proof.
+  # An unselected call must succeed with head=parent; caller-level skips break
+  # downstream jobs, including when the first or last module is unselected.
+  #
+  # Adding/reordering a publishable module:
+  # - Declare it in go.work/go.mod, and update ORDER/IMPORTS in module-publication.py.
+  #   Root, runtime and test-only modules remain consumers, not publication targets.
+  # - Insert an unconditional call after all its dependencies and before its callers.
+  #   Copy source/versions/branch, depend on preflight and the preceding module,
+  #   and take parent from that module's head. The first call uses preflight.source.
+  # - Rewire the following call's needs/parent to the new head. If the last call
+  #   changes, update BOTH reconcile and adoption-pr needs/PARENT, plus summary.needs.
+  # - Update fixed-order workflow assertions and inventory/order, unselected,
+  #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
+  engine:
+    needs: preflight
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: engine
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.preflight.outputs.source }}
+
+  driver:
+    needs: [preflight, engine]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: contracts/gen/go/mecatl/driver
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.engine.outputs.head }}
+
+  ssefilter:
+    needs: [preflight, driver]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/ssefilter
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.driver.outputs.head }}
+
+  adaptersupport:
+    needs: [preflight, ssefilter]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: internal/adaptersupport
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.ssefilter.outputs.head }}
+
+  oidc:
+    needs: [preflight, adaptersupport]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: authn/oidc
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.adaptersupport.outputs.head }}
+
+  anthropic:
+    needs: [preflight, oidc]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/anthropic
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.oidc.outputs.head }}
+
+  openai:
+    needs: [preflight, anthropic]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/openai
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.anthropic.outputs.head }}
+
+  openaichat:
+    needs: [preflight, openai]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: provider/openaichat
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.openai.outputs.head }}
+
+  adapters:
+    needs: [preflight, openaichat]
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: adapters
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.openaichat.outputs.head }}
+
+  # Reached only after every selected module passes public proof. Reconcile all
+  # remaining consumers, including root/runtime/test and unselected publishable
+  # modules, preserving development replacements. No additional modules are tagged.
+  # Upload only metadata.json {parent, files: {go.mod/go.sum path: UTF-8 or null}};
+  # null represents a deleted sum file. This is a current-run Actions artifact,
+  # not a cache or executable patch; adoption-pr validates it on a fresh runner.
+  reconcile:
+    needs: [preflight, adapters]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      SOURCE: ${{ needs.preflight.outputs.source }}
+      VERSIONS: ${{ needs.preflight.outputs.versions }}
+      PARENT: ${{ needs.adapters.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.adapters.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - name: Refresh main and tags without persisted credentials
+        run: git -C candidate fetch --force origin main --tags
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: tooling/go.work
+          cache: false
+      - name: Prepare remaining consumer pins without write credentials
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py reconcile
+          --source "$SOURCE" --versions "$VERSIONS" --parent "$PARENT"
+          --root "$GITHUB_WORKSPACE/candidate" --metadata "$RUNNER_TEMP/metadata.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: module-metadata-adoption
+          path: ${{ runner.temp }}/metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # The only writer with PR permission. Consume reconciliation's artifact by ID,
+  # commit validated metadata and open one adoption PR; never merge automatically.
+  # Before rollout, enable merge commits and configure the main-only release
+  # environment/App. Pre-merge CI checks prospective ancestry; after the human
+  # merge commit, tags must actually be ancestors of main. Concurrency above does
+  # not reserve a release across PR review waits: humans coordinate open adoptions.
+  adoption-pr:
+    needs: [preflight, adapters, reconcile]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    env:
+      SOURCE: ${{ needs.preflight.outputs.source }}
+      VERSIONS: ${{ needs.preflight.outputs.versions }}
+      PARENT: ${{ needs.adapters.outputs.head }}
+      BRANCH: ${{ needs.preflight.outputs.branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: tooling
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.reconcile.outputs.artifact }}
+          path: ${{ runner.temp }}/prepared
+          merge-multiple: true
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Commit final metadata and open an ordinary PR for HUMAN MERGE COMMIT
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        # Never squash/rebase: tagged commits must become ancestors of main.
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py open-pr
+          --source "$SOURCE" --versions "$VERSIONS" --parent "$PARENT"
+          --branch "$BRANCH" --metadata "$RUNNER_TEMP/prepared/metadata.json"
+
+  summary:
+    needs: [preflight, engine, driver, ssefilter, adaptersupport, oidc, anthropic, openai, openaichat, adapters, reconcile, adoption-pr]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Best-effort request and job results (writer jobs report each created ref immediately)
+        env:
+          SOURCE: ${{ inputs.source }}
+          VERSIONS: ${{ inputs.versions }}
+          BRANCH: module-publication/${{ github.run_id }}-${{ github.run_attempt }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          {
+            printf 'Source: %s\nVersions: %s\nBranch: %s\n' "$SOURCE" "$VERSIONS" "$BRANCH"
+            printf 'Job results:\n%s\n' "$RESULTS"
+            printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
+          } >> "$GITHUB_STEP_SUMMARY"

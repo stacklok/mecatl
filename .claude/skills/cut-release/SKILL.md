@@ -1,21 +1,22 @@
 ---
 name: cut-release
 description: >-
-  Cut a tagged release of mecatl — dispatch the Create Release PR workflow, review and
-  merge the release PR, then verify the tag and the artifacts it publishes (images +
-  Helm charts to GHCR, plus a GitHub Release with signed archives and a Homebrew cask
-  bump). Use when asked to cut/ship/tag/publish a release or bump the version. NOT for
-  general git tagging unrelated to a mecatl release.
+  Cut a tagged Mecatl application release, or route an independently published Go module
+  release to its bounded publication workflow and guide. For application releases, dispatch
+  the Create Release PR workflow, review and merge the release PR, then verify its images,
+  Helm charts, GitHub Release, signed archives, and Homebrew cask bump. Do not use for
+  general git tagging unrelated to a Mecatl release.
 metadata:
   author: stacklok
 ---
 
 # Cut a mecatl release
 
-A release is a `vX.Y.Z` git tag. Pushing that tag triggers `.github/workflows/release.yml`,
-which publishes signed images (`mecated`, `mecatui`, `mecak8s`, execution provider/workload,
-Studio, and the Slack-bot example), Helm charts, and versioned microVM and Brood Box
-artifacts. It also publishes a **GitHub Release** carrying `darwin`/`linux` x
+For an application release, a release is a `vX.Y.Z` git tag. Pushing that tag triggers
+`.github/workflows/release.yml`, which publishes signed images (`mecated`, `mecatui`,
+`mecak8s`, execution provider/workload, Studio, and the Slack-bot example), Helm
+charts, and versioned microVM and Brood Box artifacts. It also publishes a **GitHub
+Release** carrying `darwin`/`linux` x
 `amd64`/`arm64` CLI archives, a `checksums.txt`, cosign bundles, SBOMs, and build
 provenance, and pushes a `mecatl` cask bump to the public `stacklok/homebrew-tap`
 repository. There is **no** version baked into the Go code — the tag IS the release.
@@ -174,57 +175,35 @@ Run from the repo root.
    brew update && brew install stacklok/tap/mecatl && mecatui --version
    ```
 
-## The engine module is tagged separately
+## Publish an importable Go module
 
-The `vX.Y.Z` release above is the **root repo / `mecated` image** release. The importable
-core, `github.com/stacklok/mecatl/engine`, is its **own Go module** with its own
-tag grammar `engine/vX.Y.Z` (distinct from the root tags). It carries a public-API
-compatibility contract (`engine/COMPATIBILITY.md`).
+The root `vX.Y.Z` release above is the application release. It does not automatically
+publish the independently versioned Go modules. Module tags use their module path,
+such as `engine/vX.Y.Z` or `adapters/vX.Y.Z`, and are lightweight tags. Root application
+tags remain annotated.
 
-- **Engine tags are cut on their own schedule.** Cutting one is a deliberate maintainer
-  decision — do NOT cut it as part of a routine root release unless asked. The `engine/vX.Y.Z`
-  and root `vX.Y.Z` version lines are independent. Bumps follow `engine/COMPATIBILITY.md`
-  (pre-v1: minor = additive or breaking, patch = fixes only).
+When a request concerns an independently published Go module, use the bounded workflow in
+[the Go module publication procedure](../../../docs/module-development.md#4-publish-selected-go-modules).
+Do not create an engine tag, or any other module tag, by hand. Do not add a module
+release to the root application release flow.
 
-### Cutting an engine tag (mirrors the root flow)
+Before dispatching, verify the release's compatibility policy and changelog. For
+`engine`, retain the version and API preflight policy in `engine/COMPATIBILITY.md`:
+update `engine/CHANGELOG.md`, run `task api:release-check` as the advisory SemVer
+preview, and require the committed API snapshots checked by `task api:check`. Supply
+a reviewed, `main`-reachable full commit SHA as `source` and choose every exact version
+explicitly in the workflow's `versions` map; the workflow never infers versions or
+releases additional modules.
 
-Run from the repo root.
+The workflow must be present on `main`, and the repository needs a configured
+`release` environment with the release App plus merge commits enabled before dispatch.
+Those rollout prerequisites do not establish hosted verification. There is no evidence
+here of a completed hosted module release or public-download proof.
 
-1. **Pick the engine version.** Increment the latest engine tag per `engine/COMPATIBILITY.md`
-   (pre-v1: Added = minor, Changed/Removed = minor too; patch = fixes). The latest engine tag:
-   ```sh
-   git tag --sort=-v:refname --list 'engine/v*' | head -1
-   ```
-
-2. **Pre-flight.** Confirm `engine/CHANGELOG.md` has an `[Unreleased]` entry covering everything
-   since the last engine tag. Then run the advisory `gorelease` check:
-   ```sh
-   task api:release-check
-   ```
-   It never fails: it previews the SemVer classification against the previous engine tag, so
-   compare its verdict with the version you picked. The authoritative guard is the `api-compat` gate
-   (`task api:check`), which already guarantees the committed `engine/api/*.txt` snapshots match the
-   surface being tagged.
-
-3. **Create the annotated tag** with a concise summary:
-   ```sh
-   git tag -a engine/vX.Y.Z -m "engine/vX.Y.Z — <one-line summary>"
-   ```
-
-4. **Push the tag:**
-   ```sh
-   git push origin engine/vX.Y.Z
-   ```
-
-**This line is deliberately still manual.** An engine tag adds no commit to `main` and carries
-no pin bump, so it never needed the release-PR flow the root `vX.Y.Z` line uses — pushing the
-tag is the whole release.
-
-**IMPORTANT — an engine tag fires NO image build, NO GitHub Release, and NO Homebrew cask bump.** `release.yml` triggers on `v*` (the root tag
-glob), which does **not** match `engine/v*`, so cutting an engine tag runs none of the ko build /
-cosign / SBOM / SLSA pipeline. It only publishes the module version, making it resolvable for
-`go get github.com/stacklok/mecatl/engine@engine/vX.Y.Z` consumers. There is no pin
-bump and no `release.yml` run to confirm — the push of the tag is the whole release.
+A human alone merge-commits the final adoption PR. Agents never merge it, and squash
+or rebase adoption breaks the required release ancestry. If a write or public proof
+fails, preserve the existing tags and branch and recover manually through a new
+explicitly approved action.
 
 ## Notes
 
@@ -237,15 +216,14 @@ bump and no `release.yml` run to confirm — the push of the tag is the whole re
   release workflow and carries a `DO NOT EDIT` header. A manual edit is overwritten by the next
   release and desynchronizes the checksums in the meantime.
 - **Never push to `main`, and never create a root `vX.Y.Z` tag by hand.** Both are the
-  workflows' job. A hand-pushed version bump skips code review, and a hand-created tag can point
-  at a commit whose release metadata the gate rejects. If `VERSION` is edited on `main` outside a
-  release PR, `create-release-tag.yml` refuses to tag it rather than cutting a release from it.
-  `release.yml`'s `guard` job additionally refuses to publish anything from a tag that is
-  not an ancestor of `main`, so a tag cut on a branch builds nothing. (This applies to the ROOT
-  `v*` line only — the `engine/v*` tags below are still cut by hand, deliberately: they carry
-  no pin bump and add no commit to `main`.)
-- **Annotated tags only** (`git tag -a`), matching prior releases — they carry a tagger + message.
-  `create-release-tag.yml` does this; the tagger is `github-actions[bot]`.
+  application workflows' job. A hand-pushed version bump skips code review, and a
+  hand-created tag can point at a commit whose release metadata the gate rejects. If
+  `VERSION` is edited on `main` outside a release PR, `create-release-tag.yml` refuses
+  to tag it rather than cutting a release from it. `release.yml`'s `guard` job also
+  refuses a root tag that is not an ancestor of `main`. Module tags follow the bounded
+  module-publication workflow above.
+- **Root tags are annotated.** `create-release-tag.yml` creates the root application
+  tag with `git tag -a`; module publication creates lightweight module tags.
 - **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
   `user-docs/building/deployment/mecatequi.md` are illustrative and do NOT gate the release. The
   release flow deliberately leaves them alone.

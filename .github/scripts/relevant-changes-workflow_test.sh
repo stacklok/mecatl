@@ -120,10 +120,62 @@ done
 build_block="$(job_block build)"
 grep -Fq "if: needs.changes.outputs.module_publication_relevant == 'true'" <<<"$build_block" \
   || fail 'Build must gate the publication step on module_publication_relevant'
-grep -Fq 'task test:module-publication' <<<"$build_block" \
-  || fail 'Build must run the publication task'
-grep -Fq 'git fetch --unshallow --tags origin main' <<<"$build_block" \
-  || fail 'Build must fetch ancestry and nested tags before checking pins'
+grep -Fq 'sh .github/scripts/check-module-publication.sh' <<<"$build_block" \
+  || fail 'Build must run the publication checker'
+grep -Fq 'sh .github/scripts/check-module-publication_test.sh' <<<"$build_block" \
+  || fail 'Build must run the offline publication controls'
+grep -Fq 'git fetch --unshallow --tags origin +refs/heads/main:refs/remotes/origin/main' <<<"$build_block" \
+  || fail 'Build must fetch actual main ancestry and nested tags before checking pins'
+for binding in 'EVENT_NAME: ${{ github.event_name }}' 'PROSPECTIVE_MAIN: ${{ github.sha }}' 'PR_HEAD: ${{ github.event.pull_request.head.sha }}'; do
+  grep -Fq "$binding" <<<"$build_block" || fail "publication caller must bind $binding as data"
+done
+if grep -Eq '^          ref:' <<<"$build_block"; then
+  fail 'Build checkout must retain the default GitHub prospective merge ref'
+fi
+
+# Execute the actual caller body with inert Git/Go boundaries. Check PR/push
+# argument selection and ensure expression-shaped data never becomes shell code.
+publication_work=$(mktemp -d "${TMPDIR:-/tmp}/module-publication-caller.XXXXXXXX")
+trap 'rm -rf "$publication_work"' EXIT
+awk '
+  $0 == "      - name: Verify nested module publication" { inpub = 1; next }
+  inpub && /^      - / { exit }
+  inpub && $0 == "        run: |" { inrun = 1; next }
+  inpub && inrun && /^          / { sub(/^          /, ""); print }
+' "$workflow" > "$publication_work/run.sh"
+[[ -s "$publication_work/run.sh" ]] || fail 'publication caller body must be extractable'
+if grep -Fq '${{' "$publication_work/run.sh"; then
+  fail 'publication shell must use env, never inline GitHub expressions'
+fi
+mkdir -p "$publication_work/.github/scripts" "$publication_work/bin"
+cat > "$publication_work/.github/scripts/check-module-publication.sh" <<'EOF'
+#!/bin/sh
+printf 'checker\n' >> "$CALLS"
+for arg do printf '<%s>\n' "$arg" >> "$CALLS"; done
+EOF
+printf '#!/bin/sh\nprintf "controls\\n" >> "$CALLS"\n' > "$publication_work/.github/scripts/check-module-publication_test.sh"
+printf '#!/bin/sh\nprintf "fetch\\n" >> "$CALLS"\n' > "$publication_work/bin/git"
+chmod +x "$publication_work/bin/git"
+for event in pull_request push; do
+  calls="$publication_work/$event.calls"
+  # These strings are intentionally NOT evaluated by the test shell.
+  prospective='$(touch injected-merge)'
+  # A stale event base must not be passed as the merge's expected first parent.
+  pr_base='$(touch injected-base)'
+  pr_head='"; touch injected-head; #'
+  if ! (cd "$publication_work" && PATH="$publication_work/bin:$PATH" CALLS="$calls" \
+    EVENT_NAME="$event" PROSPECTIVE_MAIN="$prospective" PR_BASE="$pr_base" PR_HEAD="$pr_head" bash run.sh); then
+    fail "publication caller failed for $event"
+  fi
+  printf 'fetch\ncontrols\nchecker\n' > "$publication_work/expected"
+  if [[ "$event" == pull_request ]]; then
+    printf '<%s>\n' --prospective-main "$prospective" --pr-head "$pr_head" >> "$publication_work/expected"
+  fi
+  cmp -s "$publication_work/expected" "$calls" || fail "wrong publication arguments for $event"
+done
+if [[ -e "$publication_work/injected-merge" || -e "$publication_work/injected-base" || -e "$publication_work/injected-head" ]]; then
+  fail 'publication caller evaluated untrusted env as shell code'
+fi
 
 # The pure-TypeScript SDK unit job gates on sdk_relevant ALONE (no go, no
 # docs_only — sdk_relevant already implies a non-docs, TS/contract change).

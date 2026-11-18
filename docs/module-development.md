@@ -156,81 +156,77 @@ modifying it. Intentional uncommitted metadata fails too. CI uses the same check
 after its existing Build preparation and Test suite; ignored `go.work.sum` updates
 are allowed. A clean result proves only that tracked metadata is stable.
 
-## 4. Merge and release dependencies first
+## 4. Publish selected Go modules
 
-Prepare the coordinated PRs in dependency order. When source changes require an
-unpublished dependency API, project CI will be red during the transition: standalone
-checks still use the old published pins, even if the assembled workspace passes.
-This is an expected dependency-publication gap. Record the affected checks and the
-missing dependency versions in each PR; investigate unrelated failures normally.
+Use the bounded publication workflow for every independently published Go module.
+Do not create module tags by hand or include a module release in the root application
+release. The root application's annotated `vX.Y.Z` release procedure remains separate;
+module publication creates lightweight nested tags such as `engine/vX.Y.Z`.
 
-Each module's standalone checks must pass again after its prerequisite dependencies
-are published and its pins are updated and tidied. Project-wide CI must return to
-green after the final root and integration pin updates in step 5. A workspace pass
-alone does not close this gap or waive required checks. Obtain an explicit maintainer
-decision on any intermediate merge that cannot satisfy the existing required checks.
+Before dispatching, confirm that `publish-modules.yml` is present on `main`, the
+`release` environment has the release GitHub App configured, and repository settings
+allow merge commits. Dispatch authentication stays separate from the release App
+credential; the workflow supplies that credential only to its isolated writer jobs.
 
-For each dependency module:
+1. Choose a reviewed commit that is reachable from `main` and supply its full SHA as
+   `source`. Choose every release explicitly in the `versions` JSON map, including
+   its exact version. For example,
+   `{"engine":"v0.12.0","provider/openai":"v0.8.0"}` selects only those two
+   modules. Dependencies outside the map retain their published pins; the workflow
+   never infers versions or expands the selection.
+2. Dispatch `publish-modules.yml` from `main`. Its `preflight` job validates the
+   source, versions, module inventory, and fixed dependency order, then runs the
+   assembled workspace check once. A workspace result proves the coordinated source;
+   it does not prove the published dependency closure or public availability.
+3. The workflow walks its fixed dependency-first chain. For each selected module,
+   `prepare` updates only existing sibling requirements to versions already selected
+   and published earlier in the chain, tidies metadata, and runs standalone checks
+   with `GOWORK=off`. A missing prerequisite fails the run instead of adding a
+   version to the map.
+4. The first selected `publish` writer creates a temporary release branch at `source`.
+   Each selected writer commits its prepared dependency metadata and creates the
+   module's lightweight tag. Release commits contain metadata only, never
+   implementation source. A module with no metadata change tags its incoming parent
+   commit.
+5. `prove` downloads the exact tagged version through the public proxy and checksum
+   database, then compiles an owned minimal import. It must finish before the next
+   selected module can run. This is the public publication evidence that standalone
+   checks cannot provide.
+6. After every selected module passes public proof, `reconcile` updates the selected
+   version pins in root, runtime, test, and unselected publishable modules. It preserves
+   development replacements, changes metadata only, and does not tag those modules.
+   `adoption-pr` commits that metadata and opens one PR to `main`.
+7. A human merges the adoption PR with a merge commit. Never squash or rebase it.
+   This makes every tagged release commit an ancestor of `main`. The workflow opens
+   the PR but never merges it.
 
-1. Verify the module against available declared dependencies. From its directory,
-   run `GOWORK=off go mod tidy -diff`, `GOWORK=off go build ./...`, and
-   `GOWORK=off go test -mod=readonly ./...`.
-2. Have a human merge the reviewed PR. Identify the actual merged commit reachable
-   from `main`; a squash merge does not preserve the PR-head SHA.
-3. Publish that module's independent tag through its owning release process, with
-   authorization. For example, the engine uses `engine/vX.Y.Z`, while adapters use
-   `adapters/vX.Y.Z`. A root release tag does not release nested modules.
-4. Update dependent modules to the real published version, tidy their manifests,
-   and repeat verification. Publish changed dependencies before their callers.
+During publication, tags point at metadata commits on the release branch. The adoption
+merge later brings those commits into `main`; `main` never receives intermediate pins
+for versions that are not publicly available.
 
-After the engine release, set `ENGINE_VERSION` to its published version and update
-an affected provider, for example:
+### Workflow maintenance
 
-```sh
-(cd provider/openai &&
-  GOWORK=off go get "github.com/stacklok/mecatl/engine@$ENGINE_VERSION" &&
-  GOWORK=off go mod tidy &&
-  GOWORK=off go mod tidy -diff &&
-  GOWORK=off go test -mod=readonly ./...)
-```
+Job ownership, metadata-artifact and credential boundaries, and the instructions for
+adding or reordering a module live beside the implementation in
+[`publish-modules.yml`](../.github/workflows/publish-modules.yml) and
+[`publish-module.yml`](../.github/workflows/publish-module.yml).
 
-Review the manifest/sum diff before proceeding. Repeat for each affected module;
-`go get` can also update transitive requirements.
+### Handle a partial publication
 
-`GOWORK=off` disables `go.work`, but leaves local `replace` directives effective.
-Root, the microVM runtime, and microVM integration use local replacements. Their
-workspace-disabled tests are not proofs of public dependency resolution. A real
-external-consumer proof must resolve released modules without checkout replacements.
+A failed preparation, write, or public proof stops the remaining chain and prevents
+adoption PR creation. Tags and metadata commits that succeeded remain valid. Inspect
+the branch, tags, and workflow logs, then recover manually with a new explicitly
+approved action. Never move or recreate a published tag, and do not assume a rerun can
+resume a partial publication.
 
-Follow [adapter release verification](../adapters/COMPATIBILITY.md#release-verification)
-for the persistence modules:
+## 5. Review the adoption PR
 
-```sh
-task test:module-publication
-# Set ADAPTERS_VERSION to the authorized published version:
-task test:module-publication VERSION="$ADAPTERS_VERSION"
-```
-
-This proof requires fetched `origin/main` history/tags and public proxy access.
-It checks the specified persistence-module pins and builds a published adapters
-version in a fresh external module/cache. It does not prove publication of every
-module in the repository.
-
-## 5. Finish integration
-
-Once dependency releases exist, finish root and integration pins, tidy affected
-modules, and run the existing full gates:
-
-```sh
-task lint
-task --concurrency 3 test
-task --concurrency 3 test:race
-go run ./cmd/mecademo
-```
-
-Run the workspace race suite against the final coordinated candidate, then verify
-metadata cleanliness. Keep unavailable publication proofs or failing checks visible
-in the PR rather than treating a workspace pass as release readiness.
+Review the final metadata PR and its normal checks after all selected modules complete
+public proof. The prospective-merge publication check confirms tagged commits would
+remain ancestors of a merge commit; it cannot control which merge method a human
+chooses. After adoption, the main-ancestry check rejects squash or rebase results
+that lost the tagged commits. Have a human use a merge commit and record the workspace,
+standalone, and public-download evidence separately in the PR or release record.
 
 ## Command reference
 

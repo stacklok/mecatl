@@ -613,6 +613,13 @@ tasks:
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-candidate_test.py
 
+  test:module-publication-tools:
+    desc: Run offline bounded-publication helper and workflow regression tests
+    cmds:
+      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-publication_test.py
+      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-publication-writer_test.py
+      - go test .github/scripts/module-publication-workflow_test.go
+
   test:module-publication:
     desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
     vars:
@@ -1229,6 +1236,7 @@ tasks:
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
       - task: test:workspace-infrastructure
+      - task: test:module-publication-tools
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
       - bash .github/scripts/microvm-ci-release_test.sh

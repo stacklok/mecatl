@@ -1047,9 +1047,19 @@ jobs:
 
       - name: Verify nested module publication
         if: needs.changes.outputs.module_publication_relevant == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PROSPECTIVE_MAIN: ${{ github.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          git fetch --unshallow --tags origin main
-          task test:module-publication
+          git fetch --unshallow --tags origin +refs/heads/main:refs/remotes/origin/main
+          sh .github/scripts/check-module-publication_test.sh
+          if [ "$EVENT_NAME" = pull_request ]; then
+            # The merge commit identifies its base; event base.sha can lag behind it.
+            sh .github/scripts/check-module-publication.sh --prospective-main "$PROSPECTIVE_MAIN" --pr-head "$PR_HEAD"
+          else
+            sh .github/scripts/check-module-publication.sh
+          fi
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
       # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
