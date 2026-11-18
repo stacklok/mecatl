@@ -432538,6 +432538,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795026045695,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cea6d32e5a031f9a01b51e1de45e8e0a32ca9193",
+          "message": "fix(slack-bot): isolate offline daemon startup (#2872)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T21:37:01Z",
+          "tree_id": "eff0ff79c5f86954e72a3dcbfbf986f76967b96a",
+          "url": "https://github.com/stacklok/mecatl/commit/cea6d32e5a031f9a01b51e1de45e8e0a32ca9193"
+        },
+        "date": 1795038600895,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -563334,6 +563373,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795038597380,
+  "lastUpdate": 1795038602047,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
