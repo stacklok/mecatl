@@ -17,9 +17,9 @@ Verify that scheduled invocations preserve owner attribution without treating sa
 
 ## SPIFFE identifier construction
 
-An agent instance's SPIFFE ID is `spiffe://<trust domain>/agent/<ag_ identifier>` and nothing more: no definition name, incarnation, or creation ancestry. The registry keys each instance by its incarnation and keeps its definition reference and creating instance. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
+An agent instance's SPIFFE ID is `spiffe://<trust domain>/agent/<ag_ identifier>` and nothing more: no definition name, incarnation, or creation ancestry. The ID has no version segment, so changing its shape requires migration. The registry keys each instance by its incarnation and keeps its definition reference and creating instance. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
 
-Use literal, nonempty definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
+Use literal, nonempty definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root; registration past either cap is refused. Legacy-name compatibility is also open.
 
 ## Grant record
 
