@@ -391330,6 +391330,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795041650164,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dcda427af386489187d095a470f55332490f4e6c",
+          "message": "feat(release): implement bounded Go module publication (#2865)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T15:34:01-08:00",
+          "tree_id": "1581dc8d3a794d90ea58d2d7bc8add983a223132",
+          "url": "https://github.com/stacklok/mecatl/commit/dcda427af386489187d095a470f55332490f4e6c"
+        },
+        "date": 1795045570232,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -564833,6 +564867,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795045567044,
+  "lastUpdate": 1795045571052,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
