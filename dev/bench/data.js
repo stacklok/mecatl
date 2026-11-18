@@ -559606,9 +559606,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795002650902,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d66a6d415d52fe8bd32f363ab25058b08eea75a",
+          "message": "feat(executor): serve the executor gRPC services over mutual TLS (#2860)\n\n`mecatl-executor serve` now always serves over TLS 1.3 and requires a\nclient certificate. It presents the per-Pod key pair from `-tls-dir`\n(default `/etc/mecatl-executor/tls`) and admits only clients that chain\nto `ca.crt` in `-provider-trust-dir` (default\n`/etc/mecatl-executor/provider`), carry client-auth usage, and whose\nsingle URI SAN equals `client-uri`. `newExecutorServer` takes the\ntransport credentials and `serve` passes the mutual TLS ones, so\nplaintext serving is removed.\n\n`executionexecutor.ServerTLSConfig` loads the server key pair once and\nrereads the provider trust on every handshake from a consistent\n`..data` projection, so a CA or URI rotation reaches a running\nexecutor. An unreadable or invalid bundle fails closed, invalid trust\nat startup stops `serve` before it listens, and session tickets are\ndisabled.\n\nURI SAN canonicalization moves to `executionenv.ClientIdentity` so the\nprovider dialer and the executor share one rule, and the executor mount\npaths become shared `executionenv` constants. The dialer tests now run\nagainst the real server configuration.\n\nCloses: #2699",
+          "timestamp": "2026-11-18T13:04:37Z",
+          "tree_id": "52fadff4d9c3502f10fcfaa9fc824ea6b68bad7e",
+          "url": "https://github.com/stacklok/mecatl/commit/8d66a6d415d52fe8bd32f363ab25058b08eea75a"
+        },
+        "date": 1795007825341,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 775,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32188.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795007820967,
+  "lastUpdate": 1795007826139,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
