@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
@@ -29,13 +31,24 @@ type Runner struct {
 	commands executorv1.CommandServiceClient
 	root     string
 	context  RequestContextFunc
+	limits   limits
 }
 
 var _ tool.CommandRunner = (*Runner)(nil)
 
 // NewRunner returns a Runner whose commands run in root, the server's workspace root.
-func NewRunner(conn grpc.ClientConnInterface, root string, rc RequestContextFunc) *Runner {
-	return &Runner{commands: executorv1.NewCommandServiceClient(conn), root: root, context: rc}
+func NewRunner(
+	conn grpc.ClientConnInterface,
+	root string,
+	rc RequestContextFunc,
+	opts ...Option,
+) *Runner {
+	return &Runner{
+		commands: executorv1.NewCommandServiceClient(conn),
+		root:     root,
+		context:  rc,
+		limits:   newLimits(opts),
+	}
 }
 
 // BoundWorkspaceRoot returns the root commands run in.
@@ -76,7 +89,7 @@ func (r *Runner) Run(ctx context.Context, command string) (tool.CommandResult, e
 	done := make(chan struct{})
 	defer close(done)
 	go cancelOnDone(ctx, stream, closeStream, done)
-	return receive(ctx, stream)
+	return receive(ctx, stream, r.limits.maxOutputBytes)
 }
 
 // cancelOnDone asks the server to cancel once ctx ends, and closes the stream,
@@ -108,13 +121,29 @@ func cancelOnDone(
 	}
 }
 
-// receive reads events until the result. A failure before the start
-// confirmation means the command never ran; any later failure leaves it unknown.
-func receive(ctx context.Context, stream commandStream) (tool.CommandResult, error) {
+const truncationMarker = "\n... [output truncated by the executor]"
+
+// receive reads events until the result. Only a refusal the server reports
+// before Started means the command never ran; anything else leaves it unknown.
+func receive(
+	ctx context.Context,
+	stream commandStream,
+	maxOutput int,
+) (tool.CommandResult, error) {
 	var stdout, stderr bytes.Buffer
+	truncated := false
+	keep := func(buf *bytes.Buffer, p []byte) {
+		n := min(len(p), maxOutput-stdout.Len()-stderr.Len())
+		buf.Write(p[:n])
+		truncated = truncated || n < len(p)
+	}
 	output := func() tool.CommandResult {
+		out := stdout.String()
+		if truncated {
+			out += truncationMarker
+		}
 		return tool.CommandResult{
-			Stdout: session.ToValidUTF8(stdout.String()),
+			Stdout: session.ToValidUTF8(out),
 			Stderr: session.ToValidUTF8(stderr.String()),
 		}
 	}
@@ -122,21 +151,30 @@ func receive(ctx context.Context, stream commandStream) (tool.CommandResult, err
 	for {
 		msg, err := stream.Recv()
 		if err != nil && !started {
-			return tool.CommandResult{}, notStarted(err)
+			return tool.CommandResult{}, startError(err)
 		}
 		if err != nil {
 			return output(), fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 		}
-		started = true
 		switch ev := msg.GetEvent().(type) {
+		case *executorv1.RunCommandResponse_Started:
+			started = true
+			continue
 		case *executorv1.RunCommandResponse_Stdout:
-			stdout.Write(ev.Stdout)
+			keep(&stdout, ev.Stdout)
 		case *executorv1.RunCommandResponse_Stderr:
-			stderr.Write(ev.Stderr)
+			keep(&stderr, ev.Stderr)
 		case *executorv1.RunCommandResponse_Result:
+			truncated = truncated || ev.Result.GetOutputTruncated()
 			out := output()
 			out.ExitCode = int(ev.Result.GetExitCode())
+			if !started {
+				return out, fmt.Errorf("%w: result before start", ErrOutcomeUnknown)
+			}
 			return out, resultError(ctx, ev.Result.GetState())
+		}
+		if !started {
+			return output(), fmt.Errorf("%w: output before start", ErrOutcomeUnknown)
 		}
 	}
 }
@@ -158,6 +196,16 @@ func resultError(ctx context.Context, state executorv1.CommandState) error {
 	default:
 		return fmt.Errorf("%w: state %v", ErrOutcomeUnknown, state)
 	}
+}
+
+// startError classifies a failure before Started. Transport codes, and a
+// stream ending cleanly (io.EOF, so Unknown), can follow a process that started.
+func startError(err error) error {
+	switch status.Code(err) {
+	case codes.Unknown, codes.Canceled, codes.DeadlineExceeded, codes.Unavailable:
+		return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
+	}
+	return notStarted(err)
 }
 
 func notStarted(err error) error {

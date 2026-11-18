@@ -51,6 +51,7 @@ type Workspace struct {
 	files   executorv1.FileServiceClient
 	root    string
 	context RequestContextFunc
+	limits  limits
 }
 
 var (
@@ -60,8 +61,18 @@ var (
 )
 
 // NewWorkspace returns a Workspace rooted at root, the server's workspace root.
-func NewWorkspace(conn grpc.ClientConnInterface, root string, rc RequestContextFunc) *Workspace {
-	return &Workspace{files: executorv1.NewFileServiceClient(conn), root: root, context: rc}
+func NewWorkspace(
+	conn grpc.ClientConnInterface,
+	root string,
+	rc RequestContextFunc,
+	opts ...Option,
+) *Workspace {
+	return &Workspace{
+		files:   executorv1.NewFileServiceClient(conn),
+		root:    root,
+		context: rc,
+		limits:  newLimits(opts),
+	}
 }
 
 // Root implements tool.WorkspaceReader.
@@ -82,7 +93,9 @@ func (w *Workspace) ReadVersion(
 	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
-	stream, err := w.files.ReadFile(ctx, &executorv1.ReadFileRequest{Context: rc, Path: path})
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := w.files.ReadFile(streamCtx, &executorv1.ReadFileRequest{Context: rc, Path: path})
 	if err != nil {
 		return nil, tool.FileVersion{}, fileError(ctx, path, err)
 	}
@@ -98,6 +111,9 @@ func (w *Workspace) ReadVersion(
 		}
 		if version != nil {
 			return nil, tool.FileVersion{}, fmt.Errorf("%w: data after version", errProtocol)
+		}
+		if len(data)+len(msg.GetData()) > w.limits.maxFileBytes {
+			return nil, tool.FileVersion{}, fmt.Errorf("%s: %w", path, ErrLimitExceeded)
 		}
 		data = append(data, msg.GetData()...)
 		version = msg.GetVersion()
