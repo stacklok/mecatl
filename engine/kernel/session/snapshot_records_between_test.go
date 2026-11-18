@@ -124,7 +124,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 		expected[i] = want.RecordAt(i).MutableClone()
 	}
 	reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), scope, sessionPolicy())
+	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), scope, sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	reads, observes, appends := len(reader.reads), reader.observes, reader.appends
 	for name, snapshot := range map[string]session.Snapshot{"submit": want, "load": loaded.Snapshot()} {

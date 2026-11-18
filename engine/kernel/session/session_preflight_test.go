@@ -82,14 +82,14 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 					}
 				}
 				before := s.Snapshot()
-				p, err := s.prepare(batch)
+				p, err := s.prepare(batch, 0, 1)
 				if !errors.Is(err, tc.want) || (err != nil && !reflect.DeepEqual(p, prepared{})) {
 					t.Fatalf("metadata (imported=%t): %v; want %v", imported, err, tc.want)
 				}
 				if !reflect.DeepEqual(before, s.Snapshot()) {
 					t.Fatal("preflight mutation")
 				}
-				dto := format.Commit{FormatVersion: 1, Sequence: before.Head().Sequence + 1}
+				dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: before.Head().Sequence + 1}
 				if before.Head() == (history.CommitRef{}) {
 					dto.HistoryID = new(id)
 				} else {
@@ -131,10 +131,10 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A later payload limit must not mask the earlier lifecycle violation.
-	if _, err := s.prepare([]*materializedRecord{start, input}); !errors.Is(err, ErrTransition) {
+	if _, err := s.prepare([]*materializedRecord{start, input}, 0, 1); !errors.Is(err, ErrTransition) {
 		t.Fatalf("metadata: %v", err)
 	}
-	dto := format.Commit{FormatVersion: 1, HistoryID: new(id), Sequence: 1, Records: []format.Record{start.format(), input.format()}}
+	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(id), Sequence: 1, Records: []format.Record{start.format(), input.format()}}
 	wire, err := codec.Encode(dto, limits)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 	if err := b.Discard(); err != nil {
 		t.Fatal(err)
 	}
-	p, err := wide.prepare(batch)
+	p, err := wide.prepare(batch, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestSessionMetadataAndDecodedPayloadLimitsAgree(t *testing.T) {
 			s, _ := internalFixture(t)
 			reflect.ValueOf(&s.policy.PayloadLimits).Elem().Field(i).SetInt(1)
 			before := s.Snapshot()
-			_, prepareErr := s.prepare(batch)
+			_, prepareErr := s.prepare(batch, 0, 1)
 			applyErr := s.apply(history.Commit{Ref: p.ref, Commit: p.commit})
 			var want error
 			if applyErr != nil {
@@ -196,7 +196,7 @@ func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, records := range [][]*materializedRecord{nil, {nil}} {
-		if p, err := s.prepare(records); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(p, prepared{}) {
+		if p, err := s.prepare(records, 0, 1); !errors.Is(err, codec.ErrInvalidData) || !reflect.DeepEqual(p, prepared{}) {
 			t.Fatalf("invalid preparation: %v", err)
 		}
 	}
@@ -226,7 +226,7 @@ func TestPrivatePreparationAdmissionAndBarriers(t *testing.T) {
 	s.policy.SoftMaxDecodedWork = 1
 	before := s.Snapshot()
 	if n := testing.AllocsPerRun(10, func() {
-		p, err := s.prepare([]*materializedRecord{created})
+		p, err := s.prepare([]*materializedRecord{created}, 0, 1)
 		if !errors.Is(err, codec.ErrLimitExceeded) || p.ref != (history.CommitRef{}) || p.commit.Records != nil {
 			panic("admission")
 		}

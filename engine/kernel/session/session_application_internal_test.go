@@ -63,7 +63,7 @@ func newSessionHistory(t testing.TB) *history.History {
 }
 func newSession(t testing.TB, p Policy) *Session {
 	t.Helper()
-	s, err := New(newSessionHistory(t), testHistoryID(t), p)
+	s, err := New(newSessionHistory(t), testHistoryID(t), p, testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func closeoutRecord(t testing.TB, ordinal uint64) *materializedRecord {
 func proposedCommit(t testing.TB, s *Session, records ...*materializedRecord) history.Commit {
 	t.Helper()
 	v := s.Snapshot()
-	dto := format.Commit{FormatVersion: 1, Sequence: v.Head().Sequence + 1}
+	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: v.Head().Sequence + 1}
 	if v.Head() == (history.CommitRef{}) {
 		dto.HistoryID = new(v.HistoryID())
 	} else {
@@ -243,15 +243,15 @@ func TestSessionAtomicRejection(t *testing.T) {
 	}{
 		{"duplicate creation", createdRecord(t).format(), ErrTransition},
 		{"skipped input", runInputRecord(t, 3, 3).format(), ErrTransition},
-		{"maximum input ordinal", format.Record{Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: maxInput}, ErrTransition},
-		{"maximum run ordinal", format.Record{Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: maxRun}, ErrTransition},
+		{"maximum input ordinal", format.Record{Timestamp: 0, Kind: sessionformat.KindUserInput, KindVersion: sessionformat.Version, Payload: maxInput}, ErrTransition},
+		{"maximum run ordinal", format.Record{Timestamp: 0, Kind: sessionformat.KindRunStarted, KindVersion: sessionformat.Version, Payload: maxRun}, ErrTransition},
 		{"repeated input", runInputRecord(t, 3, 1).format(), ErrTransition},
 		{"duplicate active start", startRecord(t, 4).format(), ErrTransition},
 		{"wrong owner", runInputRecord(t, 2, 2).format(), ErrTransition},
 		{"wrong interruption", closeoutRecord(t, 2).format(), ErrTransition},
-		{"unsupported kind", format.Record{Kind: "session.future_request", KindVersion: sessionformat.Version, Payload: []byte{0xa0}}, ErrUnsupportedRecord},
-		{"unsupported version", format.Record{Kind: "session.user_input", KindVersion: sessionformat.Version + 1, Payload: []byte{0xa0}}, ErrUnsupportedRecord},
-		{"malformed payload", format.Record{Kind: "session.user_input", KindVersion: sessionformat.Version, Payload: []byte{0xff}}, codec.ErrInvalidData},
+		{"unsupported kind", format.Record{Timestamp: 0, Kind: "session.future_request", KindVersion: sessionformat.Version, Payload: []byte{0xa0}}, ErrUnsupportedRecord},
+		{"unsupported version", format.Record{Timestamp: 0, Kind: "session.user_input", KindVersion: sessionformat.Version + 1, Payload: []byte{0xa0}}, ErrUnsupportedRecord},
+		{"malformed payload", format.Record{Timestamp: 0, Kind: "session.user_input", KindVersion: sessionformat.Version, Payload: []byte{0xff}}, codec.ErrInvalidData},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), inputRecord(t, 2), closeoutRecord(t, 1), startRecord(t, 2), runInputRecord(t, 2, 1), closeoutRecord(t, 2)}
@@ -349,7 +349,7 @@ func TestSessionPolicyAndZero(t *testing.T) {
 	for i := 0; i < reflect.TypeOf(p).NumField(); i++ {
 		bad := p
 		reflect.ValueOf(&bad).Elem().Field(i).SetZero()
-		if s, err := New(newSessionHistory(t), testHistoryID(t), bad); !errors.Is(err, ErrInvalidPolicy) || s != nil {
+		if s, err := New(newSessionHistory(t), testHistoryID(t), bad, testConfig()); !errors.Is(err, ErrInvalidPolicy) || s != nil {
 			t.Fatalf("zero policy field %d: %v", i, err)
 		}
 	}
@@ -366,10 +366,10 @@ func TestSessionPolicyAndZero(t *testing.T) {
 			}
 		}
 	}
-	if s, err := New(nil, testHistoryID(t), p); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(nil, testHistoryID(t), p, testConfig()); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("nil History: %v", err)
 	}
-	if s, err := New(newSessionHistory(t), historyid.HistoryID{}, p); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(newSessionHistory(t), historyid.HistoryID{}, p, testConfig()); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("zero scope: %v", err)
 	}
 	var zero Session
@@ -548,7 +548,7 @@ func TestSessionAdmissionBeforeDecodeOrClone(t *testing.T) {
 	s := newSession(t, wide)
 	oversized := history.Commit{Commit: format.Commit{Records: make([]format.Record, 4096)}}
 	for i := range oversized.Commit.Records {
-		oversized.Commit.Records[i] = format.Record{Kind: "unknown", KindVersion: sessionformat.Version, Payload: []byte{0xff}}
+		oversized.Commit.Records[i] = format.Record{Timestamp: 0, Kind: "unknown", KindVersion: sessionformat.Version, Payload: []byte{0xff}}
 	}
 	assertRejected(t, s, oversized, codec.ErrLimitExceeded)
 	if n := testing.AllocsPerRun(10, func() {
@@ -572,7 +572,7 @@ func FuzzSessionApplyMalformed(f *testing.F) {
 		applyRecords(t, s, createdRecord(t), startRecord(t, 1))
 		dto := proposedCommit(t, s, inputRecord(t, 1)).Commit
 		kind := []string{"session.user_input", "session.run_started", "session.run_ended", "session.created", "unknown"}[int(variant)%5]
-		dto.Records = append(dto.Records, format.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: payload})
+		dto.Records = append(dto.Records, format.Record{Timestamp: 0, Kind: kind, KindVersion: sessionformat.Version, Payload: payload})
 		c := identify(t, dto)
 		before := s.Snapshot()
 		if err := s.apply(c); err != nil && !reflect.DeepEqual(before, s.Snapshot()) {

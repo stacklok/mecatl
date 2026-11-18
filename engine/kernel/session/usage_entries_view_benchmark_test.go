@@ -45,7 +45,7 @@ func traverseUsageEntries(entries UsageEntriesView) int64 {
 func TestUsageEntriesAllocations(t *testing.T) {
 	for _, sibling := range []int{32, 64 << 10} {
 		s := usageEntriesFixture(t, 2, 3, sibling)
-		loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+		loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
 		mustBatch(t, err)
 		for seam, owner := range map[string]*Session{"Submit": s, "Load": loaded} {
 			t.Run(seam, func(t *testing.T) {
@@ -97,7 +97,7 @@ func BenchmarkSnapshotUsages(b *testing.B) {
 	} {
 		b.Run(axis.name, func(b *testing.B) {
 			s := usageEntriesFixture(b, axis.identities, axis.replacements, axis.sibling)
-			loaded, err := Load(b.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+			loaded, err := Load(b.Context(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
 			interactionCheck(b, err)
 			for seam, owner := range map[string]*Session{"Submit": s, "Load": loaded} {
 				b.Run(seam, func(b *testing.B) {

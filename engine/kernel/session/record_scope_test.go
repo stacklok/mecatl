@@ -16,7 +16,7 @@ func TestDecodedRecordUsesEnclosingScope(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, id := range []historyid.HistoryID{testHistoryID(t), foreign} {
-		s, err := New(newSessionHistory(t), id, sessionPolicy())
+		s, err := New(newSessionHistory(t), id, sessionPolicy(), testConfig())
 		mustBatch(t, err)
 		for _, r := range []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), closeoutRecord(t, 1)} {
 			decoded, err := decodeMaterialized(r.format(), testLimits())
@@ -405,7 +405,7 @@ func TestSessionLocalOrdinalsBindToVerifiedChain(t *testing.T) {
 	dto := c.Commit.Clone()
 	dto.HistoryID = new(foreign)
 	accepted := identify(t, dto)
-	other, err := New(newSessionHistory(t), foreign, sessionPolicy())
+	other, err := New(newSessionHistory(t), foreign, sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	mustBatch(t, other.apply(accepted))
 	got := other.Snapshot()
@@ -419,7 +419,7 @@ func TestSessionLocalOrdinalsBindToVerifiedChain(t *testing.T) {
 	if other.Snapshot().ActiveRun() != (RunID{}) {
 		t.Fatal("scoped closeout")
 	}
-	if !c.Commit.Records[0].Equal(format.Record{Kind: "session.created", KindVersion: 1, Payload: []byte{0xa0}}) {
+	if !c.Commit.Records[0].Equal(format.Record{Timestamp: 0, Kind: "session.created", KindVersion: 1, Payload: []byte{0xa0}}) {
 		t.Fatal("creation repeats scope")
 	}
 }

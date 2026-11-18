@@ -63,7 +63,7 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 				t.Fatal("payload repeats history identity")
 			}
 			version := int64(1)
-			want := format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}
+			want := format.Record{Timestamp: 0, Kind: test.kind, KindVersion: version, Payload: test.wire}
 			if !r.format().Equal(want) {
 				t.Fatal("constructor differs from canonical fixture")
 			}
@@ -83,7 +83,7 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 				t.Fatal("Format exposed private storage")
 			}
 			// Reuse existing envelope codecs, rather than inventing a session envelope.
-			commit := format.Commit{FormatVersion: 1, HistoryID: new(testHistoryID(t)), Sequence: 1, Records: []format.Record{r.format()}}
+			commit := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(testHistoryID(t)), Sequence: 1, Records: []format.Record{r.format()}}
 			wire, err := codec.Encode(commit, testLimits())
 			if err != nil {
 				t.Fatal(err)
@@ -113,13 +113,13 @@ func TestRecordFailureCategories(t *testing.T) {
 				if !errors.Is(err, want) || r != nil {
 					t.Fatalf("constructor %s: %v", name, err)
 				}
-				r, err = decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, limits)
+				r, err = decodeMaterialized(format.Record{Timestamp: 0, Kind: test.kind, KindVersion: version, Payload: test.wire}, limits)
 				if !errors.Is(err, want) || r != nil {
 					t.Fatalf("decode %s: %v", name, err)
 				}
 			}
 			for _, version := range []int64{2, 3, 99} {
-				r, err := decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: test.wire}, testLimits())
+				r, err := decodeMaterialized(format.Record{Timestamp: 0, Kind: test.kind, KindVersion: version, Payload: test.wire}, testLimits())
 				if !errors.Is(err, ErrUnsupportedRecord) || r != nil {
 					t.Fatalf("future version: %v", err)
 				}
@@ -127,7 +127,7 @@ func TestRecordFailureCategories(t *testing.T) {
 		})
 	}
 	for _, kind := range []string{"session.future_request", "session.run_interrupted", "other"} {
-		r, err := decodeMaterialized(format.Record{Kind: kind, KindVersion: 1, Payload: []byte{0xa0}}, testLimits())
+		r, err := decodeMaterialized(format.Record{Timestamp: 0, Kind: kind, KindVersion: 1, Payload: []byte{0xa0}}, testLimits())
 		if !errors.Is(err, ErrUnsupportedRecord) || r != nil {
 			t.Fatalf("unsupported kind: %v", err)
 		}
@@ -156,7 +156,7 @@ func TestRecordMalformedPayloads(t *testing.T) {
 			}
 			for _, wire := range wires {
 				before := bytes.Clone(wire)
-				r, err := decodeMaterialized(format.Record{Kind: test.kind, KindVersion: version, Payload: wire}, testLimits())
+				r, err := decodeMaterialized(format.Record{Timestamp: 0, Kind: test.kind, KindVersion: version, Payload: wire}, testLimits())
 				if !errors.Is(err, codec.ErrInvalidData) || r != nil || !bytes.Equal(wire, before) {
 					t.Fatalf("malformed payload: %v", err)
 				}
@@ -171,7 +171,7 @@ func FuzzDecodeRecord(f *testing.F) {
 	}
 	kinds := []string{"session.created", "session.user_input", "session.run_started", "session.run_ended"}
 	f.Fuzz(func(t *testing.T, kind uint8, wire []byte) {
-		dto := format.Record{Kind: kinds[int(kind)%len(kinds)], KindVersion: 1, Payload: wire}
+		dto := format.Record{Timestamp: 0, Kind: kinds[int(kind)%len(kinds)], KindVersion: 1, Payload: wire}
 		r, err := decodeMaterialized(dto, testLimits())
 		if err != nil {
 			if r != nil {

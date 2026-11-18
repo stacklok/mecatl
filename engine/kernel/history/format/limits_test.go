@@ -156,11 +156,18 @@ func TestCodecHeaderTransitions(t *testing.T) {
 	for _, sequence := range []int64{2, 23, 24, 255, 256, 65535, 65536, math.MaxUint32, math.MaxUint32 + 1, math.MaxInt64} {
 		roundtrip(successorOf(validRoot(t), contentid.Sum(nil), sequence))
 	}
+	for _, timestamp := range []int64{math.MinInt64, -1, 0, 23, 24, 255, 256, math.MaxInt64} {
+		for _, instanceID := range []uint64{1, 23, 24, 255, 256, math.MaxUint32, math.MaxUint32 + 1, math.MaxUint64} {
+			metadata := validRoot(t)
+			metadata.Timestamp, metadata.InstanceID, metadata.Records[0].Timestamp = timestamp, instanceID, timestamp
+			roundtrip(metadata)
+		}
+	}
 	for _, count := range []int{23, 24, 255, 256} {
 		group := validRoot(t)
 		group.Records = make([]format.Record, count)
 		for i := range group.Records {
-			group.Records[i] = format.Record{Kind: "x", KindVersion: 1}
+			group.Records[i] = format.Record{Timestamp: -1, Kind: "x", KindVersion: 1}
 		}
 		roundtrip(group)
 	}

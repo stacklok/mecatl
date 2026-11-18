@@ -10,7 +10,7 @@ import (
 // allocatedRun builds a real provisional prefix rather than constructing an ID.
 func allocatedRun(t testing.TB, scope historyid.HistoryID, count uint64) session.RunID {
 	t.Helper()
-	s, err := session.New(newSessionHistory(t), scope, sessionPolicy())
+	s, err := session.New(newSessionHistory(t), scope, sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	b := beginBatch(t, s)
 	defer b.Discard() //nolint:errcheck // Test-only provisional prefix.
@@ -29,7 +29,7 @@ func allocatedRun(t testing.TB, scope historyid.HistoryID, count uint64) session
 func allocationBatch(t testing.TB, run session.RunID) (*session.Session, *session.SessionCommit) {
 	t.Helper()
 	mustBatch(t, run.Validate())
-	s, err := session.New(newSessionHistory(t), run.HistoryID(), sessionPolicy())
+	s, err := session.New(newSessionHistory(t), run.HistoryID(), sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())

@@ -38,6 +38,11 @@ func requireConstruction(t testing.TB, err error) {
 
 func newConstructionFixture(t *testing.T) *constructionFixture {
 	t.Helper()
+	return newConstructionFixtureWithConfig(t, testConfig())
+}
+
+func newConstructionFixtureWithConfig(t *testing.T, config session.Config) *constructionFixture {
+	t.Helper()
 	limits := testLimits()
 	limits.MaxArrayElements = 16384
 	h, err := history.New(mem.New(), history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
@@ -45,7 +50,7 @@ func newConstructionFixture(t *testing.T) *constructionFixture {
 	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
 	requireConstruction(t, err)
 	policy := session.Policy{PayloadLimits: limits, CommitLimits: limits, MaxRecordsPerCommit: 1024, SoftMaxRetainedRecords: 32768, MaxRetainedRecords: 32768, SoftMaxPayloadBytes: 1 << 30, MaxPayloadBytes: 1 << 30, SoftMaxDecodedWork: 1 << 40, MaxDecodedWork: 1 << 40}
-	s, err := session.New(h, id, policy)
+	s, err := session.New(h, id, policy, config)
 	requireConstruction(t, err)
 	b, err := s.BeginCommit()
 	requireConstruction(t, err)
@@ -132,7 +137,7 @@ func TestInstructionKeysDoNotAffectLogicalRequest(t *testing.T) {
 				requireConstruction(t, f.b.ReplaceUserInstructions(scope, user))
 			}
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+			loaded, err := session.Load(t.Context(), f.h, scope, f.policy, testConfig())
 			requireConstruction(t, err)
 			for _, after := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 				gotRoot, _ := after.RootInstructions()
@@ -292,7 +297,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 	if !capturedAgain.Request().MutableClone().Equal(want) || capturedAgain.Request().CID() != contentid.Sum(wire) {
 		t.Fatal("submission changed the pinned source")
 	}
-	loaded, err := session.Load(t.Context(), f.h, id, f.policy)
+	loaded, err := session.Load(t.Context(), f.h, id, f.policy, testConfig())
 	requireConstruction(t, err)
 	for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 		got, err := Reconstruct(snapshot, target, testLimits())

@@ -55,8 +55,8 @@ func TestPolicyValidationAndCopy(t *testing.T) {
 	p.CommitLimits.MaxBytes = 1
 	p.MaxPageBytes, p.MaxPageCommits, p.RetryWindow = 1, 1, 1
 	id := history.NewHistoryID()
-	c := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
-		Records: []format.Record{{Kind: "opaque", KindVersion: 7, Payload: []byte("tiny")}},
+	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
+		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 7, Payload: []byte("tiny")}},
 	}
 	data, err := codec.Encode(c, policy().CommitLimits)
 	if err != nil {

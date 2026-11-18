@@ -21,7 +21,8 @@ func toolCallViewSession(t testing.TB) *Session {
 	interactionCheck(t, err)
 	s, err := New(internalTestHistory(t, limits), id, Policy{PayloadLimits: limits, CommitLimits: limits,
 		MaxRecordsPerCommit: 1024, SoftMaxRetainedRecords: 32768, MaxRetainedRecords: 32768,
-		SoftMaxPayloadBytes: 1 << 30, MaxPayloadBytes: 1 << 30, SoftMaxDecodedWork: 1 << 40, MaxDecodedWork: 1 << 40})
+		SoftMaxPayloadBytes: 1 << 30, MaxPayloadBytes: 1 << 30, SoftMaxDecodedWork: 1 << 40, MaxDecodedWork: 1 << 40}, testConfig())
+
 	interactionCheck(t, err)
 	interactionSubmit(t, s, func(b *SessionCommit) {
 		interactionCheck(t, b.Create())
@@ -143,7 +144,7 @@ func TestRunToolCallsAcrossResponses(t *testing.T) {
 				})
 				toolCallViewResponse(t, s, 1, 5, 7) // Must not enter the past run's collection.
 			}
-			loaded, err := Load(t.Context(), s.history, run.HistoryID(), s.policy)
+			loaded, err := Load(t.Context(), s.history, run.HistoryID(), s.policy, testConfig())
 			interactionCheck(t, err)
 			for seam, inspected := range map[string]*Session{"Submit": s, "Load": loaded} {
 				t.Run(seam, func(t *testing.T) {
@@ -359,7 +360,7 @@ func TestToolCallsSubmitLoadRetainsRichFacts(t *testing.T) {
 	_, err = s.SubmitCommit(t.Context(), b)
 	interactionCheck(t, err)
 
-	loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+	loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
 	interactionCheck(t, err)
 	for seam, inspected := range map[string]*Session{"Submit": s, "Load": loaded} {
 		t.Run(seam, func(t *testing.T) {

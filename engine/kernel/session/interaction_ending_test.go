@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
@@ -63,6 +64,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						active := s.state.view.lifecycle
 						prepared, err := s.prepareEnding(reason)
 						interactionCheck(t, err)
+						ending.value.Timestamp = math.MinInt64
 						if len(prepared.commit.Records) != 1 || !prepared.commit.Records[0].Equal(ending.format()) {
 							t.Fatal("reservation not actual minimal ending")
 						}
@@ -74,7 +76,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						if s.state.view.lifecycle.pending != active.pending || s.state.view.lifecycle.calls != active.calls || s.state.view.lifecycle.frontier != active.frontier || s.state.view.lifecycle.accounted != active.accounted {
 							t.Fatal("ending erased uncertainty")
 						}
-						loaded, err := Load(context.Background(), s.history, run.historyID, p)
+						loaded, err := Load(context.Background(), s.history, run.historyID, p, testConfig())
 						interactionCheck(t, err)
 						if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 							t.Fatal("hard-only ending replay")
@@ -265,10 +267,11 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 			s, backend := closeoutWidthPrefix(t)
 			run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: uint64(s.Snapshot().RunCount()) + 1}
 			start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, s.policy.PayloadLimits))
-			candidate, err := s.prepare([]*materializedRecord{start})
+			candidate, err := s.prepare([]*materializedRecord{start}, 0, 1)
 			interactionCheck(t, err)
 			ending := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
-			next := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{ending.format()}}
+			ending.value.Timestamp = math.MinInt64
+			next := format.Commit{FormatVersion: 1, Timestamp: math.MinInt64, InstanceID: math.MaxUint64, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{ending.format()}}
 			budget, err := codec.NewBudget(s.policy.CommitLimits)
 			interactionCheck(t, err)
 			interactionCheck(t, next.CheckCBOR(&budget, 0, math.MaxInt))
@@ -285,7 +288,7 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 				t.Fatalf("candidate itself must fit tighter history: %v", err)
 			}
 			attempts := backend.appends
-			_, err = s.prepare([]*materializedRecord{start})
+			_, err = s.prepare([]*materializedRecord{start}, 0, 1)
 			if backend.appends != attempts {
 				t.Fatal("Identify reservation did I/O")
 			}
@@ -303,6 +306,7 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 					t.Fatal("run")
 				}
 			})
+			s.config = Config{InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
 			interactionSubmit(t, s, func(b *SessionCommit) {
 				interactionCheck(t, b.AddRunEnded(s.Snapshot().ActiveRun(), RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}))
 			})
@@ -366,7 +370,7 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 			if againInput != 0 || againRaw.Data().Copy()[0] != 0xff || s.state.view.lifecycle.pending != pending {
 				t.Fatal("capture export mutated fact or resolved request")
 			}
-			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, s.policy)
+			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, s.policy, testConfig())
 			interactionCheck(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("capture replay")

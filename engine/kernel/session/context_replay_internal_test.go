@@ -54,7 +54,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 				units := uint64(p.PayloadLimits.MaxBytes + p.PayloadLimits.MaxNodes + p.PayloadLimits.MaxCollectionElements)
 				p.SoftMaxDecodedWork, p.MaxDecodedWork = 1, uint64(s.state.records)*units
 			}
-			loaded, err := Load(context.Background(), s.history, scope, p)
+			loaded, err := Load(context.Background(), s.history, scope, p, testConfig())
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -87,7 +87,7 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 func iteratorSessions(t testing.TB, h *history.History, s *session.Session, p session.Policy) map[string]*session.Session {
 	t.Helper()
 	scope := s.Snapshot().HistoryID()
-	loaded, err := session.Load(context.Background(), h, scope, p)
+	loaded, err := session.Load(context.Background(), h, scope, p, testConfig())
 	mustBatch(t, err)
 	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }

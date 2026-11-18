@@ -26,7 +26,8 @@ func Example_usageAccounting() {
 	h, err := history.New(mem.New(), history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
 	must(err)
 	historyID := historyid.NewHistoryID()
-	s, err := session.New(h, historyID, policy)
+	config := session.Config{InstanceID: 1} // Reused by this running writer.
+	s, err := session.New(h, historyID, policy, config)
 	must(err)
 	begin := func() *session.SessionCommit {
 		b, err := s.BeginCommit()
@@ -39,7 +40,7 @@ func Example_usageAccounting() {
 	}
 	show := func(label string) {
 		// Rebuild from storage, not a producer-maintained counter or cached sum.
-		loaded, err := session.Load(ctx, h, historyID, policy)
+		loaded, err := session.Load(ctx, h, historyID, policy, config)
 		must(err)
 		tokens, incomplete, err := knownUsageTokens(loaded.Snapshot().Usages())
 		must(err)
@@ -95,7 +96,7 @@ func Example_usageAccounting() {
 	submit(b)
 	show("restored")
 
-	loaded, err := session.Load(ctx, h, historyID, policy)
+	loaded, err := session.Load(ctx, h, historyID, policy, config)
 	must(err)
 	entry, ok := loaded.Snapshot().Usages().ByID(conversation)
 	owner, _ := entry.Definition().RunID()

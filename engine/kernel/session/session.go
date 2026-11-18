@@ -26,6 +26,7 @@ var ErrIdentity = errors.New("session history identity mismatch")
 type Session struct {
 	history *history.History
 	policy  Policy
+	config  Config
 	state   sessionState
 	batch   *SessionCommit
 	reload  bool
@@ -47,10 +48,11 @@ func validateHistoryID(id historyid.HistoryID) error {
 	return nil
 }
 
-// New binds a History and scope with a copied explicit policy, without I/O.
-// Invalid policy returns nil, ErrInvalidPolicy; nil History or invalid scope
-// returns nil, ErrIdentity. Creation must be explicitly added to the first batch.
-func New(h *history.History, id historyid.HistoryID, policy Policy) (*Session, error) {
+// New binds a History and scope with copied explicit policy and authoring config,
+// without I/O or clock sampling. Invalid policy returns nil, ErrInvalidPolicy;
+// zero config InstanceID returns nil, ErrInvalidConfig; nil History or invalid
+// scope returns nil, ErrIdentity. Creation must be added to the first batch.
+func New(h *history.History, id historyid.HistoryID, policy Policy, config Config) (*Session, error) {
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
@@ -60,7 +62,11 @@ func New(h *history.History, id historyid.HistoryID, policy Policy) (*Session, e
 	if err := validateHistoryID(id); err != nil {
 		return nil, ErrIdentity
 	}
-	return &Session{history: h, policy: policy, state: sessionState{view: Snapshot{historyID: id}}}, nil
+	config, err := config.normalized()
+	if err != nil {
+		return nil, err
+	}
+	return &Session{history: h, policy: policy, config: config, state: sessionState{view: Snapshot{historyID: id}}}, nil
 }
 
 // loadError preserves the storage cause without projecting backend-controlled
@@ -74,11 +80,13 @@ func (e loadError) Unwrap() error { return e.cause }
 // replaying verified pages from genesis through that endpoint. Later appends are
 // not included. Active runs stay active; loading never writes, interrupts, retries
 // an old submission or grants exclusive writer ownership. Policy is copied as in
-// New. Replay enforces hard bounds, not soft write admission or future closeout
+// New. Config is copied/normalized without sampling; replay preserves stored
+// metadata and only subsequent authoring uses this writer's config.
+// Replay enforces hard bounds, not soft write admission or future closeout
 // room. Unknown histories return history.ErrNotFound, not an uncreated session.
 // Any error returns nil, never a partially reconstructed object.
-func Load(ctx context.Context, h *history.History, id historyid.HistoryID, policy Policy) (*Session, error) {
-	s, err := New(h, id, policy)
+func Load(ctx context.Context, h *history.History, id historyid.HistoryID, policy Policy, config Config) (*Session, error) {
+	s, err := New(h, id, policy, config)
 	if err != nil {
 		return nil, err
 	}
@@ -113,9 +121,10 @@ func Load(ctx context.Context, h *history.History, id historyid.HistoryID, polic
 // A zero Session returns the zero handle.
 func (s *Session) Snapshot() Snapshot { return s.state.view }
 
-// prepareEnding prepares an actual minimal exceptional terminal envelope without
-// I/O. Idle returns zero. Reservation uses both supported bulk-closeout reasons;
-// capacity does not guarantee backend availability.
+// prepareEnding deterministically sizes a minimal exceptional terminal envelope
+// with maximum-width diagnostic metadata, without I/O or clock sampling. Idle
+// returns zero. Reservation uses both supported bulk-closeout reasons; capacity
+// does not guarantee backend availability.
 func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if err := s.writeBarrier(); err != nil {
 		return prepared{}, err
@@ -130,13 +139,17 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 	if err != nil {
 		return prepared{}, err
 	}
-	return s.prepare([]*materializedRecord{r})
+	// Future authoring may use any valid timestamp or writer ID. Reserve their
+	// maximum CBOR widths, independently of the live writer's clock and identity.
+	r.value.Timestamp = math.MinInt64
+	return s.prepare([]*materializedRecord{r}, math.MinInt64, math.MaxUint64)
 }
 
-// prepare uses owner-validated immutable backing, also while submission holds
-// its own batch's write slot. It supplies enclosing history scope; payload references
+// prepare deterministically assembles owner-validated immutable backing with
+// explicitly supplied metadata, also while submission holds its batch's slot.
+// It never samples a clock. It supplies enclosing history scope; payload references
 // are destination-run-relative and carry no origin provenance.
-func (s *Session) prepare(records []*materializedRecord) (prepared, error) {
+func (s *Session) prepare(records []*materializedRecord, timestamp int64, instanceID uint64) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
 		return prepared{}, err
 	}
@@ -161,7 +174,7 @@ func (s *Session) prepare(records []*materializedRecord) (prepared, error) {
 	if v.head.Sequence == math.MaxInt64 {
 		return prepared{}, codec.ErrLimitExceeded
 	}
-	c := format.Commit{FormatVersion: 1, Sequence: v.head.Sequence + 1, Records: make([]format.Record, len(records))}
+	c := format.Commit{FormatVersion: 1, Timestamp: timestamp, InstanceID: instanceID, Sequence: v.head.Sequence + 1, Records: make([]format.Record, len(records))}
 	if v.head == (history.CommitRef{}) {
 		c.HistoryID = new(v.historyID)
 	} else {
@@ -225,6 +238,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	candidate := s.state
 	admission := newAdmission(candidate.view)
 	staged := make([]*materializedRecord, len(c.Records))
+	metadata := &CommitMetadata{ref: ref, timestamp: c.Timestamp, instanceID: c.InstanceID}
 	var runs []runEntry
 	var inputs []int
 	for i, r := range c.Records {
@@ -235,6 +249,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		if err := admission.admit(candidate.view.historyID, fact); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
+		fact.commit = metadata
 		staged[i] = fact
 		position := len(candidate.view.records) + i
 		switch r.Kind {
@@ -254,7 +269,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	}
 	candidate.records += len(c.Records)
 	candidate.payloadBytes += total
-	entry := commitEntry{ref: ref, formatVersion: c.FormatVersion, recordStart: len(candidate.view.records), recordCount: len(staged)}
+	entry := commitEntry{ref: ref, metadata: metadata, formatVersion: c.FormatVersion, recordStart: len(candidate.view.records), recordCount: len(staged)}
 	if c.HistoryID != nil {
 		entry.historyID = *c.HistoryID
 	}

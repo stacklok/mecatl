@@ -316,7 +316,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Construct an external accepted assertion independently of local preflight.
-	c := history.Commit{Commit: historyformat.Commit{FormatVersion: 1, Parent: new(old.Head().CID), Sequence: old.Head().Sequence + 1, Records: []historyformat.Record{replacement.format(), catalog.format(), binding.format(), bad.format()}}}
+	c := history.Commit{Commit: historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Parent: new(old.Head().CID), Sequence: old.Head().Sequence + 1, Records: []historyformat.Record{replacement.format(), catalog.format(), binding.format(), bad.format()}}}
 	wire, err := codec.Encode(c.Commit, limits)
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +390,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 				if _, err := h.Append(context.Background(), scope, external); err != nil {
 					t.Fatal(err)
 				}
-				if loaded, err := Load(context.Background(), h, scope, s.policy); loaded != nil || !errors.Is(err, wantErr) {
+				if loaded, err := Load(context.Background(), h, scope, s.policy, testConfig()); loaded != nil || !errors.Is(err, wantErr) {
 					t.Fatalf("malformed/unknown Load: %v, %v", loaded, err)
 				}
 				if head, err := h.Head(context.Background(), scope); err != nil || head != accepted.Ref {

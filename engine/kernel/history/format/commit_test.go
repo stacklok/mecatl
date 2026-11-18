@@ -64,12 +64,16 @@ func TestCommitEqual(t *testing.T) {
 	if other := commitFixture(t); !base.Equal(other) || !other.Equal(base) {
 		t.Fatal("independently allocated equal commits compared unequal")
 	}
-	for _, field := range []string{"format version", "sequence", "history", "parent", "history value", "parent value", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
+	for _, field := range []string{"format version", "timestamp", "instance ID", "sequence", "history", "parent", "history value", "parent value", "record timestamp", "record kind", "record version", "record payload", "later record payload", "record order", "record count"} {
 		t.Run(field, func(t *testing.T) {
 			other := commitFixture(t)
 			switch field {
 			case "format version":
 				other.FormatVersion++
+			case "timestamp":
+				other.Timestamp++
+			case "instance ID":
+				other.InstanceID++
 			case "sequence":
 				other.Sequence++
 			case "history":
@@ -80,6 +84,8 @@ func TestCommitEqual(t *testing.T) {
 				*other.HistoryID = historyid.HistoryID{}
 			case "parent value":
 				*other.Parent = contentid.CID{}
+			case "record timestamp":
+				other.Records[0].Timestamp++
 			case "record kind":
 				other.Records[0].Kind = "changed"
 			case "record version":
@@ -124,12 +130,14 @@ func commitFixture(t *testing.T) format.Commit {
 	parent := contentid.Sum(nil)
 	return format.Commit{
 		FormatVersion: 1,
+		Timestamp:     -1,
+		InstanceID:    1,
 		Sequence:      2,
 		HistoryID:     &h,
 		Parent:        &parent,
 		Records: []format.Record{
-			{Kind: "unknown.first", KindVersion: 2, Payload: []byte{0, 0xff, 'x'}},
-			{Kind: "unknown.second", KindVersion: 3, Payload: []byte{'y'}},
+			{Timestamp: -1, Kind: "unknown.first", KindVersion: 2, Payload: []byte{0, 0xff, 'x'}},
+			{Timestamp: 0, Kind: "unknown.second", KindVersion: 3, Payload: []byte{'y'}},
 		},
 	}
 }

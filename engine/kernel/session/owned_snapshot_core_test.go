@@ -33,7 +33,7 @@ func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := session.New(h, id, p)
+	s, err := session.New(h, id, p, testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if oldRun.RecordCount() != 2 || old.RecordCount() != 3 {
 		t.Fatal("old last-run endpoint")
 	}
-	loaded, err := session.Load(context.Background(), h, id, p)
+	loaded, err := session.Load(context.Background(), h, id, p, testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 func TestOwnedCoreLoadRejectionAndImportedStorage(t *testing.T) {
 	s, h, p, id := ownedCoreFixture(t, 64)
 	makeRecord := func(kind string, payload []byte) historyformat.Record {
-		return historyformat.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: payload}
+		return historyformat.Record{Timestamp: 0, Kind: kind, KindVersion: sessionformat.Version, Payload: payload}
 	}
 	encodeInput := func(ordinal uint64) []byte {
 		payload, err := codec.Encode(sessionformat.UserInput{RunID: 1, ID: ordinal, Parts: formatByteParts([]byte("exact"))}, p.PayloadLimits)
@@ -201,7 +201,7 @@ func TestOwnedCoreLoadRejectionAndImportedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := historyformat.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1, Records: []historyformat.Record{
+	c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1, Records: []historyformat.Record{
 		makeRecord(sessionformat.KindCreated, created), makeRecord(sessionformat.KindRunStarted, started), makeRecord(sessionformat.KindUserInput, encodeInput(1)), makeRecord(sessionformat.KindUserInput, encodeInput(3)),
 	}}
 	identify := func(c historyformat.Commit) history.Commit {

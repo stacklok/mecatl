@@ -18,7 +18,7 @@ func validRoot(t testing.TB) format.Commit {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: &h, Records: []format.Record{{Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
+	return format.Commit{FormatVersion: 1, Timestamp: -2, InstanceID: 1, Sequence: 1, HistoryID: &h, Records: []format.Record{{Timestamp: -1, Kind: "x", KindVersion: 1, Payload: []byte{0xff, 0}}}}
 }
 
 func TestCommitValidate(t *testing.T) {
@@ -45,6 +45,7 @@ func TestCommitValidate(t *testing.T) {
 		}
 	}
 	for _, change := range []func(*format.Commit){
+		func(c *format.Commit) { c.InstanceID = 0 },
 		func(c *format.Commit) { c.FormatVersion = 0 },
 		func(c *format.Commit) { c.FormatVersion = -1 },
 		func(c *format.Commit) { c.FormatVersion = 2 },

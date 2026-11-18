@@ -92,7 +92,7 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 			if f.s.Snapshot().ActiveRun() != (session.RunID{}) {
 				t.Fatal("fixture is not idle")
 			}
-			loaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+			loaded, err := session.Load(t.Context(), f.h, scope, f.policy, testConfig())
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{accepted, f.s.Snapshot(), loaded.Snapshot()} {
 				assertReconstructed(t, snapshot, id, built.Request())
@@ -136,7 +136,7 @@ func TestResumeUserInstructionsSelectiveRefresh(t *testing.T) {
 
 	// Neither source file exists in this fixture. Load has only retained History,
 	// not a filesystem resolver, and must preserve both provenance labels exactly.
-	loaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+	loaded, err := session.Load(t.Context(), f.h, scope, f.policy, testConfig())
 	requireConstruction(t, err)
 	oldSnapshot := loaded.Snapshot()
 	standing, present := oldSnapshot.UserInstructions()
@@ -167,7 +167,7 @@ func TestResumeUserInstructionsSelectiveRefresh(t *testing.T) {
 	*updated.Blocks[1].Parts[0].Text = "caller-mutated"
 	_, err = loaded.SubmitCommit(t.Context(), b)
 	requireConstruction(t, err)
-	reloaded, err := session.Load(t.Context(), f.h, scope, f.policy)
+	reloaded, err := session.Load(t.Context(), f.h, scope, f.policy, testConfig())
 	requireConstruction(t, err)
 	for _, snapshot := range []session.Snapshot{loaded.Snapshot(), reloaded.Snapshot()} {
 		got, ok := snapshot.UserInstructions()
@@ -204,7 +204,7 @@ func TestReconstructSameCommitOutcomeAndPrivateReplay(t *testing.T) {
 	if built.Request().Conversation().Len() != 1 {
 		t.Fatal("selected private-only assistant message was lost")
 	}
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy)
+	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
 	requireConstruction(t, err)
 	assertReconstructed(t, loaded.Snapshot(), id, built.Request())
 }
@@ -256,7 +256,7 @@ func TestReconstructRejectsRetainedRecipe(t *testing.T) {
 			id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: recipe})
 			requireConstruction(t, err)
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy)
+			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 				assertReconstructionFailure(t, snapshot, id, testLimits(), tc.want)
@@ -314,7 +314,7 @@ func TestReconstructCIDIgnoresHistoryRouteAndIrrelevantSelectors(t *testing.T) {
 			requireConstruction(t, f.b.Discard())
 			scope, err := historyid.ParseHistoryID(textID)
 			requireConstruction(t, err)
-			f.s, err = session.New(f.h, scope, f.policy)
+			f.s, err = session.New(f.h, scope, f.policy, testConfig())
 			requireConstruction(t, err)
 			f.b, err = f.s.BeginCommit()
 			requireConstruction(t, err)
@@ -334,7 +334,7 @@ func TestReconstructCIDIgnoresHistoryRouteAndIrrelevantSelectors(t *testing.T) {
 		id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: recipe})
 		requireConstruction(t, err)
 		f.submit()
-		loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy)
+		loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
 		requireConstruction(t, err)
 		got, err := Reconstruct(loaded.Snapshot(), id, testLimits())
 		requireConstruction(t, err)

@@ -47,7 +47,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					s.policy.PayloadLimits = limits
 					// Prove a Load rejection is caused by this response, not an earlier
 					// fact made inadmissible by the deliberately tighter payload policy.
-					_, err := Load(context.Background(), s.history, id.runID.historyID, s.policy)
+					_, err := Load(context.Background(), s.history, id.runID.historyID, s.policy, testConfig())
 					interactionCheck(t, err)
 					before := detachedSessionState(s.state)
 					switch path {
@@ -68,7 +68,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 						if result.Status != history.StatusAccepted {
 							t.Fatal("History response admission")
 						}
-						_, err = Load(context.Background(), s.history, id.runID.historyID, s.policy)
+						_, err = Load(context.Background(), s.history, id.runID.historyID, s.policy, testConfig())
 					}
 					if short {
 						if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -152,7 +152,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 							t.Fatal("memory History acceptance")
 						}
 						var loaded *Session
-						loaded, err = Load(context.Background(), s.history, id.runID.historyID, p)
+						loaded, err = Load(context.Background(), s.history, id.runID.historyID, p, testConfig())
 						if err != nil && loaded != nil {
 							t.Fatal("failed load published partial state")
 						}

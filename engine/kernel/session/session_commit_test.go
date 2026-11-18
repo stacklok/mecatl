@@ -51,7 +51,7 @@ func (b *batchBackend) Append(ctx context.Context, id history.HistoryID, expecte
 }
 func boundSession(t testing.TB, h *history.History, p session.Policy) *session.Session {
 	t.Helper()
-	s, err := session.New(h, testHistoryID(t), p)
+	s, err := session.New(h, testHistoryID(t), p, testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 					t.Fatal("missing lost ack")
 				}
 				root := backend.attempts[0].commit.Ref
-				winner, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
+				winner, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
 				mustBatch(t, err)
 				if winner.Snapshot().Head() != root {
 					t.Fatal("loaded winner endpoint")

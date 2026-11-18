@@ -28,6 +28,9 @@
     method func (CaptureFailureEvidenceView).Evidence() (ObservedEvidenceView, bool)
     method func (CaptureFailureEvidenceView).MutableClone() format.CaptureFailureEvidence
     method func (CaptureFailureEvidenceView).RequestID() ModelRequestID
+    method func (CommitMetadata).InstanceID() uint64
+    method func (CommitMetadata).Ref() history.CommitRef
+    method func (CommitMetadata).Timestamp() int64
     method func (CommitView).ActiveRun() RunID
     method func (CommitView).HistoryID() id.HistoryID
     method func (CommitView).RecordAt(i int) RecordView
@@ -110,6 +113,7 @@
     method func (OpaqueProviderDataView).Producer() string
     method func (OpaqueProviderDataView).Version() int64
     method func (Policy).Validate() error
+    method func (RecordView).Commit() (CommitMetadata, bool)
     method func (RecordView).Created() (CreatedView, bool)
     method func (RecordView).EffectiveInput() (EffectiveInputView, bool)
     method func (RecordView).InvocationFailure() (InvocationFailureView, bool)
@@ -122,6 +126,7 @@
     method func (RecordView).RootInstructions() (RootInstructionsView, bool)
     method func (RecordView).RunEnded() (RunEndedView, bool)
     method func (RecordView).RunStarted() (RunStartedView, bool)
+    method func (RecordView).Timestamp() (int64, bool)
     method func (RecordView).ToolCatalog() (ToolCatalogView, bool)
     method func (RecordView).ToolDisposition() (ToolDispositionView, bool)
     method func (RecordView).ToolInvocation() (ToolInvocationView, bool)
@@ -336,8 +341,8 @@ const ToolSettlementReturned ToolSettlementCategory = 1
 const UsagePurposeMain untyped string = "main"
 const UsageReportActive format.UsageReportState = "active"
 const UsageReportWithdrawn format.UsageReportState = "withdrawn"
-func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy) (*Session, error)
-func New(h *history.History, id id.HistoryID, policy Policy) (*Session, error)
+func Load(ctx context.Context, h *history.History, id id.HistoryID, policy Policy, config Config) (*Session, error)
+func New(h *history.History, id id.HistoryID, policy Policy, config Config) (*Session, error)
 func NewModelRequestID(runID RunID, component uint64) (ModelRequestID, error)
 func NewRequestedCallID(requestID ModelRequestID, component uint64) (RequestedCallID, error)
 func NewRunID(historyID id.HistoryID, component uint64) (RunID, error)
@@ -348,7 +353,9 @@ type AttributedInput = format.AttributedInput
 type AttributedInputView struct{}
 type CaptureFailureEvidence = format.CaptureFailureEvidence
 type CaptureFailureEvidenceView struct{}
+type CommitMetadata struct{}
 type CommitView struct{}
+type Config struct{InstanceID uint64; Now func() time.Time}
 type ConstructionRecipe = format.ConstructionRecipe
 type ConstructionRecipeView struct{}
 type ContentPart = format.ContentPart
@@ -465,6 +472,7 @@ var ErrAcceptedApply error
 var ErrBatch error
 var ErrConflict error
 var ErrIdentity error
+var ErrInvalidConfig error
 var ErrInvalidPolicy error
 var ErrReloadRequired error
 var ErrRetryExpired error

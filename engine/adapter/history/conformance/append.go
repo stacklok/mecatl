@@ -18,10 +18,10 @@ func appendLimits(t *testing.T, factory historyFactory) {
 	for _, name := range []string{"bytes", "records", "kind", "payload", "version", "sequence", "empty-records"} {
 		t.Run(name, func(t *testing.T) {
 			id := history.NewHistoryID()
-			commit := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
+			commit := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
 				Records: []format.Record{
-					{Kind: "opaque-kind-longer-than-history", KindVersion: 7, Payload: []byte("private-payload")},
-					{Kind: opaqueKind, KindVersion: 7},
+					{Timestamp: 0, Kind: "opaque-kind-longer-than-history", KindVersion: 7, Payload: []byte("private-payload")},
+					{Timestamp: 0, Kind: opaqueKind, KindVersion: 7},
 				},
 			}
 			// Encode under larger limits first: each resource rejection belongs
@@ -87,24 +87,24 @@ func appendLargeLimitRejections(t *testing.T, factory historyFactory) {
 	}
 	id := history.NewHistoryID()
 	fixture := func(records []format.Record) format.Commit {
-		return format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1, Records: records}
+		return format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1, Records: records}
 	}
 	largePayload := func() []byte {
 		return append([]byte(inputMarker), bytes.Repeat([]byte{'p'}, largeInputBytes-len(inputMarker))...)
 	}
 	records := make([]format.Record, 8192)
 	for i := range records {
-		records[i] = format.Record{Kind: inputMarker, KindVersion: 1}
+		records[i] = format.Record{Timestamp: 0, Kind: inputMarker, KindVersion: 1}
 	}
 	for _, test := range []struct {
 		name   string
 		input  format.Commit
 		adjust func(*history.Policy)
 	}{
-		{"bytes", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxBytes = 1024 }},
+		{"bytes", fixture([]format.Record{{Timestamp: 0, Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxBytes = 1024 }},
 		{"records", fixture(records), func(p *history.Policy) { p.CommitLimits.MaxArrayElements = len(records) - 1 }},
-		{"kind", fixture([]format.Record{{Kind: string(largePayload()), KindVersion: 1}}), func(p *history.Policy) { p.CommitLimits.MaxStringBytes = 32 }},
-		{"payload", fixture([]format.Record{{Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 32 }},
+		{"kind", fixture([]format.Record{{Timestamp: 0, Kind: string(largePayload()), KindVersion: 1}}), func(p *history.Policy) { p.CommitLimits.MaxStringBytes = 32 }},
+		{"payload", fixture([]format.Record{{Timestamp: 0, Kind: opaqueKind, KindVersion: 1, Payload: largePayload()}}), func(p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 32 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := policy()

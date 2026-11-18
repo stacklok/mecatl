@@ -127,7 +127,7 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 							if result.Status != history.StatusAccepted {
 								t.Fatal("history rejected locally valid extreme reference")
 							}
-							loaded, loadErr := Load(context.Background(), s.history, run.historyID, s.policy)
+							loaded, loadErr := Load(context.Background(), s.history, run.historyID, s.policy, testConfig())
 							err = loadErr
 							if loaded != nil {
 								t.Fatal("failed replay returned a session")

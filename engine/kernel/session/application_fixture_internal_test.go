@@ -24,7 +24,7 @@ func newLifecycleHistory(t testing.TB, backend history.Backend) *history.History
 }
 func boundSession(t testing.TB, h *history.History, p Policy) *Session {
 	t.Helper()
-	s, err := New(h, testHistoryID(t), p)
+	s, err := New(h, testHistoryID(t), p, testConfig())
 	mustBatch(t, err)
 	return s
 }

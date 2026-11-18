@@ -76,7 +76,7 @@ func interactionFixture(t testing.TB, stage string) *Session {
 func interactionCommit(t testing.TB, s *Session, records []*materializedRecord) history.Commit {
 	t.Helper()
 	head := s.Snapshot().Head()
-	c := format.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID)}
+	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID)}
 	for _, r := range records {
 		c.Records = append(c.Records, r.format())
 	}
@@ -96,6 +96,7 @@ func interactionForgedEffectiveReferenceRecord(t testing.TB, s *Session, run Run
 	}, s.policy.PayloadLimits)
 	interactionCheck(t, err)
 	r, err := decodeMaterialized(format.Record{
+		Timestamp:   0,
 		Kind:        sessionformat.KindEffectiveInput,
 		KindVersion: sessionformat.Version,
 		Payload:     payload,
@@ -231,7 +232,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 			var err error
 			switch path {
 			case "preflight":
-				_, err = s.prepare(records)
+				_, err = s.prepare(records, 0, 1)
 			case "apply":
 				err = s.apply(interactionCommit(t, s, records))
 			case "load":
@@ -241,7 +242,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 				if result.Status != history.StatusAccepted {
 					t.Fatal("history rejected locally valid forged contribution")
 				}
-				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
 				if loaded != nil && (loaded.state.view.lifecycle.captured != 3 || loaded.state.view.lifecycle.pending != interactionRequest(s, 2).ID) {
 					t.Fatal("load lost prospective coverage")
 				}
@@ -378,7 +379,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 						}
 						interactionCheck(t, b.Discard())
 					case "preflight":
-						_, err = s.prepare(records)
+						_, err = s.prepare(records, 0, 1)
 					case "apply":
 						err = s.apply(interactionCommit(t, s, records))
 					case "load":
@@ -388,7 +389,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 						if result.Status != history.StatusAccepted {
 							t.Fatal("history did not accept locally valid commit")
 						}
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
 					}
 					if !errors.Is(err, tc.want) {
 						t.Fatalf("got %v; want %v", err, tc.want)

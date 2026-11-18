@@ -47,6 +47,24 @@ Before changing these containers, read the [views implementation guidance](views
 explicit and separate from schema validity. The owning Go declarations document
 limits, ownership, retry, and concurrency contracts.
 
+## Diagnostic history metadata
+
+Session construction and loading require a [`Config`](session/config.go) with a
+nonzero writer-instance ID, reused across sessions for that writer's lifetime.
+The optional clock defaults to system time. Session stamps each record at
+successful local admission and each commit at first submission preparation;
+frozen retries retain the exact timestamps, ID, bytes, and CID. Loading preserves
+stored metadata without consulting the clock.
+
+[`RecordView`](session/record_view.go) exposes recording time and optional enclosing
+accepted [`CommitMetadata`](session/commit_metadata.go) in constant time. Captured
+proposed records retain their timestamps but never acquire accepted metadata.
+These diagnostic values establish neither authority nor action timing, storage
+receipt time, or clock ordering. They affect history identity while leaving
+logical model-request bytes and identity unchanged. Version 1 history envelopes
+require all metadata fields; missing values fail decoding without migration or
+inferred historical data.
+
 ## DTO generation
 
 `dtogen` generates codecs, whole-value operations, and view accessors. See the

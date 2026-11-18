@@ -53,7 +53,7 @@ func TestUsageUncertainAcceptanceFreezesExactReplacement(t *testing.T) {
 			if !ok || !usage.Report().MutableClone().Equal(want) {
 				t.Fatal("frozen capture changed")
 			}
-			loaded, err := session.Load(t.Context(), h, before.HistoryID(), sessionPolicy())
+			loaded, err := session.Load(t.Context(), h, before.HistoryID(), sessionPolicy(), testConfig())
 			mustBatch(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("retry replay changed accounting")
@@ -77,7 +77,7 @@ func TestUsageConflictDoesNotPublishOrMerge(t *testing.T) {
 	id, err := b.AddUsage(nil, nil, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
-	other, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), sessionPolicy())
+	other, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	before := other.Snapshot()
 	winner := beginBatch(t, s)
@@ -96,7 +96,7 @@ func TestUsageConflictDoesNotPublishOrMerge(t *testing.T) {
 	if _, err := other.BeginCommit(); !errors.Is(err, session.ErrReloadRequired) {
 		t.Fatal("conflicting owner reused")
 	}
-	loaded, err := session.Load(t.Context(), h, before.HistoryID(), sessionPolicy())
+	loaded, err := session.Load(t.Context(), h, before.HistoryID(), sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	if loaded.Snapshot().Head() != head || !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 		t.Fatal("fresh load merged losing usage")

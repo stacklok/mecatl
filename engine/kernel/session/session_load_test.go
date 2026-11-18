@@ -70,7 +70,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			want := s.Snapshot()
 			reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy())
+			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy(), testConfig())
 			mustBatch(t, err)
 			if loaded == s || !reflect.DeepEqual(loaded.Snapshot(), want) {
 				t.Fatal("fresh load differs")
@@ -92,7 +92,7 @@ func TestLoadLifecycleAndOwnership(t *testing.T) {
 			}
 			assertHistoryHead(t, h, want.Head())
 		})
-		loaded, err := session.Load(context.Background(), h, testHistoryID(t), sessionPolicy())
+		loaded, err := session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
 		mustBatch(t, err)
 		s = loaded
 		if stage == "successor" {
@@ -131,7 +131,7 @@ func TestLoadPinsBeforeLaterAppend(t *testing.T) {
 	submitBatch(t, s, b)
 	pinned := s.Snapshot()
 	reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}, afterHead: func() { b := beginBatch(t, s); batchInput(t, b, run, []byte("later")); submitBatch(t, s, b) }}
-	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy())
+	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	if !reflect.DeepEqual(loaded.Snapshot(), pinned) || s.Snapshot().Head() == pinned.Head() || reader.observes != 1 || len(reader.reads) != 2 {
 		t.Fatal("load exceeded pin")
@@ -162,7 +162,7 @@ func TestLoadAfterAcceptedBeforeLocalApply(t *testing.T) {
 	}
 	// Abandon the unresolved batch. Fresh recovery neither retries nor repairs it.
 	readOnly := newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t})
-	loaded, err := session.Load(context.Background(), readOnly, testHistoryID(t), sessionPolicy())
+	loaded, err := session.Load(context.Background(), readOnly, testHistoryID(t), sessionPolicy(), testConfig())
 	mustBatch(t, err)
 	v := loaded.Snapshot()
 	if v.Head() != backend.attempts[0].commit.Ref || !v.Created() || v.ActiveRun() != run || v.RunCount() != 1 || !userInputsMatch(v, run, 1) || lookupInput(t, v, input.RunID(), 1).ID() != input || string(inputBytes(lookupInput(t, v, input.RunID(), 1))) != "accepted" || !reflect.DeepEqual(s.Snapshot(), before) || len(backend.attempts) != 1 {
@@ -190,14 +190,14 @@ func TestLoadRedactsBackendFailures(t *testing.T) {
 			} else {
 				reader.readError = marker
 			}
-			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy())
+			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy(), testConfig())
 			if loaded != nil || !errors.Is(err, marker) || strings.Contains(err.Error(), marker.Error()) || reader.appends != 0 {
 				t.Fatalf("redacted failure: %v, %v", loaded, err)
 			}
 		})
 	}
 	reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy())
+	loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), sessionPolicy(), testConfig())
 	if err != nil || loaded == nil || !loaded.Snapshot().Created() || reader.appends != 0 {
 		t.Fatalf("happy load: %v, %v", loaded, err)
 	}
@@ -221,7 +221,7 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 			policy := sessionPolicy()
 			reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
 			if tc.kind != "missing" {
-				root := format.Commit{FormatVersion: 1, Sequence: 1, HistoryID: new(testHistoryID(t)), Records: []format.Record{createdRecord(t).MutableClone()}}
+				root := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: 1, HistoryID: new(testHistoryID(t)), Records: []format.Record{createdRecord(t).MutableClone()}}
 				r, err := h.Append(context.Background(), testHistoryID(t), root)
 				mustBatch(t, err)
 				if r.Status != history.StatusAccepted {
@@ -257,13 +257,13 @@ func TestLoadRejectsInvalidHistories(t *testing.T) {
 				if tc.kind == "commit-limit" {
 					records = append(records, inputRecord(t, 1).MutableClone())
 				}
-				r, err = h.Append(context.Background(), testHistoryID(t), format.Commit{FormatVersion: 1, Sequence: 2, Parent: new(rootRef.CID), Records: records})
+				r, err = h.Append(context.Background(), testHistoryID(t), format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: 2, Parent: new(rootRef.CID), Records: records})
 				mustBatch(t, err)
 				if r.Status != history.StatusAccepted {
 					t.Fatal("successor")
 				}
 			}
-			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), policy)
+			loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), testHistoryID(t), policy, testConfig())
 			if loaded != nil || !errors.Is(err, tc.want) {
 				t.Fatalf("Load = %v, %v; want %v", loaded, err, tc.want)
 			}
@@ -282,7 +282,7 @@ func TestLoadRejectsInvalidArgumentsBeforeIO(t *testing.T) {
 	}{
 		{nil, testHistoryID(t), sessionPolicy(), session.ErrIdentity}, {h, history.HistoryID{}, sessionPolicy(), session.ErrIdentity}, {h, testHistoryID(t), session.Policy{}, session.ErrInvalidPolicy},
 	} {
-		loaded, err := session.Load(context.Background(), tc.h, tc.id, tc.policy)
+		loaded, err := session.Load(context.Background(), tc.h, tc.id, tc.policy, testConfig())
 		if loaded != nil || !errors.Is(err, tc.want) {
 			t.Fatalf("invalid Load = %v, %v", loaded, err)
 		}
@@ -292,7 +292,7 @@ func TestLoadRejectsInvalidArgumentsBeforeIO(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	loaded, err := session.Load(ctx, h, testHistoryID(t), sessionPolicy())
+	loaded, err := session.Load(ctx, h, testHistoryID(t), sessionPolicy(), testConfig())
 	if loaded != nil || !errors.Is(err, context.Canceled) || reader.observes != 0 {
 		t.Fatalf("canceled Load: %v, %v", loaded, err)
 	}
