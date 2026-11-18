@@ -432935,6 +432935,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795038600895,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e3ffbc433569a9556d122c4d18f8d4f10e6569d8",
+          "message": "test(identityharness): retire the fake AS-1; identity tests use the real AS-1 (#2867)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-18T21:43:53Z",
+          "tree_id": "21f03b002b6d0db1638a2c1e225c51cb43b7a197",
+          "url": "https://github.com/stacklok/mecatl/commit/e3ffbc433569a9556d122c4d18f8d4f10e6569d8"
+        },
+        "date": 1795039366852,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -563845,6 +563884,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795039363469,
+  "lastUpdate": 1795039367798,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
