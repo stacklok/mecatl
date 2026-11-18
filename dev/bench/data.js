@@ -387750,6 +387750,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795002655283,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8d66a6d415d52fe8bd32f363ab25058b08eea75a",
+          "message": "feat(executor): serve the executor gRPC services over mutual TLS (#2860)\n\n`mecatl-executor serve` now always serves over TLS 1.3 and requires a\nclient certificate. It presents the per-Pod key pair from `-tls-dir`\n(default `/etc/mecatl-executor/tls`) and admits only clients that chain\nto `ca.crt` in `-provider-trust-dir` (default\n`/etc/mecatl-executor/provider`), carry client-auth usage, and whose\nsingle URI SAN equals `client-uri`. `newExecutorServer` takes the\ntransport credentials and `serve` passes the mutual TLS ones, so\nplaintext serving is removed.\n\n`executionexecutor.ServerTLSConfig` loads the server key pair once and\nrereads the provider trust on every handshake from a consistent\n`..data` projection, so a CA or URI rotation reaches a running\nexecutor. An unreadable or invalid bundle fails closed, invalid trust\nat startup stops `serve` before it listens, and session tickets are\ndisabled.\n\nURI SAN canonicalization moves to `executionenv.ClientIdentity` so the\nprovider dialer and the executor share one rule, and the executor mount\npaths become shared `executionenv` constants. The dialer tests now run\nagainst the real server configuration.\n\nCloses: #2699",
+          "timestamp": "2026-11-18T13:04:37Z",
+          "tree_id": "52fadff4d9c3502f10fcfaa9fc824ea6b68bad7e",
+          "url": "https://github.com/stacklok/mecatl/commit/8d66a6d415d52fe8bd32f363ab25058b08eea75a"
+        },
+        "date": 1795007830043,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -559723,6 +559757,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795007826139,
+  "lastUpdate": 1795007830942,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
