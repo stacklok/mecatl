@@ -436508,6 +436508,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795102176239,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9fd47cdebaf1efcd113aee348c1640df11044e3",
+          "message": "fix(release): expose module publication preflight diagnostics (#2890)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T16:14:15Z",
+          "tree_id": "a92f7ed491a15975277bfdc431f06dcb511570aa",
+          "url": "https://github.com/stacklok/mecatl/commit/a9fd47cdebaf1efcd113aee348c1640df11044e3"
+        },
+        "date": 1795105638047,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13384.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -568444,6 +568483,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795105634822,
+  "lastUpdate": 1795105638909,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
