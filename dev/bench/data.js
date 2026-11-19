@@ -434523,6 +434523,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795049196771,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8820d9efb382e6c06d42570da2009d928518ddf5",
+          "message": "feat(mecatui): add explicit Effort mouse actions and Tool calls goldens (#2880)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T00:42:23Z",
+          "tree_id": "ee3e35d0097738e671a4b2875329d07beb6915b7",
+          "url": "https://github.com/stacklok/mecatl/commit/8820d9efb382e6c06d42570da2009d928518ddf5"
+        },
+        "date": 1795049970218,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -565889,6 +565928,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795049966885,
+  "lastUpdate": 1795049970804,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
