@@ -3,6 +3,7 @@ package commandserver_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -60,6 +61,8 @@ func (r *fakeRunner) Start(
 		}}, nil
 	case "noshell":
 		return nil, tool.ErrNoShell
+	case "maybe":
+		return nil, fmt.Errorf("lost: %w", commandserver.ErrStartUnknown)
 	case "early":
 		_, _ = io.WriteString(stdout, "early")
 		return fakeProcess{func() commandserver.Exit {
@@ -163,12 +166,15 @@ func TestStartFailures(t *testing.T) {
 			codes.ResourceExhausted,
 			executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,
 		},
+		"maybe": {codes.Unknown, executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED},
 	} {
 		_, _, err := run(t, client, command)
-		details := status.Convert(err).Details()
-		if status.Code(err) != want.code || len(details) != 1 ||
-			details[0].(*executorv1.ErrorDetail).GetReason() != want.reason {
-			t.Fatalf("%s: %v %v, want %v %v", command, err, details, want.code, want.reason)
+		got := executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+		for _, d := range status.Convert(err).Details() {
+			got = d.(*executorv1.ErrorDetail).GetReason()
+		}
+		if status.Code(err) != want.code || got != want.reason {
+			t.Fatalf("%s: %v %v, want %v %v", command, err, got, want.code, want.reason)
 		}
 	}
 }

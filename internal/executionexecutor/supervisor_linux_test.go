@@ -5,8 +5,10 @@ package executionexecutor
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +31,7 @@ const (
 	helperEnv = "MECATL_SUPERVISOR_TEST_HELPER"
 	spareEnv  = "MECATL_SUPERVISOR_TEST_SPARE"
 	sweepEnv  = "MECATL_SUPERVISOR_TEST_SWEEP"
-	noShell   = "MECATL_SUPERVISOR_TEST_NO_SHELL"
+	startEnv  = "MECATL_SUPERVISOR_TEST_START"
 )
 
 // token is a sleep duration of whole seconds whose fraction marks the process.
@@ -209,29 +211,44 @@ func TestCommandCannotForgeItsResult(t *testing.T) {
 	}
 }
 
-func TestMissingShellIsNoShell(t *testing.T) {
-	supervisor := NewCommandSupervisor(
-		[]string{os.Args[0], "-test.run=^TestCommandSupervisorHelper$"},
-		[]string{helperEnv + "=1", noShell + "=1"}, t.TempDir())
-	srv, err := commandserver.New(supervisor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream, err := commandconformance.Dial(t, srv).RunCommand(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Send(&executorv1.RunCommandRequest{Action: &executorv1.RunCommandRequest_Start{
-		Start: &executorv1.StartCommand{Command: "true"},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	_, err = stream.Recv()
-	st := status.Convert(err)
-	if st.Code() != codes.FailedPrecondition || len(st.Details()) != 1 ||
-		st.Details()[0].(*executorv1.ErrorDetail).GetReason() !=
-			executorv1.ErrorReason_ERROR_REASON_NO_SHELL {
-		t.Fatalf("recv error = %v, want FailedPrecondition NO_SHELL", err)
+func TestStartFailuresAreTaggedOnlyWhenNothingRan(t *testing.T) {
+	for mode, want := range map[string]struct {
+		code   codes.Code
+		reason executorv1.ErrorReason
+	}{
+		"noshell":  {codes.FailedPrecondition, executorv1.ErrorReason_ERROR_REASON_NO_SHELL},
+		"badshell": {codes.Internal, executorv1.ErrorReason_ERROR_REASON_START_FAILED},
+		"vanish":   {codes.Unknown, executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED},
+	} {
+		t.Run(mode, func(t *testing.T) {
+			supervisor := NewCommandSupervisor(
+				[]string{os.Args[0], "-test.run=^TestCommandSupervisorHelper$"},
+				[]string{helperEnv + "=1", startEnv + "=" + mode}, t.TempDir())
+			srv, err := commandserver.New(supervisor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := commandconformance.Dial(t, srv).RunCommand(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = stream.Send(&executorv1.RunCommandRequest{
+				Action: &executorv1.RunCommandRequest_Start{
+					Start: &executorv1.StartCommand{Command: "true"},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = stream.Recv()
+			got := executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+			for _, d := range status.Convert(err).Details() {
+				got = d.(*executorv1.ErrorDetail).GetReason()
+			}
+			if status.Code(err) != want.code || got != want.reason {
+				t.Fatalf("recv error = %v %v, want %v %v", err, got, want.code, want.reason)
+			}
+		})
 	}
 }
 
@@ -244,8 +261,16 @@ func TestCommandSupervisorHelper(_ *testing.T) {
 	if os.Getenv(helperEnv) != "1" {
 		return
 	}
-	if os.Getenv(noShell) == "1" {
+	switch os.Getenv(startEnv) {
+	case "noshell":
 		shellPath = "/nonexistent/sh"
+	case "badshell":
+		shellPath = "/"
+	case "vanish":
+		var size [4]byte
+		_, _ = io.ReadFull(os.Stdin, size[:])
+		_, _ = io.CopyN(io.Discard, os.Stdin, int64(binary.BigEndian.Uint32(size[:])))
+		os.Exit(1)
 	}
 	spare := os.Getenv(spareEnv)
 	killChild = func(pid int) {
