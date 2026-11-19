@@ -393120,6 +393120,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795085797175,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3e74512bbb7aba58c8c8ab6becab300de566f8e8",
+          "message": "feat(build): make the executor server the workload image entrypoint (#2886)\n\nThe `mecatl-execution-workload` image now starts\n`/mecatl-executor serve` instead of the `sleep infinity` shell. The\nimage sets no `CMD`: the Pod supplies `-listen`, the admitted\n`-files`/`-commands` and the TLS directories, so the image enables no\nservice by default and a bare run exits with `serve: -listen is required`.\n\nExecutor Pods are unchanged until the transport switch. The controller\nstill sets the container command to the `sleep infinity` shell and\nreaches the executor through one-shot Pod exec, which runs\n`/mecatl-executor` without arguments. A new image digest produces new\ntemplate revisions, and existing environments keep theirs.\n\nThe pins test asserts the new entrypoint, the absence of `CMD`, and\nthat the Kind derivative fixture sets neither `ENTRYPOINT` nor `CMD`,\nso it inherits the server.\n\nCloses: #2700",
+          "timestamp": "2026-11-19T12:34:37Z",
+          "tree_id": "93696206cd8ac06ed07170602eaed46f02c31204",
+          "url": "https://github.com/stacklok/mecatl/commit/3e74512bbb7aba58c8c8ab6becab300de566f8e8"
+        },
+        "date": 1795092502030,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -567388,6 +567422,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795092498387,
+  "lastUpdate": 1795092503296,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
