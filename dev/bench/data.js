@@ -566760,9 +566760,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795050785763,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cfe8483dbc1f3ff7538de7a35015753c1c2e0c2",
+          "message": "feat(executorrpc): add a Files and Commands client for the agent loop (#2863)\n\nAdd `internal/executorrpc/executorclient`, a client of the executor\n`FileService` and `CommandService` that implements `tool.Workspace`,\n`tool.WorkspaceNamespace`, `tool.AuthorityResourceResolver`, and a\nforeground `tool.CommandRunner`, against the trusted service or a local\nexecutor.\n\n- Each call carries the full `RequestContext` from a per-call\n  `RequestContextFunc` in the opaque `context` field. No methods are\n  added to `Workspace`, `CommandRunner`, or `CommandStreamer`.\n- Nothing is retried: `executorclient.Dial` disables gRPC retries, and\n  a command is sent on exactly one stream. A stream that breaks after\n  `Started`, or an `OUTCOME_UNKNOWN` result, returns\n  `ErrOutcomeUnknown`. Before `Started`, only a refusal the executor\n  tagged (`InvalidArgument`, `LIMIT_EXCEEDED`, `NO_SHELL`, or the new\n  `START_FAILED`) reports \"did not start\"; any other error is unknown.\n- File reads and command output are capped client-side (256 MiB by\n  default). Truncated output ends with a marker, on stderr when stdout\n  is empty.\n- `ErrorReason` gains `ERROR_REASON_START_FAILED`, which `commandserver`\n  attaches when the runner fails to start the process. The Linux\n  supervisor's helper now reports `failed` explicitly; any other\n  handshake failure after the command is sent returns\n  `commandserver.ErrStartUnknown`, sent as an untagged `Unknown`.\n- `fileconformance` drops its own `Workspace` and runs the conformance\n  suites through the client; `Target.Client` becomes `Target.Conn`.\n- `executionclient.NewTemplateProvider` gains an opt-in\n  `WithExecutorServices()`, off by default and unset in `cmd/mecak8s`,\n  which builds the run's workspace and runner from the new client.\n  The remote workspace conformance tests run over both transports.\n\nCloses: #2710",
+          "timestamp": "2026-11-19T10:44:12Z",
+          "tree_id": "6bcc6ea3844c28edfb4947dc5bf51804d71b8089",
+          "url": "https://github.com/stacklok/mecatl/commit/0cfe8483dbc1f3ff7538de7a35015753c1c2e0c2"
+        },
+        "date": 1795085792472,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 776.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32189.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795085787555,
+  "lastUpdate": 1795085793401,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
