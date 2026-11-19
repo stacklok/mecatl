@@ -436905,6 +436905,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795105638047,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f629868855a3cec393ab03c7790fde37c62253b9",
+          "message": "fix(release): shorten preflight temporary paths for Unix sockets (#2897)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T10:07:38-08:00",
+          "tree_id": "532865115e5a6b510c87edc93c75d3bfaaa67b49",
+          "url": "https://github.com/stacklok/mecatl/commit/f629868855a3cec393ab03c7790fde37c62253b9"
+        },
+        "date": 1795112391828,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13408,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12902,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -568955,6 +568994,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795112388073,
+  "lastUpdate": 1795112392674,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
