@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
+import signal
 import sys
 import tempfile
 import time
@@ -49,15 +49,7 @@ IMPORTS = {
 }
 
 
-def run(command, directory, env=None, timeout=1800):
-    try:
-        result = subprocess.run(command, cwd=directory, env=env,
-                                capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        raise CheckError(f"command timed out: {command[0]}") from error
-    if result.returncode:
-        raise CheckError(f"{' '.join(map(str, command))}:\n{result.stdout}{result.stderr}".rstrip())
-    return result.stdout
+run = candidate.run
 
 
 def git(root, *args):
@@ -116,7 +108,8 @@ def environment(temporary):
            "GOWORK": "off", "GOTOOLCHAIN": "local", "GOTELEMETRY": "off",
            "GOPROXY": "https://proxy.golang.org", "GOSUMDB": "sum.golang.org",
            "GOPRIVATE": "", "GONOPROXY": "none", "GONOSUMDB": "none",
-           "GOINSECURE": "", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"}
+           "GOINSECURE": "", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+           "MECATL_MODULE_DIAGNOSTICS": "1"}
     for key, name in (("HOME", "home"), ("GOPATH", "gopath"), ("GOCACHE", "build"),
                       ("GOMODCACHE", "modules"), ("TMPDIR", "tmp")):
         path = temporary / name
@@ -248,29 +241,33 @@ def artifact(root, parent, captured, destination):
 
 def preflight(args, versions, env):
     root = args.root
-    checkout(root, args.source, args.source)
-    # A stale local origin/main is not authority for main ancestry. Do not fetch or
-    # mutate refs here: the runner must fetch the actual main tip before checking.
-    remote = git(root, "ls-remote", "--exit-code", "origin", "refs/heads/main").split()
-    if len(remote) != 2 or remote[1] != "refs/heads/main":
-        raise CheckError("cannot resolve actual origin/main")
-    git(root, "merge-base", "--is-ancestor", args.source, sha(remote[0]))
-    inventory(root, env)
-    for path, exact in versions.items():
-        tag = f"refs/tags/{path}/{exact}"
-        if git(root, "ls-remote", "origin", tag):
-            raise CheckError(f"requested tag already exists: {tag}")
-    runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
-    if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
-        raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
-    run(["task", "test:workspace"], root, env)
-    command = [sys.executable, str(Path(candidate.__file__).resolve()), "--root", str(root)]
+    with candidate.phase("request validation"):
+        checkout(root, args.source, args.source)
+        # A stale local origin/main is not authority for main ancestry. Do not fetch or
+        # mutate refs here: the runner must fetch the actual main tip before checking.
+        remote = git(root, "ls-remote", "--exit-code", "origin", "refs/heads/main").split()
+        if len(remote) != 2 or remote[1] != "refs/heads/main":
+            raise CheckError("cannot resolve actual origin/main")
+        git(root, "merge-base", "--is-ancestor", args.source, sha(remote[0]))
+        inventory(root, env)
+        for path, exact in versions.items():
+            tag = f"refs/tags/{path}/{exact}"
+            if git(root, "ls-remote", "origin", tag):
+                raise CheckError(f"requested tag already exists: {tag}")
+        runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
+        if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
+            raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
+    with candidate.phase("workspace tests"):
+        run(["task", "test:workspace"], root, dict(env, GOFLAGS="-v"), stream=True)
+    command = [sys.executable, str(Path(candidate.__file__).resolve()), "--diagnostics", "--root", str(root)]
     for path in versions:
         command += ["--module", path]
-    run(command, root, env)
-    check_changes(root)
-    if git(root, "rev-parse", "HEAD") != args.source:
-        raise CheckError("candidate execution moved HEAD")
+    with candidate.phase("selected module candidate checks"):
+        run(command, root, env, stream=True)
+    with candidate.phase("post-test source integrity"):
+        check_changes(root)
+        if git(root, "rev-parse", "HEAD") != args.source:
+            raise CheckError("candidate execution moved HEAD")
     return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
             "branch": f"module-publication/{runid}-{attempt}"}
 
@@ -570,7 +567,8 @@ def main(argv=None):
             return 0
         if hasattr(args, "root"):
             args.root = args.root.resolve()
-        with tempfile.TemporaryDirectory(prefix="module-publication-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="module-publication-") as temporary, \
+                candidate.phase(f"publication {args.command}"):
             temporary = Path(temporary)
             env = environment(temporary)
             if args.command == "prove":
@@ -585,4 +583,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, candidate.interrupted)
     sys.exit(main())

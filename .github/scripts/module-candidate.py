@@ -7,25 +7,105 @@ check: only exact workspace module identities are replaced by current source tre
 """
 
 import argparse
+import codecs
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import re
+import selectors
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class CheckError(Exception):
     pass
 
 
-def go(directory, env, *args):
-    result = subprocess.run(["go", *args], cwd=directory, env=env,
-                            capture_output=True, text=True)
+@contextmanager
+def phase(label, enabled=True):
+    start = time.monotonic()
+    if enabled:
+        print(f"START {label}", file=sys.stderr, flush=True)
+    status = "FAIL"
+    try:
+        yield
+        status = "OK"
+    finally:
+        if enabled:
+            print(f"END {label}: {status} ({time.monotonic() - start:.1f}s)",
+                  file=sys.stderr, flush=True)
+
+
+def interrupted(signum, frame):
+    # Unwind active runners so nested diagnostic commands also reap their groups.
+    raise SystemExit(128 + signum)
+
+
+def run(command, directory, env=None, timeout=1800, stream=False, cleanup_timeout=5):
+    try:
+        if not stream:
+            result = subprocess.run(command, cwd=directory, env=env,
+                                    capture_output=True, text=True, timeout=timeout)
+        else:
+            with phase(f"{directory}: {' '.join(map(str, command))}"), \
+                    subprocess.Popen(command, cwd=directory, env=env, start_new_session=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                captured = {process.stdout: [], process.stderr: []}
+                decoders = {pipe: codecs.getincrementaldecoder("utf-8")("replace")
+                            for pipe in captured}
+                deadline = time.monotonic() + timeout
+                try:
+                    with selectors.DefaultSelector() as selector:
+                        for pipe in captured:
+                            selector.register(pipe, selectors.EVENT_READ)
+                        while selector.get_map():
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise subprocess.TimeoutExpired(command, timeout)
+                            for key, _ in selector.select(min(remaining, 1)):
+                                data = os.read(key.fileobj.fileno(), 8192)
+                                captured[key.fileobj].append(data)
+                                sys.stderr.write(decoders[key.fileobj].decode(data, final=not data))
+                                sys.stderr.flush()
+                                if not data:
+                                    selector.unregister(key.fileobj)
+                        process.wait(timeout=max(0, deadline - time.monotonic()))
+                    result = subprocess.CompletedProcess(command, process.returncode,
+                        *(b"".join(captured[pipe]).decode("utf-8", "replace")
+                          for pipe in (process.stdout, process.stderr)))
+                finally:
+                    # Kill the group even if its leader exited, not just the direct child.
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            process.wait(timeout=cleanup_timeout)
+                        except subprocess.TimeoutExpired:
+                            pass
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+                if result.returncode:
+                    raise CheckError(f"{command[0]} exited {result.returncode}:\n"
+                                     f"{result.stdout}{result.stderr}".rstrip())
+    except subprocess.TimeoutExpired as error:
+        raise CheckError(f"command timed out after {timeout}s: {command[0]}") from error
     if result.returncode:
-        raise CheckError(f"go {' '.join(args)}:\n{result.stdout}{result.stderr}".rstrip())
+        raise CheckError(f"{' '.join(map(str, command))}:\n{result.stdout}{result.stderr}".rstrip())
     return result.stdout
+
+
+def go(directory, env, *args):
+    diagnostics = env.get("MECATL_MODULE_DIAGNOSTICS") == "1" and args[0] in ("test", "build")
+    if diagnostics and args[0] == "test":
+        args = (args[0], "-v", *args[1:])
+    # Escalate before the outer publication runner's five-second cleanup expires.
+    return run(["go", *args], directory, env,
+               timeout=1800 if diagnostics else None, stream=diagnostics, cleanup_timeout=1)
 
 
 def parse_mod(directory, env, path):
@@ -204,6 +284,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, help="checkout containing go.work (default: nearest ancestor)")
     parser.add_argument("--module", action="append", help="go.work module directory, e.g. . or engine; repeatable")
+    parser.add_argument("--diagnostics", action="store_true", help="stream verbose tests and module timings (publication only)")
     parser.add_argument("--fix", action="store_true", help="apply safe tidy metadata repairs after all selected modules pass tests")
     args = parser.parse_args(argv)
     root = args.root
@@ -214,6 +295,10 @@ def main(argv=None):
             parser.error("no ancestor go.work; use --root")
     root = root.resolve()
     env = dict(os.environ, GOWORK="off", GOTOOLCHAIN="local", GOFLAGS="")
+    # Ambient opt-in must not make ordinary candidate checks verbose.
+    env.pop("MECATL_MODULE_DIAGNOSTICS", None)
+    if args.diagnostics:
+        env["MECATL_MODULE_DIAGNOSTICS"] = "1"
     try:
         modules, snapshots = inventory(root, env)
         paths = {str(directory.relative_to(root)): identity
@@ -233,10 +318,11 @@ def main(argv=None):
                 continue
             label = f"{identity} ({directory.relative_to(root)})"
             try:
-                with tempfile.TemporaryDirectory(prefix="module-candidate-") as temporary:
+                with phase(label, args.diagnostics), \
+                        tempfile.TemporaryDirectory(prefix="module-candidate-") as temporary:
                     differences, repair = candidate(identity, directory, original, modules,
                                                     snapshots, env, Path(temporary))
-                print(label + (": metadata drift" if differences else ": OK"))
+                print(label + (": metadata drift" if differences else ": OK"), flush=True)
                 for difference in differences:
                     print("  " + difference)
                 dirty |= bool(differences)
@@ -262,4 +348,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, interrupted)
     sys.exit(main())

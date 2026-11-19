@@ -8,10 +8,12 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -125,6 +127,53 @@ class CandidateTests(unittest.TestCase):
         self.check()
         self.assertEqual(initialized.read_text(), "ran")
         self.assertEqual(executed.read_text(), "ran")
+
+    def test_publication_diagnostics_stream_actual_verbose_test_before_completion(self):
+        gate = self.base_dir / "finish-test"
+        self.write("diagnostics_test.go", '''package fixture
+import ("os"; "testing"; "time")
+func TestPublicationDiagnostics(t *testing.T) {
+    t.Log("candidate-stream-ready")
+    for {
+        if _, err := os.Stat(''' + json.dumps(str(gate)) + '''); err == nil { return }
+        time.Sleep(10 * time.Millisecond)
+    }
+}
+''')
+        gate.touch()
+        self.env["MECATL_MODULE_DIAGNOSTICS"] = "1"
+        quiet = self.check("--module", ".")
+        self.assertNotIn("=== RUN", quiet)
+        self.assertNotIn("START ", quiet)
+        gate.unlink()
+        with subprocess.Popen([sys.executable, str(CHECK), "--root", str(self.root),
+                               "--module", ".", "--diagnostics"], cwd=self.root, env=self.env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+            try:
+                observed = b""
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stderr, selectors.EVENT_READ)
+                    deadline = time.monotonic() + 120
+                    while b"candidate-stream-ready\n" not in observed:
+                        self.assertLess(time.monotonic(), deadline, observed)
+                        for key, _ in selector.select(0.1):
+                            data = os.read(key.fileobj.fileno(), 8192)
+                            self.assertTrue(data, observed)
+                            observed += data
+                self.assertIn(b"=== RUN   TestPublicationDiagnostics", observed)
+                self.assertIn(b"START fixture.invalid/root (.)", observed)
+                self.assertIsNone(process.poll())
+                self.assertFalse(gate.exists())
+                gate.touch()
+                stdout, stderr = process.communicate(timeout=120)
+                self.assertEqual(process.returncode, 0, stdout + stderr)
+                self.assertIn(b": OK (", stderr)
+                self.assertNotIn(b"=== RUN", stdout)
+            finally:
+                gate.touch()
+                if process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=20)
 
     def test_failing_test_fails_check_and_prevents_repair(self):
         self.third(indirect=True)

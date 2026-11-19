@@ -8,8 +8,12 @@ import io
 import json
 import os
 from pathlib import Path
+import selectors
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -20,6 +24,314 @@ SCRIPT = Path(__file__).resolve().with_name("module-publication.py")
 SPEC = importlib.util.spec_from_file_location("publication", SCRIPT)
 p = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(p)
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_streams_before_completion_and_keeps_stdout_parseable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            gate = root / "finish"
+            child = ("import pathlib,sys,time; print('{\"answer\":42}', flush=True); "
+                     "print('child-ready', file=sys.stderr, flush=True); "
+                     f"gate=pathlib.Path({str(gate)!r})\n"
+                     "while not gate.exists(): time.sleep(0.01)\n")
+            # Both buffering layers are real: publication.run -> candidate.run -> child.
+            inner = (f"import runpy,signal; p=runpy.run_path({str(SCRIPT)!r}); "
+                     "signal.signal(signal.SIGTERM,p['candidate'].interrupted); "
+                     f"print(p['run']({[sys.executable, '-c', child]!r}, {temporary!r}, "
+                     "stream=True, timeout=10), end='')")
+            outer = (f"import runpy; p=runpy.run_path({str(SCRIPT)!r}); "
+                     f"print(p['run']({[sys.executable, '-c', inner]!r}, {temporary!r}, "
+                     "stream=True, timeout=15), end='')")
+            with subprocess.Popen([sys.executable, "-c", outer], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE) as process:
+                try:
+                    observed = b""
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(process.stderr, selectors.EVENT_READ)
+                        deadline = time.monotonic() + 10
+                        # Use a complete line so the phase's printed argv cannot satisfy this.
+                        while b"\nchild-ready\n" not in observed:
+                            self.assertLess(time.monotonic(), deadline, observed)
+                            for key, _ in selector.select(0.1):
+                                data = os.read(key.fileobj.fileno(), 8192)
+                                self.assertTrue(data, observed)
+                                observed += data
+                    self.assertIsNone(process.poll())
+                    self.assertFalse(gate.exists())
+                    gate.touch()
+                    stdout, stderr = process.communicate(timeout=10)
+                    self.assertEqual(process.returncode, 0, stderr)
+                    self.assertEqual(json.loads(stdout), {"answer": 42})
+                    self.assertIn(b"END ", observed + stderr)
+                finally:
+                    gate.touch()
+                    if process.poll() is None:
+                        process.terminate()
+                        process.communicate(timeout=20)
+
+    def test_stream_failure_and_timeout_reap_descendants(self):
+        for mode in ("failure", "timeout", "nested-timeout"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                pidfile = root / "pid"
+                # The descendant closes its pipes, outlives its leader and ignores TERM.
+                descendant = ("import os,pathlib,signal,time; "
+                              "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                              f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+                              "time.sleep(30)")
+                child = ("import pathlib,signal,subprocess,sys,time; "
+                         f"subprocess.Popen({[sys.executable, '-c', descendant]!r}, "
+                         "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+                         f"pidfile=pathlib.Path({str(pidfile)!r})\n"
+                         "while not pidfile.exists(): time.sleep(0.01)\n"
+                         + ("sys.exit(7)" if mode == "failure" else
+                            "signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(30)"
+                            if mode == "nested-timeout" else "time.sleep(30)"))
+                command = [sys.executable, "-c", child]
+                if mode == "nested-timeout":
+                    inner = (f"import runpy,signal; p=runpy.run_path({str(SCRIPT)!r}); "
+                             "signal.signal(signal.SIGTERM,p['candidate'].interrupted); "
+                             f"p['run']({command!r}, {temporary!r}, stream=True, timeout=20, cleanup_timeout=1)")
+                    command = [sys.executable, "-c", inner]
+                with contextlib.redirect_stderr(io.StringIO()) as output:
+                    with self.assertRaisesRegex(p.CheckError, "exited 7" if mode == "failure" else "timed out"):
+                        p.run(command, root, timeout=1, stream=True)
+                self.assertIn("FAIL", output.getvalue())
+                self.assertTrue(pidfile.exists(), "fixture did not reach descendant boundary")
+                pid = int(pidfile.read_text())
+                # A killed orphan can remain a zombie until the host reaps it.
+                deadline = time.monotonic() + 2
+                while True:
+                    state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
+                                           capture_output=True, text=True, timeout=5)
+                    if state.returncode or state.stdout.lstrip().startswith("Z"):
+                        break
+                    self.assertLess(time.monotonic(), deadline, f"live descendant {pid}")
+                    time.sleep(0.01)
+
+    def test_sigterm_allows_nested_runner_to_reap_detached_leaf(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pidfile = root / "leaf-pid"
+            inner_pidfile = root / "inner-pid"
+            (root / "go.mod").write_text("module fixture.invalid/root\n\ngo 1.23.0\n")
+            go = root / "go"
+            go.write_text(f"#!{sys.executable}\n" + '''import json,os,pathlib,signal,sys,time
+if sys.argv[1] == "test":
+    assert "-timeout=20m" in sys.argv
+    signal.signal(signal.SIGTERM,signal.SIG_IGN)
+    pathlib.Path("leaf-pid").write_text(str(os.getpid()))
+    time.sleep(30)
+elif "-json" in sys.argv:
+    print(json.dumps({"Module":{"Path":"fixture.invalid/root"},"Go":"1.23.0"}))
+''')
+            go.chmod(0o755)
+            bootstrap = root / "cli-fixture.py"
+            # Mock metadata/network seams at main entry, after the real CLI installs its handler.
+            bootstrap.write_text('''import os,pathlib,runpy,sys
+script = pathlib.Path(sys.argv[1])
+root = pathlib.Path.cwd()
+def before_main(frame, event, arg):
+    if event == "call" and frame.f_code.co_name == "main" and frame.f_code.co_filename == str(script):
+        ns = frame.f_globals
+        if script.name == "module-candidate.py":
+            (root / "inner-pid").write_text(str(os.getpid()))
+            original = {"Module":{"Path":"fixture.invalid/root"},"Go":"1.23.0"}
+            ns["inventory"] = lambda *_: ({"fixture.invalid/root": (root, original)},
+                {root / "go.mod": (root / "go.mod").read_bytes(), root / "go.sum": None})
+        else:
+            command = [sys.executable, __file__, str(script.with_name("module-candidate.py")),
+                       "--root", str(root), "--diagnostics"]
+            ns["preflight"] = lambda args, versions, env: ns["run"](command, root, env, stream=True)
+        sys.settrace(None)
+sys.settrace(before_main)
+sys.argv = sys.argv[1:]
+runpy.run_path(str(script), run_name="__main__")
+''')
+            command = [sys.executable, str(bootstrap), str(SCRIPT), "preflight", "--root", str(root),
+                       "--source", "a" * 40, "--versions", '{"engine":"v0.2.0"}']
+            with subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")) as process:
+                try:
+                    deadline = time.monotonic() + 10
+                    while not pidfile.exists():
+                        self.assertIsNone(process.poll())
+                        self.assertLess(time.monotonic(), deadline, "leaf did not start")
+                        time.sleep(0.01)
+                    self.assertNotEqual(os.getpgid(int(pidfile.read_text())),
+                                        os.getpgid(int(inner_pidfile.read_text())))
+                    start = time.monotonic()
+                    process.terminate()
+                    process.wait(timeout=8)
+                    self.assertEqual(process.returncode, 128 + signal.SIGTERM)
+                    self.assertLess(time.monotonic() - start, 5)
+                    pid = int(pidfile.read_text())
+                    deadline = time.monotonic() + 2
+                    while True:
+                        state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
+                                               capture_output=True, text=True, timeout=5)
+                        if state.returncode or state.stdout.lstrip().startswith("Z"):
+                            break
+                        self.assertLess(time.monotonic(), deadline, f"live detached leaf {pid}")
+                        time.sleep(0.01)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    for path in (inner_pidfile, pidfile):
+                        if path.exists():
+                            try:
+                                os.kill(int(path.read_text()), signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                    process.communicate(timeout=10)
+
+    def test_go_build_streams_before_completion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            gate = root / "finish"
+            go = root / "go"
+            go.write_text(f"#!{sys.executable}\n" + '''import pathlib,sys,time
+assert sys.argv[1:] == ["build", "-mod=readonly", "./..."]
+print("build-live", flush=True)
+while not pathlib.Path("finish").exists(): time.sleep(0.01)
+''')
+            go.chmod(0o755)
+            code = (f"import os,runpy; p=runpy.run_path({str(SCRIPT)!r}); "
+                    "print(p['candidate'].go(os.getcwd(), dict(os.environ, "
+                    "MECATL_MODULE_DIAGNOSTICS='1'), 'build', '-mod=readonly', './...'), end='')")
+            with subprocess.Popen([sys.executable, "-c", code], cwd=root, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")) as process:
+                try:
+                    observed = b""
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(process.stderr, selectors.EVENT_READ)
+                        deadline = time.monotonic() + 5
+                        while b"\nbuild-live\n" not in observed:
+                            self.assertLess(time.monotonic(), deadline, observed)
+                            for key, _ in selector.select(0.1):
+                                data = os.read(key.fileobj.fileno(), 8192)
+                                self.assertTrue(data, observed)
+                                observed += data
+                    self.assertIsNone(process.poll())
+                    self.assertFalse(gate.exists())
+                    gate.touch()
+                    stdout, stderr = process.communicate(timeout=10)
+                    self.assertEqual(process.returncode, 0, stderr)
+                    self.assertEqual(stdout, b"build-live\n")
+                finally:
+                    gate.touch()
+                    process.communicate(timeout=10)
+
+    def test_publication_timeout_defaults_and_prepare_package_bound(self):
+        with mock.patch.object(p.candidate.subprocess, "run") as command:
+            command.return_value = subprocess.CompletedProcess(["fixture"], 0, "", "")
+            p.run(["fixture"], SCRIPT.parent)
+            self.assertEqual(command.call_args.kwargs["timeout"], 1800)
+        env = {"MECATL_MODULE_DIAGNOSTICS": "1"}
+        with mock.patch.object(p.candidate, "run", return_value="") as command:
+            for verb in ("test", "build"):
+                p.candidate.go(SCRIPT.parent, env, verb, "./...")
+                self.assertEqual(command.call_args.kwargs["timeout"], 1800)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.mod").write_text("module fixture.invalid/root\n\ngo 1.23.0\n")
+            original = {"Module": {"Path": "fixture.invalid/root"}, "Go": "1.23.0"}
+            with mock.patch.object(p.candidate, "parse_mod", return_value=original), \
+                    mock.patch.object(p.candidate, "go") as go:
+                p.tidy(root, ("fixture.invalid/root", root, original), {}, {}, env, standalone=True)
+            self.assertIn(mock.call(root, env, "test", "-mod=readonly", "-count=1",
+                                    "-timeout=20m", "./..."), go.call_args_list)
+
+    def test_machine_output_stays_quiet_even_with_diagnostics(self):
+        command = [sys.executable, "-c", "import sys; print('{\"ok\":true}'); print('detail',file=sys.stderr)"]
+        for stream in (False, True):
+            with self.subTest(stream=stream), contextlib.redirect_stderr(io.StringIO()) as diagnostics:
+                self.assertEqual(json.loads(p.run(command, SCRIPT.parent, stream=stream)), {"ok": True})
+                self.assertEqual(bool(diagnostics.getvalue()), stream)
+        with tempfile.TemporaryDirectory() as temporary:
+            env = dict(os.environ, GOWORK="off", GOENV="off", GOFLAGS="",
+                       GOTOOLCHAIN="local", MECATL_MODULE_DIAGNOSTICS="1")
+            root = Path(temporary)
+            (root / "go.mod").write_text("module fixture.invalid/metadata\n\ngo 1.23.0\n")
+            with contextlib.redirect_stderr(io.StringIO()) as diagnostics:
+                parsed = p.candidate.parse_mod(root, env, root / "go.mod")
+            self.assertEqual(parsed["Module"]["Path"], "fixture.invalid/metadata")
+            self.assertEqual(diagnostics.getvalue(), "")
+
+
+@unittest.skipUnless(os.environ.get("PUBLICATION_DIAGNOSTICS_WORKFLOW"), "workflow supplied by Go contract test")
+class DiagnosticsWorkflowTests(unittest.TestCase):
+    def test_logged_preflight_preserves_exit_and_stops_sampler(self):
+        step = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["preflight"]
+        for status in (0, 7):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                scripts = {
+                    "python3": '''import os,pathlib,sys,time
+assert sys.argv[1:] == ["tooling/.github/scripts/module-publication.py", "preflight", "--source", "reviewed-source", "--versions", '{"engine":"v0.2.0"}', "--root", os.environ["GITHUB_WORKSPACE"] + "/candidate"]
+deadline = time.monotonic() + 10
+while not pathlib.Path(os.environ["RUNNER_TEMP"], "sleeper").exists():
+    assert time.monotonic() < deadline
+    time.sleep(0.01)
+print("fixture-preflight", flush=True)
+print("fixture-stderr", file=sys.stderr, flush=True)
+sys.exit(int(os.environ["FIXTURE_EXIT"]))
+''',
+                    "sleep": '''import os,pathlib
+pathlib.Path(os.environ["RUNNER_TEMP"], "sleeper").write_text(str(os.getpid()))
+os.execl("/bin/sleep", "sleep", "60")
+''',
+                    "ps": '''import sys
+assert sys.argv[1:] == ["-eo", "pid,ppid,comm,pcpu,pmem,rss,etime"]
+print("PID PPID COMMAND %CPU %MEM RSS ELAPSED")
+print("123 1 go 12.3 1.0 1000 01:00")
+print("124 1 fixture.test 1.0 0.1 100 01:00")
+print("125 1 microvmmanager. 0.0 0.1 100 01:00")
+''',
+                }
+                for name, content in scripts.items():
+                    path = bin_dir / name
+                    path.write_text(f"#!{sys.executable}\n" + content)
+                    path.chmod(0o755)
+                result = subprocess.run(["bash", "-c", step["Run"]], cwd=root,
+                    env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+                             RUNNER_TEMP=str(root), GITHUB_WORKSPACE=str(root),
+                             SOURCE="reviewed-source", VERSIONS='{"engine":"v0.2.0"}',
+                             FIXTURE_EXIT=str(status)), capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                logs = root / "module-publication-diagnostics"
+                log = (logs / "preflight.log").read_text()
+                self.assertIn("fixture-preflight", log)
+                self.assertIn("fixture-stderr", log)
+                self.assertIn("fixture-preflight", result.stdout)
+                resources = (logs / "resources.log").read_text()
+                self.assertIn("123 1 go", resources)
+                self.assertIn("124 1 fixture.test", resources)
+                self.assertIn("125 1 microvmmanager.", resources)
+                self.assertNotIn("Traceback", resources)
+                pid = int((root / "sleeper").read_text())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+
+    def test_summary_distinguishes_diagnostics_from_publication(self):
+        step = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["summary"]
+        for only in ("true", "false"):
+            with self.subTest(preflight_only=only), tempfile.TemporaryDirectory() as temporary:
+                summary = Path(temporary) / "summary"
+                result = subprocess.run(["bash", "-c", step["Run"]],
+                    env=dict(os.environ, SOURCE="reviewed-source", VERSIONS='{"engine":"v0.2.0"}',
+                             BRANCH="module-publication/123-1", PREFLIGHT_ONLY=only,
+                             RESULTS='{"preflight":{"result":"success"}}',
+                             GITHUB_STEP_SUMMARY=str(summary)), capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = summary.read_text()
+                self.assertIn("success", output)
+                self.assertEqual("Branch:" in output, only == "false")
+                self.assertEqual("publication and adoption disabled" in output, only == "true")
 
 
 class RequestTests(unittest.TestCase):
@@ -525,7 +837,12 @@ class LocalTests(unittest.TestCase):
         candidates = [command for command in calls if command[0] == p.sys.executable]
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0][1], str(SCRIPT.with_name("module-candidate.py")))
+        self.assertIn("--diagnostics", candidates[0])
         self.assertEqual(candidates[0][-2:], ["--module", "engine"])
+        expensive = [call for call in run.call_args_list if call.args[0][0] in ("task", sys.executable)]
+        self.assertTrue(all(call.kwargs["stream"] for call in expensive))
+        self.assertEqual(expensive[0].args[2]["GOFLAGS"], "-v")
+        self.assertEqual(self.env["GOFLAGS"], "")
         self.assertEqual(result["source"], self.head)
 
     def test_preflight_workspace_sums_are_ephemeral_but_source_changes_fail(self):

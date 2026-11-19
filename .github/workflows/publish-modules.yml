@@ -15,6 +15,10 @@ on:
         description: 'Full main commit SHA containing the reviewed implementation'
         type: string
         required: true
+      preflight_only:
+        description: 'Run the full read-only preflight without publication or adoption'
+        type: boolean
+        default: false
       versions:
         description: 'Explicit JSON mapping of module directories to exact versions'
         type: string
@@ -34,7 +38,7 @@ jobs:
   preflight:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
     outputs:
       source: ${{ steps.preflight.outputs.source }}
       versions: ${{ steps.preflight.outputs.versions }}
@@ -63,9 +67,42 @@ jobs:
         env:
           SOURCE: ${{ inputs.source }}
           VERSIONS: ${{ inputs.versions }}
-        run: >-
-          python3 tooling/.github/scripts/module-publication.py preflight
-          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+        shell: bash
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/module-publication-diagnostics"
+          mkdir -p "$logs"
+          sample() {
+            sleeper=''
+            trap 'if [ -n "$sleeper" ]; then kill "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
+            while :; do
+              date -u '+%Y-%m-%dT%H:%M:%SZ'
+              uptime
+              free -m
+              df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+              # Executable names and counters only: never args or environments.
+              ps -eo pid,ppid,comm,pcpu,pmem,rss,etime
+              sleep 60 &
+              sleeper=$!
+              wait "$sleeper"
+            done
+          }
+          sample > "$logs/resources.log" 2>&1 &
+          sampler=$!
+          trap 'status=$?; kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; exit "$status"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          python3 tooling/.github/scripts/module-publication.py preflight \
+            --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate" \
+            2>&1 | tee "$logs/preflight.log"
+      - name: Upload preflight diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: module-publication-preflight-diagnostics
+          path: ${{ runner.temp }}/module-publication-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
 
   # Fixed dependency-first chain: GitHub matrices do not thread an evolving SHA
   # through ordered calls. Each call returns head only AFTER its public proof.
@@ -85,6 +122,8 @@ jobs:
   #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
   agentdef:
     needs: preflight
+    # Skip the entire chain, not individual selections (which must pass head through).
+    if: ${{ !inputs.preflight_only }}
     uses: ./.github/workflows/publish-module.yml
     with:
       module: agentdef
@@ -191,6 +230,7 @@ jobs:
   # not a cache or executable patch; adoption-pr validates it on a fresh runner.
   reconcile:
     needs: [preflight, adapters]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -238,6 +278,7 @@ jobs:
   # not reserve a release across PR review waits: humans coordinate open adoptions.
   adoption-pr:
     needs: [preflight, adapters, reconcile]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -286,10 +327,16 @@ jobs:
           SOURCE: ${{ inputs.source }}
           VERSIONS: ${{ inputs.versions }}
           BRANCH: module-publication/${{ github.run_id }}-${{ github.run_attempt }}
+          PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           {
-            printf 'Source: %s\nVersions: %s\nBranch: %s\n' "$SOURCE" "$VERSIONS" "$BRANCH"
+            printf 'Source: %s\nVersions: %s\n' "$SOURCE" "$VERSIONS"
+            if [ "$PREFLIGHT_ONLY" = true ]; then
+              printf '%s\n' 'Preflight only: publication and adoption disabled; no release branch or tags created.'
+            else
+              printf 'Branch: %s\n' "$BRANCH"
+              printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
+            fi
             printf 'Job results:\n%s\n' "$RESULTS"
-            printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
           } >> "$GITHUB_STEP_SUMMARY"
