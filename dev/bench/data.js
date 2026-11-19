@@ -391688,6 +391688,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795045570232,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e5a72977e37c65483de32cf6c6665526a62f6528",
+          "message": "fix(release): register agentdef in module publication (#2879)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T00:33:46Z",
+          "tree_id": "1c84ed817ad05137141c915593e6346409612e08",
+          "url": "https://github.com/stacklok/mecatl/commit/e5a72977e37c65483de32cf6c6665526a62f6528"
+        },
+        "date": 1795049192464,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -565344,6 +565378,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795049188812,
+  "lastUpdate": 1795049193485,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
