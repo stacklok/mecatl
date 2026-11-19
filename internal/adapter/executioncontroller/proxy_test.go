@@ -245,7 +245,9 @@ func TestCommandProxyConformance(t *testing.T) {
 			return nil
 		},
 		Survivor: "survivor",
-		Context:  proxyRequestContext,
+		Context: func(context.Context) (*executorv1.RequestContext, error) {
+			return proxyRequestContext(), nil
+		},
 	})
 }
 
