@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -78,6 +77,11 @@ var (
 			Event: &executorv1.RunCommandResponse_Stdout{Stdout: []byte(s)},
 		}
 	}
+	stderr = func(s string) *executorv1.RunCommandResponse {
+		return &executorv1.RunCommandResponse{
+			Event: &executorv1.RunCommandResponse_Stderr{Stderr: []byte(s)},
+		}
+	}
 	result = func(truncated bool) *executorv1.RunCommandResponse {
 		return &executorv1.RunCommandResponse{Event: &executorv1.RunCommandResponse_Result{
 			Result: &executorv1.CommandResult{
@@ -88,14 +92,28 @@ var (
 	}
 )
 
+func refusal(code codes.Code, why executorv1.ErrorReason) func(commandStream) error {
+	return func(commandStream) error {
+		st, err := status.New(code, "refused").WithDetails(&executorv1.ErrorDetail{Reason: why})
+		if err != nil {
+			return err
+		}
+		return st.Err()
+	}
+}
+
 func TestFailureBeforeStartedIsUnknownUnlessRefused(t *testing.T) {
+	const (
+		none    = executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+		limit   = executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED
+		noShell = executorv1.ErrorReason_ERROR_REASON_NO_SHELL
+		failed  = executorv1.ErrorReason_ERROR_REASON_START_FAILED
+	)
 	cases := map[string]struct {
 		run     func(commandStream) error
 		unknown bool
 	}{
-		"unavailable": {func(commandStream) error {
-			return status.Error(codes.Unavailable, "gone")
-		}, true},
+		"unavailable": {refusal(codes.Unavailable, none), true},
 		"raw send error": {func(commandStream) error {
 			return errors.New("send started: broken pipe")
 		}, true},
@@ -103,12 +121,12 @@ func TestFailureBeforeStartedIsUnknownUnlessRefused(t *testing.T) {
 		"output first": {func(s commandStream) error {
 			return send(s, stdout("x"), started, result(false))
 		}, true},
-		"refused": {func(commandStream) error {
-			return status.Error(codes.InvalidArgument, "command is required")
-		}, false},
-		"start failed": {func(commandStream) error {
-			return status.Error(codes.Internal, "command did not start")
-		}, false},
+		"untagged internal":   {refusal(codes.Internal, none), true},
+		"untagged exhausted":  {refusal(codes.ResourceExhausted, none), true},
+		"refused":             {refusal(codes.InvalidArgument, none), false},
+		"command over limit":  {refusal(codes.ResourceExhausted, limit), false},
+		"no shell":            {refusal(codes.FailedPrecondition, noShell), false},
+		"start failed tagged": {refusal(codes.Internal, failed), false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -122,28 +140,29 @@ func TestFailureBeforeStartedIsUnknownUnlessRefused(t *testing.T) {
 }
 
 func TestOutputIsCappedAndTruncationReported(t *testing.T) {
+	const marker = "\n... [output truncated]"
 	cases := map[string]struct {
-		run  func(commandStream) error
-		want string
+		run            func(commandStream) error
+		stdout, stderr string
 	}{
 		"client cap": {func(s commandStream) error {
 			return send(s, started, stdout("aaaa"), stdout("bbbb"), stdout("cccc"), result(false))
-		}, "aaaabb"},
+		}, "aaaabb" + marker, ""},
 		"server flag": {func(s commandStream) error {
 			return send(s, started, stdout("ok"), result(true))
-		}, "ok"},
+		}, "ok" + marker, ""},
+		"stderr only": {func(s commandStream) error {
+			return send(s, started, stderr("eeeeeeee"), result(false))
+		}, "", "eeeeee" + marker},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			conn := dialScripted(t, c.run)
 			r := executorclient.NewRunner(conn, root, nil, executorclient.WithMaxOutputBytes(6))
 			res, err := r.Run(t.Context(), "cmd")
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, ok := strings.CutSuffix(res.Stdout, "\n... [output truncated by the executor]")
-			if !ok || got != c.want {
-				t.Fatalf("stdout = %q, want %q with the truncation marker", res.Stdout, c.want)
+			if err != nil || res.Stdout != c.stdout || res.Stderr != c.stderr {
+				t.Fatalf("Run = %q, %q, %v; want %q, %q", res.Stdout, res.Stderr, err,
+					c.stdout, c.stderr)
 			}
 		})
 	}

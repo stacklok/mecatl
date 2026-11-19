@@ -153,14 +153,22 @@ func TestOutputIsBoundedAndFlagged(t *testing.T) {
 func TestStartFailures(t *testing.T) {
 	srv := newServer(t, &fakeRunner{}, commandserver.WithMaxCommandBytes(8))
 	client := commandconformance.Dial(t, srv)
-	for command, want := range map[string]codes.Code{
-		"noshell":        codes.FailedPrecondition,
-		"unknown":        codes.Internal,
-		"far too long !": codes.ResourceExhausted,
+	for command, want := range map[string]struct {
+		code   codes.Code
+		reason executorv1.ErrorReason
+	}{
+		"noshell": {codes.FailedPrecondition, executorv1.ErrorReason_ERROR_REASON_NO_SHELL},
+		"unknown": {codes.Internal, executorv1.ErrorReason_ERROR_REASON_START_FAILED},
+		"far too long !": {
+			codes.ResourceExhausted,
+			executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,
+		},
 	} {
 		_, _, err := run(t, client, command)
-		if status.Code(err) != want {
-			t.Fatalf("%s: %v, want %v", command, err, want)
+		details := status.Convert(err).Details()
+		if status.Code(err) != want.code || len(details) != 1 ||
+			details[0].(*executorv1.ErrorDetail).GetReason() != want.reason {
+			t.Fatalf("%s: %v %v, want %v %v", command, err, details, want.code, want.reason)
 		}
 	}
 }

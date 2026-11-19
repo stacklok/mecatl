@@ -140,7 +140,8 @@ func (s *Server) RunCommand(
 			return failure(codes.FailedPrecondition, executorv1.ErrorReason_ERROR_REASON_NO_SHELL,
 				"no shell available")
 		}
-		return status.Error(codes.Internal, "command did not start")
+		return failure(codes.Internal, executorv1.ErrorReason_ERROR_REASON_START_FAILED,
+			"command did not start")
 	}
 	if err := out.start(); err != nil {
 		cancel(err)

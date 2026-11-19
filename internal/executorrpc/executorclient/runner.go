@@ -121,7 +121,7 @@ func cancelOnDone(
 	}
 }
 
-const truncationMarker = "\n... [output truncated by the executor]"
+const truncationMarker = "\n... [output truncated]"
 
 // receive reads events until the result. Only a refusal the server reports
 // before Started means the command never ran; anything else leaves it unknown.
@@ -138,13 +138,17 @@ func receive(
 		truncated = truncated || n < len(p)
 	}
 	output := func() tool.CommandResult {
-		out := stdout.String()
-		if truncated {
+		out, errOut := stdout.String(), stderr.String()
+		switch {
+		case !truncated:
+		case out == "" && errOut != "":
+			errOut += truncationMarker
+		default:
 			out += truncationMarker
 		}
 		return tool.CommandResult{
 			Stdout: session.ToValidUTF8(out),
-			Stderr: session.ToValidUTF8(stderr.String()),
+			Stderr: session.ToValidUTF8(errOut),
 		}
 	}
 	started := false
@@ -198,19 +202,22 @@ func resultError(ctx context.Context, state executorv1.CommandState) error {
 	}
 }
 
-// startError classifies a failure before Started. Transport codes, and a
-// stream ending cleanly (io.EOF, so Unknown), can follow a process that started.
+// startError classifies a failure before Started. Only a refusal the executor
+// tagged means the command never ran; transport errors can follow a start.
 func startError(err error) error {
-	switch status.Code(err) {
-	case codes.Unknown, codes.Canceled, codes.DeadlineExceeded, codes.Unavailable:
-		return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
+	code, why := status.Code(err), reason(err)
+	switch {
+	case why == executorv1.ErrorReason_ERROR_REASON_NO_SHELL:
+		return tool.ErrNoShell
+	case code == codes.InvalidArgument,
+		code == codes.ResourceExhausted &&
+			why == executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,
+		code == codes.Internal && why == executorv1.ErrorReason_ERROR_REASON_START_FAILED:
+		return notStarted(err)
 	}
-	return notStarted(err)
+	return fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 }
 
 func notStarted(err error) error {
-	if reason(err) == executorv1.ErrorReason_ERROR_REASON_NO_SHELL {
-		return tool.ErrNoShell
-	}
 	return fmt.Errorf("executor: command did not start: %w", err)
 }
