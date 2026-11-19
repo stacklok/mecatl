@@ -51,7 +51,9 @@ type workflow struct {
 			} `yaml:"inputs"`
 		} `yaml:"workflow_dispatch"`
 		Call struct {
-			Secrets any `yaml:"secrets"`
+			Secrets map[string]struct {
+				Required bool `yaml:"required"`
+			} `yaml:"secrets"`
 			Outputs map[string]struct {
 				Value string `yaml:"value"`
 			} `yaml:"outputs"`
@@ -92,8 +94,11 @@ func credential(key, value string) bool {
 }
 
 func isolation(w workflow) error {
-	if w.Secrets != nil || w.On.Call.Secrets != nil {
-		return fmt.Errorf("workflow must not accept or forward secrets")
+	if w.Secrets != nil {
+		return fmt.Errorf("workflow must not forward secrets globally")
+	}
+	if w.On.Call.Secrets != nil && (len(w.On.Call.Secrets) != 1 || !w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"].Required) {
+		return fmt.Errorf("reusable workflow must declare only the required release key")
 	}
 	for key, value := range w.Env {
 		if credential(key, value) {
@@ -101,8 +106,20 @@ func isolation(w workflow) error {
 		}
 	}
 	for name, j := range w.Jobs {
-		if j.Secrets != nil {
+		if j.Uses == "./.github/workflows/publish-module.yml" {
+			forwarded, ok := j.Secrets.(map[string]any)
+			if !ok || len(forwarded) != 1 || forwarded["RELEASE_APP_PRIVATE_KEY"] != "${{ secrets.RELEASE_APP_PRIVATE_KEY }}" {
+				return fmt.Errorf("%s must forward only the named release key", name)
+			}
+		} else if j.Secrets != nil {
 			return fmt.Errorf("%s forwards reusable secrets", name)
+		}
+		operation := map[string]string{"publish": "publish", "adoption-pr": "open-pr"}[name]
+		if operation == "" && j.Environment != "" {
+			return fmt.Errorf("%s must not bind an environment", name)
+		}
+		if operation != "" && j.Environment != "release" {
+			return fmt.Errorf("%s must bind the release environment", name)
 		}
 		if j.Uses == "" && j.RunsOn != "ubuntu-24.04" {
 			return fmt.Errorf("%s must use a fresh hosted ubuntu-24.04 runner", name)
@@ -117,7 +134,6 @@ func isolation(w workflow) error {
 				return fmt.Errorf("%s forwards credential input: %s", name, key)
 			}
 		}
-		operation := map[string]string{"publish": "publish", "adoption-pr": "open-pr"}[name]
 		for _, s := range j.Steps {
 			for key, value := range s.Env {
 				if !credential(key, value) {
@@ -148,6 +164,10 @@ func isolation(w workflow) error {
 }
 
 func TestPublicationRunnerAndCredentialIsolation(t *testing.T) {
+	one := load(t, "publish-module")
+	if len(one.On.Call.Secrets) != 1 || !one.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"].Required {
+		t.Fatal("reusable workflow must require explicit release key forwarding")
+	}
 	for _, name := range []string{"publish-module", "publish-modules"} {
 		if err := isolation(load(t, name)); err != nil {
 			t.Fatal(err)
@@ -175,6 +195,29 @@ func TestPublicationIsolationMutations(t *testing.T) {
 		{"step token", func(w *workflow) { w.Jobs["prove"].Steps[0].Env = map[string]string{"GH_TOKEN": "${{ github.token }}"} }},
 		{"hidden action token", func(w *workflow) { w.Jobs["prepare"].Steps[0].With["token"] = "${{ github.token }}" }},
 		{"hidden innocuous input", func(w *workflow) { w.Jobs["prove"].Steps[0].With["data"] = "${{ secrets.RELEASE_APP_PRIVATE_KEY }}" }},
+		{"candidate environment", func(w *workflow) {
+			j := w.Jobs["prepare"]
+			j.Environment = "release"
+			w.Jobs["prepare"] = j
+		}},
+		{"proof environment", func(w *workflow) {
+			j := w.Jobs["prove"]
+			j.Environment = "release"
+			w.Jobs["prove"] = j
+		}},
+		{"missing writer environment", func(w *workflow) {
+			j := w.Jobs["publish"]
+			j.Environment = ""
+			w.Jobs["publish"] = j
+		}},
+		{"optional release key", func(w *workflow) {
+			declaration := w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"]
+			declaration.Required = false
+			w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"] = declaration
+		}},
+		{"extra declared secret", func(w *workflow) {
+			w.On.Call.Secrets["UNRELATED"] = w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"]
+		}},
 		{"writer token on checkout", func(w *workflow) {
 			w.Jobs["publish"].Steps[0].Env = map[string]string{"GH_TOKEN": "${{ steps.app.outputs.token }}"}
 		}},
@@ -190,7 +233,13 @@ func TestPublicationIsolationMutations(t *testing.T) {
 			}
 		})
 	}
-	for _, secrets := range []any{"inherit", map[string]any{"key": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"}} {
+	for _, secrets := range []any{
+		nil,
+		"inherit",
+		map[string]any{"key": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"},
+		map[string]any{"RELEASE_APP_PRIVATE_KEY": "${{ secrets.UNRELATED }}"},
+		map[string]any{"RELEASE_APP_PRIVATE_KEY": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}", "UNRELATED": "${{ secrets.UNRELATED }}"},
+	} {
 		w := load(t, "publish-modules")
 		j := w.Jobs["engine"]
 		j.Secrets = secrets

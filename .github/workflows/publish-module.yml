@@ -25,6 +25,10 @@ on:
         description: 'Head returned only after the preceding public proof'
         type: string
         required: true
+    secrets:
+      RELEASE_APP_PRIVATE_KEY:
+        description: 'Explicit forwarding enables the writer job to resolve the release environment key'
+        required: true
     outputs:
       head:
         description: 'Publicly verified commit, or unchanged parent when unselected'

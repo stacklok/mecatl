@@ -109,11 +109,17 @@ jobs:
   #   needs/PARENT.
   # - Update fixed-order workflow assertions and inventory/order, unselected,
   #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
+  # Explicit named forwarding is required even for an environment-only secret:
+  # https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow
+  # Keep the key in the release environment only; prepare/prove do not bind it.
+  # Never inherit all secrets into candidate jobs.
   agentdef:
     needs: preflight
     # Skip the entire chain, not individual selections (which must pass head through).
     if: ${{ !inputs.preflight_only }}
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: agentdef
       source: ${{ needs.preflight.outputs.source }}
@@ -124,6 +130,8 @@ jobs:
   engine:
     needs: [preflight, agentdef]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: engine
       source: ${{ needs.preflight.outputs.source }}
@@ -134,6 +142,8 @@ jobs:
   driver:
     needs: [preflight, engine]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: contracts/gen/go/mecatl/driver
       source: ${{ needs.preflight.outputs.source }}
@@ -144,6 +154,8 @@ jobs:
   ssefilter:
     needs: [preflight, driver]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/ssefilter
       source: ${{ needs.preflight.outputs.source }}
@@ -154,6 +166,8 @@ jobs:
   adaptersupport:
     needs: [preflight, ssefilter]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: internal/adaptersupport
       source: ${{ needs.preflight.outputs.source }}
@@ -164,6 +178,8 @@ jobs:
   oidc:
     needs: [preflight, adaptersupport]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: authn/oidc
       source: ${{ needs.preflight.outputs.source }}
@@ -174,6 +190,8 @@ jobs:
   anthropic:
     needs: [preflight, oidc]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/anthropic
       source: ${{ needs.preflight.outputs.source }}
@@ -184,6 +202,8 @@ jobs:
   openai:
     needs: [preflight, anthropic]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/openai
       source: ${{ needs.preflight.outputs.source }}
@@ -194,6 +214,8 @@ jobs:
   openaichat:
     needs: [preflight, openai]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/openaichat
       source: ${{ needs.preflight.outputs.source }}
@@ -204,6 +226,8 @@ jobs:
   adapters:
     needs: [preflight, openaichat]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: adapters
       source: ${{ needs.preflight.outputs.source }}
