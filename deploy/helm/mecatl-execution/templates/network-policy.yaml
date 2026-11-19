@@ -20,6 +20,12 @@ spec:
     ports:
     - {protocol: TCP, port: {{ .Values.service.port }}}
   egress:
+  - to:
+    - podSelector:
+        matchExpressions:
+        - {key: execution.mecatl.dev/environment, operator: Exists}
+    ports:
+    - {protocol: TCP, port: {{ include "mecatl-execution.executorServerPort" . }}}
 {{- range .Values.provider.apiServerCIDRs }}
   - to: [{ipBlock: {cidr: {{ . | quote }}}}]
     ports:
@@ -47,6 +53,22 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress: []
   egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecatl-execution.fullname" . }}-executor-server
+spec:
+  podSelector:
+    matchExpressions:
+    - {key: execution.mecatl.dev/environment, operator: Exists}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels: {app.kubernetes.io/name: {{ include "mecatl-execution.fullname" . }}}
+    ports:
+    - {protocol: TCP, port: {{ include "mecatl-execution.executorServerPort" . }}}
 {{- range $name, $profile := .Values.networkPolicy.workloadProfiles }}
 ---
 apiVersion: networking.k8s.io/v1

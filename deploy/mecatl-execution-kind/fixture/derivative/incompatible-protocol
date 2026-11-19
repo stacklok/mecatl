@@ -1,4 +1,7 @@
 #!/bin/sh
+if [ "${1:-}" = serve ]; then
+	exec /usr/local/libexec/mecatl-executor-server "$@"
+fi
 # Consume one request but never execute it or access the workspace.
 IFS= read -r request || :
 printf '%s\n' '{"unsupported_executor_protocol":999}'

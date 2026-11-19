@@ -15,6 +15,9 @@ const (
 	ExecutorTrustURIFile     = "client-uri"
 )
 
+// ExecutorServerPort is the TCP port of the executor gRPC server in its Pod.
+const ExecutorServerPort = 7443
+
 // ClientIdentity returns the single URI SAN of c with its scheme and host lowercased.
 func ClientIdentity(c *x509.Certificate) (string, error) {
 	if len(c.URIs) != 1 {

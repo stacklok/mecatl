@@ -28,6 +28,7 @@
 1 TestKindExecutionProductionNetworkPolicyEnforced 46
 1 TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete 45
 1 TestKindExecutionServiceExplicitIDRetriesReuseOneAllocation 16
+1 TestKindExecutionProductionExecutorServerRestartsInPlace 30
 1 TestKindExecutionProductionFailureArtifactBoundary 1
 
 2 TestKindExecutionQualification 222

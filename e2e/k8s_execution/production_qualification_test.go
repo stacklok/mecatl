@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -137,8 +139,108 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
 		t.Fatalf("unrelated pod denial exit proof=%q err=%v, want 42", strings.TrimSpace(string(out)), err)
 	}
+	executorIP := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace,
+		"-l", "execution.mecatl.dev/environment="+attached.Environment.ID,
+		"-o", "jsonpath={.items[0].status.podIP}")
+	server := net.JoinHostPort(executorIP, strconv.Itoa(executionenv.ExecutorServerPort))
+	out, err = command(ctx, kubeconfig, "exec", "-n", namespace, "pod/network-intruder", "--",
+		"/ko-app/netprobe", "-target", server, "-timeout", "2s").CombinedOutput()
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
+		t.Fatalf("unrelated pod reached the executor server: %q err=%v", out, err)
+	}
+	if code := probeFromProvider(t, ctx, kubeconfig, server); code != "0" {
+		t.Fatalf("provider could not reach the executor server: exit %s", code)
+	}
 	if got := resourceCount(t, ctx, kubeconfig, "pods -l app.kubernetes.io/name=mecatl-execution"); got != 2 {
 		t.Fatalf("ready provider replicas=%d, want 2", got)
+	}
+}
+
+// probeFromProvider dials target from a provider Pod's network namespace
+// through an ephemeral container, and returns the probe's exit code.
+func probeFromProvider(t *testing.T, ctx context.Context, kubeconfig, target string) string {
+	t.Helper()
+	provider := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace,
+		"-l", "app.kubernetes.io/name=mecatl-execution",
+		"--field-selector=status.phase=Running",
+		"-o", "jsonpath={.items[0].metadata.name}")
+	image := kubeValue(t, ctx, kubeconfig, "get", "pod/network-intruder", "-n", namespace,
+		"-o", "jsonpath={.spec.containers[0].image}")
+	name := fmt.Sprintf("server-probe-%d", time.Now().UnixNano())
+	runKubectl(t, ctx, kubeconfig, "debug", "-n", namespace, "pod/"+provider,
+		"--profile=restricted", "--image="+image, "--container="+name, "--attach=false",
+		"--", "/ko-app/netprobe", "-target", target, "-timeout", "2s")
+	exitCode := fmt.Sprintf("jsonpath={.status.ephemeralContainerStatuses"+
+		"[?(@.name==%q)].state.terminated.exitCode}", name)
+	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); {
+		if code := kubeValue(t, ctx, kubeconfig, "get", "pod/"+provider, "-n", namespace,
+			"-o", exitCode); code != "" {
+			return code
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatal("provider probe container did not finish")
+	return ""
+}
+
+func TestKindExecutionProductionExecutorServerRestartsInPlace(t *testing.T) {
+	state, kubeconfig, ctx, cancel := requireProduction(t)
+	defer cancel()
+	client, _ := productionClient(t, ctx, state, kubeconfig)
+	owner, binding, attached := createProductionEnvironment(t, ctx, client, "restart")
+	runID := fmt.Sprintf("restart-%d", time.Now().UnixNano())
+	rc, release := acquireRunWithTTL(
+		t,
+		ctx,
+		client,
+		owner,
+		binding,
+		attached,
+		runID,
+		executionenv.MaxRunTTL,
+	)
+	defer release()
+	sentinel := executionenv.FileRequest{
+		Context:   rc,
+		Operation: executionenv.OpFileCreate,
+		Path:      "restart-sentinel.txt",
+		Data:      []byte("kept\n"),
+	}
+	if _, err := client.File(ctx, sentinel); err != nil {
+		t.Fatal(err)
+	}
+	id := attached.Environment.ID
+	before := readExecutionStatus(t, ctx, kubeconfig, id)
+	pod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace,
+		"-l", "execution.mecatl.dev/environment="+id, "-o", "jsonpath={.items[0].metadata.name}")
+	// PID 1 only receives signals it handles; the Go runtime crashes on SIGABRT.
+	runKubectl(t, ctx, kubeconfig, "exec", "-n", namespace, pod, "--",
+		"/bin/sh", "-c", "kill -ABRT 1")
+	restarted := "jsonpath={.status.containerStatuses[0].restartCount}/" +
+		"{.status.containerStatuses[0].lastState.terminated.exitCode}/" +
+		"{.status.containerStatuses[0].ready}"
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(time.Second) {
+		got := kubeValue(t, ctx, kubeconfig, "get", "pod/"+pod, "-n", namespace, "-o", restarted)
+		restarts, rest, _ := strings.Cut(got, "/")
+		exit, ready, _ := strings.Cut(rest, "/")
+		if restarts == "1" && exit != "" && exit != "0" && ready == "true" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("executor server did not restart in place: restarts/exit/ready=%s", got)
+		}
+	}
+	ready := func(s executionStatus) bool { return s.Ready }
+	after := waitExecutionStatus(t, ctx, kubeconfig, id, ready)
+	if after.PodUID != before.PodUID || after.PVCUID != before.PVCUID ||
+		after.Epoch != before.Epoch || after.FenceState != before.FenceState {
+		t.Fatalf("server restart replaced the executor: before=%+v after=%+v", before, after)
+	}
+	read := sentinel
+	read.Operation, read.Data = executionenv.OpFileRead, nil
+	got, err := client.File(ctx, read)
+	if err != nil || string(got.Data) != "kept\n" {
+		t.Fatalf("workspace changed across the server restart: %q err=%v", got.Data, err)
 	}
 }
 

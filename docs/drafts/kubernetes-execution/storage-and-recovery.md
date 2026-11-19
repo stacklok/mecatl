@@ -32,8 +32,10 @@ the kubelet reports.
 
 When the executor's server process exits but its Pod is healthy, the kubelet restarts the container in place: same Pod,
 same node, same PVC. This needs the server to be the container's main process, instead of today's `sleep infinity`, and
-the Pod's restart policy to change from `Never` to restarting failed containers. Because every process in the container
-stops when its main process exits, no command from the crashed server survives the restart.
+the Pod's restart policy to change from `Never` to `Always`. `OnFailure` is not enough: shell commands run as the
+server's user and can stop it with `SIGTERM`, after which it exits cleanly with status 0. A Pod being deleted is not
+restarted under either policy, so it still reaches a terminal phase. Because every process in the container stops when
+its main process exits, no command from the crashed server survives the restart.
 
 Calls in flight when the server exits fail when their connection drops. The agent loop reports their outcome as
 unknown and does not retry a command.
@@ -106,7 +108,7 @@ this work.
 
 ## What changes from today
 
-- The executor server becomes the container's main process, and the Pod restarts failed containers instead of using
+- The executor server becomes the container's main process, and the Pod uses `RestartPolicyAlways` instead of
   `RestartPolicyNever`.
 - Fencing caused by an expired operation lease, and by a command that returns no terminal receipt, is removed along
   with Pod exec; see the [executor protocol](executor-protocol.md#why-pod-exec-goes).
