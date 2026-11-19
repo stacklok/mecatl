@@ -437302,6 +437302,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795112391828,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ae16a9e37107dfd38aab99479992101fdffb1e7b",
+          "message": "fix(release): simplify incremental module publication (#2900)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T13:22:20-08:00",
+          "tree_id": "14caae6c39269bc0caf9312334037ed3a4b9b4ae",
+          "url": "https://github.com/stacklok/mecatl/commit/ae16a9e37107dfd38aab99479992101fdffb1e7b"
+        },
+        "date": 1795124151361,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -569466,6 +569505,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795124147595,
+  "lastUpdate": 1795124152285,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
