@@ -1,0 +1,30 @@
+
+────────────────────
+Tool calls
+
+ … Read · file-0.go
+ … Read · file-1.go
+▶… Read · file-2.go
+
+
+
+
+
+
+
+
+
+
+
+
+
+[enter Open details]
+[esc Close]
+
+│
+│ Ask mecatl to do
+│ something…
+│ (enter to send ·
+────────────────────
+ ready      ctx 50%
+? help · / commands · ctrl+c quit

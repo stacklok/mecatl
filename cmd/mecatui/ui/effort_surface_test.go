@@ -45,9 +45,6 @@ func checkEffortBodyFits(t *testing.T, m Model) string {
 	if bounds.x0 < 0 || bounds.x1 > m.width || bounds.y0 < convTopRow(m) || bounds.y1 > convTopRow(m)+m.vp.Height() || bounds.x1-bounds.x0 > 128 {
 		t.Fatalf("card bounds outside capped offer: %+v", bounds)
 	}
-	if len(m.hits.frame) != 0 {
-		t.Fatal("effort must have no click regions")
-	}
 	return stripANSIstr(body)
 }
 
@@ -470,7 +467,7 @@ func TestEffortSurfaceResizeRevealsSelection(t *testing.T) {
 }
 
 func TestEffortSurfaceZeroAndCompactInvalidateActivation(t *testing.T) {
-	for _, offer := range [][2]int{{0, 20}, {100, 0}, {100, 4}, {3, 80}, {1, 1}} {
+	for _, offer := range [][2]int{{0, 20}, {100, 0}, {100, 2}, {3, 80}, {1, 1}} {
 		t.Run(fmt.Sprint(offer), func(t *testing.T) {
 			m, s := openedEffort(t, "max", false)
 			_ = m.View()

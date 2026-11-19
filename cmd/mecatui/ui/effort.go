@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -64,6 +65,12 @@ type effortState struct {
 	intent      surfaceIntent
 	compact     bool   // view cache: refreshed from every Render offer
 	offer       [2]int // view cache: last Render geometry, for selection reveal on resize
+	hitTargets  map[HitID]effortHit
+}
+
+type effortHit struct {
+	tier         string
+	apply, close bool
 }
 
 type effortSelectIntent struct{ effort string }
@@ -90,9 +97,42 @@ func (s *effortState) modalMaxOuterWidth() int {
 	}
 	return min(effortMaxOuterWidth, width+frame)
 }
-func (s *effortState) modalFrame() bool                      { return !s.compact }
-func (s *effortState) Close()                                { s.intent = nil }
-func (*effortState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
+func (s *effortState) modalFrame() bool { return !s.compact }
+func (s *effortState) Close()           { s.intent, s.hitTargets = nil, nil }
+
+func (s *effortState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	hit, ok := msg.(surfaceHitMsg)
+	if !ok {
+		return nil, false, false
+	}
+	target, current := s.hitTargets[hit.ID]
+	s.hitTargets = nil
+	if !current || s.compact {
+		return nil, true, false
+	}
+	if target.close {
+		return nil, true, true
+	}
+	if target.apply {
+		if target.tier == s.list.CursorID() {
+			s.apply()
+		}
+	} else {
+		for i, tier := range effortTiers {
+			if tier == target.tier {
+				s.list.SetCursor(i)
+				break
+			}
+		}
+	}
+	return nil, true, false
+}
+
+func (s *effortState) apply() {
+	if !s.compact && s.list.Valid() && s.deps.keys.Choose.Enabled() {
+		s.intent = effortSelectIntent{effort: effortValue(s.list.CursorID())}
+	}
+}
 
 func (s *effortState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if key.Matches(msg, s.deps.keys.Close) {
@@ -104,7 +144,7 @@ func (s *effortState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
 		s.list.Move(move)
 	} else if key.Matches(msg, s.deps.keys.Choose) {
-		s.intent = effortSelectIntent{effort: effortValue(s.list.CursorID())}
+		s.apply()
 	}
 	return nil, true, false
 }
@@ -219,9 +259,50 @@ func (m Model) effortSelection(effort string) client.ModelSelection {
 	return sel
 }
 
+type effortControl struct {
+	rect  cellRect
+	close bool
+}
+
+func (s *effortState) footerControls(width int) ([]string, []effortControl) {
+	var lines []string
+	var controls []effortControl
+	for _, action := range []struct {
+		hint, name     string
+		enabled, close bool
+	}{
+		{s.deps.marks.choose, "Apply", s.deps.keys.Choose.Enabled(), false},
+		{s.deps.marks.closeOnly, "Close", s.deps.keys.Close.Enabled(), true},
+	} {
+		if !action.enabled {
+			continue
+		}
+		label := "[" + terminaltext.SanitizeSingleLine(action.hint) + " " + action.name + "]"
+		w := ansi.StringWidth(label)
+		if w > width {
+			return nil, nil
+		}
+		x := 0
+		if len(lines) > 0 {
+			x = ansi.StringWidth(lines[len(lines)-1]) + 1
+		}
+		if len(lines) == 0 || x+w > width {
+			lines = append(lines, "")
+			x = 0
+		}
+		y := len(lines) - 1
+		if x > 0 {
+			lines[y] += " "
+		}
+		lines[y] += s.deps.theme.Style("viewport").Bold(true).Render(label)
+		controls = append(controls, effortControl{rect: cellRect{x0: x, x1: x + w, y0: y, y1: y + 1}, close: action.close})
+	}
+	return lines, controls
+}
+
 func (s *effortState) footerLines(width int) []string {
 	th, hk := s.deps.theme, s.deps.marks
-	var actions, navigation []string
+	var navigation []string
 	for i, pair := range []struct {
 		up, down      key.Binding
 		marks, action string
@@ -246,17 +327,9 @@ func (s *effortState) footerLines(width int) []string {
 				pair.action = "first"
 			}
 		}
-		if i == 0 {
-			actions = append(actions, marks+" "+pair.action)
-		} else {
-			navigation = append(navigation, marks+" "+pair.action)
-		}
+		navigation = append(navigation, marks+" "+pair.action)
 	}
-	if s.deps.keys.Choose.Enabled() {
-		actions = append(actions, hk.choose+" apply")
-	}
-	actions = append(actions, hk.closeOnly+" close")
-	footer := skillsTextLines(th.Style("muted"), strings.Join(actions, " · "), width)
+	footer, _ := s.footerControls(width)
 	if len(navigation) > 0 {
 		footer = append(footer, skillsTextLines(th.Style("muted"), strings.Join(navigation, " · "), width)...)
 	}
@@ -268,6 +341,7 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 	reveal := offer != s.offer || s.list.RevealPending()
 	s.offer = offer
 	s.compact = true
+	s.hitTargets = nil
 	if width <= 0 || height <= 0 {
 		s.list.SetGeometry(0, 0, 2, bounded.Clip)
 		return "", nil
@@ -275,16 +349,30 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 	th, hk := s.deps.theme, s.deps.marks
 	title := skillsTextLines(th.Style("askTitle"), "Reasoning effort", width)
 	footer := s.footerLines(width)
+	controlsText, controls := s.footerControls(width)
 	var warning []string
 	if s.noReasoning {
 		warning = skillsTextLines(th.Style("warning"), effortWarning, width)
 	}
 	rows := height - len(title) - len(warning) - len(footer)
+	if rows < 1 {
+		footer = controlsText
+		rows = height - len(title) - len(warning) - len(footer)
+	}
 	s.list.SetGeometry(width, rows, 2, bounded.Clip)
-	if !s.list.Valid() {
+	if !s.list.Valid() || ((s.deps.keys.Choose.Enabled() || s.deps.keys.Close.Enabled()) && len(controls) == 0) {
 		return renderSkillsCompact(th, hk, width), nil
 	}
 	s.compact = false
+	s.hitTargets = make(map[HitID]effortHit)
+	var regions []ClickableRegion
+	addHit := func(rect cellRect, target effortHit) {
+		if s.deps.hits != nil {
+			id := s.deps.hits.allocate()
+			s.hitTargets[id] = target
+			regions = append(regions, ClickableRegion{rect: rect, hit: id})
+		}
+	}
 	view := s.list.ViewWithIndicators(rows, reveal)
 	result := title
 	if rows == 1 && (view.Above > 0 || view.Below > 0) {
@@ -295,14 +383,22 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	for _, row := range view.Rows {
 		p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
-		result = append(result, ansi.Cut(p.Style.Render(p.Text), 0, width))
+		text := ansi.Cut(p.Style.Render(p.Text), 0, width)
+		addHit(cellRect{x0: 0, x1: ansi.StringWidth(text), y0: len(result), y1: len(result) + 1}, effortHit{tier: row.ID})
+		result = append(result, text)
 	}
 	if rows > 1 && view.Below > 0 {
 		result = append(result, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)), 0, width))
 	}
 	result = append(result, warning...)
+	for _, control := range controls {
+		rect := control.rect
+		rect.y0 += len(result)
+		rect.y1 += len(result)
+		addHit(rect, effortHit{tier: s.list.CursorID(), apply: !control.close, close: control.close})
+	}
 	result = append(result, footer...)
-	return strings.Join(result, "\n"), nil
+	return strings.Join(result, "\n"), regions
 }
 
 // effortRowText is the per-tier row label: the tier name plus a short hint for the

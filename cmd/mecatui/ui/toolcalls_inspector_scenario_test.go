@@ -989,6 +989,14 @@ func newToolcallsInspectorModel(t *testing.T) Model {
 	return m
 }
 
+func newToolcallsGoldenModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	m := newToolcallsInspectorModel(t)
+	m.deps.NoAltScreen = false
+	m = resize(m, width, height)
+	return goldenStatusFrame(t, m)
+}
+
 func openToolcallsForTest(t *testing.T, m Model) Model {
 	t.Helper()
 	opened, _ := m.runToolcalls()

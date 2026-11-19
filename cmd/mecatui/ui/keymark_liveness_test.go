@@ -678,7 +678,7 @@ func TestEffortOverlayHintsReflectKeyOverride(t *testing.T) {
 	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
 	mm, _ := m.runEffort()
 	got := stripANSIstr(mm.(Model).View().Content)
-	if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 apply · ctrl+f16 close") {
+	if !strings.Contains(got, "ctrl+f26/ctrl+f27 move") || !strings.Contains(got, "[ctrl+f17 Apply] [ctrl+f16 Close]") {
 		t.Errorf("effort hint should carry live move/apply/close: %q", got)
 	}
 	if strings.Contains(got, "↑/↓ move · enter apply · esc close") {

@@ -1,0 +1,40 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Tool calls
+
+✓ Read · file-1.go
+Call: call-1
+Arguments:
+  Path: file-1.go
+
+Result:
+read fixture result
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[esc Back]  ·  ↑/↓ scroll · pgup/pgdn page · home/g/end/G jump
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ready                                                    ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit
