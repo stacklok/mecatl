@@ -322,12 +322,23 @@ tasks:
             key=$(new_key)
             printf '%s\n' "$key" | $k create secret generic identity-broker-agent-issuer --from-file=key.pem=/dev/stdin >/dev/null
           fi
-          # has_client_data reports whether identity-broker-client holds data
-          # under the escaped key $1; only a byte count leaves kubectl.
-          has_client_data() {
-            [ "$($k get secret identity-broker-client -o "jsonpath={.data.$1}" 2>/dev/null | wc -c)" -gt 0 ]
+          # client_secret_complete reports whether identity-broker-client exists
+          # with data under both key.pem and jwks.json. It exits setup when the
+          # Secret cannot be read, so a transient API error never replaces a
+          # valid key; only a confirmed missing Secret or field is repaired.
+          client_secret_complete() {
+            if ! err=$($k get secret identity-broker-client -o name 2>&1 >/dev/null); then
+              case "$err" in
+                *NotFound*) return 1 ;;
+                *) echo "reading Secret identity-broker-client failed: $err" >&2; exit 1 ;;
+              esac
+            fi
+            for field in 'key\.pem' 'jwks\.json'; do
+              data=$($k get secret identity-broker-client -o "jsonpath={.data.$field}") || { echo 'reading Secret identity-broker-client failed' >&2; exit 1; }
+              [ -n "$data" ] || return 1
+            done
           }
-          if ! has_client_data 'key\.pem' || ! has_client_data 'jwks\.json'; then
+          if ! client_secret_complete; then
             key=$(new_key)
             keyset_file=$(mktemp)
             printf '%s\n' "$key" | deploy/mecak8s-idbroker/broker-client-key-set.sh >"$keyset_file"
