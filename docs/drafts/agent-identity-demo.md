@@ -17,12 +17,12 @@ sequenceDiagram
     Alice->>Brk: Signs in and schedules the review
     Note over Brk: Alice's refresh token stays here, outside the agent loop
     Note over Alice: Alice goes offline
-    Note over Main: 02:00, the scheduler starts the run
+    Note over Main: 02:00, the scheduler starts a read-only main agent
     Main->>Brk: Register the main agent
-    Brk-->>Main: SPIFFE credential spiffe://…/session/S1/main/A
+    Brk-->>Main: SPIFFE credential spiffe://…/agent/A
     Main->>Rev: Delegate "review the repo"
     Rev->>Brk: Register as a child of A
-    Brk-->>Rev: Linked SPIFFE credential spiffe://…/session/S1/main/A/repo-reviewer/B
+    Brk-->>Rev: SPIFFE credential spiffe://…/agent/B, recorded as a child of A
     Rev->>Brk: Read pull requests, presenting its SPIFFE credential
     Note over Brk: Checks the reviewer's read-only limit
     Brk-->>Rev: Token for this one call: Alice, acting agent B
@@ -36,7 +36,7 @@ sequenceDiagram
     Note over Aud: Recorded as audit events, joined per session
 ```
 
-*A and B are instance IDs: unique per running agent, so two agents with the same definition in one session are told apart.*
+*A and B are opaque IDs, unique per running agent. The broker records each agent's parent, session and user.*
 
 **Who holds which credential:**
 - **Alice's refresh token:** broker only, outside the agent loop. It acts for Alice only with the broker's own key.
@@ -48,7 +48,7 @@ sequenceDiagram
 
 **How agent access is down-scoped:**
 - The broker loads agent definitions at startup, from files the operator controls. The harness can't change them.
-- The repo-reviewer definition lists the GitHub tools it may use, and they are all read tools. We don't rely on the tool server marking its own tools as read-only.
+- The schedule names the main agent's definition. Both it and the repo-reviewer definition list only read tools. We don't rely on the tool server marking its own tools as read-only.
 - Sub-agents attenuate with delegation: a sub-agent never gets more access than its parent.
 - The broker checks every call against that list. Anything else is refused and the refusal is recorded; no token is issued, so nothing reaches GitHub.
 - Each gateway token is tied to the exact call the broker approved (tool, arguments, operation ID, sent as OAuth `authorization_details`), so it can't be reused for anything else.
@@ -59,8 +59,8 @@ sequenceDiagram
 
 | Ask | In the demo |
 |---|---|
-| Identity per agent, per session | Each agent gets its own SPIFFE credential, and the credential's ID includes the session |
-| Linked sub-agents | The reviewer's credential shows its parent; the audit log records the link |
+| Identity per agent, per session | Each agent gets its own SPIFFE credential; the broker records the session it belongs to |
+| Linked sub-agents | The broker records the reviewer's parent; the audit log walks from any call to its parent, session and user |
 | Attribution | Every call names Alice and the acting agent |
 | Read-only, limited credentials | The broker enforces the read-only limit; each gateway token allows one approved call |
 | Scheduled | Runs while Alice is offline, on a refresh token from her sign-in |
@@ -104,7 +104,7 @@ Schedules already use a broker handle, a renew call and a revoke call; only stor
 
 ## The audit log: options for tamper resistance
 
-None of these is tracked yet; each builds on the one before.
+Locked storage is planned for the demo; tamper-evident records and signing at the source come after it. Each builds on the one before.
 
 | Option | What it is | What we can say |
 |---|---|---|
