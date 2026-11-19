@@ -15,6 +15,14 @@ on:
         description: 'Full main commit SHA containing the reviewed implementation'
         type: string
         required: true
+      preflight_only:
+        description: 'Run the full read-only preflight without publication or adoption'
+        type: boolean
+        default: false
+      verbose:
+        description: 'Show individual Go tests and detailed test output'
+        type: boolean
+        default: false
       versions:
         description: 'Explicit JSON mapping of module directories to exact versions'
         type: string
@@ -34,7 +42,11 @@ jobs:
   preflight:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
+    env:
+      SOURCE: ${{ inputs.source }}
+      VERSIONS: ${{ inputs.versions }}
+      VERBOSE: ${{ inputs.verbose }}
     outputs:
       source: ${{ steps.preflight.outputs.source }}
       versions: ${{ steps.preflight.outputs.versions }}
@@ -58,14 +70,33 @@ jobs:
           go-version-file: tooling/go.work
           cache: false
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-      - name: Validate request and test assembled source
-        id: preflight
-        env:
-          SOURCE: ${{ inputs.source }}
-          VERSIONS: ${{ inputs.versions }}
+      # Share only this job's isolated Go environment/caches across the four invocations.
+      # Native step timeouts own long-command cleanup; Go retains its 20m package bound.
+      - name: Validate request
+        timeout-minutes: 30
         run: >-
-          python3 tooling/.github/scripts/module-publication.py preflight
+          python3 tooling/.github/scripts/module-publication.py preflight --phase validate
           --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/module-publication-environment"
+      - name: Test workspace
+        timeout-minutes: 30
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight --phase workspace
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/module-publication-environment" --verbose "$VERBOSE"
+      - name: Check selected module candidates
+        timeout-minutes: 30
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight --phase candidates
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/module-publication-environment" --verbose "$VERBOSE"
+      - name: Verify source integrity and expose publication outputs
+        id: preflight
+        timeout-minutes: 30
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight --phase final
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/module-publication-environment"
 
   # Fixed dependency-first chain: GitHub matrices do not thread an evolving SHA
   # through ordered calls. Each call returns head only AFTER its public proof.
@@ -85,6 +116,8 @@ jobs:
   #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
   agentdef:
     needs: preflight
+    # Skip the entire chain, not individual selections (which must pass head through).
+    if: ${{ !inputs.preflight_only }}
     uses: ./.github/workflows/publish-module.yml
     with:
       module: agentdef
@@ -191,6 +224,7 @@ jobs:
   # not a cache or executable patch; adoption-pr validates it on a fresh runner.
   reconcile:
     needs: [preflight, adapters]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -238,6 +272,7 @@ jobs:
   # not reserve a release across PR review waits: humans coordinate open adoptions.
   adoption-pr:
     needs: [preflight, adapters, reconcile]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -286,10 +321,16 @@ jobs:
           SOURCE: ${{ inputs.source }}
           VERSIONS: ${{ inputs.versions }}
           BRANCH: module-publication/${{ github.run_id }}-${{ github.run_attempt }}
+          PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           {
-            printf 'Source: %s\nVersions: %s\nBranch: %s\n' "$SOURCE" "$VERSIONS" "$BRANCH"
+            printf 'Source: %s\nVersions: %s\n' "$SOURCE" "$VERSIONS"
+            if [ "$PREFLIGHT_ONLY" = true ]; then
+              printf '%s\n' 'Preflight only: publication and adoption disabled; no release branch or tags created.'
+            else
+              printf 'Branch: %s\n' "$BRANCH"
+              printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
+            fi
             printf 'Job results:\n%s\n' "$RESULTS"
-            printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
           } >> "$GITHUB_STEP_SUMMARY"
