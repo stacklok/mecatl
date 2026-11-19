@@ -254,7 +254,7 @@ Workload mTLS does not bind an OAuth access token to its certificate, prove user
 
 ## Cedar authorization and audit verification
 
-The ceiling checks below belong to the [authority work](README.md#order-of-work), which follows the identity work; the audit checks belong to the identity work. Cedar is the selected engine for the effective MCP server/tool ceiling. Policy representation is an implementation choice; user, resource, argument, and dynamic delegation policies are deferred. Required focused checks are:
+The ceiling checks below belong to the [authority work](#order-of-work), which follows the identity work; the audit checks belong to the identity work. Cedar is the selected engine for the effective MCP server/tool ceiling. Policy representation is an implementation choice; user, resource, argument, and dynamic delegation policies are deferred. Required focused checks are:
 
 - Resolve `Tools`, `DisallowedTools`, and `MCPServers` with existing defaults, selection, and exclusion semantics into registered server/tool pairs. Reject ambiguous or unresolved grants; the same tool name on another server must not inherit access.
 - Prove deterministic generation from fixed admitted definition inputs, with retained source, definition revision, and generated policy revision. Prose and model output must not affect grants; source edits and restoration must not silently replace the admitted ceiling.
@@ -339,9 +339,15 @@ Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#si
 - An upstream revocation runs the broker's sign-out-everywhere path: live runs stop, parked and in-flight calls are cancelled, and no further `V` is issued.
 - A second sign-in replaces the user's upstream refresh token. A client's own sign-out does not remove it. Re-checks happen at most once per interval.
 
+## Order of work
+
+Mecatl builds this design in two steps. The identity work comes first, and the authority work follows once the identity work is in place. The order follows the dependencies: a ceiling attaches to a definition and to the chain of instances that created each other, so the broker can enforce ceilings only once definitions and registrations are recorded. Recording first also lets attribution ship without committing to a policy model.
+
+Until the authority work is in place, the only ceiling checks are the harness's delegation restrictions. The identity work already records the definition reference and creation parent at registration, so the authority work adds computation, not a migration.
+
 ## Work breakdown
 
-The [overview](README.md#order-of-work) gives the order of work and its reasons. The full breakdown:
+The full breakdown:
 
 The **identity work** establishes who acts and records it:
 
