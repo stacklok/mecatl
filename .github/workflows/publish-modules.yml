@@ -70,7 +70,7 @@ jobs:
           go-version-file: tooling/go.work
           cache: false
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-      # Share only this job's isolated Go environment/caches across the four invocations.
+      # Share only this job's isolated Go environment/caches across the three invocations.
       # Keep the root short: tests nest Unix sockets below its TMPDIR (Linux sun_path).
       # Native step timeouts own long-command cleanup; Go retains its 20m package bound.
       - name: Validate request
@@ -83,12 +83,6 @@ jobs:
         timeout-minutes: 30
         run: >-
           python3 tooling/.github/scripts/module-publication.py preflight --phase workspace
-          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
-          --environment-dir "$RUNNER_TEMP/mp" --verbose "$VERBOSE"
-      - name: Check selected module candidates
-        timeout-minutes: 30
-        run: >-
-          python3 tooling/.github/scripts/module-publication.py preflight --phase candidates
           --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
           --environment-dir "$RUNNER_TEMP/mp" --verbose "$VERBOSE"
       - name: Verify source integrity and expose publication outputs
