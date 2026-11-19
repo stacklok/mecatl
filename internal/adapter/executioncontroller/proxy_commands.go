@@ -60,7 +60,7 @@ func (p *CommandProxy) RunCommand(stream commandStream) error {
 	defer cancel()
 	up, err := executorv1.NewCommandServiceClient(a.conn).RunCommand(ctx)
 	if err != nil {
-		return executorError(err)
+		return notForwarded(executorError(err))
 	}
 	if err := up.Send(forward); err != nil {
 		if _, err = up.Recv(); err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net"
 	"path/filepath"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -424,6 +426,41 @@ func TestCommandProxyBoundsTheStart(t *testing.T) {
 	}
 	if f.connect.count() != 0 {
 		t.Fatal("refused command was forwarded")
+	}
+}
+
+func TestCommandProxyTagsAnUnreachableExecutor(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	closed, err := grpc.NewClient(
+		"passthrough:///"+addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closed.Close() })
+	f.connect.conn = closed
+
+	_, err = startCommand(t.Context(), t, f.conn, proxyRequestContext(), "true").Recv()
+	if status.Code(err) != codes.Unavailable || !refusedBeforeForwarding(status.Convert(err)) {
+		t.Fatalf("RunCommand = %v, want Unavailable with NOT_FORWARDED", err)
+	}
+	r := executorclient.NewRunner(
+		f.conn,
+		proxyRoot,
+		func(context.Context) (*executorv1.RequestContext, error) {
+			return proxyRequestContext(), nil
+		},
+	)
+	_, err = r.Run(t.Context(), "true")
+	if err == nil || errors.Is(err, executorclient.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want did not start", err)
 	}
 }
 
