@@ -302,7 +302,7 @@ func TestPublicationPreflightDiagnostics(t *testing.T) {
 	for i, phase := range []string{"validate", "workspace", "candidates", "final"} {
 		s := commands[i]
 		if s.Timeout != 30 || s.If != "" || !strings.Contains(s.Run, "--phase "+phase+" ") ||
-			!strings.Contains(s.Run, `--environment-dir "$RUNNER_TEMP/module-publication-environment"`) {
+			!strings.Contains(s.Run, `--environment-dir "$RUNNER_TEMP/mp"`) {
 			t.Fatalf("%s lost step ordering, success gating, bounds or shared environment", phase)
 		}
 		if (s.ID == "preflight") != (phase == "final") {

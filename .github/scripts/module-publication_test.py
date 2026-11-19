@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,26 @@ while not pathlib.Path("finish").exists(): time.sleep(0.01)
 
 @unittest.skipUnless(os.environ.get("PUBLICATION_DIAGNOSTICS_WORKFLOW"), "workflow supplied by Go contract test")
 class DiagnosticsWorkflowTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "linux", "publication runs on Linux")
+    def test_runner_temp_root_allows_embedded_unix_socket(self):
+        steps = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["preflight"]
+        for step in steps:
+            args = shlex.split(step["Run"])
+            root = args[args.index("--environment-dir") + 1]
+            # Bind relative to a test-owned cwd so the real kernel sees the hosted
+            # runner's path length, independent of this test's own temporary root.
+            root = root.replace("$RUNNER_TEMP", "home/runner/work/_temp")
+            with self.subTest(step=step["Run"]), tempfile.TemporaryDirectory() as temporary:
+                result = subprocess.run([sys.executable, "-c", '''import pathlib,runpy,socket,sys
+publication = runpy.run_path(sys.argv[1])
+env = publication["environment"](pathlib.Path(sys.argv[2]))
+runtime = pathlib.Path(env["TMPDIR"]) / "mecatui-test-home-4294967295/runtime/mecatui-4294967295"
+runtime.mkdir(parents=True, mode=0o700)
+with socket.socket(socket.AF_UNIX) as listener:
+    listener.bind(str(runtime / "mecated.sock"))
+''', str(SCRIPT), root], cwd=temporary, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_summary_distinguishes_diagnostics_from_publication(self):
         step = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["summary"]
         for only in ("true", "false"):
@@ -661,7 +682,7 @@ func TestSharedEnvironment(t *testing.T) {
                         break  # Native Actions' default success-only step sequencing.
                     if index == 1:
                         actual = json.loads((self.base / "workspace-env").read_text())
-                        shared = p.environment(self.base / "runner/module-publication-environment")
+                        shared = p.environment(self.base / "runner/mp")
                         for key in ("HOME", "GOPATH", "GOCACHE", "GOMODCACHE", "TMPDIR"):
                             self.assertEqual(actual[key], shared[key])
                         self.assertEqual(actual["GOFLAGS"], "-v" if scenario == "verbose" else "")
