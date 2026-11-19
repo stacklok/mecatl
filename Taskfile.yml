@@ -725,6 +725,20 @@ tasks:
       # flake attempts sum to ~50m worst-case (see e2e/suite_test.go).
       - go test -tags e2e -count=1 -timeout 60m ./e2e/...
 
+  executor:smoke:
+    desc: |
+      Build the executor workload image, serve it with throwaway mTLS certificates,
+      and check files, commands, and client authentication through mecaexec. Pass
+      `-- --keep` to leave the container running for manual testing. NOT part of
+      `task test`.
+    preconditions:
+      - sh: command -v docker >/dev/null 2>&1
+        msg: "docker is not installed"
+      - sh: command -v openssl >/dev/null 2>&1
+        msg: "openssl is not installed"
+    cmds:
+      - sh scripts/executor-smoke.sh {{.CLI_ARGS}}
+
   e2e:k8s:
     desc: |
       Run the kind-based k8s e2e suite (e2e/k8s/, build tag kind_e2e).

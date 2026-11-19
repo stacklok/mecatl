@@ -1,0 +1,33 @@
+# Starts the executor workload image with test mTLS certificates and checks
+# it from the host. The in-process suites cover the services' semantics; this
+# covers the image: entrypoint, user, certificate mounts, and command helper.
+name: executor-smoke
+
+on:
+  pull_request:
+    paths:
+      - build/execution-workload/**
+      - cmd/mecatl-executor/**
+      - internal/executionexecutor/**
+      - internal/executionenv/**
+      - scripts/executor-smoke.sh
+      - .github/workflows/executor-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Executor smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: 'stable'
+      - name: Smoke-test the executor image
+        run: sh scripts/executor-smoke.sh
