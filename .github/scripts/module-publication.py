@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -175,45 +176,164 @@ def check_changes(root, allowed=()):
     return changed
 
 
-def check_metadata(original, desired, modules, pins):
-    for key in ("Module", "Go", "Toolchain", "Replace"):
+def check_metadata(original, desired, modules, pins, reachable=(), dependency_go=None):
+    for key in ("Module", "Replace"):
         if original.get(key) != desired.get(key):
             raise CheckError(f"tidy changed reviewed {key} directive(s)")
+    expected_go = max(candidate.minimum(original.get("Go")), candidate.minimum(dependency_go))
+    if candidate.minimum(desired.get("Go")) != expected_go:
+        raise CheckError("tidy changed reviewed Go directive beyond dependency minimum")
+    toolchain = original.get("Toolchain")
+    if (toolchain and toolchain != "default"
+            and candidate.minimum(desired.get("Go")) > candidate.minimum(original.get("Go"))
+            and candidate.minimum(toolchain) <= candidate.minimum(desired.get("Go"))):
+        toolchain = None
+    if desired.get("Toolchain") != toolchain:
+        raise CheckError("tidy changed reviewed Toolchain directive(s)")
     before, after = candidate.requirements(original), candidate.requirements(desired)
-    siblings = {identity(path) for path in modules}
-    missing = (after.keys() - before.keys()) & siblings
-    if missing:
-        raise CheckError("missing new sibling require in reviewed metadata: " + ", ".join(sorted(missing)))
-    for name, (exact, _) in after.items():
-        if (name == PREFIX or name.startswith(PREFIX + "/")) and name not in siblings:
-            raise CheckError(f"unexpected repository dependency: {name}")
-        if name in siblings and name in before and name not in pins and exact != before[name][0]:
+    siblings = {identity(path): path for path in modules}
+    owner = original["Module"]["Path"]
+    for name, (exact, _) in before.items():
+        if name in siblings and name not in pins and after.get(name, (None,))[0] != exact:
             raise CheckError(f"tidy changed an unselected sibling pin: {name}")
+    for name, (exact, indirect) in after.items():
+        if name != PREFIX and not name.startswith(PREFIX + "/"):
+            continue
+        path = siblings.get(name)
+        if path is None or (siblings.get(owner) in ORDER
+                            and (path not in ORDER or ORDER.index(path) >= ORDER.index(siblings[owner]))):
+            raise CheckError(f"unexpected repository dependency/order: {name}")
+        if name not in before and (not indirect or f"{name}@{exact}" not in reachable):
+            raise CheckError(f"missing new sibling provenance or indirect declaration: {name}@{exact}")
     for name, exact in pins.items():
         if after.get(name, (None,))[0] != exact:
             raise CheckError(f"requested exact pin did not survive tidy: {name}@{exact}")
 
 
-def tidy(root, entry, modules, versions, env, standalone):
+def dependency_evidence(directory, env, flags, pins, main, versions):
+    graph = run(["go", "mod", "graph", *flags], directory, env)
+    edges = {}
+    for line in graph.splitlines():
+        source, target = line.split()
+        edges.setdefault(source, set()).add(target)
+    reachable, pending = set(), [f"{name}@{exact}" for name, exact in pins.items()]
+    while pending:
+        node = pending.pop()
+        if node in reachable or node.split("@", 1)[0] == main:
+            continue
+        reachable.add(node)
+        pending.extend(edges.get(node, ()))
+    stream = candidate.go(directory, env, "list", "-m", "-json", *flags, "all")
+    decoder, dependencies = json.JSONDecoder(), []
+    selected = {identity(path): exact for path, exact in versions.items()}
+    while stream.strip():
+        dependency, end = decoder.raw_decode(stream.lstrip())
+        stream = stream.lstrip()[end:]
+        if not dependency.get("Main"):
+            name = dependency["Path"]
+            if name in selected and dependency.get("Version") != selected[name]:
+                raise CheckError(f"requested exact pin did not survive resolution: {name}@{selected[name]}"
+                                 f" (resolved {dependency.get('Version')})")
+            dependencies.append((dependency.get("Replace") or dependency).get("GoVersion"))
+    minimum = max(dependencies, key=candidate.minimum, default=None)
+    return reachable, minimum
+
+
+def tidy(root, entry, modules, versions, env, standalone, modfile=None, replacements=None):
     name, directory, original = entry
+    manifest = modfile or directory / "go.mod"
+    flags = ["-modfile=" + str(modfile)] if modfile else []
     requirements = candidate.requirements(original)
     pins = {identity(path): exact for path, exact in versions.items()
             if identity(path) in requirements and identity(path) != name}
-    if pins:
-        candidate.go(directory, env, "mod", "edit",
-                     *[f"-require={module}@{exact}" for module, exact in pins.items()])
-    candidate.go(directory, env, "mod", "tidy")
-    desired = candidate.parse_mod(directory, env, directory / "go.mod")
-    check_metadata(original, desired, modules, pins)
-    captured = {str((directory / filename).relative_to(root)): candidate.read_optional(directory / filename)
+    edits = [f"-require={module}@{exact}" for module, exact in pins.items()]
+    edits += [f"-replace={module}={source}" for module, source in (replacements or {}).items()]
+    if edits:
+        candidate.go(directory, env, "mod", "edit", *edits, str(manifest))
+    candidate.go(directory, env, "mod", "tidy", *flags)
+    desired = candidate.parse_mod(directory, env, manifest)
+    reachable, dependency_go = dependency_evidence(directory, env, flags, pins, name, versions)
+    pins.update({identity(path): exact for path, exact in versions.items()
+                 if identity(path) in candidate.requirements(desired) and identity(path) != name})
+    toolchain = original.get("Toolchain")
+    if (toolchain and toolchain != "default"
+            and candidate.minimum(desired.get("Go")) > candidate.minimum(original.get("Go"))
+            and candidate.minimum(toolchain) <= candidate.minimum(desired.get("Go"))):
+        toolchain = None
+    if desired.get("Toolchain") != toolchain:
+        candidate.go(directory, env, "mod", "edit", "-toolchain=" + (toolchain or "none"), str(manifest))
+        desired = candidate.parse_mod(directory, env, manifest)
+    reviewed = dict(desired)
+    if replacements:
+        retained = [entry for entry in desired.get("Replace") or []
+                    if entry["Old"]["Path"] not in replacements]
+        if retained:
+            reviewed["Replace"] = retained
+        else:
+            reviewed.pop("Replace", None)
+    check_metadata(original, reviewed, modules, pins, reachable, dependency_go)
+    captured = {str((directory / filename).relative_to(root)): candidate.read_optional(
+                    manifest if filename == "go.mod" else manifest.with_suffix(".sum"))
                 for filename in ("go.mod", "go.sum")}
-    candidate.go(directory, env, "mod", "tidy", "-diff")
+    candidate.go(directory, env, "mod", "tidy", "-diff", *flags)
     if standalone:
-        candidate.go(directory, env, "build", "-mod=readonly", "./...")
-        candidate.go(directory, env, "test", "-mod=readonly", "-count=1", "-timeout=20m", "./...")
-    if any(candidate.read_optional(root / path) != data for path, data in captured.items()):
+        candidate.go(directory, env, "build", "-mod=readonly", *flags, "./...")
+        candidate.go(directory, env, "test", "-mod=readonly", *flags, "-count=1", "-timeout=20m", "./...")
+    if any(candidate.read_optional(manifest if path.endswith("go.mod") else manifest.with_suffix(".sum"))
+           != data for path, data in captured.items()):
         raise CheckError("candidate execution modified files after metadata was tested")
+    if reviewed != original:
+        changes = []
+        if reviewed.get("Go") != original.get("Go"):
+            changes.append(f"Go {original.get('Go')} -> {reviewed.get('Go')}")
+        if reviewed.get("Toolchain") != original.get("Toolchain"):
+            changes.append(f"Toolchain {original.get('Toolchain')} -> {reviewed.get('Toolchain')}")
+        before, after = candidate.requirements(original), candidate.requirements(reviewed)
+        changes += [f"{module}: {before.get(module)} -> {after.get(module)}"
+                    for module in sorted(before.keys() | after.keys()) if before.get(module) != after.get(module)]
+        print(f"{name}: metadata projected: " + "; ".join(changes), flush=True)
     return captured
+
+
+def planned_candidates(root, modules, versions, env):
+    for path in versions:
+        for source in modules[path][1].rglob("*"):
+            if source.is_symlink() and source.name != "CLAUDE.md":
+                raise CheckError(f"selected source symlink is unsupported: {source}")
+    snapshots = {directory / filename: candidate.read_optional(directory / filename)
+                 for _, directory, _ in modules.values() for filename in ("go.mod", "go.sum")}
+    snapshots[root / "go.work"] = (root / "go.work").read_bytes()
+    with tempfile.TemporaryDirectory(prefix="publication-plan-") as temporary:
+        stage = Path(temporary)
+        # Never stage unselected siblings or follow the repository's guidance aliases.
+        for path in versions:
+            shutil.copytree(modules[path][1], stage / path, ignore=shutil.ignore_patterns(".git", "CLAUDE.md"))
+        staged = {identity(path): stage / path for path in versions}
+        for path in versions:
+            name, directory, original = modules[path]
+            print(f"{name}: checking planned candidate", flush=True)
+            try:
+                replacements = {module: source for module, source in staged.items() if module != name}
+                tidy(root, (name, directory, original), modules, versions, env, standalone=False,
+                     modfile=stage / path / "go.mod", replacements=replacements)
+                tested = {file: file.read_bytes() for file in stage.rglob("*") if file.is_file()}
+                flags = ["-modfile=" + str(stage / path / "go.mod")]
+                candidate.go(directory, env, "build", "-mod=readonly", *flags, "./...")
+                candidate.go(directory, env, "test", "-mod=readonly", *flags,
+                             "-count=1", "-timeout=20m", "./...")
+                if {file for file in stage.rglob("*") if file.is_file()} != tested.keys():
+                    raise CheckError("candidate execution modified staged source files")
+                candidate.verify_unchanged(tested)
+                candidate.verify_unchanged(snapshots)
+                # Dependencies consume projected manifests without transient overrides.
+                manifest = stage / path / "go.mod"
+                if replacements:
+                    candidate.go(directory, env, "mod", "edit",
+                                 *["-dropreplace=" + module for module in replacements], str(manifest))
+            except CheckError as error:
+                raise CheckError(f"{name}: planned candidate FAIL\n{error}") from error
+            print(f"{name}: planned candidate OK", flush=True)
+        candidate.verify_unchanged(snapshots)
 
 
 def artifact(root, parent, captured, destination):
@@ -245,7 +365,7 @@ def preflight(args, versions, env):
     # Fetch each phase's main snapshot; its tip may have advanced during earlier tests.
     git(root, "fetch", "--no-tags", "origin", "refs/heads/main")
     git(root, "merge-base", "--is-ancestor", args.source, sha(git(root, "rev-parse", "FETCH_HEAD")))
-    inventory(root, env)
+    modules = inventory(root, env)
     for path, exact in versions.items():
         tag = f"refs/tags/{path}/{exact}"
         if git(root, "ls-remote", "origin", tag):
@@ -257,12 +377,7 @@ def preflight(args, versions, env):
     if args.phase == "workspace":
         run(["task", "test:workspace"], root, env, timeout=None, capture=False)
     elif args.phase == "candidates":
-        command = [sys.executable, str(Path(candidate.__file__).resolve()), "--root", str(root)]
-        if args.verbose == "true":
-            command.append("--verbose")
-        for path in versions:
-            command += ["--module", path]
-        run(command, root, env, timeout=None, capture=False)
+        planned_candidates(root, modules, versions, env)
     elif args.phase == "final":
         check_changes(root)
         if git(root, "rev-parse", "HEAD") != args.source:
@@ -278,8 +393,10 @@ def prepare(args, versions, env):
     modules = inventory(root, env)
     earlier = {path: exact for path, exact in versions.items()
                if ORDER.index(path) < ORDER.index(args.module)}
+    print(f"{identity(args.module)}: checking standalone publication", flush=True)
     captured = tidy(root, modules[args.module], modules, earlier, env, standalone=True)
     result = artifact(root, args.parent, captured, args.metadata)
+    print(f"{identity(args.module)}: standalone publication OK", flush=True)
     return dict(result, selected="true")
 
 
@@ -296,13 +413,14 @@ def reconcile(args, versions, env):
     # Later consumers (with development replacements) can observe earlier changes.
     # Verify the entire resulting metadata is stable, not just each intermediate tree.
     captured = {path: candidate.read_optional(root / path) for path in allowed}
-    for path, (_, directory, original) in modules.items():
+    for path, (name, directory, original) in modules.items():
         if str(Path(path) / "go.mod") in allowed:
             candidate.go(directory, env, "mod", "tidy", "-diff")
             desired = candidate.parse_mod(directory, env, directory / "go.mod")
             pins = {identity(p): exact for p, exact in versions.items()
                     if identity(p) in candidate.requirements(original)}
-            check_metadata(original, desired, modules, pins)
+            reachable, dependency_go = dependency_evidence(directory, env, [], pins, name, versions)
+            check_metadata(original, desired, modules, pins, reachable, dependency_go)
     return artifact(root, args.parent, captured, args.metadata)
 
 

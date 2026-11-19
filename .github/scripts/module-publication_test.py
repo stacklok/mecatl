@@ -76,9 +76,10 @@ while not pathlib.Path("finish").exists(): time.sleep(0.01)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text("module fixture.invalid/root\n\ngo 1.23.0\n")
+            (root / "fixture.go").write_text("package fixture\n")
             original = {"Module": {"Path": "fixture.invalid/root"}, "Go": "1.23.0"}
-            with mock.patch.object(p.candidate, "parse_mod", return_value=original), \
-                    mock.patch.object(p.candidate, "go") as go:
+            env = dict(os.environ, GOWORK="off", GOENV="off", GOFLAGS="", GOTOOLCHAIN="local", GOPROXY="off")
+            with mock.patch.object(p.candidate, "go", wraps=p.candidate.go) as go:
                 p.tidy(root, ("fixture.invalid/root", root, original), {}, {}, env, standalone=True)
             self.assertIn(mock.call(root, env, "test", "-mod=readonly", "-count=1",
                                     "-timeout=20m", "./..."), go.call_args_list)
@@ -287,17 +288,17 @@ class LocalTests(unittest.TestCase):
         self.command("git", "commit", "--allow-empty", "-m", "fixture")
         self.head = self.command("git", "rev-parse", "HEAD")
 
-    def publish(self, path, exact, requires=""):
+    def publish(self, path, exact, requires="", go_version="1.27.3", source=None):
         module = p.identity(path)
         destination = self.proxy / module / "@v"
         destination.mkdir(parents=True, exist_ok=True)
-        mod = f"module {module}\n\ngo 1.27.3\n{requires}"
+        mod = f"module {module}\n\ngo {go_version}\n{requires}"
         (destination / f"{exact}.mod").write_text(mod)
         (destination / f"{exact}.info").write_text(json.dumps({"Version": exact, "Time": "2026-01-01T00:00:00Z"}))
         (destination / "list").write_text("\n".join(sorted(p.stem for p in destination.glob("*.mod"))) + "\n")
         with zipfile.ZipFile(destination / f"{exact}.zip", "w") as archive:
             archive.writestr(f"{module}@{exact}/go.mod", mod)
-            archive.writestr(f"{module}@{exact}/fixture.go", "package fixture\nconst Value = 1\n")
+            archive.writestr(f"{module}@{exact}/fixture.go", source or "package fixture\nconst Value = 1\n")
 
     def require(self, path, dependency="engine", exact="v0.1.0", replacement=False):
         mod = self.root / path / "go.mod"
@@ -315,6 +316,319 @@ class LocalTests(unittest.TestCase):
     def args(self, **extra):
         return argparse.Namespace(root=self.root, source=self.head, parent=self.head,
                                   metadata=self.base / "metadata.json", **extra)
+
+    def planned_upgrade(self):
+        self.publish("agentdef", "v0.1.0")
+        self.publish("engine", "v0.1.0", go_version="1.27.0")
+        self.write("adapters/go.mod", f"module {p.identity('adapters')}\n\ngo 1.27.0\n")
+        self.require("adapters")
+        # This is a tidy committed published baseline, not the planned graph.
+        p.candidate.go(self.root / "adapters", self.env, "mod", "tidy", "-diff")
+        self.require("engine", "agentdef")
+        self.write("engine/fixture.go", f'package fixture\nimport a "{p.identity("agentdef")}"\n'
+                   'const Planned = a.Value + 6\nconst Value = Planned\n')
+        self.write("adapters/fixture.go", f'package fixture\nimport e "{p.identity("engine")}"\nconst Value = e.Planned\n')
+        self.write("agentdef/fixture.go", "deliberately invalid unselected local source\n")
+        self.write("adapters/fixture_test.go", 'package fixture\nimport ("os"; "testing")\n'
+                   'func TestRelativeFixture(t *testing.T) {\n'
+                   ' if _, err := os.ReadFile("fixture.go"); err != nil { t.Fatal(err) }\n'
+                   ' if Value != 7 { t.Fatalf("planned value = %d, want 7", Value) }\n}\n')
+        self.commit()
+        return {"engine": "v0.2.0", "provider/ssefilter": "v0.3.0", "adapters": "v0.3.0"}
+
+    def test_planned_graph_matches_standalone_without_unselected_source(self):
+        versions = self.planned_upgrade()
+        with self.assertRaisesRegex(p.CheckError, "exit 1"):
+            p.candidate.go(self.root / "adapters", self.env, "build", "-mod=readonly", "./...")
+        originals = {path: path.read_bytes() for path in self.root.rglob("*")
+                     if path.is_file() and ".git" not in path.relative_to(self.root).parts}
+        projected = {}
+        tidy = p.tidy
+        def capture(*args, **kwargs):
+            result = tidy(*args, **kwargs)
+            manifest = kwargs["modfile"]
+            parsed = p.candidate.parse_mod(self.root, self.env, manifest)
+            parsed.pop("Replace", None)
+            projected[args[1][0]] = parsed
+            return result
+        with mock.patch.object(p, "tidy", side_effect=capture):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), versions, self.env)
+        for path, data in originals.items():
+            self.assertEqual(path.read_bytes(), data, str(path))
+        desired = projected[p.identity("adapters")]
+        self.assertEqual(desired["Go"], "1.27.3")
+        self.assertIsNone(desired.get("Toolchain"))
+        self.assertEqual(p.candidate.requirements(desired), {
+            p.identity("engine"): ("v0.2.0", False), p.identity("agentdef"): ("v0.1.0", True)})
+        # A real public artifact now supplies the same graph for standalone prepare.
+        self.publish("engine", "v0.2.0", f"require {p.identity('agentdef')} v0.1.0\n",
+                     source=(self.root / "engine/fixture.go").read_text())
+        p.prepare(self.args(module="adapters"), versions, self.env)
+        standalone = p.candidate.parse_mod(self.root, self.env, self.root / "adapters/go.mod")
+        self.assertEqual(standalone, desired)
+
+    def test_planned_build_and_test_require_staged_modfile(self):
+        versions = self.planned_upgrade()
+        modules = p.inventory(self.root, self.env)
+        go = p.candidate.go
+        for verb in ("build", "test"):
+            def baseline(directory, env, *args):
+                if directory == self.root / "adapters" and args[0] == verb:
+                    args = tuple(arg for arg in args if not arg.startswith("-modfile="))
+                return go(directory, env, *args)
+            with self.subTest(verb=verb), mock.patch.object(p.candidate, "go", side_effect=baseline), \
+                    self.assertRaisesRegex(p.CheckError, "planned candidate FAIL"):
+                p.planned_candidates(self.root, modules, versions, self.env)
+        p.check_changes(self.root)
+
+    def connected_upgrade(self):
+        self.publish("agentdef", "v0.1.0")
+        self.publish("engine", "v0.1.0", go_version="1.27.0")
+        self.publish("provider/ssefilter", "v0.1.0", go_version="1.27.0")
+        self.write("adapters/go.mod", f'module {p.identity("adapters")}\n\ngo 1.27.0\n'
+                   f'\nrequire (\n {p.identity("engine")} v0.1.0\n {p.identity("provider/ssefilter")} v0.1.0\n)\n')
+        self.write("adapters/fixture.go", 'package fixture\nimport (\n'
+                   f'e "{p.identity("engine")}"\ns "{p.identity("provider/ssefilter")}"\n)\n'
+                   'const Value = e.Value + s.Value\n')
+        p.candidate.go(self.root / "adapters", self.env, "mod", "tidy")
+        p.candidate.go(self.root / "adapters", self.env, "mod", "tidy", "-diff")
+        self.require("engine", "agentdef")
+        self.write("agentdef/fixture.go", "package fixture\nconst Value = 9\n")
+        self.write("provider/ssefilter/fixture.go", "poisoned unselected sibling\n")
+        self.write("adapters/fixture_test.go", 'package fixture\nimport "testing"\n'
+                   'func TestPlannedValue(t *testing.T) { if Value != 10 { t.Fatalf("value = %d, want 10", Value) } }\n')
+        self.commit()
+        return {"agentdef": "v0.2.0", "engine": "v0.2.0", "adapters": "v0.3.0"}
+
+    def test_connected_selected_projection_matches_public_prepare(self):
+        versions = self.connected_upgrade()
+        projected = {}
+        tidy = p.tidy
+        def capture(*args, **kwargs):
+            result = tidy(*args, **kwargs)
+            parsed = p.candidate.parse_mod(self.root, self.env, kwargs["modfile"])
+            parsed.pop("Replace", None)
+            projected[args[1][0]] = parsed
+            return result
+        with mock.patch.object(p, "tidy", side_effect=capture):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), versions, self.env)
+        engine, agentdef = p.identity("engine"), p.identity("agentdef")
+        self.assertEqual(p.candidate.requirements(projected[engine])[agentdef], ("v0.2.0", False))
+        self.assertEqual(p.candidate.requirements(projected[p.identity("adapters")]), {
+            engine: ("v0.2.0", False), agentdef: ("v0.2.0", True),
+            p.identity("provider/ssefilter"): ("v0.1.0", False)})
+        p.check_changes(self.root)
+        self.publish("agentdef", "v0.2.0", source=(self.root / "agentdef/fixture.go").read_text())
+        self.publish("engine", "v0.2.0", f"require {agentdef} v0.2.0\n",
+                     source=(self.root / "engine/fixture.go").read_text())
+        for module in ("engine", "adapters"):
+            with self.subTest(module=module):
+                args = self.args(module=module)
+                p.prepare(args, versions, self.env)
+                standalone = p.candidate.parse_mod(self.root, self.env, self.root / module / "go.mod")
+                self.assertEqual(standalone, projected[p.identity(module)])
+                args.metadata.unlink()
+                self.command("git", "restore", "--", module + "/go.mod", module + "/go.sum")
+
+    def test_downstream_requires_retained_upstream_projection(self):
+        versions = self.connected_upgrade()
+        modules = p.inventory(self.root, self.env)
+        original = (self.root / "engine/go.mod").read_bytes()
+        go = p.candidate.go
+        discarded = []
+        def discard(directory, env, *args):
+            result = go(directory, env, *args)
+            if directory == self.root / "engine" and any(arg.startswith("-dropreplace=") for arg in args):
+                Path(args[-1]).write_bytes(original)
+                discarded.append(True)
+            return result
+        with mock.patch.object(p.candidate, "go", side_effect=discard), \
+                self.assertRaisesRegex(p.CheckError, "requested exact pin"):
+            p.planned_candidates(self.root, modules, versions, self.env)
+        self.assertEqual(discarded, [True])
+        p.check_changes(self.root)
+
+    def test_planned_missing_public_prerequisite_has_no_local_fallback(self):
+        versions = self.planned_upgrade()
+        # Clear both proxy and cache before the planned invocation.
+        import shutil
+        shutil.rmtree(self.proxy / p.identity("agentdef"))
+        self.env["GOMODCACHE"] = str(self.base / "empty-module-cache")
+        with self.assertRaises(p.CheckError):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), versions, self.env)
+        p.check_changes(self.root)
+
+    def test_planned_tests_fail_and_detect_metadata_mutation(self):
+        self.write("engine/fail_test.go", 'package fixture\nimport "testing"\n'
+                   'func TestFail(t *testing.T) { t.Fatal("planned failure") }\n')
+        self.commit()
+        with self.assertRaisesRegex(p.CheckError, "exit 1"):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), {"engine": "v0.2.0"}, self.env)
+        self.write("engine/fail_test.go", 'package fixture\nimport ("os"; "testing")\n'
+                   'func TestMutation(t *testing.T) {\n'
+                   ' if err := os.WriteFile("go.mod", []byte("changed"), 0600); err != nil { t.Fatal(err) }\n}\n')
+        self.commit()
+        with self.assertRaisesRegex(p.CheckError, "metadata changed"):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), {"engine": "v0.2.0"}, self.env)
+
+    def test_planned_staged_dependency_and_manifest_mutations_fail(self):
+        versions = self.planned_upgrade()
+        self.write("engine/stage-marker", "marker\n")
+        self.commit()
+        modules = p.inventory(self.root, self.env)
+        go = p.candidate.go
+        for verb in ("build", "test"):
+            for mutation in ("edit", "add", "delete", "manifest"):
+                mutated = []
+                def tamper(directory, env, *args):
+                    result = go(directory, env, *args)
+                    if directory == self.root / "adapters" and args[0] == verb:
+                        manifest = Path(next(arg.split("=", 1)[1] for arg in args if arg.startswith("-modfile=")))
+                        engine = manifest.parent.parent / "engine"
+                        if mutation == "edit":
+                            source = engine / "fixture.go"
+                            source.write_bytes(source.read_bytes() + b"\n// mutated dependency\n")
+                        elif mutation == "add":
+                            (engine / "added-file").write_text("unexpected\n")
+                        elif mutation == "delete":
+                            (engine / "stage-marker").unlink()
+                        else:
+                            manifest.write_bytes(manifest.read_bytes() + b"\n// mutated alternate manifest\n")
+                        mutated.append(True)
+                    return result
+                with self.subTest(verb=verb, mutation=mutation), \
+                        mock.patch.object(p.candidate, "go", side_effect=tamper), \
+                        self.assertRaisesRegex(p.CheckError, "metadata changed during check|modified staged source files"):
+                    p.planned_candidates(self.root, modules, versions, self.env)
+                self.assertEqual(mutated, [True])
+                p.check_changes(self.root)
+
+    def test_selected_source_symlinks_rejected_before_copy(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "fixture.go").write_text("outside target must not be read\n")
+        modules = p.inventory(self.root, self.env)
+        link = self.root / "engine/linked"
+        for target in (self.root / "provider/ssefilter", self.root / "provider/ssefilter/fixture.go",
+                       outside, outside / "fixture.go", outside / "missing"):
+            with self.subTest(target=target):
+                link.symlink_to(target)
+                try:
+                    with mock.patch.object(p.shutil, "copytree", wraps=p.shutil.copytree) as copy, \
+                            self.assertRaisesRegex(p.CheckError, "selected source symlink"):
+                        p.planned_candidates(self.root, modules, {"agentdef": "v0.2.0", "engine": "v0.2.0"}, self.env)
+                    copy.assert_not_called()
+                finally:
+                    link.unlink()
+
+    def test_guidance_symlink_aliases_are_omitted_without_following(self):
+        for relative in ("engine/CLAUDE.md", "engine/nested/CLAUDE.md"):
+            link = self.root / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(self.base / "nonexistent-outside-target")
+        self.commit()
+        go, checked = p.candidate.go, []
+        def verify(directory, env, *args):
+            result = go(directory, env, *args)
+            if args[0] == "build":
+                manifest = Path(next(arg.split("=", 1)[1] for arg in args if arg.startswith("-modfile=")))
+                self.assertEqual(list(manifest.parent.rglob("CLAUDE.md")), [])
+                checked.append(True)
+            return result
+        with mock.patch.object(p.candidate, "go", side_effect=verify):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env), {"engine": "v0.2.0"}, self.env)
+        self.assertEqual(checked, [True])
+        p.check_changes(self.root)
+
+    def test_resolved_selected_version_mismatch_without_root_requirement(self):
+        self.publish("agentdef", "v0.2.0")
+        self.publish("agentdef", "v0.3.0")
+        # A dependency used only by engine's own tests stays out of the consumer's requirements.
+        self.publish("engine", "v0.2.0", f'require {p.identity("agentdef")} v0.3.0\n')
+        archive = self.proxy / p.identity("engine") / "@v/v0.2.0.zip"
+        with zipfile.ZipFile(archive, "a") as output:
+            output.writestr(p.identity("engine") + '@v0.2.0/fixture_test.go',
+                            f'package fixture\nimport _ "{p.identity("agentdef")}"\n')
+        self.require("adapters")
+        self.commit()
+        directory = self.root / "adapters"
+        p.candidate.go(directory, self.env, "mod", "edit", f'-require={p.identity("engine")}@v0.2.0')
+        p.candidate.go(directory, self.env, "mod", "tidy")
+        desired = p.candidate.parse_mod(directory, self.env, directory / "go.mod")
+        self.assertNotIn(p.identity("agentdef"), p.candidate.requirements(desired))
+        resolved = json.loads(p.candidate.go(directory, self.env, "list", "-m", "-json", p.identity("agentdef")))
+        self.assertEqual(resolved["Version"], "v0.3.0")
+        self.command("git", "restore", "--", "adapters/go.mod", "adapters/go.sum")
+        with self.assertRaisesRegex(p.CheckError, "requested exact pin"):
+            p.prepare(self.args(module="adapters"),
+                      {"agentdef": "v0.2.0", "engine": "v0.2.0", "adapters": "v0.3.0"}, self.env)
+
+    def test_new_indirect_requires_exact_dependency_provenance_and_legal_identity(self):
+        original = {"Module": {"Path": p.identity("adapters")}, "Go": "1.27.0"}
+        engine = p.identity("engine")
+        for name, indirect, reachable in (
+                (engine, False, {engine + "@v0.2.0"}),
+                (engine, True, set()),
+                (engine, True, {engine + "@v0.1.0"}),
+                (p.identity("unknown"), True, {p.identity("unknown") + "@v0.2.0"}),
+                (p.identity("adapters"), True, {p.identity("adapters") + "@v0.2.0"})):
+            desired = dict(original, Require=[{"Path": name, "Version": "v0.2.0", "Indirect": indirect}])
+            with self.subTest(name=name, indirect=indirect, reachable=reachable), self.assertRaises(p.CheckError):
+                p.check_metadata(original, desired, p.ORDER, {}, reachable)
+        desired = dict(original, Go="1.27.3")
+        p.check_metadata(original, desired, p.ORDER, {}, dependency_go="1.27.3")
+        for changed in ("1.26.0", "1.27.4", "1.28.0"):
+            with self.subTest(go=changed), self.assertRaisesRegex(p.CheckError, "Go directive"):
+                p.check_metadata(original, dict(desired, Go=changed), p.ORDER, {}, dependency_go="1.27.3")
+
+    def test_real_new_direct_sibling_is_not_inferred_from_selection(self):
+        self.write("adapters/fixture.go", f'package fixture\nimport e "{p.identity("engine")}"\nconst Value = e.Value\n')
+        self.commit()
+        with self.assertRaisesRegex(p.CheckError, "requested exact pin did not survive resolution"):
+            p.planned_candidates(self.root, p.inventory(self.root, self.env),
+                                 {"engine": "v0.2.0", "adapters": "v0.3.0"}, self.env)
+        p.check_changes(self.root)
+
+    def test_real_new_indirect_cannot_prove_itself_through_main_edges(self):
+        engine = p.identity("engine")
+        self.publish("internal/adaptersupport", "v0.1.0", f"require {engine} v0.2.0\n",
+                     source=f'package fixture\nimport e "{engine}"\nconst Value = e.Value\n')
+        self.require("provider/openai", "provider/ssefilter")
+        manifest = self.root / "provider/openai/go.mod"
+        manifest.write_text(manifest.read_text() + f'\nrequire {p.identity("internal/adaptersupport")} v0.1.0\n')
+        self.write("provider/openai/fixture.go", 'package fixture\nimport (\n'
+                   f's "{p.identity("provider/ssefilter")}"\na "{p.identity("internal/adaptersupport")}"\n)\n'
+                   'const Value = s.Value + a.Value\n')
+        self.publish("provider/ssefilter", "v0.3.0", f"require {engine} v0.1.0\n",
+                     source=f'package fixture\nimport e "{engine}"\nconst Value = e.Value\n')
+        self.commit()
+        for exact in ("v0.2.0", "v0.3.0"):
+            with self.subTest(selected_dependency=exact), self.assertRaisesRegex(p.CheckError, "missing new sibling"):
+                p.prepare(self.args(module="provider/openai"),
+                          {"engine": "v0.2.0", "provider/ssefilter": exact, "provider/openai": "v0.3.0"}, self.env)
+            self.command("git", "restore", "--", "provider/openai/go.mod", "provider/openai/go.sum")
+
+    def test_real_dependency_go_raise_normalizes_only_obsolete_toolchain(self):
+        self.publish("agentdef", "v0.1.0", go_version="1.26.0")
+        self.write("engine/fixture.go", f'package fixture\nimport a "{p.identity("agentdef")}"\nconst Value = a.Value\n')
+        for toolchain in (None, "go1.25.5", "go1.27.3", "default"):
+            with self.subTest(toolchain=toolchain):
+                text = f'module {p.identity("engine")}\n\ngo 1.25.0\n'
+                if toolchain:
+                    text += f'\ntoolchain {toolchain}\n'
+                text += f'\nrequire {p.identity("agentdef")} v0.1.0\n'
+                manifest = self.write("engine/go.mod", text)
+                original = p.candidate.parse_mod(manifest.parent, self.env, manifest)
+                # `toolchain default` itself is not readonly-tidy under Go 1.27.3.
+                # Preserve it, but keep the existing standalone tidy gate strict.
+                gate = self.assertRaises(p.CheckError) if toolchain == "default" else contextlib.nullcontext()
+                with gate:
+                    p.tidy(self.root, (p.identity("engine"), manifest.parent, original), p.ORDER,
+                           {}, self.env, standalone=True)
+                desired = p.candidate.parse_mod(manifest.parent, self.env, manifest)
+                self.assertEqual(desired["Go"], "1.26.0")
+                self.assertEqual(desired.get("Toolchain"),
+                                 None if toolchain in (None, "go1.25.5") else toolchain)
 
     def test_inventory_and_drift(self):
         self.assertEqual(set(p.inventory(self.root, self.env)), set(p.ORDER + p.CONSUMERS))
@@ -401,6 +715,18 @@ class LocalTests(unittest.TestCase):
         affected = (".", "environment/microvm", "integration/microvm", "authn/oidc")
         for path in affected:
             self.require(path, replacement=path in p.CONSUMERS)
+        # The integration module also retains local root/runtime dependencies.
+        integration = self.root / "integration/microvm"
+        p.candidate.go(integration, self.env, "mod", "edit",
+                       f"-require={p.identity('.')}@v0.0.1",
+                       f"-require={p.identity('environment/microvm')}@v0.0.1",
+                       f"-replace={p.identity('.')}=../..",
+                       f"-replace={p.identity('environment/microvm')}=../../environment/microvm")
+        self.write("integration/microvm/fixture.go", 'package fixture\nimport (\n'
+                   f'e "{p.identity("engine")}"\nr "{p.identity(".")}"\n'
+                   f'm "{p.identity("environment/microvm")}"\n)\n'
+                   'const Value = e.Value + r.Value + m.Value\n')
+        p.candidate.go(integration, self.env, "mod", "tidy")
         self.commit()
         originals = p.inventory(self.root, self.env)
         args = self.args()
@@ -447,7 +773,7 @@ class LocalTests(unittest.TestCase):
     def test_directive_changes_and_missing_sibling_rejected(self):
         original = {"Module": {"Path": p.identity("adapters")}, "Go": "1.27.3",
                     "Toolchain": "go1.27.4", "Require": []}
-        for key, value in (("Go", "1.28"), ("Toolchain", None),
+        for key, value in (("Go", "1.28"), ("Toolchain", None), ("Toolchain", "go1.28.0"),
                            ("Module", {"Path": "bad"}), ("Replace", [{"Old": {"Path": "bad"}}])):
             desired = dict(original, **{key: value})
             with self.subTest(key=key), self.assertRaisesRegex(p.CheckError, "directive"):
@@ -456,7 +782,7 @@ class LocalTests(unittest.TestCase):
         with self.assertRaisesRegex(p.CheckError, "missing new sibling"):
             p.check_metadata(original, desired, p.ORDER, {})
 
-    def test_real_tidy_missing_sibling_rejected(self):
+    def test_real_tidy_missing_indirect_sibling_allowed_with_provenance(self):
         # Dependency transitively requires a workspace sibling absent from reviewed metadata.
         self.publish("provider/ssefilter", "v0.2.0", f"require {p.identity('engine')} v0.2.0\n")
         # Make the proxy dependency import engine so tidy adds its indirect requirement.
@@ -468,9 +794,10 @@ class LocalTests(unittest.TestCase):
             output.writestr(prefix + "fixture.go", f'package fixture\nimport e "{p.identity("engine")}"\nconst Value = e.Value\n')
         self.require("provider/openai", "provider/ssefilter")
         self.commit()
-        with self.assertRaisesRegex(p.CheckError, "missing new sibling"):
-            p.prepare(self.args(module="provider/openai"),
-                      {"provider/ssefilter": "v0.2.0", "provider/openai": "v0.3.0"}, self.env)
+        p.prepare(self.args(module="provider/openai"),
+                  {"provider/ssefilter": "v0.2.0", "provider/openai": "v0.3.0"}, self.env)
+        desired = p.candidate.parse_mod(self.root, self.env, self.root / "provider/openai/go.mod")
+        self.assertEqual(p.candidate.requirements(desired)[p.identity("engine")], ("v0.2.0", True))
 
     def test_source_or_tested_metadata_mutation_fails(self):
         original_go = p.candidate.go
@@ -701,8 +1028,8 @@ func TestSharedEnvironment(t *testing.T) {
     def preflight(self, mutate=None, phases=("validate", "workspace", "candidates", "final"), **env):
         original = p.run
         def expensive(command, directory, environment=None, **kwargs):
-            if command[0] in ("task", p.sys.executable):
-                if mutate and command[0] == "task":
+            if command[0] == "task":
+                if mutate:
                     mutate()
                 return ""
             return original(command, directory, environment, **kwargs)
@@ -713,17 +1040,18 @@ func TestSharedEnvironment(t *testing.T) {
                 result = p.preflight(args, {"engine": "v0.2.0"}, self.env)
         return result, run
 
-    def test_preflight_actual_git_and_trusted_candidate_command(self):
-        result, run = self.preflight()
+    def test_preflight_actual_git_and_planned_candidate_checks(self):
+        with mock.patch.object(p, "planned_candidates", wraps=p.planned_candidates) as planned:
+            result, run = self.preflight()
+        planned.assert_called_once()
+        self.assertEqual(planned.call_args.args[0], self.root)
+        self.assertEqual(planned.call_args.args[2], {"engine": "v0.2.0"})
         self.assertEqual(result["branch"], "module-publication/123-2")
         calls = [call.args[0] for call in run.call_args_list]
         self.assertEqual(calls.count(["task", "test:workspace"]), 1)
         candidates = [command for command in calls if command[0] == p.sys.executable]
-        self.assertEqual(len(candidates), 1)
-        self.assertEqual(candidates[0][1], str(SCRIPT.with_name("module-candidate.py")))
-        self.assertNotIn("--verbose", candidates[0])
-        self.assertEqual(candidates[0][-2:], ["--module", "engine"])
-        expensive = [call for call in run.call_args_list if call.args[0][0] in ("task", sys.executable)]
+        self.assertEqual(candidates, [])  # Publisher owns the planned graph, not generic module-candidate.
+        expensive = [call for call in run.call_args_list if call.args[0][0] == "task"]
         self.assertTrue(all(not call.kwargs["capture"] and call.kwargs["timeout"] is None for call in expensive))
         self.assertEqual(expensive[0].args[2]["GOFLAGS"], "")
         self.assertEqual(self.env["GOFLAGS"], "")
