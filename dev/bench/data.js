@@ -567782,9 +567782,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795092497281,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed4a4d4393d63dbe948af38b0eaeaf789c1823a2",
+          "message": "feat(executor): smoke-test the workload image with a manual client (#2889)\n\nThe in-process suites cover the executor services' semantics but not\nthe image that ships them. `task executor:smoke` builds\n`build/execution-workload/Dockerfile`, serves it with throwaway mTLS\ncertificates in the mounted layout, and checks a file round trip,\ncommand output and exit status as the image user, and refusal of both\na certificate not valid for client authentication and a CA-signed\nclient certificate whose URI is not `client-uri`. It cleans up on\nsuccess, failure, and interrupt; `--keep` leaves the container for\nmanual testing, and `EXECUTOR_SMOKE_PORT` pins its port.\n\n`mecaexec` drives the executor `FileService` and `CommandService`\nthrough `executorclient` and prints a class for each error, so unknown\noutcomes, limits, and version mismatches can be checked by hand. It is\nnot released, so the self-knowledge test excludes it alongside\n`mecademo`.\n\nThe `executor-smoke` workflow runs the script on pull requests that\ntouch the image, `mecatl-executor`, `executionexecutor`, or\n`executionenv`. The `executor-smoke` skill runs it, maps failures to\nlikely causes, and lists the manual scenarios.\n\nCloses: #2771",
+          "timestamp": "2026-11-19T15:17:49Z",
+          "tree_id": "203735759d939b024546537b7dc9010f2258824d",
+          "url": "https://github.com/stacklok/mecatl/commit/ed4a4d4393d63dbe948af38b0eaeaf789c1823a2"
+        },
+        "date": 1795102166670,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 779,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32183,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795102162365,
+  "lastUpdate": 1795102167919,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
