@@ -206,8 +206,8 @@ func notForwarded(err error) error {
 
 func refusedBeforeForwarding(st *status.Status) bool {
 	for _, d := range st.Details() {
-		if detail, ok := d.(*executorv1.ErrorDetail); ok &&
-			detail.GetReason() == executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED {
+		detail, ok := d.(*executorv1.ErrorDetail)
+		if ok && detail.GetReason() == executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED {
 			return true
 		}
 	}

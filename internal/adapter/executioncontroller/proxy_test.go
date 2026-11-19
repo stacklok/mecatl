@@ -182,13 +182,16 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 	t.Cleanup(server.Stop)
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(ca)
-	conn, err := grpc.NewClient(listener.Addr().String(),
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			MinVersion:   tls.VersionTLS13,
-			ServerName:   "provider.test",
-			RootCAs:      roots,
-			Certificates: []tls.Certificate{clientCert},
-		})))
+	creds := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		ServerName:   "provider.test",
+		RootCAs:      roots,
+		Certificates: []tls.Certificate{clientCert},
+	})
+	conn, err := grpc.NewClient(
+		listener.Addr().String(),
+		grpc.WithTransportCredentials(creds),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,8 +312,10 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 		},
 		{
 			name: "lapsed claim",
-			mutate: setField([]string{"status", "activeRun", "expiresAt"},
-				time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)),
+			mutate: setField(
+				[]string{"status", "activeRun", "expiresAt"},
+				time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano),
+			),
 			wantFiles: codes.Aborted, wantCommands: codes.Aborted,
 		},
 		{
@@ -360,8 +365,10 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 			if tc.request != nil {
 				rc = tc.request(rc)
 			}
-			_, fileErr := executorv1.NewFileServiceClient(f.conn).StatFile(t.Context(),
-				&executorv1.StatFileRequest{Context: rc, Path: "a.txt"})
+			_, fileErr := executorv1.NewFileServiceClient(f.conn).StatFile(
+				t.Context(),
+				&executorv1.StatFileRequest{Context: rc, Path: "a.txt"},
+			)
 			if status.Code(fileErr) != tc.wantFiles {
 				t.Fatalf("StatFile = %v, want %v", fileErr, tc.wantFiles)
 			}
@@ -411,8 +418,8 @@ func TestCommandProxyBoundsTheStart(t *testing.T) {
 			Timeout: durationpb.New(2 * time.Minute),
 		}},
 	})
-	if _, err := stream.Recv(); status.Code(err) != codes.InvalidArgument ||
-		!refusedBeforeForwarding(status.Convert(err)) {
+	_, err = stream.Recv()
+	if status.Code(err) != codes.InvalidArgument || !refusedBeforeForwarding(status.Convert(err)) {
 		t.Fatalf("timeout over the template limit = %v", err)
 	}
 	if f.connect.count() != 0 {
@@ -493,10 +500,13 @@ func TestFileProxyEnforcesTheTemplateFileLimit(t *testing.T) {
 	if err := f.files.Write(t.Context(), "big.txt", []byte("12345")); err != nil {
 		t.Fatal(err)
 	}
-	ws := executorclient.NewWorkspace(f.conn, proxyRoot,
+	ws := executorclient.NewWorkspace(
+		f.conn,
+		proxyRoot,
 		func(context.Context) (*executorv1.RequestContext, error) {
 			return proxyRequestContext(), nil
-		})
+		},
+	)
 	_, err := ws.Read(t.Context(), "big.txt")
 	if status.Code(err) != codes.ResourceExhausted ||
 		fileconformance.Reason(err) != executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED {
@@ -542,8 +552,10 @@ func TestExecutorConnectorFollowsThePinnedPod(t *testing.T) {
 			return err
 		}
 		defer release()
-		_, err = executorv1.NewFileServiceClient(conn).StatFile(t.Context(),
-			&executorv1.StatFileRequest{Path: "a.txt"})
+		_, err = executorv1.NewFileServiceClient(conn).StatFile(
+			t.Context(),
+			&executorv1.StatFileRequest{Path: "a.txt"},
+		)
 		return err
 	}
 	if err := stat(); err != nil {
