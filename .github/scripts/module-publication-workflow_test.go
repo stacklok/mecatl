@@ -208,8 +208,8 @@ func needs(j job, want string) bool {
 
 func TestPublicationProofChain(t *testing.T) {
 	w := load(t, "publish-modules")
-	modules := []string{"engine", "contracts/gen/go/mecatl/driver", "provider/ssefilter", "internal/adaptersupport", "authn/oidc", "provider/anthropic", "provider/openai", "provider/openaichat", "adapters"}
-	names := []string{"engine", "driver", "ssefilter", "adaptersupport", "oidc", "anthropic", "openai", "openaichat", "adapters"}
+	modules := []string{"agentdef", "engine", "contracts/gen/go/mecatl/driver", "provider/ssefilter", "internal/adaptersupport", "authn/oidc", "provider/anthropic", "provider/openai", "provider/openaichat", "adapters"}
+	names := []string{"agentdef", "engine", "driver", "ssefilter", "adaptersupport", "oidc", "anthropic", "openai", "openaichat", "adapters"}
 	previous := "preflight"
 	for i, name := range names {
 		j := w.Jobs[name]

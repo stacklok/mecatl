@@ -1239,6 +1239,9 @@ jobs:
       - name: Test workspace task infrastructure
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task test:workspace-infrastructure
+      - name: Test publication tooling and workspace inventory
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        run: task test:module-publication-tools
       - name: Test modules
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         run: task --concurrency 3 test:race

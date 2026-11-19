@@ -10,6 +10,42 @@ Use the Go toolchain declared in `go.mod` and install [Task](https://taskfile.de
 The module inventory is in [`go.work`](../go.work); root `go test ./...` does not
 run nested modules' own tests.
 
+## Add a Go module
+
+Register a new module in the same PR that introduces it:
+
+1. Create `go.mod` with the module path `github.com/stacklok/mecatl/<DIRECTORY>`
+   and the repository's Go version. Add its directory to `go.work` and
+   `Taskfile.yml`'s `GO_MODULES`. Commit its generated `go.sum` when present.
+2. Add explicit build, lint, and vulnerability-check coverage to the owning
+   `Taskfile.yml` tasks and `.github/workflows/ci.yml` jobs. These commands enumerate
+   modules separately from `GO_MODULES`. Update import allowlists when introducing
+   a dependency across an enforced package boundary.
+3. Classify the module for publication in
+   [the publication helper](../.github/scripts/module-publication.py): independently
+   versioned modules belong in `ORDER`, before their dependents, with a minimal
+   public-proof import in `IMPORTS`. Root, runtime, and test-only modules belong in
+   `CONSUMERS`; include them in reconciliation's processing order too. For a
+   publishable module, follow the
+   [workflow-local registration checklist](../.github/workflows/publish-modules.yml)
+   to add its job and update the proof chain and tests.
+4. If the module adds a dependency to the published adapters closure, update the
+   manifest checks in
+   [`check-module-publication.sh`](../.github/scripts/check-module-publication.sh)
+   and its metadata paths in
+   [`relevant-changes.sh`](../.github/scripts/relevant-changes.sh), with regressions.
+5. Run `task test:module-publication-tools`. Its offline repository-inventory check
+   validates the actual `go.work` members and dependency order, alongside the
+   publication fixtures. Run `task test:workspace:module MODULE=<DIRECTORY>` for
+   same-checkout integration and `task test:module MODULE=<DIRECTORY>` for the
+   standalone dependency closure. Use `task test:module-candidate MODULE=<DIRECTORY>`
+   when sibling changes are not yet published. Complete the normal repository gates
+   before review.
+
+Workspace replacements let you develop sibling modules together; independently
+published modules must resolve their requirements with `GOWORK=off`. Publish missing
+sibling versions in dependency order using [the publication procedure](#4-publish-selected-go-modules).
+
 ## 1. Identify the affected modules
 
 Inspect the changed modules' `go.mod` files and the modules that depend on them.

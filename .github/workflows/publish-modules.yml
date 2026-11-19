@@ -78,19 +78,30 @@ jobs:
   # - Insert an unconditional call after all its dependencies and before its callers.
   #   Copy source/versions/branch, depend on preflight and the preceding module,
   #   and take parent from that module's head. The first call uses preflight.source.
-  # - Rewire the following call's needs/parent to the new head. If the last call
-  #   changes, update BOTH reconcile and adoption-pr needs/PARENT, plus summary.needs.
+  # - Rewire the following call's needs/parent to the new head; add the job to
+  #   summary.needs. If the last call changes, update BOTH reconcile and adoption-pr
+  #   needs/PARENT.
   # - Update fixed-order workflow assertions and inventory/order, unselected,
   #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
-  engine:
+  agentdef:
     needs: preflight
+    uses: ./.github/workflows/publish-module.yml
+    with:
+      module: agentdef
+      source: ${{ needs.preflight.outputs.source }}
+      versions: ${{ needs.preflight.outputs.versions }}
+      branch: ${{ needs.preflight.outputs.branch }}
+      parent: ${{ needs.preflight.outputs.source }}
+
+  engine:
+    needs: [preflight, agentdef]
     uses: ./.github/workflows/publish-module.yml
     with:
       module: engine
       source: ${{ needs.preflight.outputs.source }}
       versions: ${{ needs.preflight.outputs.versions }}
       branch: ${{ needs.preflight.outputs.branch }}
-      parent: ${{ needs.preflight.outputs.source }}
+      parent: ${{ needs.agentdef.outputs.head }}
 
   driver:
     needs: [preflight, engine]
@@ -265,7 +276,7 @@ jobs:
           --branch "$BRANCH" --metadata "$RUNNER_TEMP/prepared/metadata.json"
 
   summary:
-    needs: [preflight, engine, driver, ssefilter, adaptersupport, oidc, anthropic, openai, openaichat, adapters, reconcile, adoption-pr]
+    needs: [preflight, agentdef, engine, driver, ssefilter, adaptersupport, oidc, anthropic, openai, openaichat, adapters, reconcile, adoption-pr]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

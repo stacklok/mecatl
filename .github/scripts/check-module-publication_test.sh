@@ -5,7 +5,7 @@ root=$(git rev-parse --show-toplevel)
 work=$(mktemp -d "${TMPDIR:-/tmp}/module-publication-fixture.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT
 repo=$work/repo
-mkdir -p "$repo/internal/adaptersupport" "$repo/contracts/gen/go/mecatl/driver" "$repo/adapters" "$repo/integration/microvm" "$work/bin" "$work/home"
+mkdir -p "$repo/agentdef" "$repo/engine" "$repo/internal/adaptersupport" "$repo/contracts/gen/go/mecatl/driver" "$repo/adapters" "$repo/integration/microvm" "$work/bin" "$work/home"
 export HOME=$work/home GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.com
 export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.com
@@ -44,6 +44,8 @@ pins() {
   manifest go.mod example.com/root github.com/stacklok/mecatl/adapters "$1"
   manifest integration/microvm/go.mod example.com/microvm github.com/stacklok/mecatl/adapters "$1"
 }
+manifest agentdef/go.mod github.com/stacklok/mecatl/agentdef
+manifest engine/go.mod github.com/stacklok/mecatl/engine github.com/stacklok/mecatl/agentdef v0.1.0
 manifest internal/adaptersupport/go.mod github.com/stacklok/mecatl/internal/adaptersupport
 manifest contracts/gen/go/mecatl/driver/go.mod github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver
 manifest adapters/go.mod github.com/stacklok/mecatl/adapters
@@ -55,6 +57,7 @@ base=$(commit base)
 main=$(commit main -p "$base")
 git -C "$repo" update-ref refs/remotes/origin/main "$main"
 git -C "$repo" tag v0.2.0 "$base"
+git -C "$repo" tag agentdef/v0.1.0 "$base"
 pins v0.2.0
 manifest adapters/go.mod github.com/stacklok/mecatl/adapters github.com/stacklok/mecatl/engine v0.2.0
 git -C "$repo" add .
@@ -88,6 +91,13 @@ reject() {
 prospective() { "$@" --prospective-main "$merge" --pr-head "$head"; }
 
 prospective accept 'release-branch tags in prospective main'
+manifest engine/go.mod github.com/stacklok/mecatl/engine github.com/stacklok/mecatl/agentdef v0.9.9
+prospective reject 'unpublished agentdef dependency' 'agentdef@v0.9.9 has no published nested tag'
+outside_agentdef=$(commit outside-agentdef -p "$base")
+git -C "$repo" tag agentdef/v0.9.9 "$outside_agentdef"
+prospective reject 'agentdef outside adoption history' 'agentdef@v0.9.9 is not on'
+manifest engine/go.mod github.com/stacklok/mecatl/engine github.com/stacklok/mecatl/agentdef v0.1.0
+prospective accept 'published agentdef dependency'
 # Main can advance after GitHub constructs the event's test merge.
 advanced_main=$(commit advanced-main -p "$main")
 git -C "$repo" update-ref refs/remotes/origin/main "$advanced_main"
