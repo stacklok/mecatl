@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -545,6 +546,28 @@ func loadIdentityBrokerDefinitions(ctx context.Context, cfg Config) ([]identityb
 		return nil, fmt.Errorf("load identity broker definitions: %w", err)
 	}
 	return records, nil
+}
+
+// identityDefinitionRefs returns the references the server registers
+// sessions' main agents with: those of records, the definitions the broker
+// loaded. The server takes a global record of a session's definition name to
+// be the definition the session runs, which holds only while the operator's
+// agent directories win every name. An operator harness_context policy can
+// order agent-definition sources, or exclude one per name, so another source,
+// such as a driver, can win a name the broker loaded. Under such a policy only
+// the built-in references are passed: a named session then registers by name
+// only and is refused, as any definition the broker did not load is, rather
+// than registering another source's definition as the operator's.
+//
+// Shortcut: a session knows its definition by name only; removed by #2548 (sessions record their exact reference, so this guess goes away).
+func identityDefinitionRefs(cfg Config, records []identitybroker.DefinitionRecord) []identitybroker.DefinitionRef {
+	refs := definitionRefs(records)
+	if cfg.harnessResolver == nil {
+		return refs
+	}
+	return slices.DeleteFunc(refs, func(ref identitybroker.DefinitionRef) bool {
+		return ref.Source != identitybroker.SourceSystem
+	})
 }
 
 // definitionRefs returns the references of records.

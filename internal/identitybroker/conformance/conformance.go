@@ -43,9 +43,16 @@ var (
 	ReviewerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "code-reviewer", Revision: "r1"}
 )
 
+// DefinitionRefs returns the references of the records Definitions returns,
+// in the same order: what an implementation under test has loaded. Each call
+// returns a new slice.
+func DefinitionRefs() []identitybroker.DefinitionRef {
+	return []identitybroker.DefinitionRef{MainDefinition, ReviewerDefinition}
+}
+
 // Definitions returns the definition records an implementation under test
-// loads: the built-in main and a global code reviewer. Each call returns new
-// records.
+// loads: one for each of DefinitionRefs, the built-in main and a global code
+// reviewer. Each call returns new records.
 func Definitions() []identitybroker.DefinitionRecord {
 	record := func(ref identitybroker.DefinitionRef) identitybroker.DefinitionRecord {
 		source := sha256.Sum256([]byte("source " + ref.Name))
@@ -56,7 +63,12 @@ func Definitions() []identitybroker.DefinitionRecord {
 			DefinitionDigest: identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(accepted[:])},
 		}}
 	}
-	return []identitybroker.DefinitionRecord{record(MainDefinition), record(ReviewerDefinition)}
+	refs := DefinitionRefs()
+	records := make([]identitybroker.DefinitionRecord, len(refs))
+	for i, ref := range refs {
+		records[i] = record(ref)
+	}
+	return records
 }
 
 // coreFactory returns an implementation on the real clock.

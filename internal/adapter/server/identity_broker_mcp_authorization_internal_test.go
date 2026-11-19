@@ -127,7 +127,7 @@ func newMCPAuthorizationBrokerFixture(t *testing.T, status session.Authorization
 	broker := convertingBroker(t, as1)
 	events := memstore.NewEventLog()
 	f.svc.cfg.IdentityBroker = broker
-	f.svc.cfg.IdentityDefinitions = []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition}
+	f.svc.cfg.IdentityDefinitions = conformance.DefinitionRefs()
 	// NewService made no holder, as the fixture had no identity broker then.
 	f.svc.cfg.IdentityAgents = identityAgentsFor(f.svc.cfg)
 	f.svc.cfg.EventLog = events

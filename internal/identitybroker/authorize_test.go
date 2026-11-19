@@ -1321,3 +1321,31 @@ func TestAuthorizeCallKeepsTokensSecret(t *testing.T) {
 		t.Fatal("an error, record, or formatted authorization carries a token")
 	}
 }
+
+// TestAuthorizeCallRefusesAnotherSessionsAgentWithoutCallingAS1 checks that a
+// call naming an agent registered to another broker session of the same
+// broker, and so of the same user, is refused before any ID-JAG exchange.
+func TestAuthorizeCallRefusesAnotherSessionsAgentWithoutCallingAS1(t *testing.T) {
+	f := newPerCall(t)
+	other, err := f.b.OpenSession(context.Background(), testWorkload, identitybroker.OpenSessionRequest{
+		HostSessionID: "hostS43", Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Owner: testOwner, AccessToken: unsignedToken(t, testOwner),
+	})
+	if err != nil || !other.HoldsRefreshToken {
+		t.Fatalf("OpenSession = %+v, %v; want a second session holding a grant", other, err)
+	}
+	otherAgent, err := f.b.RegisterAgent(context.Background(), testWorkload, mainAgent(other))
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+	got, err := f.authorize(callRequest(f.s.ID, otherAgent.Credential))
+	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, otherAgent.Credential)
+	if !got.GatewayToken.IsZero() {
+		t.Fatal("a refused call returned a gateway token")
+	}
+	f.wantCounts(t, 0, 0)
+	// Positive control: in its own session the same agent's call is exchanged.
+	if _, err := f.authorize(callRequest(other.ID, otherAgent.Credential)); err != nil {
+		t.Fatalf("AuthorizeCall in the agent's own session: %v", err)
+	}
+	f.wantCounts(t, 1, 1)
+}

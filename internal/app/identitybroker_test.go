@@ -691,3 +691,21 @@ func TestIdentityBrokerMissingAgentsDirFailsStartup(t *testing.T) {
 	}
 	built.Close()
 }
+
+func TestIdentityDefinitionRefsUnderAHarnessPolicy(t *testing.T) {
+	records := []identitybroker.DefinitionRecord{
+		{Ref: builtinMainRef()},
+		{Ref: identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "reviewer", Revision: "r1"}},
+	}
+	// Without a harness policy the operator's agent directories win every
+	// name, so the global references are passed.
+	if got := identityDefinitionRefs(Config{}, records); len(got) != 2 {
+		t.Fatalf("references without a harness policy = %+v, want both", got)
+	}
+	// A harness policy can let another source win a name the broker loaded,
+	// so only the built-in references are passed.
+	got := identityDefinitionRefs(Config{harnessResolver: &harnessCommandResolver{}}, records)
+	if len(got) != 1 || got[0] != builtinMainRef() {
+		t.Fatalf("references under a harness policy = %+v, want only the built-in main", got)
+	}
+}

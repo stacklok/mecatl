@@ -245,7 +245,7 @@ func newIdentityBrokerService(t *testing.T, broker identitybroker.Service, llm *
 	cfg := server.Config{
 		Engine:         eng,
 		Store:          store,
-		IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
+		IdentityBroker: broker, IdentityDefinitions: conformance.DefinitionRefs(),
 		Now: func() time.Time { return time.Unix(0, 0) },
 	}
 	for _, f := range configure {
@@ -627,7 +627,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			svc, err := server.NewService(server.Config{
 				Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
 				PlacementProvider: delegationPlacementProvider{binding: server.PlacementBinding{Environment: env, Ref: ref}},
-				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
+				PlacementScope:    "test-scope", MemberEngine: memberEngine, IdentityBroker: broker, IdentityDefinitions: conformance.DefinitionRefs(),
 			})
 			if err != nil {
 				t.Fatal(err)

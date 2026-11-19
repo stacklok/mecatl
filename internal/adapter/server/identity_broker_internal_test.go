@@ -39,7 +39,7 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    broker, IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
+		IdentityBroker:    broker, IdentityDefinitions: conformance.DefinitionRefs(),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -167,7 +167,7 @@ func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, 
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), IdentityDefinitions: []identitybroker.DefinitionRef{conformance.MainDefinition, conformance.ReviewerDefinition},
+		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), IdentityDefinitions: conformance.DefinitionRefs(),
 	}
 	for _, c := range configure {
 		c(&cfg)
