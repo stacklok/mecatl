@@ -392762,6 +392762,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795050790566,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0cfe8483dbc1f3ff7538de7a35015753c1c2e0c2",
+          "message": "feat(executorrpc): add a Files and Commands client for the agent loop (#2863)\n\nAdd `internal/executorrpc/executorclient`, a client of the executor\n`FileService` and `CommandService` that implements `tool.Workspace`,\n`tool.WorkspaceNamespace`, `tool.AuthorityResourceResolver`, and a\nforeground `tool.CommandRunner`, against the trusted service or a local\nexecutor.\n\n- Each call carries the full `RequestContext` from a per-call\n  `RequestContextFunc` in the opaque `context` field. No methods are\n  added to `Workspace`, `CommandRunner`, or `CommandStreamer`.\n- Nothing is retried: `executorclient.Dial` disables gRPC retries, and\n  a command is sent on exactly one stream. A stream that breaks after\n  `Started`, or an `OUTCOME_UNKNOWN` result, returns\n  `ErrOutcomeUnknown`. Before `Started`, only a refusal the executor\n  tagged (`InvalidArgument`, `LIMIT_EXCEEDED`, `NO_SHELL`, or the new\n  `START_FAILED`) reports \"did not start\"; any other error is unknown.\n- File reads and command output are capped client-side (256 MiB by\n  default). Truncated output ends with a marker, on stderr when stdout\n  is empty.\n- `ErrorReason` gains `ERROR_REASON_START_FAILED`, which `commandserver`\n  attaches when the runner fails to start the process. The Linux\n  supervisor's helper now reports `failed` explicitly; any other\n  handshake failure after the command is sent returns\n  `commandserver.ErrStartUnknown`, sent as an untagged `Unknown`.\n- `fileconformance` drops its own `Workspace` and runs the conformance\n  suites through the client; `Target.Client` becomes `Target.Conn`.\n- `executionclient.NewTemplateProvider` gains an opt-in\n  `WithExecutorServices()`, off by default and unset in `cmd/mecak8s`,\n  which builds the run's workspace and runner from the new client.\n  The remote workspace conformance tests run over both transports.\n\nCloses: #2710",
+          "timestamp": "2026-11-19T10:44:12Z",
+          "tree_id": "6bcc6ea3844c28edfb4947dc5bf51804d71b8089",
+          "url": "https://github.com/stacklok/mecatl/commit/0cfe8483dbc1f3ff7538de7a35015753c1c2e0c2"
+        },
+        "date": 1795085797175,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -566877,6 +566911,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795085793401,
+  "lastUpdate": 1795085797905,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
