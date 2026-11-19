@@ -36,7 +36,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 				backend := &timestampBackend{Backend: mem.New()}
 				h := newLifecycleHistory(t, backend)
 				calls, nanos, forbidden := 0, int64(0), false
-				config := Config{InstanceID: 17, Now: func() time.Time {
+				config := Config{Policy: sessionPolicy(), InstanceID: 17, Now: func() time.Time {
 					if forbidden {
 						t.Fatal("retry or load sampled clock")
 					}
@@ -44,7 +44,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 					nanos--
 					return time.Unix(0, nanos)
 				}}
-				s, err := New(h, testHistoryID(t), sessionPolicy(), config)
+				s, err := New(h, testHistoryID(t), config)
 				interactionCheck(t, err)
 				b, err := s.BeginCommit()
 				interactionCheck(t, err)
@@ -100,7 +100,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 						t.Fatal("retry changed exact frozen wire proposal")
 					}
 				}
-				loaded, err := Load(t.Context(), h, testHistoryID(t), sessionPolicy(), config)
+				loaded, err := Load(t.Context(), h, testHistoryID(t), config)
 				interactionCheck(t, err)
 				if loaded.Snapshot().Head() != ref || captured.RecordAt(captured.RecordCount()-1).MutableClone().Timestamp != proposal.commit.Records[0].Timestamp {
 					t.Fatal("load or accepted publication changed record metadata")

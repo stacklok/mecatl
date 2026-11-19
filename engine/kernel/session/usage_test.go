@@ -90,7 +90,7 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 		t.Fatal("late accounting attached to current run or reset allocation")
 	}
 	interactionReplay(t, s)
-	loaded, err := Load(t.Context(), s.history, run.HistoryID(), s.policy, testConfig())
+	loaded, err := Load(t.Context(), s.history, run.HistoryID(), testConfigFor(s.policy))
 	mustBatch(t, err)
 	for _, snapshot := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		var reports []UsageReport
@@ -501,7 +501,7 @@ func TestUsageSharedAdmissionRejectsTamperedReplay(t *testing.T) {
 						t.Fatal("History rejected opaque session records")
 					}
 					var loaded *Session
-					loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+					loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed replay published partial aggregate")
 					}
@@ -540,7 +540,7 @@ func TestUsageRejectsForwardSameBatchCorrelation(t *testing.T) {
 		forged := interactionCommit(t, s, records)
 		_, err := s.history.Append(t.Context(), scope, forged.Commit)
 		mustBatch(t, err)
-		if loaded, err := Load(t.Context(), s.history, scope, s.policy, testConfig()); loaded != nil || !errors.Is(err, ErrTransition) {
+		if loaded, err := Load(t.Context(), s.history, scope, testConfigFor(s.policy)); loaded != nil || !errors.Is(err, ErrTransition) {
 			t.Fatalf("forward %s replay: %v", correlation, err)
 		}
 	}

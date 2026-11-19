@@ -88,7 +88,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 		mustBatch(t, err)
 	}
 	submitBatch(t, s, b)
-	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p, testConfig())
+	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
 	mustBatch(t, err)
 	sessions := map[string]*session.Session{"Submit": s, "Load": loaded}
 	for seam, inspected := range sessions {

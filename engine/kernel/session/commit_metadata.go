@@ -1,6 +1,10 @@
 package session
 
-import "github.com/stacklok/mecatl/engine/kernel/history"
+import (
+	"time"
+
+	"github.com/stacklok/mecatl/engine/kernel/history"
+)
 
 // CommitMetadata is immutable diagnostic metadata for an accepted enclosing
 // commit, not a captured batch source (CommitView). Copying and scalar reads cost
@@ -19,9 +23,15 @@ type CommitMetadata struct {
 // Ref returns the accepted enclosing commit reference, or zero for zero.
 func (v CommitMetadata) Ref() history.CommitRef { return v.ref }
 
-// Timestamp returns the signed Unix-nanosecond preparation time. Zero denotes
-// the Unix epoch for present metadata, not absence; negative values are valid.
-func (v CommitMetadata) Timestamp() int64 { return v.timestamp }
+// Timestamp returns the UTC preparation time. Zero metadata returns the zero time.
+// A present timestamp at the Unix epoch is distinct from absent metadata; use
+// RecordView.Commit for accepted-metadata presence.
+func (v CommitMetadata) Timestamp() time.Time {
+	if v == (CommitMetadata{}) {
+		return time.Time{}
+	}
+	return time.Unix(0, v.timestamp).UTC()
+}
 
 // InstanceID returns the writer's nonzero diagnostic instance ID, or zero for zero.
 func (v CommitMetadata) InstanceID() uint64 { return v.instanceID }

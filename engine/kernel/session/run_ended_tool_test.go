@@ -118,7 +118,7 @@ func TestToolBulkCloseoutCandidateFactsAndSuccessor(t *testing.T) {
 								_, e := h.Append(context.Background(), run.historyID, c.Commit)
 								interactionCheck(t, e)
 								var loaded *Session
-								loaded, err = Load(context.Background(), h, run.historyID, s.policy, testConfig())
+								loaded, err = Load(context.Background(), h, run.historyID, testConfigFor(s.policy))
 								if loaded != nil {
 									t.Fatal("failed load published a partial session")
 								}
@@ -158,7 +158,7 @@ func TestToolBulkPreservesEveryExplicitDisposition(t *testing.T) {
 				})
 				explicit.RunID = calls[0].requestID.runID.ordinal
 				explicit.RequestID, explicit.CallID = calls[0].requestID.requestOrdinal, calls[0].ordinal
-				loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+				loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 				interactionCheck(t, err)
 				for _, snap := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 					v, ok := snap.RecordAt(position).ToolDisposition()

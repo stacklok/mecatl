@@ -69,7 +69,7 @@ func TestHistoryMetadataExcludedFromLogicalRequest(t *testing.T) {
 			if _, ok := proposed.RecordAt(0).Commit(); ok {
 				t.Fatal("construction source proposal acquired accepted metadata")
 			}
-			if metadata, ok := accepted.RecordAt(0).Commit(); !ok || metadata.Ref() != head || metadata.Timestamp() != variant.stamp || metadata.InstanceID() != variant.instance {
+			if metadata, ok := accepted.RecordAt(0).Commit(); !ok || metadata.Ref() != head || metadata.Timestamp() != time.Unix(0, variant.stamp).UTC() || metadata.InstanceID() != variant.instance {
 				t.Fatal("accepted history metadata not inspectable")
 			}
 
@@ -100,7 +100,8 @@ func TestHistoryMetadataExcludedFromLogicalRequest(t *testing.T) {
 			_, err = s.SubmitCommit(t.Context(), b)
 			requireConstruction(t, err)
 			forbidden = true
-			loaded, err := session.Load(t.Context(), h, scope, f.policy, session.Config{InstanceID: 999, Now: config.Now})
+			loadConfig := session.Config{Policy: f.policy, InstanceID: 999, Now: config.Now}
+			loaded, err := session.Load(t.Context(), h, scope, loadConfig)
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 				reconstructed, err := Reconstruct(snapshot, request, testLimits())

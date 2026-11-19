@@ -71,7 +71,7 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 			}
 			if closeBatch == "Submit" {
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, run.HistoryID(), p, testConfig())
+				loaded, err := session.Load(t.Context(), h, run.HistoryID(), testConfigFor(p))
 				mustBatch(t, err)
 				for i := range before {
 					if !bytes.Equal(before[i], loaded.Snapshot().RecordAt(i).MutableClone().Payload) {

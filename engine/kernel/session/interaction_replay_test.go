@@ -17,9 +17,9 @@ import (
 // submitting reducer's state. Each page is read from the real memory History.
 func interactionReplay(t testing.TB, s *Session) {
 	t.Helper()
-	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
-	applied, err := New(s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+	applied, err := New(s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
 	request := history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1}
 	for request.After != request.Through {
@@ -135,7 +135,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 							if result.Status != history.StatusAccepted {
 								t.Fatal("History rejected locally valid DTO")
 							}
-							loaded, e := Load(context.Background(), s.history, run.historyID, s.policy, testConfig())
+							loaded, e := Load(context.Background(), s.history, run.historyID, testConfigFor(s.policy))
 							err = e
 							if err != nil && loaded != nil {
 								t.Fatal("failed Load published partial state")
@@ -202,7 +202,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 					_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 					interactionCheck(t, e)
 					var loaded *Session
-					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed Load returned a partial session")
 					}
@@ -242,7 +242,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 					} else {
 						_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 						interactionCheck(t, e)
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					}
 				}
 				if !errors.Is(err, ErrUnsupportedRecord) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {

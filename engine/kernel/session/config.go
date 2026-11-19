@@ -11,15 +11,19 @@ import (
 // ErrInvalidConfig identifies a missing writer instance identity.
 var ErrInvalidConfig = errors.New("invalid session authoring config")
 
-// Config supplies diagnostic metadata for newly authored history. It is separate
-// from resource Policy and is copied by New and Load. Reuse the same nonzero
-// InstanceID across sessions belonging to one running writer instance; it proves
-// neither authority nor global uniqueness. A new writer loading history supplies
-// its own identity without changing historical metadata.
+// Config supplies explicit construction policy and diagnostic metadata for newly
+// authored history. It is copied by New and Load. Policy governs admission and
+// reconstruction resources; it has no defaults. Reuse the same nonzero InstanceID
+// across sessions belonging to one running writer instance; it proves neither
+// authority nor global uniqueness. A new writer loading history supplies its own
+// identity without changing historical metadata.
 //
 // Session calls remain caller-serialized. If Now closes over state shared across
 // sessions, the caller is responsible for synchronizing that state.
 type Config struct {
+	// Policy supplies required resource bounds for admission and reconstruction.
+	// It has no defaults.
+	Policy Policy
 	// InstanceID is the required nonzero diagnostic writer identity.
 	InstanceID uint64
 	// Now supplies wall-clock time, defaulting to time.Now when nil. Each
@@ -28,7 +32,8 @@ type Config struct {
 	Now func() time.Time
 }
 
-// normalized copies authoring configuration without sampling the clock.
+// normalized copies construction configuration without sampling the clock.
+// New validates Policy before calling it.
 func (c Config) normalized() (Config, error) {
 	if c.InstanceID == 0 {
 		return Config{}, ErrInvalidConfig

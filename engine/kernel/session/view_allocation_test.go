@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -65,7 +66,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: items}))
 	submitBatch(t, s, b)
 
-	loaded, err := session.Load(context.Background(), h, scope, p, testConfig())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
@@ -99,10 +100,10 @@ func TestViewNavigationAllocations(t *testing.T) {
 						var present bool
 						metadata, present = record.Commit()
 						stamp, hasTimestamp := record.Timestamp()
-						if !present || !hasTimestamp || stamp != 0 {
+						if !present || !hasTimestamp || !stamp.Equal(time.Unix(0, 0).UTC()) {
 							t.Fatal("missing or inconsistent record metadata")
 						}
-						if metadata.Ref() != snapshot.Head() || metadata.InstanceID() != 1 || metadata.Timestamp() != 0 {
+						if metadata.Ref() != snapshot.Head() || metadata.InstanceID() != 1 || !metadata.Timestamp().Equal(time.Unix(0, 0).UTC()) {
 							t.Fatal("incorrect enclosing commit metadata")
 						}
 					}
@@ -228,7 +229,7 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 								record := v.RecordAt(field.parent)
 								metadata, present := record.Commit()
 								stamp, hasTimestamp := record.Timestamp()
-								if !present || !hasTimestamp || stamp != 0 || metadata.Ref() != v.Head() || metadata.Timestamp() != 0 || metadata.InstanceID() != 1 {
+								if !present || !hasTimestamp || !stamp.Equal(time.Unix(0, 0).UTC()) || metadata.Ref() != v.Head() || !metadata.Timestamp().Equal(time.Unix(0, 0).UTC()) || metadata.InstanceID() != 1 {
 									t.Fatal("metadata navigation lost accepted envelope")
 								}
 								copied = field.export()

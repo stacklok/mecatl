@@ -242,7 +242,7 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 				if result.Status != history.StatusAccepted {
 					t.Fatal("history rejected locally valid forged contribution")
 				}
-				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 				if loaded != nil && (loaded.state.view.lifecycle.captured != 3 || loaded.state.view.lifecycle.pending != interactionRequest(s, 2).ID) {
 					t.Fatal("load lost prospective coverage")
 				}
@@ -389,7 +389,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 						if result.Status != history.StatusAccepted {
 							t.Fatal("history did not accept locally valid commit")
 						}
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					}
 					if !errors.Is(err, tc.want) {
 						t.Fatalf("got %v; want %v", err, tc.want)

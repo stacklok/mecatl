@@ -62,7 +62,7 @@ func reconstructHistorySession(t testing.TB, read func(context.Context, history.
 	if request.After != endpoint {
 		return nil, errReplayPrefix
 	}
-	return session.Load(context.Background(), newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t}), testHistoryID(t), sessionPolicy(), testConfig())
+	return session.Load(context.Background(), newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t}), testHistoryID(t), testConfigFor(sessionPolicy()))
 }
 func assertHistoryHead(t testing.TB, h *history.History, want history.CommitRef) {
 	t.Helper()
@@ -90,7 +90,7 @@ func TestSessionRealHistoryLifecycleAndReplay(t *testing.T) {
 	}
 	assertHistoryHead(t, h, pinned)
 	// Use the real public bound path to close out and start a successor.
-	recovered, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
+	recovered, err = session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	b = beginBatch(t, recovered)
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
@@ -129,7 +129,7 @@ func TestSessionRealHistoryCompetingStarts(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	submitBatch(t, s, b)
-	other, err := session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
+	other, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	first := beginBatch(t, s)
 	run := batchRun(t, first)
@@ -166,12 +166,12 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 			if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 				t.Fatal("append")
 			}
-			s, err = session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
+			s, err = session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
 			mustBatch(t, err)
 			offset += n
 		}
 		v := s.Snapshot()
-		loaded, err := session.Load(context.Background(), h, testHistoryID(t), sessionPolicy(), testConfig())
+		loaded, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
 		mustBatch(t, err)
 		if !reflect.DeepEqual(v, loaded.Snapshot()) {
 			t.Fatal("same grouping replay differs")

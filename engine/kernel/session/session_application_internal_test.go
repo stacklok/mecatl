@@ -63,7 +63,7 @@ func newSessionHistory(t testing.TB) *history.History {
 }
 func newSession(t testing.TB, p Policy) *Session {
 	t.Helper()
-	s, err := New(newSessionHistory(t), testHistoryID(t), p, testConfig())
+	s, err := New(newSessionHistory(t), testHistoryID(t), testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestSessionPolicyAndZero(t *testing.T) {
 	for i := 0; i < reflect.TypeOf(p).NumField(); i++ {
 		bad := p
 		reflect.ValueOf(&bad).Elem().Field(i).SetZero()
-		if s, err := New(newSessionHistory(t), testHistoryID(t), bad, testConfig()); !errors.Is(err, ErrInvalidPolicy) || s != nil {
+		if s, err := New(newSessionHistory(t), testHistoryID(t), testConfigFor(bad)); !errors.Is(err, ErrInvalidPolicy) || s != nil {
 			t.Fatalf("zero policy field %d: %v", i, err)
 		}
 	}
@@ -366,10 +366,10 @@ func TestSessionPolicyAndZero(t *testing.T) {
 			}
 		}
 	}
-	if s, err := New(nil, testHistoryID(t), p, testConfig()); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(nil, testHistoryID(t), testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("nil History: %v", err)
 	}
-	if s, err := New(newSessionHistory(t), historyid.HistoryID{}, p, testConfig()); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(newSessionHistory(t), historyid.HistoryID{}, testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("zero scope: %v", err)
 	}
 	var zero Session

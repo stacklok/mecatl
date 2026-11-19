@@ -27,7 +27,7 @@ func canonicalSession(t *testing.T) (*session.Session, *history.History, session
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := session.New(h, id, p, testConfig())
+	s, err := session.New(h, id, testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	*binding.Settings.ReasoningEffort = "changed"
 	*effective.Inputs[0].UserInputID = 99
 	canonicalSubmit(t, s, b)
-	loaded, err := session.Load(context.Background(), h, scope, p, testConfig())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	canonicalOK(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		created, ok := snapshot.RecordAt(0).Created()
@@ -239,7 +239,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	canonicalOK(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	canonicalSubmit(t, s, b)
 
-	loaded, err := session.Load(context.Background(), h, run.HistoryID(), p, testConfig())
+	loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(p))
 	canonicalOK(t, err)
 	want := []struct {
 		kind  string
@@ -354,7 +354,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	ending := sessionformat.RunEnded{Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: foreignPending.RunRelative(), Evidence: &sessionformat.ObservedEvidence{Detail: new("retained")}}}
 	canonicalOK(t, b.AddRunEnded(run, ending))
 	canonicalSubmit(t, s, b)
-	loaded, err := session.Load(context.Background(), h, run.HistoryID(), p, testConfig())
+	loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(p))
 	canonicalOK(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		effective, ok := snapshot.RecordAt(3).EffectiveInput()

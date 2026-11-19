@@ -11,9 +11,9 @@
 //
 // # Authoring and reconstruction
 //
-// [New] binds a [Session] to one history, an explicit [Policy], and a [Config].
-// Config supplies a caller-chosen nonzero writer-instance ID and optional clock.
-// [Session.BeginCommit] opens a [SessionCommit] for ordered provisional facts;
+// [New] binds a [Session] to one history and explicit [Config]. Config supplies
+// required [Policy], a caller-chosen nonzero writer-instance ID, and an optional
+// clock. [Session.BeginCommit] opens a [SessionCommit] for ordered provisional facts;
 // [Session.SubmitCommit] submits the batch atomically. [Load] reconstructs accepted
 // state from stored history. SessionCommit and Policy document admission, resource
 // limits, and submission failure handling.
@@ -24,6 +24,7 @@
 // not action durations, storage receipt times, or an ordering guarantee. Loading
 // preserves stored metadata without sampling the clock; subsequent writes use the
 // loading writer's Config. History validates supplied metadata but never stamps it.
+// Metadata affects history identity but not logical model-request bytes or identity.
 //
 // # Inspection and ownership
 //

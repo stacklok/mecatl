@@ -56,7 +56,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 	if got := mustRequestedCallID(t, allocatedCall.RequestID(), allocatedCall.RequestRelative()); got != allocatedCall {
 		t.Fatal("allocated call round trip")
 	}
-	s, err = session.Load(t.Context(), h, allocatedRun.HistoryID(), sessionPolicy(), testConfig())
+	s, err = session.Load(t.Context(), h, allocatedRun.HistoryID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 
 	loadedRun := s.Snapshot().ActiveRun()

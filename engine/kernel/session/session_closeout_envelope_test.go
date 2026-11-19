@@ -36,7 +36,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(h, fixture.Snapshot().HistoryID(), fixture.policy, testConfig())
+	s, err := New(h, fixture.Snapshot().HistoryID(), testConfigFor(fixture.policy))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				s, err := New(h, id, policy, testConfig())
+				s, err := New(h, id, testConfigFor(policy))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -234,7 +234,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil || !bytes.Equal(encoded, wire) || budget.EstimatedBytes() != limit {
 					t.Fatalf("closeout differs from measured exact admission size: %v", err)
 				}
-				s.config = Config{InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
+				s.config = Config{Policy: s.policy, InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
 				b, err := s.BeginCommit()
 				if err != nil {
 					t.Fatal(err)

@@ -363,7 +363,7 @@ func TestToolAdmissionRejectedReplayAndPreflight(t *testing.T) {
 						t.Fatal("History rejected opaque facts")
 					}
 					var loaded *Session
-					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed load published partial session")
 					}
@@ -394,7 +394,7 @@ func TestToolDispositionMalformedStorageLoadIsAtomic(t *testing.T) {
 	if result.Status != history.StatusAccepted {
 		t.Fatal("history rejected opaque malformed tool record")
 	}
-	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy, testConfig())
+	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	if loaded != nil || !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatalf("malformed tool disposition Load = %v, %v", loaded, err)
 	}

@@ -40,7 +40,7 @@ func TestSnapshotUsagesLatestAndPinned(t *testing.T) {
 	ids := []UsageID{first, second, third}
 	check := func(want UsageReport) {
 		t.Helper()
-		loaded, err := Load(t.Context(), s.history, run.HistoryID(), s.policy, testConfig())
+		loaded, err := Load(t.Context(), s.history, run.HistoryID(), testConfigFor(s.policy))
 		mustBatch(t, err)
 		for seam, snapshot := range map[string]Snapshot{"Submit": s.Snapshot(), "Load": loaded.Snapshot()} {
 			t.Run(seam, func(t *testing.T) {

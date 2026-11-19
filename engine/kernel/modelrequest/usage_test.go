@@ -75,7 +75,7 @@ func TestUsageExcludedFromConstructionAndReconstruction(t *testing.T) {
 				requireConstruction(t, f.b.ReplaceUsage(usage, replacement))
 				check(f.view())
 				f.submit()
-				loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+				loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 				requireConstruction(t, err)
 				if loaded.Snapshot().Head() == previous {
 					t.Fatal("usage-only commit did not change history anchor")
@@ -106,7 +106,7 @@ func TestUsageExcludedFromConstructionAndReconstruction(t *testing.T) {
 			requireConstruction(t, err)
 			requireConstruction(t, f.b.ReplaceUsage(usage, session.UsageReport{State: session.UsageReportWithdrawn}))
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 				built, err := Construct(snapshot, parameters, limits)
@@ -165,7 +165,7 @@ func TestKnownUsageTokens(t *testing.T) {
 				}
 			}
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 				total, incomplete, err := knownUsageTokens(snapshot.Usages())
@@ -215,7 +215,7 @@ func TestUsageSourceFreshnessForModelRequest(t *testing.T) {
 				}
 				requireConstruction(t, err)
 				f.submit()
-				loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+				loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 				requireConstruction(t, err)
 				assertReconstructed(t, loaded.Snapshot(), id, built.Request())
 			})

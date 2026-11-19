@@ -33,7 +33,7 @@ func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := session.New(h, id, p, testConfig())
+	s, err := session.New(h, id, testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	if oldRun.RecordCount() != 2 || old.RecordCount() != 3 {
 		t.Fatal("old last-run endpoint")
 	}
-	loaded, err := session.Load(context.Background(), h, id, p, testConfig())
+	loaded, err := session.Load(context.Background(), h, id, testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}

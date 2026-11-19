@@ -1,6 +1,8 @@
 package session
 
 import (
+	"time"
+
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
@@ -31,15 +33,16 @@ func (v RecordView) KindVersion() int64 {
 	return v.record.value.KindVersion
 }
 
-// Timestamp returns the signed Unix-nanosecond record-admission time in O(1),
-// without copying payloads. Zero views return zero, false; a present zero is the
-// Unix epoch. Negative values and backwards clock jumps are valid. This is
-// diagnostic recording time, not action timing or an ordering guarantee.
-func (v RecordView) Timestamp() (int64, bool) {
+// Timestamp returns the UTC record-admission time in O(1), without copying
+// payloads. Zero views return the zero time, false; a present timestamp at the
+// Unix epoch is distinct from absence. Negative values and backwards clock jumps
+// are valid. This is diagnostic recording time, not action timing or an ordering
+// guarantee.
+func (v RecordView) Timestamp() (time.Time, bool) {
 	if v.record == nil {
-		return 0, false
+		return time.Time{}, false
 	}
-	return v.record.value.Timestamp, true
+	return time.Unix(0, v.record.value.Timestamp).UTC(), true
 }
 
 // Commit returns the enclosing accepted commit's immutable metadata in O(1),

@@ -399,7 +399,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 					mustBatch(t, err)
 				}
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p, testConfig())
+				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
 				mustBatch(t, err)
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
@@ -501,7 +501,7 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 				_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive, Raw: raw})
 				mustBatch(t, err)
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), p, testConfig())
+				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
 				mustBatch(t, err)
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
@@ -746,7 +746,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	if accepted.RecordCount() != 12 || accepted.ActiveRun() != run || accepted.RunAt(0).RecordCount() != 8 || s.Snapshot().RunAt(0).RecordCount() != 10 {
 		t.Fatal("pinned bounds or chronological span")
 	}
-	loaded, err := session.Load(context.Background(), h, scope, p, testConfig())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	if !reflect.DeepEqual(loaded.Snapshot(), s.Snapshot()) {
 		t.Fatal("Submit and Load differ")

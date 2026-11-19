@@ -124,7 +124,7 @@ func loadFixtureCommit(t testing.TB, source *history.History, s *session.Session
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture continuation not accepted")
 	}
-	return session.Load(context.Background(), h, s.Snapshot().HistoryID(), p, testConfig())
+	return session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(p))
 }
 func loadRecords(t testing.TB, h *history.History, s *session.Session, records ...fixtureRecord) *session.Session {
 	t.Helper()
@@ -133,7 +133,7 @@ func loadRecords(t testing.TB, h *history.History, s *session.Session, records .
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture append rejected")
 	}
-	loaded, err := session.Load(context.Background(), h, s.Snapshot().HistoryID(), sessionPolicy(), testConfig())
+	loaded, err := session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	return loaded
 }

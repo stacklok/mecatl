@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"iter"
+	"math"
 	"testing"
 	"time"
 
@@ -13,15 +14,28 @@ import (
 
 func TestRecordMetadataZero(t *testing.T) {
 	var record RecordView
-	if stamp, ok := record.Timestamp(); ok || stamp != 0 {
+	if stamp, ok := record.Timestamp(); ok || !stamp.IsZero() {
 		t.Fatal("zero record has a timestamp")
 	}
 	if metadata, ok := record.Commit(); ok || metadata != (CommitMetadata{}) {
 		t.Fatal("zero record has enclosing metadata")
 	}
 	var metadata CommitMetadata
-	if metadata.Ref() != (history.CommitRef{}) || metadata.Timestamp() != 0 || metadata.InstanceID() != 0 {
+	if metadata.Ref() != (history.CommitRef{}) || !metadata.Timestamp().IsZero() || metadata.InstanceID() != 0 {
 		t.Fatal("zero metadata is not safe")
+	}
+}
+
+func TestMetadataTimestampConversion(t *testing.T) {
+	for _, nanos := range []int64{0, -1, math.MinInt64, math.MaxInt64} {
+		metadata := CommitMetadata{timestamp: nanos, instanceID: 1}
+		if got := metadata.Timestamp(); !got.Equal(time.Unix(0, nanos).UTC()) || got.Location() != time.UTC {
+			t.Fatalf("commit timestamp %d = %v", nanos, got)
+		}
+		record := RecordView{record: &materializedRecord{value: format.Record{Timestamp: nanos}}}
+		if got, present := record.Timestamp(); !present || !got.Equal(time.Unix(0, nanos).UTC()) || got.Location() != time.UTC {
+			t.Fatalf("record timestamp %d = %v, %t", nanos, got, present)
+		}
 	}
 }
 
@@ -30,13 +44,13 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 	scope := testHistoryID(t)
 	now := int64(0)
 	forbidden := false
-	config := Config{InstanceID: 7, Now: func() time.Time {
+	config := Config{Policy: sessionPolicy(), InstanceID: 7, Now: func() time.Time {
 		if forbidden {
 			t.Fatal("inspection or load sampled clock")
 		}
 		return time.Unix(0, now)
 	}}
-	s, err := New(h, scope, sessionPolicy(), config)
+	s, err := New(h, scope, config)
 	interactionCheck(t, err)
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
@@ -64,13 +78,13 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 	between, err := pinned.RecordsBetween(history.CommitRef{}, ref)
 	interactionCheck(t, err)
 	metadata, present := pinned.RecordAt(0).Commit()
-	if !present || metadata.Ref() != ref || metadata.Timestamp() != -9 || metadata.InstanceID() != 7 {
+	if !present || metadata.Ref() != ref || !metadata.Timestamp().Equal(time.Unix(0, -9).UTC()) || metadata.InstanceID() != 7 {
 		t.Fatal("accepted metadata differs from prepared envelope")
 	}
 	checkRecord := func(record RecordView, i int, accepted bool) {
 		t.Helper()
 		stamp, present := record.Timestamp()
-		if !present || stamp != want[i].Timestamp || !record.MutableClone().Equal(want[i]) {
+		if !present || !stamp.Equal(time.Unix(0, want[i].Timestamp).UTC()) || !record.MutableClone().Equal(want[i]) {
 			t.Fatal("timestamp, presence or payload changed")
 		}
 		got, present := record.Commit()
@@ -142,7 +156,7 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 			_, err = s.SubmitCommit(t.Context(), b)
 			interactionCheck(t, err)
 			fresh := s.Snapshot().RecordAt(last)
-			if got, ok := fresh.Commit(); !ok || got.Ref() != s.Snapshot().Head() || got.Timestamp() != now {
+			if got, ok := fresh.Commit(); !ok || got.Ref() != s.Snapshot().Head() || !got.Timestamp().Equal(time.Unix(0, now).UTC()) {
 				t.Fatal("fresh accepted record lacks successor metadata")
 			}
 		case "discard":
@@ -183,7 +197,7 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 		interactionCheck(t, err)
 	}
 	forbidden = true
-	loaded, err := Load(t.Context(), h, scope, sessionPolicy(), Config{InstanceID: 99, Now: config.Now})
+	loaded, err := Load(t.Context(), h, scope, Config{Policy: sessionPolicy(), InstanceID: 99, Now: config.Now})
 	interactionCheck(t, err)
 	checkPinned()
 	for _, snapshot := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
@@ -235,7 +249,7 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 func TestRecordMetadataUncertainSubmission(t *testing.T) {
 	backend := &timestampBackend{Backend: mem.New(), loseAck: true}
 	h := newLifecycleHistory(t, backend)
-	s, err := New(h, testHistoryID(t), sessionPolicy(), testConfig())
+	s, err := New(h, testHistoryID(t), testConfigFor(sessionPolicy()))
 	interactionCheck(t, err)
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)

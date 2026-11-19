@@ -26,7 +26,7 @@ func TestSessionRecordTimestampsAndSampling(t *testing.T) {
 		calls++
 		return time.Unix(0, n)
 	}
-	s, err := New(h, scope, sessionPolicy(), Config{InstanceID: 7, Now: clock})
+	s, err := New(h, scope, Config{Policy: sessionPolicy(), InstanceID: 7, Now: clock})
 	interactionCheck(t, err)
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
@@ -94,7 +94,7 @@ func TestSessionRecordTimestampsAndSampling(t *testing.T) {
 
 	loading := true
 	newCalls := 0
-	loaded, err := Load(t.Context(), h, scope, sessionPolicy(), Config{InstanceID: 99, Now: func() time.Time {
+	loaded, err := Load(t.Context(), h, scope, Config{Policy: sessionPolicy(), InstanceID: 99, Now: func() time.Time {
 		if loading {
 			t.Fatal("replay sampled clock")
 		}

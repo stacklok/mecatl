@@ -137,7 +137,7 @@ func TestConstructToolResourcesAndTypedMedia(t *testing.T) {
 		t.Fatalf("resource projection mismatch: %#v", result)
 	}
 	f.submit()
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 	requireConstruction(t, err)
 	again, err := Construct(loaded.Snapshot(), format.ParametersV1{}, testLimits())
 	requireConstruction(t, err)
@@ -171,7 +171,7 @@ func TestConstructBulkCloseoutExplicitDispositionWins(t *testing.T) {
 		}
 	}
 	f.submit()
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy, testConfig())
+	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 	requireConstruction(t, err)
 	if _, err := Construct(loaded.Snapshot(), format.ParametersV1{}, testLimits()); err != nil {
 		t.Fatal(err)

@@ -171,7 +171,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	if len(page.Commits) != 1 {
 		t.Fatal("missing accepted fixture commit")
 	}
-	applied, err := session.Load(context.Background(), h, scope, p, testConfig())
+	applied, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	assertExactContent(applied.Snapshot())
 	for _, record := range page.Commits[0].Commit.Records {
@@ -226,7 +226,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	if !ok || empty.Inputs().Len() != 0 || empty.RunID() != run {
 		t.Fatal("empty increment lost")
 	}
-	loaded, err := session.Load(context.Background(), h, scope, p, testConfig())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	assertExactContent(loaded.Snapshot())
 	loadedInput := lookupInput(t, loaded.Snapshot(), authoredID.RunID(), 1)
@@ -303,7 +303,7 @@ func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	mustBatch(t, err)
 	mustBatch(t, b.AddEffectiveInput(successor, session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(empty.RunRelative())}}}))
 	submitBatch(t, s, b)
-	loaded, err := session.Load(context.Background(), h, scope, sessionPolicy(), testConfig())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) || old.RecordCount() != 7 || lookupInput(t, loaded.Snapshot(), input.RunID(), 1).Parts().Len() != 0 || lookupInput(t, loaded.Snapshot(), empty.RunID(), 1).Parts().Len() != 0 {
 		t.Fatal("empty/duplicate facts lost or rejection leaked")
@@ -355,7 +355,7 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 				if !effectiveMatches(got, valid) {
 					t.Fatal("prior contribution changed")
 				}
-				loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy(), testConfig())
+				loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
 				mustBatch(t, err)
 				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 					t.Fatal("replay rejects submitted contribution")
@@ -418,7 +418,7 @@ func TestContextMixedReferenceBoundsExternalLoad(t *testing.T) {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), sessionPolicy(), testConfig())
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), testConfigFor(sessionPolicy()))
 				if valid {
 					mustBatch(t, err)
 					if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {
@@ -484,7 +484,7 @@ func TestContextForwardReferenceExternalLoad(t *testing.T) {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), sessionPolicy(), testConfig())
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), testConfigFor(sessionPolicy()))
 				if loaded != nil || !errors.Is(err, session.ErrTransition) {
 					t.Fatalf("forward reference Load = %v, %v; want nil, ErrTransition", loaded, err)
 				}

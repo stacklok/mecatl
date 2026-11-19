@@ -76,7 +76,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						if s.state.view.lifecycle.pending != active.pending || s.state.view.lifecycle.calls != active.calls || s.state.view.lifecycle.frontier != active.frontier || s.state.view.lifecycle.accounted != active.accounted {
 							t.Fatal("ending erased uncertainty")
 						}
-						loaded, err := Load(context.Background(), s.history, run.historyID, p, testConfig())
+						loaded, err := Load(context.Background(), s.history, run.historyID, testConfigFor(p))
 						interactionCheck(t, err)
 						if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 							t.Fatal("hard-only ending replay")
@@ -306,7 +306,7 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 					t.Fatal("run")
 				}
 			})
-			s.config = Config{InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
+			s.config = Config{Policy: s.policy, InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
 			interactionSubmit(t, s, func(b *SessionCommit) {
 				interactionCheck(t, b.AddRunEnded(s.Snapshot().ActiveRun(), RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}))
 			})
@@ -370,7 +370,7 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 			if againInput != 0 || againRaw.Data().Copy()[0] != 0xff || s.state.view.lifecycle.pending != pending {
 				t.Fatal("capture export mutated fact or resolved request")
 			}
-			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, s.policy, testConfig())
+			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, testConfigFor(s.policy))
 			interactionCheck(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("capture replay")

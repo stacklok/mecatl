@@ -16,7 +16,7 @@ func TestDecodedRecordUsesEnclosingScope(t *testing.T) {
 	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
 	mustBatch(t, err)
 	for _, id := range []historyid.HistoryID{testHistoryID(t), foreign} {
-		s, err := New(newSessionHistory(t), id, sessionPolicy(), testConfig())
+		s, err := New(newSessionHistory(t), id, testConfigFor(sessionPolicy()))
 		mustBatch(t, err)
 		for _, r := range []*materializedRecord{createdRecord(t), startRecord(t, 1), inputRecord(t, 1), closeoutRecord(t, 1)} {
 			decoded, err := decodeMaterialized(r.format(), testLimits())
@@ -405,7 +405,7 @@ func TestSessionLocalOrdinalsBindToVerifiedChain(t *testing.T) {
 	dto := c.Commit.Clone()
 	dto.HistoryID = new(foreign)
 	accepted := identify(t, dto)
-	other, err := New(newSessionHistory(t), foreign, sessionPolicy(), testConfig())
+	other, err := New(newSessionHistory(t), foreign, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	mustBatch(t, other.apply(accepted))
 	got := other.Snapshot()

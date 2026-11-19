@@ -48,12 +48,12 @@ func validateHistoryID(id historyid.HistoryID) error {
 	return nil
 }
 
-// New binds a History and scope with copied explicit policy and authoring config,
-// without I/O or clock sampling. Invalid policy returns nil, ErrInvalidPolicy;
-// zero config InstanceID returns nil, ErrInvalidConfig; nil History or invalid
-// scope returns nil, ErrIdentity. Creation must be added to the first batch.
-func New(h *history.History, id historyid.HistoryID, policy Policy, config Config) (*Session, error) {
-	if err := policy.Validate(); err != nil {
+// New binds a History and scope with copied explicit construction config, without
+// I/O or clock sampling. Invalid Config.Policy returns nil, ErrInvalidPolicy; zero
+// config InstanceID returns nil, ErrInvalidConfig; nil History or invalid scope
+// returns nil, ErrIdentity. Creation must be added to the first batch.
+func New(h *history.History, id historyid.HistoryID, config Config) (*Session, error) {
+	if err := config.Policy.Validate(); err != nil {
 		return nil, err
 	}
 	if h == nil {
@@ -66,7 +66,7 @@ func New(h *history.History, id historyid.HistoryID, policy Policy, config Confi
 	if err != nil {
 		return nil, err
 	}
-	return &Session{history: h, policy: policy, config: config, state: sessionState{view: Snapshot{historyID: id}}}, nil
+	return &Session{history: h, policy: config.Policy, config: config, state: sessionState{view: Snapshot{historyID: id}}}, nil
 }
 
 // loadError preserves the storage cause without projecting backend-controlled
@@ -79,14 +79,14 @@ func (e loadError) Unwrap() error { return e.cause }
 // Load constructs a new bound Session by pinning History's accepted head and
 // replaying verified pages from genesis through that endpoint. Later appends are
 // not included. Active runs stay active; loading never writes, interrupts, retries
-// an old submission or grants exclusive writer ownership. Policy is copied as in
-// New. Config is copied/normalized without sampling; replay preserves stored
-// metadata and only subsequent authoring uses this writer's config.
-// Replay enforces hard bounds, not soft write admission or future closeout
-// room. Unknown histories return history.ErrNotFound, not an uncreated session.
+// an old submission or grants exclusive writer ownership. Config is copied and
+// normalized without sampling; its Policy applies to replay and future authoring,
+// while replay preserves stored metadata. Replay enforces hard bounds, not soft
+// write admission or future closeout room. Unknown histories return
+// history.ErrNotFound, not an uncreated session.
 // Any error returns nil, never a partially reconstructed object.
-func Load(ctx context.Context, h *history.History, id historyid.HistoryID, policy Policy, config Config) (*Session, error) {
-	s, err := New(h, id, policy, config)
+func Load(ctx context.Context, h *history.History, id historyid.HistoryID, config Config) (*Session, error) {
+	s, err := New(h, id, config)
 	if err != nil {
 		return nil, err
 	}

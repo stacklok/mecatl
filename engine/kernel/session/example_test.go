@@ -29,8 +29,8 @@ func ExampleSession() {
 	// The embedding caller chooses this once per running writer and reuses it
 	// across sessions/reloads. This example uses an epoch clock for repeatable output;
 	// nil Now uses time.Now. No clock is sampled during construction or loading.
-	config := session.Config{InstanceID: 1, Now: func() time.Time { return time.Unix(0, 0) }}
-	s, err := session.New(h, id, policy, config) // No I/O or implicit creation.
+	config := session.Config{Policy: policy, InstanceID: 1, Now: func() time.Time { return time.Unix(0, 0) }}
+	s, err := session.New(h, id, config) // No I/O or implicit creation.
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -87,7 +87,7 @@ func ExampleSession() {
 	}
 	old := s.Snapshot()
 	fmt.Printf("accepted head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
-	loaded, err := session.Load(ctx, h, id, policy, config)
+	loaded, err := session.Load(ctx, h, id, config)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -102,7 +102,7 @@ func ExampleSession() {
 			stamp, present := record.Timestamp()
 			commit, accepted := record.Commit()
 			fmt.Printf("record timestamp=%d present=%t; accepted=%t commit=%d writer=%d prepared=%d\n",
-				stamp, present, accepted, commit.Ref().Sequence, commit.InstanceID(), commit.Timestamp())
+				stamp.UnixNano(), present, accepted, commit.Ref().Sequence, commit.InstanceID(), commit.Timestamp().UnixNano())
 		}
 	}
 	original, ok := loadedView.UserInputByID(input)
@@ -157,7 +157,7 @@ func ExampleSession() {
 		return
 	}
 	fmt.Printf("successor owner matches=%t; distinct run=%t\n", second.RunID() == successor, successor != run)
-	loaded, err = session.Load(ctx, h, id, policy, config)
+	loaded, err = session.Load(ctx, h, id, config)
 	if err != nil {
 		fmt.Println(err)
 		return

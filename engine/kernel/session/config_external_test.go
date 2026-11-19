@@ -7,5 +7,11 @@ import (
 )
 
 func testConfig() session.Config {
-	return session.Config{InstanceID: 1, Now: func() time.Time { return time.Unix(0, 0) }}
+	return session.Config{Policy: sessionPolicy(), InstanceID: 1, Now: func() time.Time { return time.Unix(0, 0) }}
+}
+
+func testConfigFor(p session.Policy) session.Config {
+	c := testConfig()
+	c.Policy = p
+	return c
 }

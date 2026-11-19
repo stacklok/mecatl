@@ -50,7 +50,7 @@ func TestModelInteractionUncertainMinimalEndingRetriesExactReason(t *testing.T) 
 				if !ok || ending.Reason() != reason {
 					t.Fatal("retry changed ending reason")
 				}
-				loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy(), testConfig())
+				loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
 				mustBatch(t, err)
 				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 					t.Fatal("minimal ending retry replay")
@@ -107,7 +107,7 @@ func TestModelInteractionUncertainDetailedCaptureCannotBecomeMinimal(t *testing.
 			}() {
 				t.Fatal("retry dropped detailed evidence")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy(), testConfig())
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
 			mustBatch(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("ending retry replay")
@@ -165,7 +165,7 @@ func TestToolDispositionUncertainAcceptanceRetainsFrozenFacts(t *testing.T) {
 			if ref := submitBatch(t, s, b); ref != attempt.commit.Ref || len(backend.attempts) != attempts+2 || !reflect.DeepEqual(attempt, backend.attempts[len(backend.attempts)-1]) {
 				t.Fatal("tool disposition retry changed bytes, identity or write count")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy(), testConfig())
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
 			mustBatch(t, err)
 			for _, inspected := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 				disposition, present := inspected.RunAt(0).ToolCalls().At(0).Disposition()

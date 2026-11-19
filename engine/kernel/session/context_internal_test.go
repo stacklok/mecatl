@@ -390,7 +390,7 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 				if _, err := h.Append(context.Background(), scope, external); err != nil {
 					t.Fatal(err)
 				}
-				if loaded, err := Load(context.Background(), h, scope, s.policy, testConfig()); loaded != nil || !errors.Is(err, wantErr) {
+				if loaded, err := Load(context.Background(), h, scope, testConfigFor(s.policy)); loaded != nil || !errors.Is(err, wantErr) {
 					t.Fatalf("malformed/unknown Load: %v, %v", loaded, err)
 				}
 				if head, err := h.Head(context.Background(), scope); err != nil || head != accepted.Ref {
