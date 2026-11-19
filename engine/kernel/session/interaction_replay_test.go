@@ -17,9 +17,9 @@ import (
 // submitting reducer's state. Each page is read from the real memory History.
 func interactionReplay(t testing.TB, s *Session) {
 	t.Helper()
-	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
-	applied, err := New(s.history, s.Snapshot().HistoryID(), s.policy)
+	applied, err := New(s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
 	request := history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1}
 	for request.After != request.Through {
@@ -74,7 +74,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.ModelResponse{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Terminal: sessionformat.ResponseTerminalNormal}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: wire}
+						dto = historyformat.Record{Timestamp: 0, Kind: sessionformat.KindModelResponse, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddModelResponse(id, ModelResponse{Terminal: ResponseTerminalNormal})
 						}
@@ -82,7 +82,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.InvocationFailure{RunID: id.runID.ordinal, RequestID: id.requestOrdinal, Class: sessionformat.InvocationFailureTransport}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: wire}
+						dto = historyformat.Record{Timestamp: 0, Kind: sessionformat.KindInvocationFailure, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddInvocationFailure(id, InvocationFailure{Class: InvocationFailureTransport})
 						}
@@ -90,7 +90,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						v := sessionformat.RunEnded{RunID: id.runID.ordinal, Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: id.requestOrdinal}}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: wire}
+						dto = historyformat.Record{Timestamp: 0, Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							return b.AddRunEnded(id.runID, RunEnded{Reason: RunEndedCaptureFailed, Capture: &CaptureFailureEvidence{RequestID: id.RunRelative()}})
 						}
@@ -105,7 +105,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						}
 						wire, err := codec.Encode(v, s.policy.PayloadLimits)
 						interactionCheck(t, err)
-						dto = historyformat.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: wire}
+						dto = historyformat.Record{Timestamp: 0, Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: wire}
 						add = func(b *SessionCommit) error {
 							_, err := b.AddModelRequest(run, captureCommit(t, b), ModelRequest{Recipe: next.Recipe, RetryOf: new(id.RunRelative())})
 							return err
@@ -124,7 +124,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 						interactionCheck(t, b.Discard())
 					} else {
 						head := s.Snapshot().Head()
-						c := historyformat.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
+						c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
 						ref, e := s.history.Identify(run.historyID, c)
 						interactionCheck(t, e)
 						if path == "apply" {
@@ -135,7 +135,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 							if result.Status != history.StatusAccepted {
 								t.Fatal("History rejected locally valid DTO")
 							}
-							loaded, e := Load(context.Background(), s.history, run.historyID, s.policy)
+							loaded, e := Load(context.Background(), s.history, run.historyID, testConfigFor(s.policy))
 							err = e
 							if err != nil && loaded != nil {
 								t.Fatal("failed Load published partial state")
@@ -183,7 +183,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 			before := detachedSessionState(s.state)
 			// Former experimental code 5 (interrupted) for run 1. History retains
 			// opaque payload bytes, but Session must not convert the numeric reason.
-			dto := historyformat.Record{Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: []byte("\xa3\x61b\xf4\x61e\x05\x61r\x01")}
+			dto := historyformat.Record{Timestamp: 0, Kind: sessionformat.KindRunEnded, KindVersion: sessionformat.Version, Payload: []byte("\xa3\x61b\xf4\x61e\x05\x61r\x01")}
 			var err error
 			if path == "decode" {
 				var r *materializedRecord
@@ -193,7 +193,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 				}
 			} else {
 				head := s.Snapshot().Head()
-				c := historyformat.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
+				c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
 				ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
 				interactionCheck(t, e)
 				if path == "apply" {
@@ -202,7 +202,7 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 					_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 					interactionCheck(t, e)
 					var loaded *Session
-					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed Load returned a partial session")
 					}
@@ -220,7 +220,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 		for _, path := range []string{"decode", "apply", "load"} {
 			t.Run(kind+"/"+path, func(t *testing.T) {
 				s := interactionFixture(t, "pending")
-				dto := historyformat.Record{Kind: kind, KindVersion: sessionformat.Version + 1, Payload: []byte{0xa0}}
+				dto := historyformat.Record{Timestamp: 0, Kind: kind, KindVersion: sessionformat.Version + 1, Payload: []byte{0xa0}}
 				if kind == "session.future" {
 					dto.KindVersion = 1
 				}
@@ -234,7 +234,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 					}
 				} else {
 					head := s.Snapshot().Head()
-					c := historyformat.Commit{FormatVersion: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
+					c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
 					ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
 					interactionCheck(t, e)
 					if path == "apply" {
@@ -242,7 +242,7 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 					} else {
 						_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
 						interactionCheck(t, e)
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), s.policy)
+						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					}
 				}
 				if !errors.Is(err, ErrUnsupportedRecord) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {

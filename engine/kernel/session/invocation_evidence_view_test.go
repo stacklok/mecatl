@@ -85,7 +85,7 @@ func TestInvocationEvidenceViewsOwnEveryMutableField(t *testing.T) {
 			}
 			interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); mustBatch(t, err) })
 			verify(pinned)
-			loaded, err := Load(t.Context(), s.history, pinned.HistoryID(), s.policy)
+			loaded, err := Load(t.Context(), s.history, pinned.HistoryID(), testConfigFor(s.policy))
 			mustBatch(t, err)
 			verify(loaded.Snapshot())
 		})

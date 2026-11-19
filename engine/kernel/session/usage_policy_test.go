@@ -38,7 +38,7 @@ func TestUsagePayloadPolicyBoundaries(t *testing.T) {
 					reflect.ValueOf(&limits).Elem().Field(field).SetInt(int64(lo))
 					s.policy.PayloadLimits = limits
 					// Only the accounting record, not the preceding creation, violates the bound.
-					_, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+					_, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 					mustBatch(t, err)
 					before := detachedSessionState(s.state)
 					switch path {
@@ -59,7 +59,7 @@ func TestUsagePayloadPolicyBoundaries(t *testing.T) {
 							t.Fatal("history rejected payload")
 						}
 						var loaded *Session
-						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 						if err != nil && loaded != nil {
 							t.Fatal("failed load returned partial session")
 						}
@@ -148,7 +148,7 @@ func TestUsageMixedCommitPolicyAtomicity(t *testing.T) {
 						_, e := s.history.Append(t.Context(), s.Snapshot().HistoryID(), c.Commit)
 						mustBatch(t, e)
 						var loaded *Session
-						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), p)
+						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(p))
 						if err != nil && loaded != nil {
 							t.Fatal("partial load")
 						}

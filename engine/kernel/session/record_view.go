@@ -1,6 +1,8 @@
 package session
 
 import (
+	"time"
+
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
@@ -31,9 +33,33 @@ func (v RecordView) KindVersion() int64 {
 	return v.record.value.KindVersion
 }
 
-// MutableClone returns a deeply detached mutable copy of the record DTO without
-// its enclosing history scope. A zero view returns a zero DTO. Mutating the result
-// cannot change accepted backing or other clones.
+// Timestamp returns the UTC record-admission time in O(1), without copying
+// payloads. Zero views return the zero time, false; a present timestamp at the
+// Unix epoch is distinct from absence. Negative values and backwards clock jumps
+// are valid. This is diagnostic recording time, not action timing or an ordering
+// guarantee.
+func (v RecordView) Timestamp() (time.Time, bool) {
+	if v.record == nil {
+		return time.Time{}, false
+	}
+	return time.Unix(0, v.record.value.Timestamp).UTC(), true
+}
+
+// Commit returns the enclosing accepted commit's immutable metadata in O(1),
+// without copying payloads. Zero and proposed records return zero, false. Captured
+// proposed views remain absent even after their batch is accepted; fresh accepted
+// views obtained through Submit or Load expose the metadata.
+func (v RecordView) Commit() (CommitMetadata, bool) {
+	if v.record == nil || v.record.commit == nil {
+		return CommitMetadata{}, false
+	}
+	return *v.record.commit, true
+}
+
+// MutableClone returns a deeply detached mutable copy of the record DTO, retaining
+// its timestamp but not enclosing history scope or accepted commit metadata.
+// A zero view returns a zero DTO. Mutating the result cannot change accepted
+// backing or other clones.
 func (v RecordView) MutableClone() format.Record {
 	if v.record == nil {
 		return format.Record{}

@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -35,7 +36,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(h, fixture.Snapshot().HistoryID(), fixture.policy)
+	s, err := New(h, fixture.Snapshot().HistoryID(), testConfigFor(fixture.policy))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				candidate, err := prefix.prepare([]*materializedRecord{start})
+				candidate, err := prefix.prepare([]*materializedRecord{start}, 0, 1)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -86,7 +87,8 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				closeout := format.Commit{FormatVersion: 1, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{interruption.format()}}
+				interruption.value.Timestamp = math.MinInt64
+				closeout := format.Commit{FormatVersion: 1, Timestamp: math.MinInt64, InstanceID: math.MaxUint64, Sequence: 24, Parent: new(candidate.ref.CID), Records: []format.Record{interruption.format()}}
 				wire, err := codec.Encode(closeout, prefix.policy.CommitLimits)
 				if err != nil {
 					t.Fatal(err)
@@ -141,7 +143,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				s, err := New(h, id, policy)
+				s, err := New(h, id, testConfigFor(policy))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -152,7 +154,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				switch path {
 				case "prepare":
 					var p prepared
-					p, err = s.prepare([]*materializedRecord{start})
+					p, err = s.prepare([]*materializedRecord{start}, 0, 1)
 					if !exact && !reflect.DeepEqual(p, prepared{}) {
 						t.Fatal("failed prepare returned a proposal")
 					}
@@ -232,6 +234,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				if err != nil || !bytes.Equal(encoded, wire) || budget.EstimatedBytes() != limit {
 					t.Fatalf("closeout differs from measured exact admission size: %v", err)
 				}
+				s.config = Config{Policy: s.policy, InstanceID: math.MaxUint64, Now: func() time.Time { return time.Unix(0, math.MinInt64) }}
 				b, err := s.BeginCommit()
 				if err != nil {
 					t.Fatal(err)

@@ -25,15 +25,15 @@ func testLimits() codec.Limits {
 // wireFixtures are literal canonical bytes, independent of codec append helpers.
 func wireFixtures(t testing.TB) (root, successor []byte) {
 	t.Helper()
-	records := "\x61r\x81\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01"
-	root = []byte("\xa4\x61h\x78\x19HST1111111111111111111111" + records + "\x61s\x01\x61v\x01")
+	records := "\x61r\x81\xa4\x61k\x61x\x61p\x42\xff\x00\x61t\x20\x61v\x01"
+	root = []byte("\xa6\x61h\x78\x19HST1111111111111111111111\x61i\x01" + records + "\x61s\x01\x61t\x21\x61v\x01")
 	link, err := hex.DecodeString("0001711220e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 	if err != nil {
 		t.Fatal(err)
 	}
-	successor = append([]byte("\xa4\x61p\xd8\x2a\x58\x25"), link...)
+	successor = append([]byte("\xa6\x61i\x01\x61p\xd8\x2a\x58\x25"), link...)
 	successor = append(successor, records...)
-	successor = append(successor, "\x61s\x02\x61v\x01"...)
+	successor = append(successor, "\x61s\x02\x61t\x21\x61v\x01"...)
 	return root, successor
 }
 
@@ -62,8 +62,8 @@ func TestCodecGoldens(t *testing.T) {
 		wire   []byte
 		cid    string
 	}{
-		{"root", root, rootWire, "bafyreig2llelbbwy3sclxh3ytf4cy4bphqkzuvx6ljdqm5mzgfpd7uftza"},
-		{"successor", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreihqvw7bignyhvicgqom67gvtau7w5zaezanb27aatcxpylpfkmjoq"},
+		{"root", root, rootWire, "bafyreid73f2xbvil2ai2j6kjnm62px5tyukt7yzvwhwavkm6zbxlvi3fv4"},
+		{"successor", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreibf3l4c2hnprpoguyob3yiuatjvhpeba2g7r5jujzth25ib72dh6e"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			data, err := codec.Encode(fixture.commit, testLimits())
@@ -92,13 +92,16 @@ func TestCodecGoldens(t *testing.T) {
 
 func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 	base := validRoot(t)
-	base.Records = append(base.Records, format.Record{Kind: "arbitrary namespace / 🐈", KindVersion: math.MaxInt64, Payload: []byte(`{ "a": invalid json }`)})
+	base.Records = append(base.Records, format.Record{Timestamp: math.MinInt64, Kind: "arbitrary namespace / 🐈", KindVersion: math.MaxInt64, Payload: []byte(`{ "a": invalid json }`)})
 	data, err := codec.Encode(base, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	original := contentid.Sum(data)
 	for name, mutate := range map[string]func(*format.Commit){
+		"timestamp":        func(c *format.Commit) { c.Timestamp++ },
+		"instance":         func(c *format.Commit) { c.InstanceID++ },
+		"record timestamp": func(c *format.Commit) { c.Records[0].Timestamp++ },
 		"history": func(c *format.Commit) {
 			h, _ := historyid.ParseHistoryID("HST2222222222222222222222")
 			c.HistoryID = &h

@@ -28,7 +28,8 @@ func ExampleConstruct_andReconstruct() {
 		fmt.Println(err)
 		return
 	}
-	s, err := session.New(h, historyID, policy)
+	config := session.Config{Policy: policy, InstanceID: 1}
+	s, err := session.New(h, historyID, config)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -125,7 +126,7 @@ func ExampleConstruct_andReconstruct() {
 	}
 
 	// Load restores retained facts. It does not reopen SOUL.md or AGENTS.md.
-	resumed, err := session.Load(ctx, h, historyID, policy)
+	resumed, err := session.Load(ctx, h, historyID, config)
 	if err != nil {
 		fmt.Println(err)
 		return

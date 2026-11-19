@@ -100,6 +100,8 @@ func (b *SessionCommit) check(add bool) error {
 // callers check explicit destination and synthesized fields before materialization.
 // Aggregate policy
 // is checked only on submission; this trusted in-process builder is not a sandbox.
+// Only after local validation does it sample/stamp; clock failure publishes neither
+// the record nor candidate admission state.
 func (b *SessionCommit) add(r *materializedRecord, err error) error {
 	if err != nil {
 		return err
@@ -114,6 +116,11 @@ func (b *SessionCommit) add(r *materializedRecord, err error) error {
 	if err := candidate.admit(b.owner.state.view.historyID, r); err != nil {
 		return err
 	}
+	timestamp, err := b.owner.config.timestamp()
+	if err != nil {
+		return err
+	}
+	r.value.Timestamp = timestamp
 	b.records = append(b.records, r)
 	b.admission = candidate
 	return nil
@@ -433,8 +440,10 @@ func (appendError) Is(target error) bool { return target == ErrAcceptanceUnknown
 // SubmitCommit freezes and preflights a batch, then makes exactly one History
 // Append attempt (none for invalid handles/preflight). Capacity rejection before
 // Append returns a zero ref and releases the slot without publication. Uncertain
-// errors match ErrAcceptanceUnknown and keep the exact owned proposal frozen:
-// invoke again on the same handle with a fresh context to retry. No retries or
+// errors match ErrAcceptanceUnknown and keep the exact owned proposal frozen,
+// including its one sampled preparation timestamp and writer identity, even when
+// cancellation prevents any backend call. This is not storage receipt time.
+// Invoke again on the same handle with a fresh context to retry. No retries or
 // observations occur automatically. A limit cause alone is not rejection proof.
 //
 // Success returns this proposal's accepted reference, not a potentially newer
@@ -450,8 +459,13 @@ func (s *Session) SubmitCommit(ctx context.Context, b *SessionCommit) (history.C
 		return history.CommitRef{}, err
 	}
 	if !b.frozen {
+		timestamp, err := s.config.timestamp()
+		if err != nil {
+			b.close(false)
+			return history.CommitRef{}, err
+		}
 		b.frozen = true
-		proposal, err := s.prepare(b.records)
+		proposal, err := s.prepare(b.records, timestamp, s.config.InstanceID)
 		if err != nil {
 			b.close(false)
 			return history.CommitRef{}, err

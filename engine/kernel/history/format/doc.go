@@ -6,4 +6,10 @@
 // operation state. Validate checks their data contract; CBOR operations
 // additionally enforce canonical encoding and per-operation resource limits. The
 // package does not establish history membership or acceptance.
+//
+// Version 1 envelopes require signed Unix-nanosecond timestamps on records and
+// commits, plus a nonzero writer-instance ID on commits. Zero timestamps denote
+// the Unix epoch; negative values and backwards clock jumps are valid. These
+// diagnostic fields participate in commit identity without proving timing,
+// ordering, or authority. Decoding rejects missing metadata rather than inferring it.
 package format

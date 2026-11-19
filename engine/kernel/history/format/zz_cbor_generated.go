@@ -59,11 +59,11 @@ func (v Record) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	return (dtogen{}).check7(v, b, depth, fieldMax)
+	return (dtogen{}).check8(v, b, depth, fieldMax)
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v Record) AppendCBOR(dst []byte) []byte { return (dtogen{}).append7(dst, v) }
+func (v Record) AppendCBOR(dst []byte) []byte { return (dtogen{}).append8(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
 func (v *Record) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
@@ -73,7 +73,7 @@ func (v *Record) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if r == nil || fieldMax <= 0 {
 		return dtogenCodec.ErrInvalidLimits
 	}
-	x, err := (dtogen{}).read7(r, depth, fieldMax)
+	x, err := (dtogen{}).read8(r, depth, fieldMax)
 	if err != nil {
 		return err
 	}
@@ -82,35 +82,43 @@ func (v *Record) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v Record) Clone() Record { return (dtogen{}).clone7(v) }
+func (v Record) Clone() Record { return (dtogen{}).clone8(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v Record) Equal(other Record) bool { return (dtogen{}).equal7(v, other) }
+func (v Record) Equal(other Record) bool { return (dtogen{}).equal8(v, other) }
 
 // Helpers 0: Commit.
 func (h dtogen) clone0(v Commit) Commit {
 	out := v
 	out.FormatVersion = h.clone1(v.FormatVersion)
-	out.HistoryID = h.clone2(v.HistoryID)
-	out.Parent = h.clone4(v.Parent)
+	out.Timestamp = h.clone1(v.Timestamp)
+	out.InstanceID = h.clone2(v.InstanceID)
+	out.HistoryID = h.clone3(v.HistoryID)
+	out.Parent = h.clone5(v.Parent)
 	out.Sequence = h.clone1(v.Sequence)
-	out.Records = h.clone6(v.Records)
+	out.Records = h.clone7(v.Records)
 	return out
 }
 func (h dtogen) equal0(v, w Commit) bool {
 	if !h.equal1(v.FormatVersion, w.FormatVersion) {
 		return false
 	}
-	if !h.equal2(v.HistoryID, w.HistoryID) {
+	if !h.equal1(v.Timestamp, w.Timestamp) {
 		return false
 	}
-	if !h.equal4(v.Parent, w.Parent) {
+	if !h.equal2(v.InstanceID, w.InstanceID) {
+		return false
+	}
+	if !h.equal3(v.HistoryID, w.HistoryID) {
+		return false
+	}
+	if !h.equal5(v.Parent, w.Parent) {
 		return false
 	}
 	if !h.equal1(v.Sequence, w.Sequence) {
 		return false
 	}
-	if !h.equal6(v.Records, w.Records) {
+	if !h.equal7(v.Records, w.Records) {
 		return false
 	}
 	return true
@@ -121,7 +129,7 @@ func (h dtogen) check0(v Commit, b *dtogenCodec.Budget, d, cap int) (err error) 
 			err = dtogenCodec.ErrInvalidData
 		}
 	}()
-	count := 3
+	count := 5
 	if v.HistoryID != nil {
 		count++
 	}
@@ -135,22 +143,28 @@ func (h dtogen) check0(v Commit, b *dtogenCodec.Budget, d, cap int) (err error) 
 		if err := b.CheckString("h", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("HistoryID: %w", err)
 		}
-		if err := h.check2(v.HistoryID, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check3(v.HistoryID, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("HistoryID: %w", err)
 		}
+	}
+	if err := b.CheckString("i", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("InstanceID: %w", err)
+	}
+	if err := h.check2(v.InstanceID, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("InstanceID: %w", err)
 	}
 	if v.Parent != nil {
 		if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Parent: %w", err)
 		}
-		if err := h.check4(v.Parent, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check5(v.Parent, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("Parent: %w", err)
 		}
 	}
 	if err := b.CheckString("r", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Records: %w", err)
 	}
-	if err := h.check6(v.Records, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check7(v.Records, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Records: %w", err)
 	}
 	if err := b.CheckString("s", d+1, int(^uint(0)>>1)); err != nil {
@@ -158,6 +172,12 @@ func (h dtogen) check0(v Commit, b *dtogenCodec.Budget, d, cap int) (err error) 
 	}
 	if err := h.check1(v.Sequence, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Sequence: %w", err)
+	}
+	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Timestamp: %w", err)
+	}
+	if err := h.check1(v.Timestamp, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Timestamp: %w", err)
 	}
 	if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("FormatVersion: %w", err)
@@ -168,7 +188,7 @@ func (h dtogen) check0(v Commit, b *dtogenCodec.Budget, d, cap int) (err error) 
 	return nil
 }
 func (h dtogen) append0(out []byte, v Commit) []byte {
-	count := 3
+	count := 5
 	if v.HistoryID != nil {
 		count++
 	}
@@ -178,16 +198,20 @@ func (h dtogen) append0(out []byte, v Commit) []byte {
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	if v.HistoryID != nil {
 		out = dtogenCBOR.AppendText(out, "h")
-		out = h.append2(out, v.HistoryID)
+		out = h.append3(out, v.HistoryID)
 	}
+	out = dtogenCBOR.AppendText(out, "i")
+	out = h.append2(out, v.InstanceID)
 	if v.Parent != nil {
 		out = dtogenCBOR.AppendText(out, "p")
-		out = h.append4(out, v.Parent)
+		out = h.append5(out, v.Parent)
 	}
 	out = dtogenCBOR.AppendText(out, "r")
-	out = h.append6(out, v.Records)
+	out = h.append7(out, v.Records)
 	out = dtogenCBOR.AppendText(out, "s")
 	out = h.append1(out, v.Sequence)
+	out = dtogenCBOR.AppendText(out, "t")
+	out = h.append1(out, v.Timestamp)
 	out = dtogenCBOR.AppendText(out, "v")
 	out = h.append1(out, v.FormatVersion)
 	return out
@@ -203,7 +227,7 @@ func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v Commit, err error) {
 		return v, err
 	}
 	previous := ""
-	var seen [5]bool
+	var seen [7]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -217,30 +241,42 @@ func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v Commit, err error) {
 		switch key {
 		case "h":
 			seen[0] = true
-			v.HistoryID, err = h.read2(r, d+1, int(^uint(0)>>1))
+			v.HistoryID, err = h.read3(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("HistoryID: %w", err)
 			}
-		case "p":
+		case "i":
 			seen[1] = true
-			v.Parent, err = h.read4(r, d+1, int(^uint(0)>>1))
+			v.InstanceID, err = h.read2(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("InstanceID: %w", err)
+			}
+		case "p":
+			seen[2] = true
+			v.Parent, err = h.read5(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Parent: %w", err)
 			}
 		case "r":
-			seen[2] = true
-			v.Records, err = h.read6(r, d+1, int(^uint(0)>>1))
+			seen[3] = true
+			v.Records, err = h.read7(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Records: %w", err)
 			}
 		case "s":
-			seen[3] = true
+			seen[4] = true
 			v.Sequence, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Sequence: %w", err)
 			}
+		case "t":
+			seen[5] = true
+			v.Timestamp, err = h.read1(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Timestamp: %w", err)
+			}
 		case "v":
-			seen[4] = true
+			seen[6] = true
 			v.FormatVersion, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("FormatVersion: %w", err)
@@ -249,13 +285,19 @@ func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v Commit, err error) {
 			return v, dtogenCodec.ErrInvalidData
 		}
 	}
-	if !seen[2] {
+	if !seen[1] {
 		return v, dtogenCodec.ErrInvalidData
 	}
 	if !seen[3] {
 		return v, dtogenCodec.ErrInvalidData
 	}
 	if !seen[4] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[5] {
+		return v, dtogenCodec.ErrInvalidData
+	}
+	if !seen[6] {
 		return v, dtogenCodec.ErrInvalidData
 	}
 	return v, nil
@@ -282,152 +324,173 @@ func (h dtogen) read1(r *dtogenCodec.Reader, d, cap int) (v int64, err error) {
 	return int64(x), nil
 }
 
-// Helpers 2: *id.HistoryID.
-func (h dtogen) clone2(v *dtogenType2.HistoryID) *dtogenType2.HistoryID {
+// Helpers 2: uint64.
+func (h dtogen) clone2(v uint64) uint64 {
+	return v
+}
+func (h dtogen) equal2(v, w uint64) bool {
+	return v == w
+}
+func (h dtogen) check2(v uint64, b *dtogenCodec.Budget, d, cap int) (err error) {
+	return b.CheckScalar(d)
+}
+func (h dtogen) append2(out []byte, v uint64) []byte {
+	return dtogenCBOR.AppendUint(out, uint64(v))
+}
+func (h dtogen) read2(r *dtogenCodec.Reader, d, cap int) (v uint64, err error) {
+	x, err := r.Uint(d)
+	if err != nil {
+		return v, err
+	}
+	return uint64(x), nil
+}
+
+// Helpers 3: *id.HistoryID.
+func (h dtogen) clone3(v *dtogenType2.HistoryID) *dtogenType2.HistoryID {
 	if v == nil {
 		return nil
 	}
-	x := h.clone3(*v)
+	x := h.clone4(*v)
 	return (*dtogenType2.HistoryID)(&x)
 }
-func (h dtogen) equal2(v, w *dtogenType2.HistoryID) bool {
+func (h dtogen) equal3(v, w *dtogenType2.HistoryID) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal3(*v, *w)
+	return h.equal4(*v, *w)
 }
-func (h dtogen) check2(v *dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check3(v *dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check3(*v, b, d, cap)
+	return h.check4(*v, b, d, cap)
 }
-func (h dtogen) append2(out []byte, v *dtogenType2.HistoryID) []byte {
-	return h.append3(out, *v)
+func (h dtogen) append3(out []byte, v *dtogenType2.HistoryID) []byte {
+	return h.append4(out, *v)
 }
-func (h dtogen) read2(r *dtogenCodec.Reader, d, cap int) (v *dtogenType2.HistoryID, err error) {
-	x, err := h.read3(r, d, cap)
+func (h dtogen) read3(r *dtogenCodec.Reader, d, cap int) (v *dtogenType2.HistoryID, err error) {
+	x, err := h.read4(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*dtogenType2.HistoryID)(&x), nil
 }
 
-// Helpers 3: id.HistoryID.
-func (h dtogen) clone3(v dtogenType2.HistoryID) dtogenType2.HistoryID {
+// Helpers 4: id.HistoryID.
+func (h dtogen) clone4(v dtogenType2.HistoryID) dtogenType2.HistoryID {
 	return v.Clone()
 }
-func (h dtogen) equal3(v, w dtogenType2.HistoryID) bool {
+func (h dtogen) equal4(v, w dtogenType2.HistoryID) bool {
 	return v.Equal(w)
 }
-func (h dtogen) check3(v dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check4(v dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append3(out []byte, v dtogenType2.HistoryID) []byte {
+func (h dtogen) append4(out []byte, v dtogenType2.HistoryID) []byte {
 	return v.AppendCBOR(out)
 }
-func (h dtogen) read3(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.HistoryID, err error) {
+func (h dtogen) read4(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.HistoryID, err error) {
 	err = v.ReadCBOR(r, d, cap)
 	return v, err
 }
 
-// Helpers 4: *contentid.CID.
-func (h dtogen) clone4(v *dtogenType3.CID) *dtogenType3.CID {
+// Helpers 5: *contentid.CID.
+func (h dtogen) clone5(v *dtogenType3.CID) *dtogenType3.CID {
 	if v == nil {
 		return nil
 	}
-	x := h.clone5(*v)
+	x := h.clone6(*v)
 	return (*dtogenType3.CID)(&x)
 }
-func (h dtogen) equal4(v, w *dtogenType3.CID) bool {
+func (h dtogen) equal5(v, w *dtogenType3.CID) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
-	return h.equal5(*v, *w)
+	return h.equal6(*v, *w)
 }
-func (h dtogen) check4(v *dtogenType3.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check5(v *dtogenType3.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
-	return h.check5(*v, b, d, cap)
+	return h.check6(*v, b, d, cap)
 }
-func (h dtogen) append4(out []byte, v *dtogenType3.CID) []byte {
-	return h.append5(out, *v)
+func (h dtogen) append5(out []byte, v *dtogenType3.CID) []byte {
+	return h.append6(out, *v)
 }
-func (h dtogen) read4(r *dtogenCodec.Reader, d, cap int) (v *dtogenType3.CID, err error) {
-	x, err := h.read5(r, d, cap)
+func (h dtogen) read5(r *dtogenCodec.Reader, d, cap int) (v *dtogenType3.CID, err error) {
+	x, err := h.read6(r, d, cap)
 	if err != nil {
 		return v, err
 	}
 	return (*dtogenType3.CID)(&x), nil
 }
 
-// Helpers 5: contentid.CID.
-func (h dtogen) clone5(v dtogenType3.CID) dtogenType3.CID {
+// Helpers 6: contentid.CID.
+func (h dtogen) clone6(v dtogenType3.CID) dtogenType3.CID {
 	return v.Clone()
 }
-func (h dtogen) equal5(v, w dtogenType3.CID) bool {
+func (h dtogen) equal6(v, w dtogenType3.CID) bool {
 	return v.Equal(w)
 }
-func (h dtogen) check5(v dtogenType3.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check6(v dtogenType3.CID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append5(out []byte, v dtogenType3.CID) []byte {
+func (h dtogen) append6(out []byte, v dtogenType3.CID) []byte {
 	return v.AppendCBOR(out)
 }
-func (h dtogen) read5(r *dtogenCodec.Reader, d, cap int) (v dtogenType3.CID, err error) {
+func (h dtogen) read6(r *dtogenCodec.Reader, d, cap int) (v dtogenType3.CID, err error) {
 	err = v.ReadCBOR(r, d, cap)
 	return v, err
 }
 
-// Helpers 6: []Record.
-func (h dtogen) clone6(v []Record) []Record {
+// Helpers 7: []Record.
+func (h dtogen) clone7(v []Record) []Record {
 	if v == nil {
 		return nil
 	}
 	out := make([]Record, len(v))
 	for i := range v {
-		out[i] = h.clone7(v[i])
+		out[i] = h.clone8(v[i])
 	}
 	return out
 }
-func (h dtogen) equal6(v, w []Record) bool {
+func (h dtogen) equal7(v, w []Record) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal7(v[i], w[i]) {
+		if !h.equal8(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check6(v []Record, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check7(v []Record, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if err := b.CheckArray(len(v), d, cap); err != nil {
 		return err
 	}
 	for i, x := range v {
-		if err := h.check7(x, b, d+1, int(^uint(0)>>1)); err != nil {
+		if err := h.check8(x, b, d+1, int(^uint(0)>>1)); err != nil {
 			return dtogenFmt.Errorf("index %d: %w", i, err)
 		}
 	}
 	return nil
 }
-func (h dtogen) append6(out []byte, v []Record) []byte {
+func (h dtogen) append7(out []byte, v []Record) []byte {
 	out = dtogenCBOR.AppendArrayHeader(out, uint64(len(v)))
 	for _, x := range v {
-		out = h.append7(out, x)
+		out = h.append8(out, x)
 	}
 	return out
 }
-func (h dtogen) read6(r *dtogenCodec.Reader, d, cap int) (v []Record, err error) {
+func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v []Record, err error) {
 	count, err := r.Array(d, cap)
 	if err != nil {
 		return v, err
 	}
 	v = make([]Record, count)
 	for i := range v {
-		v[i], err = h.read7(r, d+1, int(^uint(0)>>1))
+		v[i], err = h.read8(r, d+1, int(^uint(0)>>1))
 		if err != nil {
 			return v, dtogenFmt.Errorf("index %d: %w", i, err)
 		}
@@ -435,47 +498,57 @@ func (h dtogen) read6(r *dtogenCodec.Reader, d, cap int) (v []Record, err error)
 	return v, nil
 }
 
-// Helpers 7: Record.
-func (h dtogen) clone7(v Record) Record {
+// Helpers 8: Record.
+func (h dtogen) clone8(v Record) Record {
 	out := v
-	out.Kind = h.clone8(v.Kind)
+	out.Timestamp = h.clone1(v.Timestamp)
+	out.Kind = h.clone9(v.Kind)
 	out.KindVersion = h.clone1(v.KindVersion)
-	out.Payload = h.clone9(v.Payload)
+	out.Payload = h.clone10(v.Payload)
 	return out
 }
-func (h dtogen) equal7(v, w Record) bool {
-	if !h.equal8(v.Kind, w.Kind) {
+func (h dtogen) equal8(v, w Record) bool {
+	if !h.equal1(v.Timestamp, w.Timestamp) {
+		return false
+	}
+	if !h.equal9(v.Kind, w.Kind) {
 		return false
 	}
 	if !h.equal1(v.KindVersion, w.KindVersion) {
 		return false
 	}
-	if !h.equal9(v.Payload, w.Payload) {
+	if !h.equal10(v.Payload, w.Payload) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check7(v Record, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check8(v Record, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateCBOR() != nil {
 			err = dtogenCodec.ErrInvalidData
 		}
 	}()
-	count := 3
+	count := 4
 	if err := b.CheckMap(count, d, cap); err != nil {
 		return err
 	}
 	if err := b.CheckString("k", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
-	if err := h.check8(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check9(v.Kind, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Kind: %w", err)
 	}
 	if err := b.CheckString("p", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Payload: %w", err)
 	}
-	if err := h.check9(v.Payload, b, d+1, int(^uint(0)>>1)); err != nil {
+	if err := h.check10(v.Payload, b, d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("Payload: %w", err)
+	}
+	if err := b.CheckString("t", d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Timestamp: %w", err)
+	}
+	if err := h.check1(v.Timestamp, b, d+1, int(^uint(0)>>1)); err != nil {
+		return dtogenFmt.Errorf("Timestamp: %w", err)
 	}
 	if err := b.CheckString("v", d+1, int(^uint(0)>>1)); err != nil {
 		return dtogenFmt.Errorf("KindVersion: %w", err)
@@ -485,18 +558,20 @@ func (h dtogen) check7(v Record, b *dtogenCodec.Budget, d, cap int) (err error) 
 	}
 	return nil
 }
-func (h dtogen) append7(out []byte, v Record) []byte {
-	count := 3
+func (h dtogen) append8(out []byte, v Record) []byte {
+	count := 4
 	out = dtogenCBOR.AppendMapHeader(out, uint64(count))
 	out = dtogenCBOR.AppendText(out, "k")
-	out = h.append8(out, v.Kind)
+	out = h.append9(out, v.Kind)
 	out = dtogenCBOR.AppendText(out, "p")
-	out = h.append9(out, v.Payload)
+	out = h.append10(out, v.Payload)
+	out = dtogenCBOR.AppendText(out, "t")
+	out = h.append1(out, v.Timestamp)
 	out = dtogenCBOR.AppendText(out, "v")
 	out = h.append1(out, v.KindVersion)
 	return out
 }
-func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v Record, err error) {
+func (h dtogen) read8(r *dtogenCodec.Reader, d, cap int) (v Record, err error) {
 	defer func() {
 		if err == nil && v.validateCBOR() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -507,7 +582,7 @@ func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v Record, err error) {
 		return v, err
 	}
 	previous := ""
-	var seen [3]bool
+	var seen [4]bool
 	for i := 0; i < count; i++ {
 		key, err := r.String(d+1, int(^uint(0)>>1))
 		if err != nil {
@@ -521,18 +596,24 @@ func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v Record, err error) {
 		switch key {
 		case "k":
 			seen[0] = true
-			v.Kind, err = h.read8(r, d+1, int(^uint(0)>>1))
+			v.Kind, err = h.read9(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Kind: %w", err)
 			}
 		case "p":
 			seen[1] = true
-			v.Payload, err = h.read9(r, d+1, int(^uint(0)>>1))
+			v.Payload, err = h.read10(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("Payload: %w", err)
 			}
-		case "v":
+		case "t":
 			seen[2] = true
+			v.Timestamp, err = h.read1(r, d+1, int(^uint(0)>>1))
+			if err != nil {
+				return v, dtogenFmt.Errorf("Timestamp: %w", err)
+			}
+		case "v":
+			seen[3] = true
 			v.KindVersion, err = h.read1(r, d+1, int(^uint(0)>>1))
 			if err != nil {
 				return v, dtogenFmt.Errorf("KindVersion: %w", err)
@@ -550,23 +631,26 @@ func (h dtogen) read7(r *dtogenCodec.Reader, d, cap int) (v Record, err error) {
 	if !seen[2] {
 		return v, dtogenCodec.ErrInvalidData
 	}
+	if !seen[3] {
+		return v, dtogenCodec.ErrInvalidData
+	}
 	return v, nil
 }
 
-// Helpers 8: string.
-func (h dtogen) clone8(v string) string {
+// Helpers 9: string.
+func (h dtogen) clone9(v string) string {
 	return v
 }
-func (h dtogen) equal8(v, w string) bool {
+func (h dtogen) equal9(v, w string) bool {
 	return v == w
 }
-func (h dtogen) check8(v string, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check9(v string, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckString(string(v), d, cap)
 }
-func (h dtogen) append8(out []byte, v string) []byte {
+func (h dtogen) append9(out []byte, v string) []byte {
 	return dtogenCodec.AppendString(out, string(v))
 }
-func (h dtogen) read8(r *dtogenCodec.Reader, d, cap int) (v string, err error) {
+func (h dtogen) read9(r *dtogenCodec.Reader, d, cap int) (v string, err error) {
 	x, err := r.String(d, cap)
 	if err != nil {
 		return v, err
@@ -574,39 +658,39 @@ func (h dtogen) read8(r *dtogenCodec.Reader, d, cap int) (v string, err error) {
 	return string(x), nil
 }
 
-// Helpers 9: []byte.
-func (h dtogen) clone9(v []byte) []byte {
+// Helpers 10: []byte.
+func (h dtogen) clone10(v []byte) []byte {
 	if v == nil {
 		return nil
 	}
 	out := make([]byte, len(v))
 	for i := range v {
-		out[i] = h.clone10(v[i])
+		out[i] = h.clone11(v[i])
 	}
 	return out
 }
-func (h dtogen) equal9(v, w []byte) bool {
+func (h dtogen) equal10(v, w []byte) bool {
 	if len(v) != len(w) {
 		return false
 	}
 	for i := range v {
-		if !h.equal10(v[i], w[i]) {
+		if !h.equal11(v[i], w[i]) {
 			return false
 		}
 	}
 	return true
 }
-func (h dtogen) check9(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check10(v []byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckBytes(len(v), d, cap)
 }
-func (h dtogen) append9(out []byte, v []byte) []byte {
+func (h dtogen) append10(out []byte, v []byte) []byte {
 	out = dtogenCBOR.AppendBytesHeader(out, uint64(len(v)))
 	for _, x := range v {
 		out = append(out, byte(x))
 	}
 	return out
 }
-func (h dtogen) read9(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
+func (h dtogen) read10(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	x, err := r.Bytes(d, cap)
 	if err != nil {
 		return v, err
@@ -618,20 +702,20 @@ func (h dtogen) read9(r *dtogenCodec.Reader, d, cap int) (v []byte, err error) {
 	return v, nil
 }
 
-// Helpers 10: byte.
-func (h dtogen) clone10(v byte) byte {
+// Helpers 11: byte.
+func (h dtogen) clone11(v byte) byte {
 	return v
 }
-func (h dtogen) equal10(v, w byte) bool {
+func (h dtogen) equal11(v, w byte) bool {
 	return v == w
 }
-func (h dtogen) check10(v byte, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check11(v byte, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return b.CheckScalar(d)
 }
-func (h dtogen) append10(out []byte, v byte) []byte {
+func (h dtogen) append11(out []byte, v byte) []byte {
 	return dtogenCBOR.AppendUint(out, uint64(v))
 }
-func (h dtogen) read10(r *dtogenCodec.Reader, d, cap int) (v byte, err error) {
+func (h dtogen) read11(r *dtogenCodec.Reader, d, cap int) (v byte, err error) {
 	x, err := r.Uint(d)
 	if err != nil {
 		return v, err

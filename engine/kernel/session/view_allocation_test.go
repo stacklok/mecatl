@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -65,7 +66,7 @@ func allocationViewFixture(t *testing.T, fieldBytes, siblingBytes, count int) ma
 	mustBatch(t, b.AddEffectiveInput(run, session.EffectiveInput{Inputs: items}))
 	submitBatch(t, s, b)
 
-	loaded, err := session.Load(context.Background(), h, scope, p)
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	return map[string]*session.Session{"Submit": s, "Load": loaded}
 }
@@ -94,6 +95,18 @@ func TestViewNavigationAllocations(t *testing.T) {
 					var text string
 					var count int
 					var ok bool
+					var metadata session.CommitMetadata
+					metadataScalars := func() {
+						var present bool
+						metadata, present = record.Commit()
+						stamp, hasTimestamp := record.Timestamp()
+						if !present || !hasTimestamp || !stamp.Equal(time.Unix(0, 0).UTC()) {
+							t.Fatal("missing or inconsistent record metadata")
+						}
+						if metadata.Ref() != snapshot.Head() || metadata.InstanceID() != 1 || !metadata.Timestamp().Equal(time.Unix(0, 0).UTC()) {
+							t.Fatal("incorrect enclosing commit metadata")
+						}
+					}
 					capture := func() {
 						snapshot = s.Snapshot()
 						run = snapshot.RunAt(snapshot.RunCount() - 1)
@@ -140,7 +153,7 @@ func TestViewNavigationAllocations(t *testing.T) {
 						name      string
 						operation func()
 						parent    int
-					}{{"capture", capture, 3}, {"reference", follow, 2}, {"nested", nested, 6}} {
+					}{{"capture", capture, 3}, {"metadata", metadataScalars, 6}, {"reference", follow, 2}, {"nested", nested, 6}} {
 						if n := testing.AllocsPerRun(100, check.operation); n != 0 {
 							t.Fatalf("%s allocated %g times", check.name, n)
 						}
@@ -212,7 +225,15 @@ func TestViewByteExportsCopyOnlyRequestedField(t *testing.T) {
 					} {
 						t.Run(field.name, func(t *testing.T) {
 							var copied []byte
-							operation := func() { copied = field.export() }
+							operation := func() {
+								record := v.RecordAt(field.parent)
+								metadata, present := record.Commit()
+								stamp, hasTimestamp := record.Timestamp()
+								if !present || !hasTimestamp || !stamp.Equal(time.Unix(0, 0).UTC()) || metadata.Ref() != v.Head() || !metadata.Timestamp().Equal(time.Unix(0, 0).UTC()) || metadata.InstanceID() != 1 {
+									t.Fatal("metadata navigation lost accepted envelope")
+								}
+								copied = field.export()
+							}
 							if n := testing.AllocsPerRun(100, operation); n != 1 {
 								t.Fatalf("field export allocations = %g; want exactly one", n)
 							}

@@ -93,7 +93,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			if result.Status != history.StatusAccepted {
 				t.Fatal("external append")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID(), sessionPolicy())
+			loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
 			if state == "active" {
 				mustBatch(t, err)
 				if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {

@@ -13,6 +13,11 @@ import (
 //dtogen:validate validateCBOR
 //dtogen:include
 type Record struct {
+	// Timestamp is the author-supplied diagnostic recording time in signed Unix
+	// nanoseconds. Session sets it on successful local admission; it claims no action-occurrence
+	// or storage time. Every int64 value is valid, including zero (the Unix epoch)
+	// and negatives.
+	Timestamp int64 `cbor:"t"`
 	// Kind identifies the payload's record kind.
 	Kind string `cbor:"k"`
 	// KindVersion is the positive payload schema version, not an instance revision.
