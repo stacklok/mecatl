@@ -43,6 +43,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
 	-subj /CN=executor-smoke-ca -keyout "$work/ca.key" -out "$work/ca.crt" 2>/dev/null
 issue "$work/tls/tls" executor "DNS:localhost,IP:127.0.0.1" serverAuth
 issue "$work/client/client" provider "URI:$client_uri" clientAuth
+issue "$work/client/other" other "URI:spiffe://mecatl.test/other" clientAuth
 cp "$work/ca.crt" "$work/provider/ca.crt"
 printf '%s\n' "$client_uri" >"$work/provider/client-uri"
 # The image runs as 65532 and must read the mounted key.
@@ -90,12 +91,16 @@ rc=0
 out=$(mx run 'echo out; exit 3' 2>/dev/null) || rc=$?
 check "command output" out "$out"
 check "command exit status" 3 "$rc"
-refused=$("$work/mecaexec" -addr "$addr" -ca "$work/ca.crt" \
-	-cert "$work/tls/tls.crt" -key "$work/tls/tls.key" ls 2>&1 || true)
-case "$refused" in
-*"bad certificate"*) check "non-provider certificate refused" refused refused ;;
-*) check "non-provider certificate refused" refused "$refused" ;;
-esac
+check_refused() { # name cert-prefix
+	got=$("$work/mecaexec" -addr "$addr" -ca "$work/ca.crt" \
+		-cert "$2.crt" -key "$2.key" ls 2>&1 || true)
+	case "$got" in
+	*"bad certificate"*) check "$1" refused refused ;;
+	*) check "$1" refused "$got" ;;
+	esac
+}
+check_refused "server certificate refused as a client" "$work/tls/tls"
+check_refused "client certificate with another URI refused" "$work/client/other"
 
 if [ "$failed" -ne 0 ]; then
 	exit 1

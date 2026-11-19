@@ -32,7 +32,8 @@ prints the container logs when a check fails.
 | File round trip | `cmd/mecatl-executor/serve.go` `newFileServer`; `/workspace` ownership in the Dockerfile. |
 | Commands run as the image user | `USER` in the Dockerfile. |
 | Command output or exit status | The `supervise-command` helper (`/proc/self/exe`) and `executionexecutor` supervisor; the base image's `/bin/sh`. |
-| Non-provider certificate refused | `executionexecutor/servertls.go`: the server must require a client certificate whose single URI SAN equals `client-uri`. |
+| Server certificate refused as a client | `executionexecutor/servertls.go`: the server must require a client certificate (`RequireAndVerifyClientCert`) valid for client authentication from the trusted CA. |
+| Client certificate with another URI refused | `executionexecutor/servertls.go` `VerifyConnection`: the client certificate's single URI SAN must equal `client-uri`. |
 
 Reproduce by hand with Step 3 before changing code.
 
