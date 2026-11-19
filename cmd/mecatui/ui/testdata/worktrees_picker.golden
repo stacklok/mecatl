@@ -1,0 +1,32 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+──────────────────────────────────────────────────────────────────────────────────────
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                    ┃
+┃  worktrees                                                                         ┃
+┃  select a worktree to start a new session there                                    ┃
+┃  > filter worktrees…                                                               ┃
+┃                                                                                    ┃
+┃  ▶ worktree-00  (topic)                                                            ┃
+┃    worktree-01  (topic)                                                            ┃
+┃    worktree-02  (topic)                                                            ┃
+┃    worktree-03  (topic)                                                            ┃
+┃                                                                                    ┃
+┃  [enter Start session] [esc Close]                                                 ┃
+┃  ↑/↓ move · home first · end last                                                  ┃
+┃                                                                                    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+──────────────────────────────────────────────────────────────────────────────────────
+ connected                                  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

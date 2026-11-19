@@ -1,0 +1,32 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+──────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+               ┃                                                      ┃
+               ┃  Connect to remote                                   ┃
+               ┃                                                      ┃
+               ┃  Loading saved targets…                              ┃
+               ┃                                                      ┃
+               ┃                                                      ┃
+               ┃                                                      ┃
+               ┃                                                      ┃
+               ┃                                                      ┃
+               ┃  [esc Close]                                         ┃
+               ┃                                                      ┃
+               ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+──────────────────────────────────────────────────────────────────────────────────────
+ ready                                      ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

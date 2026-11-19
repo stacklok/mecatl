@@ -1,0 +1,34 @@
+ mecatui · Golden sess…
+──────────────────────────────
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                            ┃
+┃  Models  (6)               ┃
+┃  current: gpt-5 (server d  ┃
+┃  > model                   ┃
+┃                            ┃
+┃  Switching models is expe  ┃
+┃                            ┃
+┃  ▶   provider · model-00   ┃
+┃      provider · model-01   ┃
+┃  ↓ 4 items                 ┃
+┃                            ┃
+┃  [enter Use model]         ┃
+┃  [esc Clear filter]        ┃
+┃  type to filter · ↑/↓/pgu  ┃
+┃  p move · ctrl+g set glob  ┃
+┃  al default                ┃
+┃  ● current  ★ global defa  ┃
+┃  ult                       ┃
+┃  reason = emits reasoning  ┃
+┃   · set its effort tier w  ┃
+┃  ith /effort               ┃
+┃                            ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+│
+│ Ask mecatl to do something…
+│ (enter to send ·
+│ shift+enter for newline · ?
+──────────────────────────────
+ connected   ctx ▒▒▒▒░░░░ 50%
+? help · / commands · ctrl+c quit

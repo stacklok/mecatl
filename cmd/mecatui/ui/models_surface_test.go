@@ -405,8 +405,8 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 
 	withoutStatus := picker
 	withoutStatus.catalog.statuses = nil
-	withPrefix, withSuffix := modelsFixedLines(picker, "")
-	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus, "")
+	withPrefix, withSuffix := modelsFixedLines(picker)
+	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus)
 	if got, want := len(withPrefix)+len(withSuffix), len(withoutPrefix)+len(withoutSuffix)+2; got != want {
 		t.Fatalf("actual chrome rows with status and separator = %d, want %d", got, want)
 	}
@@ -414,7 +414,7 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		t.Fatalf("provider status suffix does not begin with separator then status: %q", withSuffix)
 	}
 	picker.deps = surfaceDeps{keys: defaultKeys(), theme: th}
-	prefix, suffix := modelsFixedLines(picker, "")
+	prefix, suffix := modelsFixedLines(picker)
 	_, _ = picker.Render(100, len(prefix)+len(suffix)+4)
 	if picker.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want 4 after status separation", picker.rowBudget)
@@ -432,7 +432,7 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		filtered: models,
 		deps:     surfaceDeps{keys: defaultKeys(), theme: theme.New("aztec", theme.AztecPalette())},
 	}
-	prefix, suffix := modelsFixedLines(*s, "")
+	prefix, suffix := modelsFixedLines(*s)
 	_, _ = s.Render(100, len(prefix)+len(suffix)+4)
 	if s.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
@@ -451,12 +451,12 @@ func TestModelsNoCacheLegendConsumesFixedChromeBudget(t *testing.T) {
 		filter:   textinput.New(),
 		deps:     surfaceDeps{keys: defaultKeys(), marks: defaultHelpKeys(), theme: aztec()},
 	}
-	prefix, cachedSuffix := modelsFixedLines(picker, "")
+	prefix, cachedSuffix := modelsFixedLines(picker)
 
 	uncached := cached
 	uncached.PromptCached = false
 	picker.catalog.models, picker.filtered = []client.ModelInfo{uncached}, []client.ModelInfo{uncached}
-	_, uncachedSuffix := modelsFixedLines(picker, "")
+	_, uncachedSuffix := modelsFixedLines(picker)
 	if got, want := len(uncachedSuffix), len(cachedSuffix)+1; got != want {
 		t.Fatalf("uncached fixed chrome rows = %d, want %d", got, want)
 	}

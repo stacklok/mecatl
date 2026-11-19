@@ -707,7 +707,7 @@ func TestModelsNoMatchNote(t *testing.T) {
 		t.Fatalf("filtered len = %d, want 0", len(modelsSurface(t, m).filtered))
 	}
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, `no models match "zzzzz" — esc to clear`) {
+	if !strings.Contains(out, `no models match "zzzzz"`) || !strings.Contains(out, "[esc Clear filter]") {
 		t.Errorf("the no-match note (with recovery hint) should render, got:\n%s", out)
 	}
 	if strings.Contains(out, "No selectable models advertised") || strings.Contains(out, "not available on this server") {
@@ -1780,10 +1780,12 @@ func TestModelsPickerRetainsNaturalCardWidth(t *testing.T) {
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
+	const provenance = "current: a deliberately long server-resolved model identity whose provenance must retain its natural chrome width"
+	modelsSurface(t, m).provenance = provenance
 	out := stripANSIstr(m.View().Content)
 
-	const help = "type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close"
-	if !strings.Contains(out, help) {
+	const help = "type to filter · ↑/↓/pgup move · ctrl+g set global default"
+	if !strings.Contains(out, help) || !strings.Contains(out, provenance) {
 		t.Errorf("Models help action was truncated:\n%s", out)
 	}
 	for _, line := range strings.Split(out, "\n") {
@@ -1885,7 +1887,7 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
-	if !bytes.Contains(got, []byte("↑ 26 items")) {
+	if !bytes.Contains(got, []byte("↑ 27 items")) {
 		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
 	}
 	compareGolden(t, "models_scrolled.golden", got)
