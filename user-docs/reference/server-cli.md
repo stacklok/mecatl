@@ -574,8 +574,7 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default
-        "<WORKSPACE>")
+        default session workspace root (default "<WORKSPACE>")
   --yolo
         DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools
         server-wide and lets child command substitutions run automatically. Deny rules
@@ -706,6 +705,9 @@ Usage: mecak8s [flags]
         sets --oidc-issuer, --oidc-client-id, and --oidc-accepted-client-ids when
         unset, and refuses other values. AS-1 keeps sign-ins and refresh tokens in
         memory. Empty does not host AS-1
+  --identity-broker-as1-signing-key-file value
+        REMOVED: set AS-1's signing key (keys.as1_signing) in the --identity-broker-
+        config file. Any use fails startup
   --identity-broker-as1-tui-client-id string
         OAuth client ID of mecatui at AS-1, a public client. Required with --identity-
         broker-as1-issuer

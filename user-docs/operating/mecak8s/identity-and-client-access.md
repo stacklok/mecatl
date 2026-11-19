@@ -254,7 +254,7 @@ identityBroker:
 |`identityBroker.audience`|`--identity-broker-config`|The broker audience every agent credential names.|
 |`identityBroker.keys.agentIssuer`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key that signs agent credentials.|
 |`identityBroker.keys.brokerClient`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key the broker authenticates with at AS-1. Its `keySet` names the Secret key holding the matching public JWK Set, whose `kid` is the key's RFC 7638 thumbprint. Required with `identityBroker.as1.issuer`.|
-|`identityBroker.keys.as1Signing`|`--identity-broker-config`|Secret key holding AS-1's PEM signing key (EC P-256 or RSA). Required with `identityBroker.as1.issuer`.|
+|`identityBroker.keys.as1Signing`|`--identity-broker-config`|Secret key holding AS-1's PEM signing key (EC P-256 or RSA). Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`. AS-1 accepts only an absolute `http` or `https` URL with a host and no fragment as the audience, such as `https://mecatl.example.com/api`.|
 |`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
@@ -268,7 +268,9 @@ Create the Secrets before installing; the chart mounts each key read-only and
 writes the trust domain, audience, and key paths to the identity broker's
 configuration file, a ConfigMap. `mecak8s` refuses to start when a required key
 is missing, when one key serves two roles, or when the key set lacks the broker
-client's public key under its `kid`. Leave
+client's public key under its `kid`; the
+[configuration file](#identity-broker-configuration-file) section lists every
+rule. Leave
 `oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart
 sets them to AS-1's issuer and `tuiClientID`. It refuses values that differ,
 any `oidc.jwksURI` (AS-1's discovery document supplies its keys),
@@ -294,6 +296,80 @@ kubectl create secret generic mecak8s-identity-broker \
 Generate AS-1's signing key the same way, as `signing-key.pem` in the
 `mecak8s-as1` Secret, beside `upstream-client-secret`. Delete the private key
 files once the Secrets exist.
+
+### Identity broker configuration file
+
+`mecak8s` reads the identity broker's trust domain, audience, and key paths
+from the JSON file `--identity-broker-config` names, which
+`--enable-identity-broker` requires. The chart renders this file from the
+`identityBroker` values and mounts it; without the chart, write it yourself:
+
+```json
+{
+  "trust_domain": "agents.example.com",
+  "audience": "https://mecatl.example.com/identity-broker",
+  "keys": {
+    "agent_issuer": {
+      "key_file": "/var/run/secrets/identity-broker/agent-issuer/key.pem",
+      "fallback_key_files": ["/var/run/secrets/identity-broker/agent-issuer-old/public.pem"]
+    },
+    "broker_client": {
+      "key_file": "/var/run/secrets/identity-broker/broker-client/key.pem",
+      "key_set_file": "/var/run/secrets/identity-broker/broker-client/jwks.json"
+    },
+    "as1_signing": {
+      "key_file": "/var/run/secrets/identity-broker/as1-signing/signing-key.pem"
+    }
+  }
+}
+```
+
+|Field|Meaning|
+|-|-|
+|`trust_domain`|The agent trust domain: lowercase letters, digits, `.`, `-`, and `_`. Required.|
+|`audience`|The broker audience every agent credential names. Required.|
+|`keys.agent_issuer.key_file`|EC P-256 private key that signs agent credentials. Required.|
+|`keys.agent_issuer.fallback_key_files`|_Optional._ Earlier agent issuer keys. Credentials they signed keep verifying while they are listed.|
+|`keys.broker_client.key_file`, `key_set_file`|EC P-256 private key the broker authenticates with at AS-1 and the MCP gateway, and the public JWK Set those servers register for it. Required together, and required with `--identity-broker-as1-issuer`.|
+|`keys.as1_signing.key_file`|AS-1's EC P-256 or RSA private key, which signs access tokens. Required with `--identity-broker-as1-issuer`, and refused without it.|
+|`keys.as1_signing.fallback_key_files`|_Optional._ Earlier AS-1 signing keys. AS-1 publishes them in its key set, so tokens they signed keep verifying, and never signs with them. Requires `key_file`.|
+
+Every path is absolute. A private key is a PEM file in PKCS #1
+(`RSA PRIVATE KEY`), SEC 1 (`EC PRIVATE KEY`, as `openssl ecparam -genkey`
+writes), or PKCS #8 (`PRIVATE KEY`) form; only its first PEM block is read.
+`mecak8s` refuses an unknown field, so a misspelled field fails startup rather
+than being ignored. The error names the file and the field.
+
+Rotate a signing key by making the new key `key_file` and listing the old key
+in `fallback_key_files`. Remove the fallback once everything it signed has
+expired: agent credentials last an hour, and AS-1's access tokens last their
+own lifetime. Fallbacks serve a planned rotation only. Remove a compromised key
+at once instead of keeping it as a fallback. List an agent issuer fallback as
+its public key, in PKIX (`PUBLIC KEY`) form, so the retired private key leaves
+the pod:
+
+```sh
+openssl ec -in agent-issuer-old.pem -pubout -out agent-issuer-old-public.pem
+```
+
+The broker also accepts the old private key there. AS-1's fallbacks must stay
+private keys, because AS-1 loads every key file as a signing key. The broker
+client rotates through its key set instead: add the next key's public key to
+`key_set_file`, switch `key_file` to the next key, then remove the old public
+key. The chart does not yet set fallback keys.
+
+`mecak8s` reads the file and the keys only at startup. The chart rolls the pod
+when the rendered file changes, such as a new key path. After changing a key
+inside a Secret, restart the Deployment yourself, for example for a release
+named `mecak8s` in the `mecatl` namespace:
+
+```sh
+kubectl rollout restart deployment/mecak8s-mecak8s --namespace mecatl
+```
+
+AS-1's signing key is part of this file: `mecak8s` refuses to start with the
+removed `--identity-broker-as1-signing-key-file` flag, so set
+`keys.as1_signing.key_file` instead.
 
 ### Keep the broker's keys out of sessions
 

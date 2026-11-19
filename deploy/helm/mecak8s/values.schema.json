@@ -65,7 +65,12 @@
     "identityBroker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "trustDomain", "audience", "keys", "as1"],
+      "required": ["enabled", "as1"],
+      "if": {"required": ["enabled"], "properties": {"enabled": {"const": true}}},
+      "then": {
+        "required": ["trustDomain", "audience", "keys"],
+        "properties": {"keys": {"required": ["agentIssuer", "brokerClient", "as1Signing"]}}
+      },
       "properties": {
         "enabled": {"type": "boolean"},
         "trustDomain": {"type": "string", "maxLength": 255, "pattern": "^[a-z0-9._-]*$"},
@@ -73,7 +78,6 @@
         "keys": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["agentIssuer", "brokerClient", "as1Signing"],
           "properties": {
             "agentIssuer": {"$ref": "#/definitions/optionalSecretKey"},
             "brokerClient": {

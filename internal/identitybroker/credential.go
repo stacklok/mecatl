@@ -110,10 +110,10 @@ type verifiedCredential struct {
 
 // verify applies the design's credential checks 1 to 6, in order: the subject
 // is a SPIFFE ID in the agent trust domain, kid selects the agent issuer key
-// or one of its fallbacks, alg is ES256, the signature verifies, aud is exactly the broker audience,
-// and exp has not passed (allowing clock skew) and is no further away than
-// the credential lifetime. An expired credential fails with
-// ReasonSVIDExpired; every other failure with ReasonDenied.
+// or one of its fallbacks, alg is ES256, the signature verifies, aud is
+// exactly the broker audience, and exp has not passed (allowing clock skew)
+// and is no further away than the credential lifetime. An expired credential
+// fails with ReasonSVIDExpired; every other failure with ReasonDenied.
 func (c credentialIssuer) verify(credential Token, now time.Time) (verifiedCredential, error) {
 	var claims jwt.RegisteredClaims
 	_, err := jwt.ParseWithClaims(credential.Value(), &claims, func(t *jwt.Token) (any, error) {

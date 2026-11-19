@@ -54,12 +54,17 @@ func validKeys(t *testing.T) Keys {
 
 func TestKeysValidateAcceptsOneKeyPerRole(t *testing.T) {
 	t.Parallel()
-	if err := validKeys(t).Validate(true); err != nil {
+	if err := validKeys(t).Validate(Host{AS1: true}); err != nil {
 		t.Fatalf("Validate(hosted AS-1) = %v", err)
 	}
 	agentOnly := Keys{AgentIssuer: testKey(t, "agent issuer")}
-	if err := agentOnly.Validate(false); err != nil {
+	if err := agentOnly.Validate(Host{}); err != nil {
 		t.Fatalf("Validate(agent issuer key alone, no hosted AS-1) = %v", err)
+	}
+	noAS1 := validKeys(t)
+	noAS1.AS1Signing = nil
+	if err := noAS1.Validate(Host{}); err != nil {
+		t.Fatalf("Validate(no AS-1 signing key, no hosted AS-1) = %v", err)
 	}
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -67,7 +72,7 @@ func TestKeysValidateAcceptsOneKeyPerRole(t *testing.T) {
 	}
 	withRSA := validKeys(t)
 	withRSA.AS1Signing = []crypto.PublicKey{rsaKey.Public()}
-	if err := withRSA.Validate(true); err != nil {
+	if err := withRSA.Validate(Host{AS1: true}); err != nil {
 		t.Fatalf("Validate(RSA AS-1 signing key) = %v", err)
 	}
 }
@@ -75,26 +80,41 @@ func TestKeysValidateAcceptsOneKeyPerRole(t *testing.T) {
 func TestKeysValidateRefuses(t *testing.T) {
 	t.Parallel()
 	shared := testKey(t, "shared")
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := map[string]struct {
-		edit   func(*Keys)
-		hosted bool
-		want   string
+		edit func(*Keys)
+		// noAS1 validates for a process that hosts no AS-1; every other
+		// case hosts one.
+		noAS1 bool
+		want  string
 	}{
 		"no agent issuer key": {edit: func(k *Keys) { k.AgentIssuer = nil }, want: "agent issuer key is required"},
 		"P-384 agent issuer key": {
 			edit: func(k *Keys) { k.AgentIssuer = p384Key(t) }, want: "P-256",
 		},
+		"an RSA agent issuer fallback": {
+			edit: func(k *Keys) { k.AgentIssuerFallbacks = []crypto.PublicKey{rsaKey.Public()} }, want: "agent issuer fallback key 0",
+		},
+		"a P-384 agent issuer fallback": {
+			edit: func(k *Keys) { k.AgentIssuerFallbacks = []crypto.PublicKey{p384Key(t).Public()} }, want: "agent issuer fallback key 0",
+		},
 		"no broker client key with a hosted AS-1": {
-			edit: func(k *Keys) { k.BrokerClient, k.BrokerClientKeySet = nil, nil }, hosted: true, want: "broker client key is required",
+			edit: func(k *Keys) { k.BrokerClient, k.BrokerClientKeySet = nil, nil }, want: "broker client key is required",
 		},
 		"no AS-1 signing key with a hosted AS-1": {
-			edit: func(k *Keys) { k.AS1Signing = nil }, hosted: true, want: "AS-1's signing key is required",
+			edit: func(k *Keys) { k.AS1Signing = nil }, want: "AS-1's signing key is required",
+		},
+		"an AS-1 signing key without a hosted AS-1": {
+			edit: func(*Keys) {}, noAS1: true, want: "AS-1's signing key requires a hosted AS-1",
 		},
 		"a key set without the broker client key": {
 			edit: func(k *Keys) { k.BrokerClientKeySet = nil }, want: "required together",
 		},
 		"a broker client key set without the key": {
-			edit: func(k *Keys) { k.BrokerClient = nil }, want: "required together",
+			edit: func(k *Keys) { k.BrokerClient, k.AS1Signing = nil, nil }, noAS1: true, want: "required together",
 		},
 		"an empty key set": {
 			edit: func(k *Keys) { k.BrokerClientKeySet = []byte(`{"keys":[]}`) }, want: "holds no key",
@@ -132,13 +152,32 @@ func TestKeysValidateRefuses(t *testing.T) {
 			edit: func(k *Keys) { k.AgentIssuerFallbacks = []crypto.PublicKey{testKey(t, "AS-1").Public()} },
 			want: "agent issuer key is also the AS-1 signing key",
 		},
+		// AS-1 and AS-2 accept assertions signed by any key in the set.
+		"the key set's rotation key is the agent issuer key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetOf(t, jwkOf(t, "agent issuer"), jwkOf(t, "broker client"))
+			},
+			want: "agent issuer key is also the broker client key",
+		},
+		"the key set's rotation key is an agent issuer fallback": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetOf(t, jwkOf(t, "broker client"), jwkOf(t, "old agent issuer"))
+			},
+			want: "agent issuer key is also the broker client key",
+		},
+		"the key set's rotation key is AS-1's": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetOf(t, jwkOf(t, "broker client"), jwkOf(t, "old AS-1"))
+			},
+			want: "broker client key is also the AS-1 signing key",
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			keys := validKeys(t)
 			tc.edit(&keys)
-			err := keys.Validate(tc.hosted)
+			err := keys.Validate(Host{AS1: !tc.noAS1})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate = %v, want an error containing %q", err, tc.want)
 			}

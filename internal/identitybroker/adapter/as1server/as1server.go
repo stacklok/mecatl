@@ -60,7 +60,8 @@ type Config struct {
 	Audience string
 	// SigningKeyFile is the absolute path of a PEM private key (EC P-256 for
 	// ES256, or RSA) that signs access tokens. Empty generates a key at
-	// startup, so tokens stop verifying when the server restarts.
+	// startup, so tokens stop verifying when the server restarts; only tests
+	// leave it empty, as a deployment always names the operator's key.
 	SigningKeyFile string
 	// FallbackKeyFiles are the absolute paths of earlier signing keys, in the
 	// same form. AS-1 publishes them in its key set beside SigningKeyFile's,

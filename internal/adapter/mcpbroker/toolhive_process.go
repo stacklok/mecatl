@@ -132,7 +132,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set file", ErrInvalidCatalogue)
 		}
 		if err := checkKeySetFile(client.KeySetFile); err != nil {
-			return nil, fmt.Errorf("%w: broker client: %v", ErrInvalidCatalogue, err)
+			return nil, fmt.Errorf("%w: broker client: %w", ErrInvalidCatalogue, err)
 		}
 	}
 	diag := config.Diagnostics

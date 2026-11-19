@@ -158,7 +158,7 @@ func TestBuildRecordsAS2(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg.UseMock, cfg.NoSoul = true, true
 			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
-			cfg.IdentityBrokerConfigFile = testBrokerConfigFile(t)
+			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -248,7 +248,7 @@ func TestBuildRecordsNoAS2(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg.UseMock, cfg.NoSoul = true, true
 			if cfg.IdentityBroker && cfg.identityBrokerCore == nil {
-				cfg.IdentityBrokerConfigFile = testBrokerConfigFile(t)
+				cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
 			}
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
@@ -273,7 +273,7 @@ func TestBuildRefusesAS2WithAS1sIssuer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg.UseMock, cfg.NoSoul = true, true
 			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
-			cfg.IdentityBrokerConfigFile = testBrokerConfigFile(t)
+			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err == nil {
 				built.Close()

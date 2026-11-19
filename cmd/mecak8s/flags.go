@@ -313,6 +313,9 @@ type config struct {
 	// identityBrokerConfig is the identity broker's configuration file,
 	// required with enableIdentityBroker.
 	identityBrokerConfig string
+	// removedAS1SigningKeyFile reports a use of the removed
+	// --identity-broker-as1-signing-key-file, which fails startup.
+	removedAS1SigningKeyFile bool
 	// as1 hosts AS-1 beside the identity broker when its issuer is set.
 	as1 as1Flags
 	// identityBrokerSubjectClaim is the IdP claim naming the company
@@ -559,6 +562,10 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "Enable the experimental agent-team capability")
 	fs.BoolVar(&cfg.enableIdentityBroker, "enable-identity-broker", false, "Start the experimental agent identity broker, which gives each signed-in user's session a broker session. Supports a single replica only, requires no shell in this process (--no-shell, or --shell \"\" with Kubernetes execution, which keeps the remote Shell) and no --workspace, and blocks the tool calls of agent definitions that have hooks")
 	fs.StringVar(&cfg.identityBrokerConfig, "identity-broker-config", "", "JSON file the identity broker reads its configuration from: the agent trust domain, the broker audience, and the paths of its keys (the agent issuer key, and with --identity-broker-as1-issuer the broker client key, its public key set, and AS-1's signing key). Required with, and only allowed with, --enable-identity-broker")
+	fs.Func("identity-broker-as1-signing-key-file", "REMOVED: set AS-1's signing key (keys.as1_signing) in the --identity-broker-config file. Any use fails startup", func(string) error {
+		cfg.removedAS1SigningKeyFile = true
+		return nil
+	})
 	fs.StringVar(&cfg.as1.issuer, "identity-broker-as1-issuer", "", "HTTPS issuer URL of AS-1, the identity broker's sign-in authorization server, hosted under the URL's path on the HTTP listener. Requires --enable-identity-broker, --oidc-audience, --oidc-resource, and --oidc-owner-identity=sub_id; sets --oidc-issuer, --oidc-client-id, and --oidc-accepted-client-ids when unset, and refuses other values. AS-1 keeps sign-ins and refresh tokens in memory. Empty does not host AS-1")
 	fs.StringVar(&cfg.as1.tuiClientID, "identity-broker-as1-tui-client-id", "", "OAuth client ID of mecatui at AS-1, a public client. Required with --identity-broker-as1-issuer")
 	fs.StringVar(&cfg.as1.upstreamIssuer, "identity-broker-as1-upstream-issuer", "", "HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1. Required with --identity-broker-as1-issuer")
@@ -734,12 +741,17 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.enableIdentityBroker && cfg.oidc.Enabled() && cfg.oidc.OwnerIdentity != oidcauthn.OwnerIdentitySubID {
 		return config{}, errors.New("--enable-identity-broker with --oidc-issuer requires --oidc-owner-identity=sub_id")
 	}
+	if cfg.removedAS1SigningKeyFile {
+		return config{}, errors.New("--identity-broker-as1-signing-key-file was removed: set AS-1's signing key (keys.as1_signing) in the --identity-broker-config file")
+	}
 	if cfg.enableIdentityBroker != (cfg.identityBrokerConfig != "") {
 		return config{}, errors.New("--enable-identity-broker and --identity-broker-config require each other")
 	}
 	// Shortcut: the identity broker's keys are files in this process's filesystem, so it refuses a local workspace; removed by #2807 (the broker runs as its own service).
+	// --execution-enabled excludes --workspace, so every mecak8s workspace is
+	// on this process's filesystem: app.Build's rule, refused here first.
 	if cfg.enableIdentityBroker && cfg.workspace != "" {
-		return config{}, errors.New("--enable-identity-broker cannot be used with --workspace: the identity broker's keys are files in this process's filesystem, which sessions' file tools could read; run without --workspace (file-less sessions), with --redis-filesystem, or with Kubernetes execution (--execution-enabled)")
+		return config{}, errors.New("--enable-identity-broker cannot be used with --workspace: the identity broker cannot run with a workspace on this process's filesystem, as its keys are files there, which sessions' file tools could read; run without --workspace for file-less sessions, or use --redis-filesystem or Kubernetes execution (--execution-enabled) instead")
 	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
