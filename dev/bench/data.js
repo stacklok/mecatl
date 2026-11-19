@@ -394910,6 +394910,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795124146555,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8cfb70267c6b70d5bc52f477c1ac4900f571ddc4",
+          "message": "fix(release): forward the environment key to module writers (#2902)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T15:23:59-08:00",
+          "tree_id": "065eea827f262c9a7a78b790122be4ef04ac96aa",
+          "url": "https://github.com/stacklok/mecatl/commit/8cfb70267c6b70d5bc52f477c1ac4900f571ddc4"
+        },
+        "date": 1795131353938,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -569943,6 +569977,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795131350742,
+  "lastUpdate": 1795131354792,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
