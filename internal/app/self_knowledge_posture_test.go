@@ -421,17 +421,18 @@ func TestSelfKnowledgePostureNamesLiveDocPages(t *testing.T) {
 	// answering for a component that no longer exists, and a NEW binary must not
 	// ship unnamed and fall through to a search. cmd/ is the inventory.
 	//
-	// mecademo is deliberately excluded: it is the offline demonstration of the
-	// loop, not a component anyone deploys or asks about. Excluding a future entry
-	// is a deliberate edit here, which is the point.
+	// mecademo (the offline demonstration of the loop) and mecaexec (a manual
+	// executor test client) are deliberately excluded: neither is a component anyone
+	// deploys or asks about. Excluding a future entry is a deliberate edit here,
+	// which is the point.
 	entries, err := os.ReadDir(filepath.Join("..", "..", "cmd"))
 	if err != nil {
 		t.Fatalf("read cmd/ (the component inventory): %v", err)
 	}
-	const notAComponent = "mecademo"
+	notAComponent := map[string]bool{"mecademo": true, "mecaexec": true}
 	named := 0
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == notAComponent {
+		if !e.IsDir() || notAComponent[e.Name()] {
 			continue
 		}
 		if !strings.Contains(note, e.Name()) {
