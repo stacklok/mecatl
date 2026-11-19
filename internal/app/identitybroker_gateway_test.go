@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -783,6 +785,9 @@ func (g resourceGateway) Endpoint() string                        { return g.end
 func (g resourceGateway) Resource() string                        { return g.resource }
 func (resourceGateway) HTTPClient() *http.Client                  { return http.DefaultClient }
 func (resourceGateway) Route(b, n string) (string, string, error) { return b, n, nil }
+func (resourceGateway) ListTools(context.Context, string, oauth2.TokenSource) ([]mcpbroker.GatewayTool, error) {
+	return nil, nil
+}
 
 // TestCheckGatewayResource refuses a gateway whose resource, not endpoint, is
 // other than AS-2's resource.

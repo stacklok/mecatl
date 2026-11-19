@@ -403,10 +403,10 @@ func stageAuthenticatedDeclaredRoutes(ctx context.Context, runtime *Runtime, bro
 	}
 	staged := make([]route, 0, len(declared))
 	for _, backend := range backends {
-		capabilities, err := runtime.discovery.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
+		capabilities, err := runtime.discoverBackend(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
 			runtime.diag.Log(ctx, port.LevelWarn, "authenticated discovery failed; catalogue freeze aborted", "backend", backend)
-			return nil, ErrAuthenticatedDiscovery
+			return nil, discoveryFailure(err)
 		}
 		runtime.diag.Log(ctx, port.LevelInfo, "authenticated discovery succeeded", "backend", backend, "tools", len(capabilities.Tools))
 		for _, definition := range capabilities.Tools {
@@ -451,7 +451,7 @@ func stageAuthenticatedRoutes(ctx context.Context, runtime *Runtime, brokerCrede
 	}
 	staged := make([]route, 0)
 	for backendIndex, backend := range backends {
-		capabilities, err := runtime.discovery.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
+		capabilities, err := runtime.discoverBackend(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
 			// The underlying cause is deliberately not distinguishable beyond this
 			// point (authenticated_discovery.go collapses every failure mode —
@@ -460,8 +460,8 @@ func stageAuthenticatedRoutes(ctx context.Context, runtime *Runtime, brokerCrede
 			// This is still the one place an operator can locate WHICH configured
 			// backend position broke a catalogue freeze that otherwise fails
 			// all-or-nothing, without logging its configured name.
-			runtime.diag.Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscoveryFailed, "backend_index", backendIndex)
-			return nil, ErrAuthenticatedDiscovery
+			runtime.diag.Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", discoveryFailureReason(err), "backend_index", backendIndex)
+			return nil, discoveryFailure(err)
 		}
 		runtime.diag.Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
 		for _, definition := range capabilities.Tools {
@@ -481,6 +481,23 @@ func stageAuthenticatedRoutes(ctx context.Context, runtime *Runtime, brokerCrede
 		return nil, err
 	}
 	return staged, nil
+}
+
+// discoveryFailure is the error a failed backend discovery aborts the
+// catalogue with: a gateway listing's own error, which says why, or
+// ErrAuthenticatedDiscovery.
+func discoveryFailure(err error) error {
+	if errors.Is(err, errGatewayListingFailed) || errors.Is(err, errGatewayListedNoTools) {
+		return err
+	}
+	return ErrAuthenticatedDiscovery
+}
+
+func discoveryFailureReason(err error) string {
+	if errors.Is(err, errGatewayListedNoTools) {
+		return diagnosticReasonNoTools
+	}
+	return diagnosticReasonDiscoveryFailed
 }
 
 // validateAuthenticatedRoute is the single admission boundary for protected

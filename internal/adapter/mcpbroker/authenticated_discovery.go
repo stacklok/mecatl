@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -90,6 +91,53 @@ func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, credential
 	}
 
 	return p.discovery.query(queryCtx, brokerToken.AccessToken, backend, configured)
+}
+
+var (
+	// errGatewayListingFailed reports a gateway listing for a configured
+	// server that failed or listed a tool the catalogue refuses.
+	errGatewayListingFailed = fmt.Errorf("%w: the gateway's tool listing for a configured server failed", ErrAuthenticatedDiscovery)
+	// errGatewayListedNoTools reports a gateway listing for a configured
+	// server that listed no tools.
+	errGatewayListedNoTools = fmt.Errorf("%w: the gateway listed no tools for a configured server", ErrAuthenticatedDiscovery)
+)
+
+// discoverBackend discovers backend's tools for the catalogue: through the
+// gateway's listing for a gateway route, in process otherwise.
+func (r *Runtime) discoverBackend(ctx context.Context, credential oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	if r.gateway == nil || !r.gatewayRoutes(backend) {
+		return r.discovery.QueryAuthenticatedCapabilities(ctx, credential, backend)
+	}
+	if credential == nil {
+		return AuthenticatedCapabilities{}, errGatewayListingFailed
+	}
+	// The listing is sent with this one token, so it is the one scrubbed for.
+	token, err := credential.Token()
+	if err != nil || !validBearerToken(token) {
+		return AuthenticatedCapabilities{}, errGatewayListingFailed
+	}
+	// The embedded gateway routes each backend under its own name.
+	listed, err := r.gateway.ListTools(ctx, backend, oauth2.StaticTokenSource(token))
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return AuthenticatedCapabilities{}, ctxErr
+		}
+		return AuthenticatedCapabilities{}, errGatewayListingFailed
+	}
+	if len(listed) == 0 {
+		return AuthenticatedCapabilities{}, errGatewayListedNoTools
+	}
+	candidates := make([]vmcp.Tool, len(listed))
+	for i, tool := range listed {
+		readOnly := tool.ReadOnly
+		candidates[i] = vmcp.Tool{BackendID: backend, Name: tool.Name, Description: tool.Description,
+			InputSchema: tool.InputSchema, Annotations: &vmcp.ToolAnnotations{ReadOnlyHint: &readOnly}}
+	}
+	capabilities, err := neutralCapabilities(backend, &aggregator.BackendCapabilities{Tools: candidates}, []string{token.AccessToken})
+	if err != nil {
+		return AuthenticatedCapabilities{}, errGatewayListingFailed
+	}
+	return capabilities, nil
 }
 
 func (d *authenticatedDiscovery) query(ctx context.Context, brokerToken, backend string, configured *vmcp.Backend) (AuthenticatedCapabilities, error) {
