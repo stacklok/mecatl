@@ -394552,6 +394552,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795112387306,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ae16a9e37107dfd38aab99479992101fdffb1e7b",
+          "message": "fix(release): simplify incremental module publication (#2900)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T13:22:20-08:00",
+          "tree_id": "14caae6c39269bc0caf9312334037ed3a4b9b4ae",
+          "url": "https://github.com/stacklok/mecatl/commit/ae16a9e37107dfd38aab99479992101fdffb1e7b"
+        },
+        "date": 1795124146555,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -569432,6 +569466,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795124142404,
+  "lastUpdate": 1795124147595,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
