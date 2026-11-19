@@ -116,6 +116,15 @@ class RequestTests(unittest.TestCase):
             self.assertEqual(output.read_text(), 'head=' + 'a' * 40 + '\nversions={"engine":"v1.0.0"}\n')
 
 
+class RepositoryTests(unittest.TestCase):
+    def test_workspace_publication_inventory(self):
+        with tempfile.TemporaryDirectory(prefix="publication-inventory-") as temporary:
+            env = p.environment(Path(temporary))
+            env.update(GOPROXY="off", GOSUMDB="off")
+            p.inventory(SCRIPT.parents[2], env)
+        self.assertEqual(set(p.IMPORTS), set(p.ORDER))
+
+
 class LocalTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="publication-tests-")
@@ -224,6 +233,21 @@ class LocalTests(unittest.TestCase):
         mod = p.candidate.parse_mod(self.root, self.env, self.root / "adapters/go.mod")
         self.assertEqual(p.candidate.requirements(mod)[p.identity("engine")][0], "v0.2.0")
         p.check_changes(self.root, data["files"])
+
+    def test_prepare_engine_with_selected_or_existing_agentdef(self):
+        for exact in ("v0.1.0", "v0.2.0"):
+            self.publish("agentdef", exact)
+        self.require("engine", "agentdef")
+        self.commit()
+        args = self.args(module="engine")
+        p.prepare(args, {"engine": "v0.2.0"}, self.env)
+        self.assertEqual(json.loads(args.metadata.read_text())["files"], {})
+        args.metadata = self.base / "selected-metadata.json"
+        p.prepare(args, {"agentdef": "v0.2.0", "engine": "v0.2.0"}, self.env)
+        data = json.loads(args.metadata.read_text())
+        self.assertEqual(set(data["files"]), {"engine/go.mod", "engine/go.sum"})
+        parsed = p.candidate.parse_mod(self.root, self.env, self.root / "engine/go.mod")
+        self.assertEqual(p.candidate.requirements(parsed)[p.identity("agentdef")][0], "v0.2.0")
 
     def test_prepare_allows_ignored_test_outputs(self):
         self.write(".gitignore", "test-output/\n")

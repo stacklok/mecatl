@@ -662,7 +662,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_public_failure_stops_before_next_preparation_or_write(self):
         self.assertEqual(self.flow(fail_proof=True), "proof")
-        self.assertEqual([event for event in self.events if event[0] == "prepare"], [("prepare", "engine")])
+        self.assertEqual([event for event in self.events if event[0] == "prepare"],
+                         [("prepare", "agentdef"), ("prepare", "engine")])
         self.assertEqual([event for event in self.events if event[0] == "publish"], [("publish", "engine")])
         self.assertIn("tags/engine/v0.2.0", self.api.refs)
         self.assertFalse(self.api.pulls)

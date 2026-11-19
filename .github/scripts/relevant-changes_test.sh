@@ -106,6 +106,10 @@ run "studio: Taskfile (task recipes) runs" studio true Taskfile.yml
 run "studio: .github/scripts change runs" studio true .github/scripts/relevant-changes.sh
 
 # --- module publication: immutable adapter dependency closure -----------------
+run "module publication: agentdef manifest runs" module_publication true agentdef/go.mod
+run "module publication: agentdef sums run" module_publication true agentdef/go.sum
+run "module publication: engine manifest runs" module_publication true engine/go.mod
+run "module publication: engine sums run" module_publication true engine/go.sum
 run "module publication: adapter manifest runs" module_publication true adapters/go.mod adapters/go.sum
 run "module publication: root and integration pins run" module_publication true go.mod integration/microvm/go.mod
 run "module publication: support and driver manifests run" module_publication true internal/adaptersupport/go.mod contracts/gen/go/mecatl/driver/go.mod

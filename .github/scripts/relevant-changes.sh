@@ -108,7 +108,7 @@ irrelevant() {
       # proof's own recipe/classifier changes. A Go source edit alone cannot
       # alter an existing immutable tag.
       case "$1" in
-        go.mod|go.sum|adapters/go.mod|adapters/go.sum|internal/adaptersupport/go.mod|internal/adaptersupport/go.sum|contracts/gen/go/mecatl/driver/go.mod|contracts/gen/go/mecatl/driver/go.sum|integration/microvm/go.mod|integration/microvm/go.sum|Taskfile.yml|.github/workflows/ci.yml|.github/scripts/check-module-publication*.sh|.github/scripts/relevant-changes*.sh)
+        go.mod|go.sum|agentdef/go.mod|agentdef/go.sum|engine/go.mod|engine/go.sum|adapters/go.mod|adapters/go.sum|internal/adaptersupport/go.mod|internal/adaptersupport/go.sum|contracts/gen/go/mecatl/driver/go.mod|contracts/gen/go/mecatl/driver/go.sum|integration/microvm/go.mod|integration/microvm/go.sum|Taskfile.yml|.github/workflows/ci.yml|.github/scripts/check-module-publication*.sh|.github/scripts/relevant-changes*.sh)
           return 1 ;;
       esac
       return 0

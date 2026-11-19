@@ -28,7 +28,7 @@ candidate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(candidate)
 CheckError = candidate.CheckError
 ORDER = (
-    "engine", "contracts/gen/go/mecatl/driver", "provider/ssefilter",
+    "agentdef", "engine", "contracts/gen/go/mecatl/driver", "provider/ssefilter",
     "internal/adaptersupport", "authn/oidc", "provider/anthropic",
     "provider/openai", "provider/openaichat", "adapters",
 )
@@ -36,6 +36,7 @@ CONSUMERS = (".", "environment/microvm", "integration/microvm")
 PREFIX = "github.com/stacklok/mecatl"
 REPOSITORY = "https://github.com/stacklok/mecatl.git"
 IMPORTS = {
+    "agentdef": ("",),
     "engine": ("/agent",),
     "contracts/gen/go/mecatl/driver": ("/v1",),
     "provider/ssefilter": ("",),
