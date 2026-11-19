@@ -392046,6 +392046,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795049192464,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8820d9efb382e6c06d42570da2009d928518ddf5",
+          "message": "feat(mecatui): add explicit Effort mouse actions and Tool calls goldens (#2880)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T00:42:23Z",
+          "tree_id": "ee3e35d0097738e671a4b2875329d07beb6915b7",
+          "url": "https://github.com/stacklok/mecatl/commit/8820d9efb382e6c06d42570da2009d928518ddf5"
+        },
+        "date": 1795049966270,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -565855,6 +565889,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795049962956,
+  "lastUpdate": 1795049966885,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
