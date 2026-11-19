@@ -296,10 +296,10 @@ func TestPublicationPreflightDiagnostics(t *testing.T) {
 			commands = append(commands, s)
 		}
 	}
-	if len(commands) != 4 {
-		t.Fatal("preflight needs four native command steps")
+	if len(commands) != 3 {
+		t.Fatal("preflight needs three native command steps")
 	}
-	for i, phase := range []string{"validate", "workspace", "candidates", "final"} {
+	for i, phase := range []string{"validate", "workspace", "final"} {
 		s := commands[i]
 		if s.Timeout != 30 || s.If != "" || !strings.Contains(s.Run, "--phase "+phase+" ") ||
 			!strings.Contains(s.Run, `--environment-dir "$RUNNER_TEMP/mp"`) {

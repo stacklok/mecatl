@@ -212,13 +212,18 @@ credential; the workflow supplies that credential only to its isolated writer jo
    never infers versions or expands the selection.
 2. Dispatch `publish-modules.yml` from `main`. Its `preflight` job validates the
    source, versions, module inventory, and fixed dependency order, then runs the
-   assembled workspace check once. A workspace result proves the coordinated source;
-   it does not prove the published dependency closure or public availability.
-3. The workflow walks its fixed dependency-first chain. For each selected module,
-   `prepare` updates only existing sibling requirements to versions already selected
-   and published earlier in the chain, tidies metadata, and runs standalone checks
-   with `GOWORK=off`. A missing prerequisite fails the run instead of adding a
-   version to the map.
+   assembled workspace check once. With `preflight_only=true`, the workflow stops
+   here. Preflight checks integration; each module's standalone dependencies are
+   checked during preparation, so a successful preflight does not guarantee the
+   entire batch can publish.
+3. The workflow walks its fixed dependency-first chain. Immediately before publishing
+   each selected module, `prepare` updates existing sibling requirements to versions
+   already selected and published earlier in the chain, runs `go mod tidy`, and builds
+   and tests with `GOWORK=off` against published dependencies. Tidy can add indirect
+   sibling requirements, remove obsolete requirements, and update Go/toolchain
+   directives. New direct sibling requirements and changes to existing unselected
+   sibling pins fail validation. A missing published prerequisite stops the chain
+   instead of adding a version to the map.
 4. The first selected `publish` writer creates a temporary release branch at `source`.
    Each selected writer commits its prepared dependency metadata and creates the
    module's lightweight tag. Release commits contain metadata only, never
