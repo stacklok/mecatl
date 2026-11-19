@@ -163,7 +163,6 @@ class WriterTests(unittest.TestCase):
             args += ["--module", module]
         with mock.patch.object(p.urllib.request, "build_opener", return_value=self.api), \
                 mock.patch.object(p.candidate.subprocess, "run", side_effect=AssertionError("writer subprocess")), \
-                mock.patch.object(p.candidate.subprocess, "Popen", side_effect=AssertionError("writer subprocess")), \
                 mock.patch.object(p, "environment", side_effect=AssertionError("writer Go environment")), \
                 mock.patch.dict(os.environ, {"GH_TOKEN": "fixture-not-a-secret", "GITHUB_OUTPUT": str(self.output),
                                              "GITHUB_STEP_SUMMARY": str(self.summary)}, clear=True), \

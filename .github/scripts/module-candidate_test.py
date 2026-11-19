@@ -128,7 +128,7 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(initialized.read_text(), "ran")
         self.assertEqual(executed.read_text(), "ran")
 
-    def test_publication_diagnostics_stream_actual_verbose_test_before_completion(self):
+    def test_verbose_streams_actual_test_before_completion(self):
         gate = self.base_dir / "finish-test"
         self.write("diagnostics_test.go", '''package fixture
 import ("os"; "testing"; "time")
@@ -141,18 +141,17 @@ func TestPublicationDiagnostics(t *testing.T) {
 }
 ''')
         gate.touch()
-        self.env["MECATL_MODULE_DIAGNOSTICS"] = "1"
         quiet = self.check("--module", ".")
         self.assertNotIn("=== RUN", quiet)
         self.assertNotIn("START ", quiet)
         gate.unlink()
         with subprocess.Popen([sys.executable, str(CHECK), "--root", str(self.root),
-                               "--module", ".", "--diagnostics"], cwd=self.root, env=self.env,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                               "--module", ".", "--verbose"], cwd=self.root, env=self.env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
             try:
                 observed = b""
                 with selectors.DefaultSelector() as selector:
-                    selector.register(process.stderr, selectors.EVENT_READ)
+                    selector.register(process.stdout, selectors.EVENT_READ)
                     deadline = time.monotonic() + 120
                     while b"candidate-stream-ready\n" not in observed:
                         self.assertLess(time.monotonic(), deadline, observed)
@@ -161,14 +160,13 @@ func TestPublicationDiagnostics(t *testing.T) {
                             self.assertTrue(data, observed)
                             observed += data
                 self.assertIn(b"=== RUN   TestPublicationDiagnostics", observed)
-                self.assertIn(b"START fixture.invalid/root (.)", observed)
+                self.assertIn(b"fixture.invalid/root (.): checking", observed)
                 self.assertIsNone(process.poll())
                 self.assertFalse(gate.exists())
                 gate.touch()
                 stdout, stderr = process.communicate(timeout=120)
-                self.assertEqual(process.returncode, 0, stdout + stderr)
-                self.assertIn(b": OK (", stderr)
-                self.assertNotIn(b"=== RUN", stdout)
+                self.assertEqual(process.returncode, 0, stdout)
+                self.assertIn(b": OK", stdout)
             finally:
                 gate.touch()
                 if process.poll() is None:

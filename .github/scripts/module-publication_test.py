@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import selectors
-import signal
 import subprocess
 import sys
 import tempfile
@@ -27,213 +26,52 @@ SPEC.loader.exec_module(p)
 
 
 class DiagnosticsTests(unittest.TestCase):
-    def test_streams_before_completion_and_keeps_stdout_parseable(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            gate = root / "finish"
-            child = ("import pathlib,sys,time; print('{\"answer\":42}', flush=True); "
-                     "print('child-ready', file=sys.stderr, flush=True); "
-                     f"gate=pathlib.Path({str(gate)!r})\n"
-                     "while not gate.exists(): time.sleep(0.01)\n")
-            # Both buffering layers are real: publication.run -> candidate.run -> child.
-            inner = (f"import runpy,signal; p=runpy.run_path({str(SCRIPT)!r}); "
-                     "signal.signal(signal.SIGTERM,p['candidate'].interrupted); "
-                     f"print(p['run']({[sys.executable, '-c', child]!r}, {temporary!r}, "
-                     "stream=True, timeout=10), end='')")
-            outer = (f"import runpy; p=runpy.run_path({str(SCRIPT)!r}); "
-                     f"print(p['run']({[sys.executable, '-c', inner]!r}, {temporary!r}, "
-                     "stream=True, timeout=15), end='')")
-            with subprocess.Popen([sys.executable, "-c", outer], stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE) as process:
-                try:
-                    observed = b""
-                    with selectors.DefaultSelector() as selector:
-                        selector.register(process.stderr, selectors.EVENT_READ)
-                        deadline = time.monotonic() + 10
-                        # Use a complete line so the phase's printed argv cannot satisfy this.
-                        while b"\nchild-ready\n" not in observed:
-                            self.assertLess(time.monotonic(), deadline, observed)
-                            for key, _ in selector.select(0.1):
-                                data = os.read(key.fileobj.fileno(), 8192)
-                                self.assertTrue(data, observed)
-                                observed += data
-                    self.assertIsNone(process.poll())
-                    self.assertFalse(gate.exists())
-                    gate.touch()
-                    stdout, stderr = process.communicate(timeout=10)
-                    self.assertEqual(process.returncode, 0, stderr)
-                    self.assertEqual(json.loads(stdout), {"answer": 42})
-                    self.assertIn(b"END ", observed + stderr)
-                finally:
-                    gate.touch()
-                    if process.poll() is None:
-                        process.terminate()
-                        process.communicate(timeout=20)
 
-    def test_stream_failure_and_timeout_reap_descendants(self):
-        for mode in ("failure", "timeout", "nested-timeout"):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+    def test_go_build_streams_before_completion_and_reports_failure(self):
+        for verbose, status in ((False, 0), (True, 0), (False, 7)):
+            with self.subTest(verbose=verbose, status=status), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                pidfile = root / "pid"
-                # The descendant closes its pipes, outlives its leader and ignores TERM.
-                descendant = ("import os,pathlib,signal,time; "
-                              "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-                              f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); "
-                              "time.sleep(30)")
-                child = ("import pathlib,signal,subprocess,sys,time; "
-                         f"subprocess.Popen({[sys.executable, '-c', descendant]!r}, "
-                         "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
-                         f"pidfile=pathlib.Path({str(pidfile)!r})\n"
-                         "while not pidfile.exists(): time.sleep(0.01)\n"
-                         + ("sys.exit(7)" if mode == "failure" else
-                            "signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(30)"
-                            if mode == "nested-timeout" else "time.sleep(30)"))
-                command = [sys.executable, "-c", child]
-                if mode == "nested-timeout":
-                    inner = (f"import runpy,signal; p=runpy.run_path({str(SCRIPT)!r}); "
-                             "signal.signal(signal.SIGTERM,p['candidate'].interrupted); "
-                             f"p['run']({command!r}, {temporary!r}, stream=True, timeout=20, cleanup_timeout=1)")
-                    command = [sys.executable, "-c", inner]
-                with contextlib.redirect_stderr(io.StringIO()) as output:
-                    with self.assertRaisesRegex(p.CheckError, "exited 7" if mode == "failure" else "timed out"):
-                        p.run(command, root, timeout=1, stream=True)
-                self.assertIn("FAIL", output.getvalue())
-                self.assertTrue(pidfile.exists(), "fixture did not reach descendant boundary")
-                pid = int(pidfile.read_text())
-                # A killed orphan can remain a zombie until the host reaps it.
-                deadline = time.monotonic() + 2
-                while True:
-                    state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
-                                           capture_output=True, text=True, timeout=5)
-                    if state.returncode or state.stdout.lstrip().startswith("Z"):
-                        break
-                    self.assertLess(time.monotonic(), deadline, f"live descendant {pid}")
-                    time.sleep(0.01)
-
-    def test_sigterm_allows_nested_runner_to_reap_detached_leaf(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            pidfile = root / "leaf-pid"
-            inner_pidfile = root / "inner-pid"
-            (root / "go.mod").write_text("module fixture.invalid/root\n\ngo 1.23.0\n")
-            go = root / "go"
-            go.write_text(f"#!{sys.executable}\n" + '''import json,os,pathlib,signal,sys,time
-if sys.argv[1] == "test":
-    assert "-timeout=20m" in sys.argv
-    signal.signal(signal.SIGTERM,signal.SIG_IGN)
-    pathlib.Path("leaf-pid").write_text(str(os.getpid()))
-    time.sleep(30)
-elif "-json" in sys.argv:
-    print(json.dumps({"Module":{"Path":"fixture.invalid/root"},"Go":"1.23.0"}))
-''')
-            go.chmod(0o755)
-            bootstrap = root / "cli-fixture.py"
-            # Mock metadata/network seams at main entry, after the real CLI installs its handler.
-            bootstrap.write_text('''import os,pathlib,runpy,sys
-script = pathlib.Path(sys.argv[1])
-root = pathlib.Path.cwd()
-def before_main(frame, event, arg):
-    if event == "call" and frame.f_code.co_name == "main" and frame.f_code.co_filename == str(script):
-        ns = frame.f_globals
-        if script.name == "module-candidate.py":
-            (root / "inner-pid").write_text(str(os.getpid()))
-            original = {"Module":{"Path":"fixture.invalid/root"},"Go":"1.23.0"}
-            ns["inventory"] = lambda *_: ({"fixture.invalid/root": (root, original)},
-                {root / "go.mod": (root / "go.mod").read_bytes(), root / "go.sum": None})
-        else:
-            command = [sys.executable, __file__, str(script.with_name("module-candidate.py")),
-                       "--root", str(root), "--diagnostics"]
-            ns["preflight"] = lambda args, versions, env: ns["run"](command, root, env, stream=True)
-        sys.settrace(None)
-sys.settrace(before_main)
-sys.argv = sys.argv[1:]
-runpy.run_path(str(script), run_name="__main__")
-''')
-            command = [sys.executable, str(bootstrap), str(SCRIPT), "preflight", "--root", str(root),
-                       "--source", "a" * 40, "--versions", '{"engine":"v0.2.0"}']
-            with subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")) as process:
-                try:
-                    deadline = time.monotonic() + 10
-                    while not pidfile.exists():
-                        self.assertIsNone(process.poll())
-                        self.assertLess(time.monotonic(), deadline, "leaf did not start")
-                        time.sleep(0.01)
-                    self.assertNotEqual(os.getpgid(int(pidfile.read_text())),
-                                        os.getpgid(int(inner_pidfile.read_text())))
-                    start = time.monotonic()
-                    process.terminate()
-                    process.wait(timeout=8)
-                    self.assertEqual(process.returncode, 128 + signal.SIGTERM)
-                    self.assertLess(time.monotonic() - start, 5)
-                    pid = int(pidfile.read_text())
-                    deadline = time.monotonic() + 2
-                    while True:
-                        state = subprocess.run(["ps", "-p", str(pid), "-o", "stat="],
-                                               capture_output=True, text=True, timeout=5)
-                        if state.returncode or state.stdout.lstrip().startswith("Z"):
-                            break
-                        self.assertLess(time.monotonic(), deadline, f"live detached leaf {pid}")
-                        time.sleep(0.01)
-                finally:
-                    if process.poll() is None:
-                        process.kill()
-                    for path in (inner_pidfile, pidfile):
-                        if path.exists():
-                            try:
-                                os.kill(int(path.read_text()), signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
-                    process.communicate(timeout=10)
-
-    def test_go_build_streams_before_completion(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            gate = root / "finish"
-            go = root / "go"
-            go.write_text(f"#!{sys.executable}\n" + '''import pathlib,sys,time
+                gate = root / "finish"
+                go = root / "go"
+                go.write_text(f"#!{sys.executable}\n" + '''import pathlib,sys,time
 assert sys.argv[1:] == ["build", "-mod=readonly", "./..."]
 print("build-live", flush=True)
 while not pathlib.Path("finish").exists(): time.sleep(0.01)
-''')
-            go.chmod(0o755)
-            code = (f"import os,runpy; p=runpy.run_path({str(SCRIPT)!r}); "
-                    "print(p['candidate'].go(os.getcwd(), dict(os.environ, "
-                    "MECATL_MODULE_DIAGNOSTICS='1'), 'build', '-mod=readonly', './...'), end='')")
-            with subprocess.Popen([sys.executable, "-c", code], cwd=root, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE,
-                                  env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}")) as process:
-                try:
-                    observed = b""
-                    with selectors.DefaultSelector() as selector:
-                        selector.register(process.stderr, selectors.EVENT_READ)
-                        deadline = time.monotonic() + 5
-                        while b"\nbuild-live\n" not in observed:
-                            self.assertLess(time.monotonic(), deadline, observed)
-                            for key, _ in selector.select(0.1):
-                                data = os.read(key.fileobj.fileno(), 8192)
-                                self.assertTrue(data, observed)
-                                observed += data
-                    self.assertIsNone(process.poll())
-                    self.assertFalse(gate.exists())
-                    gate.touch()
-                    stdout, stderr = process.communicate(timeout=10)
-                    self.assertEqual(process.returncode, 0, stderr)
-                    self.assertEqual(stdout, b"build-live\n")
-                finally:
-                    gate.touch()
-                    process.communicate(timeout=10)
+''' + f"sys.exit({status})\n")
+                go.chmod(0o755)
+                code = (f"import os,runpy; p=runpy.run_path({str(SCRIPT)!r}); "
+                        "p['candidate'].go(os.getcwd(), os.environ, 'build', '-mod=readonly', './...')")
+                with subprocess.Popen([sys.executable, "-c", code], cwd=root, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE,
+                                      env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                                               GOFLAGS="-v" if verbose else "")) as process:
+                    try:
+                        with selectors.DefaultSelector() as selector:
+                            selector.register(process.stdout, selectors.EVENT_READ)
+                            self.assertTrue(selector.select(5), "build output was buffered")
+                            self.assertEqual(os.read(process.stdout.fileno(), 8192), b"build-live\n")
+                        self.assertIsNone(process.poll())
+                        self.assertFalse(gate.exists())
+                        gate.touch()
+                        stdout, stderr = process.communicate(timeout=10)
+                        self.assertEqual(process.returncode == 0, status == 0, stderr)
+                        if status:
+                            self.assertIn(b"exit 7", stderr)
+                    finally:
+                        gate.touch()
+                        process.communicate(timeout=10)
 
     def test_publication_timeout_defaults_and_prepare_package_bound(self):
         with mock.patch.object(p.candidate.subprocess, "run") as command:
             command.return_value = subprocess.CompletedProcess(["fixture"], 0, "", "")
             p.run(["fixture"], SCRIPT.parent)
             self.assertEqual(command.call_args.kwargs["timeout"], 1800)
-        env = {"MECATL_MODULE_DIAGNOSTICS": "1"}
+        env = {"GOFLAGS": ""}
         with mock.patch.object(p.candidate, "run", return_value="") as command:
             for verb in ("test", "build"):
                 p.candidate.go(SCRIPT.parent, env, verb, "./...")
-                self.assertEqual(command.call_args.kwargs["timeout"], 1800)
+                self.assertIsNone(command.call_args.kwargs["timeout"])
+                self.assertFalse(command.call_args.kwargs["capture"])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "go.mod").write_text("module fixture.invalid/root\n\ngo 1.23.0\n")
@@ -244,15 +82,11 @@ while not pathlib.Path("finish").exists(): time.sleep(0.01)
             self.assertIn(mock.call(root, env, "test", "-mod=readonly", "-count=1",
                                     "-timeout=20m", "./..."), go.call_args_list)
 
-    def test_machine_output_stays_quiet_even_with_diagnostics(self):
+    def test_parsed_stdout_is_preserved(self):
         command = [sys.executable, "-c", "import sys; print('{\"ok\":true}'); print('detail',file=sys.stderr)"]
-        for stream in (False, True):
-            with self.subTest(stream=stream), contextlib.redirect_stderr(io.StringIO()) as diagnostics:
-                self.assertEqual(json.loads(p.run(command, SCRIPT.parent, stream=stream)), {"ok": True})
-                self.assertEqual(bool(diagnostics.getvalue()), stream)
+        self.assertEqual(json.loads(p.run(command, SCRIPT.parent)), {"ok": True})
         with tempfile.TemporaryDirectory() as temporary:
-            env = dict(os.environ, GOWORK="off", GOENV="off", GOFLAGS="",
-                       GOTOOLCHAIN="local", MECATL_MODULE_DIAGNOSTICS="1")
+            env = dict(os.environ, GOWORK="off", GOENV="off", GOFLAGS="", GOTOOLCHAIN="local")
             root = Path(temporary)
             (root / "go.mod").write_text("module fixture.invalid/metadata\n\ngo 1.23.0\n")
             with contextlib.redirect_stderr(io.StringIO()) as diagnostics:
@@ -263,60 +97,6 @@ while not pathlib.Path("finish").exists(): time.sleep(0.01)
 
 @unittest.skipUnless(os.environ.get("PUBLICATION_DIAGNOSTICS_WORKFLOW"), "workflow supplied by Go contract test")
 class DiagnosticsWorkflowTests(unittest.TestCase):
-    def test_logged_preflight_preserves_exit_and_stops_sampler(self):
-        step = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["preflight"]
-        for status in (0, 7):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                bin_dir = root / "bin"
-                bin_dir.mkdir()
-                scripts = {
-                    "python3": '''import os,pathlib,sys,time
-assert sys.argv[1:] == ["tooling/.github/scripts/module-publication.py", "preflight", "--source", "reviewed-source", "--versions", '{"engine":"v0.2.0"}', "--root", os.environ["GITHUB_WORKSPACE"] + "/candidate"]
-deadline = time.monotonic() + 10
-while not pathlib.Path(os.environ["RUNNER_TEMP"], "sleeper").exists():
-    assert time.monotonic() < deadline
-    time.sleep(0.01)
-print("fixture-preflight", flush=True)
-print("fixture-stderr", file=sys.stderr, flush=True)
-sys.exit(int(os.environ["FIXTURE_EXIT"]))
-''',
-                    "sleep": '''import os,pathlib
-pathlib.Path(os.environ["RUNNER_TEMP"], "sleeper").write_text(str(os.getpid()))
-os.execl("/bin/sleep", "sleep", "60")
-''',
-                    "ps": '''import sys
-assert sys.argv[1:] == ["-eo", "pid,ppid,comm,pcpu,pmem,rss,etime"]
-print("PID PPID COMMAND %CPU %MEM RSS ELAPSED")
-print("123 1 go 12.3 1.0 1000 01:00")
-print("124 1 fixture.test 1.0 0.1 100 01:00")
-print("125 1 microvmmanager. 0.0 0.1 100 01:00")
-''',
-                }
-                for name, content in scripts.items():
-                    path = bin_dir / name
-                    path.write_text(f"#!{sys.executable}\n" + content)
-                    path.chmod(0o755)
-                result = subprocess.run(["bash", "-c", step["Run"]], cwd=root,
-                    env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
-                             RUNNER_TEMP=str(root), GITHUB_WORKSPACE=str(root),
-                             SOURCE="reviewed-source", VERSIONS='{"engine":"v0.2.0"}',
-                             FIXTURE_EXIT=str(status)), capture_output=True, text=True, timeout=20)
-                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
-                logs = root / "module-publication-diagnostics"
-                log = (logs / "preflight.log").read_text()
-                self.assertIn("fixture-preflight", log)
-                self.assertIn("fixture-stderr", log)
-                self.assertIn("fixture-preflight", result.stdout)
-                resources = (logs / "resources.log").read_text()
-                self.assertIn("123 1 go", resources)
-                self.assertIn("124 1 fixture.test", resources)
-                self.assertIn("125 1 microvmmanager.", resources)
-                self.assertNotIn("Traceback", resources)
-                pid = int((root / "sleeper").read_text())
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
-
     def test_summary_distinguishes_diagnostics_from_publication(self):
         step = json.loads(os.environ["PUBLICATION_DIAGNOSTICS_WORKFLOW"])["summary"]
         for only in ("true", "false"):
@@ -347,7 +127,7 @@ class RequestTests(unittest.TestCase):
                 with mock.patch.object(p, "environment") as env, \
                         mock.patch.object(p, "preflight") as preflight, \
                         contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(p.main(["preflight", "--source", "a" * 40,
+                    self.assertEqual(p.main(["preflight", "--phase", "validate", "--source", "a" * 40,
                                              "--versions", raw, "--root", "/does-not-exist"]), 1)
                     env.assert_not_called()
                     preflight.assert_not_called()
@@ -409,6 +189,10 @@ class RequestTests(unittest.TestCase):
                                               "GONOSUMDB": "*", "GOINSECURE": "*",
                                               "GIT_CONFIG_GLOBAL": "/poison", "TOKEN": "not-a-secret"}):
                 env = p.environment(root)
+                marker = Path(env["GOCACHE"]) / "shared-cache"
+                marker.touch()
+                self.assertEqual(p.environment(root), env)
+                self.assertTrue(marker.exists())
             self.assertEqual(env["GOENV"], "off")
             self.assertEqual(env["GOFLAGS"], "")
             self.assertEqual(env["GOPROXY"], "https://proxy.golang.org")
@@ -439,6 +223,7 @@ class RepositoryTests(unittest.TestCase):
 
 class LocalTests(unittest.TestCase):
     def setUp(self):
+        self.workflow = os.environ.get("PUBLICATION_DIAGNOSTICS_WORKFLOW")
         temporary = tempfile.TemporaryDirectory(prefix="publication-tests-")
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
@@ -516,6 +301,9 @@ class LocalTests(unittest.TestCase):
         p.candidate.go(self.root, dict(self.env, GOWORK=str(self.root / "go.work")), "work", "use", "./unknown")
         with self.assertRaisesRegex(p.CheckError, "inventory drift"):
             p.inventory(self.root, self.env)
+        self.commit()
+        with self.assertRaisesRegex(p.CheckError, "inventory drift"):
+            self.preflight(phases=("final",))
 
     def test_identity_drift(self):
         self.write("engine/go.mod", "module fixture.invalid/engine\n\ngo 1.27.3\n")
@@ -750,7 +538,7 @@ class LocalTests(unittest.TestCase):
         self.write("engine/fail_test.go", 'package fixture\nimport "testing"\n'
                    'func TestFail(t *testing.T) { t.Fatal("fixture failure") }\n')
         self.commit()
-        with self.assertRaisesRegex(p.CheckError, "fixture failure"):
+        with self.assertRaisesRegex(p.CheckError, "exit 1"):
             p.prepare(self.args(module="engine"), {"engine": "v0.2.0"}, self.env)
         self.assertFalse((self.base / "metadata.json").exists())
 
@@ -775,7 +563,7 @@ class LocalTests(unittest.TestCase):
         consumer = temporary / "consumer"
         mod = consumer / "go.mod"
         mod.write_text(mod.read_text().replace(p.PREFIX + "/publication-smoke", "example.com/not-allowed"))
-        with self.assertRaisesRegex(p.CheckError, "internal package.*not allowed"):
+        with self.assertRaisesRegex(p.CheckError, "exit 1"):
             p.candidate.go(consumer, self.env, "build", "-mod=readonly", "./...")
 
     def test_artifact_rejects_metadata_symlink_and_module_deletion(self):
@@ -816,7 +604,80 @@ class LocalTests(unittest.TestCase):
         p.artifact(self.root, self.head, {"engine/go.sum": None}, args.metadata)
         self.assertIsNone(json.loads(args.metadata.read_text())["files"]["engine/go.sum"])
 
-    def preflight(self, mutate=None, **env):
+    @unittest.skipUnless(os.environ.get("PUBLICATION_DIAGNOSTICS_WORKFLOW"), "workflow supplied by Go contract test")
+    def test_preflight_workflow_boundaries(self):
+        steps = json.loads(self.workflow)["preflight"]
+        workspace = self.base / "workspace"
+        workspace.mkdir()
+        (workspace / "candidate").symlink_to(self.root, target_is_directory=True)
+        (workspace / "tooling").symlink_to(SCRIPT.parents[2], target_is_directory=True)
+        mode = self.base / "mode"
+        task = self.base / "task"
+        task.write_text(f"#!{sys.executable}\n" + f'''import json,os,pathlib,sys
+assert sys.argv[1:] == ["test:workspace"]
+assert "TOKEN" not in os.environ
+root = pathlib.Path({str(self.base)!r})
+(root / "workspace-env").write_text(json.dumps(dict(os.environ)))
+pathlib.Path(os.environ["GOCACHE"], "shared-sentinel").touch()
+mode = (root / "mode").read_text()
+if mode == "workspace-mutation":
+    pathlib.Path({str(self.root / 'fixture.go')!r}).write_text("changed")
+print("fixture-workspace", flush=True)
+sys.exit(7 if mode == "workspace-failure" else 0)
+''')
+        task.chmod(0o755)
+        self.write("engine/shared_test.go", '''package fixture
+import ("os"; "path/filepath"; "testing")
+func TestSharedEnvironment(t *testing.T) {
+    if _, err := os.Stat(filepath.Join(os.Getenv("GOCACHE"), "shared-sentinel")); err != nil { t.Fatal(err) }
+    if os.Getenv("TOKEN") != "" { t.Fatal("ambient credential inherited") }
+    mode, err := os.ReadFile(''' + json.dumps(str(mode)) + ''')
+    if err != nil { t.Fatal(err) }
+    if string(mode) == "candidate-failure" { t.Fatal("fixture-candidate-failure") }
+    if string(mode) == "candidate-mutation" {
+        if err := os.WriteFile(''' + json.dumps(str(self.root / "fixture.go")) + ''', []byte("changed"), 0600); err != nil { t.Fatal(err) }
+    }
+}
+''')
+        self.commit()
+        for scenario in ("normal", "verbose", "workspace-failure", "candidate-failure",
+                         "workspace-mutation", "candidate-mutation"):
+            with self.subTest(scenario=scenario):
+                mode.write_text(scenario)
+                self.write("fixture.go", "package fixture\nconst Value = 1\n")
+                output = self.base / "step-output"
+                output.write_text("")
+                env = dict(self.env, PATH=f"{self.base}:{self.env['PATH']}", TOKEN="fixture-not-a-secret",
+                           SOURCE=self.head, VERSIONS='{"engine":"v0.2.0"}',
+                           VERBOSE="true" if scenario == "verbose" else "false",
+                           GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="2", GITHUB_OUTPUT=str(output),
+                           GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(self.base / "runner"))
+                for index, step in enumerate(steps):
+                    result = subprocess.run(["sh", "-ec", step["Run"]], cwd=workspace, env=env,
+                                            capture_output=True, text=True, timeout=120)
+                    if index < 3 or result.returncode:
+                        self.assertEqual(output.read_text(), "", result.stdout + result.stderr)
+                    if result.returncode:
+                        break  # Native Actions' default success-only step sequencing.
+                    if index == 1:
+                        actual = json.loads((self.base / "workspace-env").read_text())
+                        shared = p.environment(self.base / "runner/module-publication-environment")
+                        for key in ("HOME", "GOPATH", "GOCACHE", "GOMODCACHE", "TMPDIR"):
+                            self.assertEqual(actual[key], shared[key])
+                        self.assertEqual(actual["GOFLAGS"], "-v" if scenario == "verbose" else "")
+                    if index == 2:
+                        self.assertEqual("=== RUN" in result.stdout, scenario == "verbose")
+                if scenario in ("normal", "verbose"):
+                    self.assertEqual(index, 3)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(output.read_text(), "source=" + self.head +
+                                     '\nversions={"engine":"v0.2.0"}\nbranch=module-publication/123-2\n')
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(index, 1 if scenario == "workspace-failure" else
+                                     2 if scenario in ("candidate-failure", "workspace-mutation") else 3)
+
+    def preflight(self, mutate=None, phases=("validate", "workspace", "candidates", "final"), **env):
         original = p.run
         def expensive(command, directory, environment=None, **kwargs):
             if command[0] in ("task", p.sys.executable):
@@ -826,7 +687,9 @@ class LocalTests(unittest.TestCase):
             return original(command, directory, environment, **kwargs)
         with mock.patch.object(p, "run", side_effect=expensive) as run, \
                 mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", **env}):
-            result = p.preflight(self.args(), {"engine": "v0.2.0"}, self.env)
+            args = self.args(phase="validate", verbose="false")
+            for args.phase in phases:
+                result = p.preflight(args, {"engine": "v0.2.0"}, self.env)
         return result, run
 
     def test_preflight_actual_git_and_trusted_candidate_command(self):
@@ -837,11 +700,11 @@ class LocalTests(unittest.TestCase):
         candidates = [command for command in calls if command[0] == p.sys.executable]
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0][1], str(SCRIPT.with_name("module-candidate.py")))
-        self.assertIn("--diagnostics", candidates[0])
+        self.assertNotIn("--verbose", candidates[0])
         self.assertEqual(candidates[0][-2:], ["--module", "engine"])
         expensive = [call for call in run.call_args_list if call.args[0][0] in ("task", sys.executable)]
-        self.assertTrue(all(call.kwargs["stream"] for call in expensive))
-        self.assertEqual(expensive[0].args[2]["GOFLAGS"], "-v")
+        self.assertTrue(all(not call.kwargs["capture"] and call.kwargs["timeout"] is None for call in expensive))
+        self.assertEqual(expensive[0].args[2]["GOFLAGS"], "")
         self.assertEqual(self.env["GOFLAGS"], "")
         self.assertEqual(result["source"], self.head)
 
@@ -850,13 +713,15 @@ class LocalTests(unittest.TestCase):
         self.commit()
         self.preflight(mutate=lambda: self.write("go.work.sum", "workspace checksum output\n"))
         (self.root / "go.work.sum").unlink()
-        with self.assertRaisesRegex(p.CheckError, "modified files"):
-            self.preflight(mutate=lambda: self.write("engine/fixture.go", "changed\n"))
+        with self.assertRaisesRegex(p.CheckError, "clean"):
+            self.preflight(mutate=lambda: self.write("engine/fixture.go", "changed\n"),
+                           phases=("workspace", "final"))
 
     def test_preflight_rejects_clean_head_movement(self):
         source = self.head
-        with self.assertRaisesRegex(p.CheckError, "moved HEAD"):
-            self.preflight(mutate=lambda: self.command("git", "commit", "--allow-empty", "-m", "moved"))
+        with self.assertRaisesRegex(p.CheckError, "HEAD"):
+            self.preflight(mutate=lambda: self.command("git", "commit", "--allow-empty", "-m", "moved"),
+                           phases=("workspace", "final"))
         self.assertNotEqual(self.command("git", "rev-parse", "HEAD"), source)
         self.assertEqual(self.command("git", "status", "--porcelain"), "")
 
@@ -865,12 +730,31 @@ class LocalTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(p.CheckError, "positive GITHUB"):
                 self.preflight(GITHUB_RUN_ID=value)
         self.command("git", "tag", "engine/v0.2.0")
-        with self.assertRaisesRegex(p.CheckError, "tag already exists"):
-            self.preflight()
+        for phase in ("validate", "final"):
+            with self.subTest(phase=phase), self.assertRaisesRegex(p.CheckError, "tag already exists"):
+                self.preflight(phases=(phase,))
+
+    def test_preflight_fetches_main_advance_between_phases(self):
+        remote = self.base / "remote.git"
+        self.command("git", "clone", "--bare", str(self.root), str(remote))
+        self.command("git", "remote", "set-url", "origin", str(remote))
+        self.preflight(phases=("validate",))
+        advanced = self.command("git", "--git-dir", str(remote),
+                                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                "commit-tree", self.head + "^{tree}", "-p", self.head, "-m", "advance main")
+        self.command("git", "--git-dir", str(remote), "update-ref", "refs/heads/main", advanced)
+        with self.assertRaises(p.CheckError):
+            self.command("git", "cat-file", "-e", advanced)
+        result, _ = self.preflight(phases=("final",))
+        self.assertEqual(result["source"], self.head)
+        self.assertEqual(self.command("git", "rev-parse", "FETCH_HEAD"), advanced)
+        self.command("git", "remote", "set-url", "origin", str(self.base / "missing.git"))
+        with self.assertRaisesRegex(p.CheckError, "git fetch"):
+            self.preflight(phases=("final",))
 
     def test_preflight_uses_remote_main_not_stale_tracking_ref(self):
         # Local main is moved to a different history, while origin/main still claims
-        # the selected commit is main. ls-remote must defeat that stale claim.
+        # the selected commit is main. A fresh fetch must defeat that stale claim.
         self.command("git", "update-ref", "refs/remotes/origin/main", self.head)
         self.command("git", "checkout", "--orphan", "other")
         self.write("other-history.txt", "not the selected source\n")
@@ -879,8 +763,9 @@ class LocalTests(unittest.TestCase):
         old = self.command("git", "rev-parse", "refs/remotes/origin/main")
         self.command("git", "checkout", "--detach", old)
         self.head = old
-        with self.assertRaises(p.CheckError):
-            self.preflight()
+        for phase in ("validate", "final"):
+            with self.subTest(phase=phase), self.assertRaises(p.CheckError):
+                self.preflight(phases=(phase,))
 
 
 class ProofTests(unittest.TestCase):

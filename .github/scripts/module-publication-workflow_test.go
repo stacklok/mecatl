@@ -14,13 +14,13 @@ import (
 )
 
 type step struct {
-	ID    string            `yaml:"id"`
-	Uses  string            `yaml:"uses"`
-	If    string            `yaml:"if"`
-	Run   string            `yaml:"run"`
-	Shell string            `yaml:"shell"`
-	With  map[string]any    `yaml:"with"`
-	Env   map[string]string `yaml:"env"`
+	ID      string            `yaml:"id"`
+	Uses    string            `yaml:"uses"`
+	If      string            `yaml:"if"`
+	Run     string            `yaml:"run"`
+	Timeout int               `yaml:"timeout-minutes"`
+	With    map[string]any    `yaml:"with"`
+	Env     map[string]string `yaml:"env"`
 }
 
 type job struct {
@@ -263,9 +263,11 @@ func TestPublicationProofChain(t *testing.T) {
 
 func TestPublicationPreflightDiagnostics(t *testing.T) {
 	w := load(t, "publish-modules")
-	input, ok := w.On.Dispatch.Inputs["preflight_only"]
-	if !ok || input.Type != "boolean" || input.Default != false {
-		t.Fatal("preflight_only must be an explicit boolean defaulting to false")
+	for _, name := range []string{"preflight_only", "verbose"} {
+		input, ok := w.On.Dispatch.Inputs[name]
+		if !ok || input.Type != "boolean" || input.Default != false {
+			t.Fatalf("%s must be an explicit boolean defaulting to false", name)
+		}
 	}
 	if w.Jobs["preflight"].If != "github.ref == 'refs/heads/main'" || w.Jobs["preflight"].Timeout != 75 {
 		t.Fatal("preflight must retain main-only authority with a 75-minute outer bound")
@@ -288,25 +290,40 @@ func TestPublicationPreflightDiagnostics(t *testing.T) {
 	if summary.If != "always()" || len(summary.Steps) != 1 || summary.Steps[0].Env["PREFLIGHT_ONLY"] != "${{ inputs.preflight_only }}" {
 		t.Fatal("summary must run even when the publication chain is skipped and report the mode")
 	}
-	var command step
-	uploaded := false
+	var commands []step
 	for _, s := range w.Jobs["preflight"].Steps {
-		if s.ID == "preflight" {
-			command = s
-		}
-		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") {
-			uploaded = s.If == "always()" && s.With["path"] == "${{ runner.temp }}/module-publication-diagnostics/" && fmt.Sprint(s.With["retention-days"]) == "7"
+		if strings.HasPrefix(s.Run, "python3 tooling/.github/scripts/module-publication.py preflight ") {
+			commands = append(commands, s)
 		}
 	}
-	if !uploaded || command.Shell != "bash" {
-		t.Fatal("preflight diagnostics need an always-upload artifact and explicit pipefail shell")
+	if len(commands) != 4 {
+		t.Fatal("preflight needs four native command steps")
 	}
-	data, err := json.Marshal(map[string]step{"preflight": command, "summary": summary.Steps[0]})
+	for i, phase := range []string{"validate", "workspace", "candidates", "final"} {
+		s := commands[i]
+		if s.Timeout != 30 || s.If != "" || !strings.Contains(s.Run, "--phase "+phase+" ") ||
+			!strings.Contains(s.Run, `--environment-dir "$RUNNER_TEMP/module-publication-environment"`) {
+			t.Fatalf("%s lost step ordering, success gating, bounds or shared environment", phase)
+		}
+		if (s.ID == "preflight") != (phase == "final") {
+			t.Fatal("only final source integrity may expose publication outputs")
+		}
+	}
+	preflight := w.Jobs["preflight"]
+	if preflight.Env["SOURCE"] != "${{ inputs.source }}" || preflight.Env["VERSIONS"] != "${{ inputs.versions }}" || preflight.Env["VERBOSE"] != "${{ inputs.verbose }}" {
+		t.Fatal("preflight must retain exact dispatch inputs across steps")
+	}
+	for _, key := range []string{"source", "versions", "branch"} {
+		if preflight.Outputs[key] != "${{ steps.preflight.outputs."+key+" }}" {
+			t.Fatalf("%s bypasses final integrity outputs", key)
+		}
+	}
+	data, err := json.Marshal(map[string]any{"preflight": commands, "summary": summary.Steps[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, file, _, _ := runtime.Caller(0)
-	cmd := exec.Command("python3", filepath.Join(filepath.Dir(file), "module-publication_test.py"), "DiagnosticsWorkflowTests")
+	cmd := exec.Command("python3", filepath.Join(filepath.Dir(file), "module-publication_test.py"), "DiagnosticsWorkflowTests", "LocalTests.test_preflight_workflow_boundaries")
 	cmd.Env = append(os.Environ(), "PUBLICATION_DIAGNOSTICS_WORKFLOW="+string(data), "PYTHONDONTWRITEBYTECODE=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("diagnostics shell boundary: %v\n%s", err, output)

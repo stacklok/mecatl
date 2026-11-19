@@ -7,12 +7,12 @@ metadata as data and never check out or execute candidate code.
 
 import argparse
 import base64
+from contextlib import nullcontext
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
-import signal
 import sys
 import tempfile
 import time
@@ -103,17 +103,16 @@ def request(raw):
 
 
 def environment(temporary):
-    """No ambient Go configuration, private bypasses, credentials, or warmed cache."""
+    """No ambient Go configuration, private bypasses, credentials, or host cache."""
     env = {"PATH": os.environ["PATH"], "GOENV": "off", "GOFLAGS": "",
            "GOWORK": "off", "GOTOOLCHAIN": "local", "GOTELEMETRY": "off",
            "GOPROXY": "https://proxy.golang.org", "GOSUMDB": "sum.golang.org",
            "GOPRIVATE": "", "GONOPROXY": "none", "GONOSUMDB": "none",
-           "GOINSECURE": "", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
-           "MECATL_MODULE_DIAGNOSTICS": "1"}
+           "GOINSECURE": "", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"}
     for key, name in (("HOME", "home"), ("GOPATH", "gopath"), ("GOCACHE", "build"),
                       ("GOMODCACHE", "modules"), ("TMPDIR", "tmp")):
         path = temporary / name
-        path.mkdir()
+        path.mkdir(parents=True, exist_ok=True)
         env[key] = str(path)
     return env
 
@@ -241,35 +240,36 @@ def artifact(root, parent, captured, destination):
 
 def preflight(args, versions, env):
     root = args.root
-    with candidate.phase("request validation"):
-        checkout(root, args.source, args.source)
-        # A stale local origin/main is not authority for main ancestry. Do not fetch or
-        # mutate refs here: the runner must fetch the actual main tip before checking.
-        remote = git(root, "ls-remote", "--exit-code", "origin", "refs/heads/main").split()
-        if len(remote) != 2 or remote[1] != "refs/heads/main":
-            raise CheckError("cannot resolve actual origin/main")
-        git(root, "merge-base", "--is-ancestor", args.source, sha(remote[0]))
-        inventory(root, env)
-        for path, exact in versions.items():
-            tag = f"refs/tags/{path}/{exact}"
-            if git(root, "ls-remote", "origin", tag):
-                raise CheckError(f"requested tag already exists: {tag}")
-        runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
-        if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
-            raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
-    with candidate.phase("workspace tests"):
-        run(["task", "test:workspace"], root, dict(env, GOFLAGS="-v"), stream=True)
-    command = [sys.executable, str(Path(candidate.__file__).resolve()), "--diagnostics", "--root", str(root)]
-    for path in versions:
-        command += ["--module", path]
-    with candidate.phase("selected module candidate checks"):
-        run(command, root, env, stream=True)
-    with candidate.phase("post-test source integrity"):
+    # Revalidate each invocation, especially before exposing final publication outputs.
+    checkout(root, args.source, args.source)
+    # Fetch each phase's main snapshot; its tip may have advanced during earlier tests.
+    git(root, "fetch", "--no-tags", "origin", "refs/heads/main")
+    git(root, "merge-base", "--is-ancestor", args.source, sha(git(root, "rev-parse", "FETCH_HEAD")))
+    inventory(root, env)
+    for path, exact in versions.items():
+        tag = f"refs/tags/{path}/{exact}"
+        if git(root, "ls-remote", "origin", tag):
+            raise CheckError(f"requested tag already exists: {tag}")
+    runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
+        raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
+    # Long commands inherit output and lifecycle from the native 30-minute Actions step.
+    if args.phase == "workspace":
+        run(["task", "test:workspace"], root, env, timeout=None, capture=False)
+    elif args.phase == "candidates":
+        command = [sys.executable, str(Path(candidate.__file__).resolve()), "--root", str(root)]
+        if args.verbose == "true":
+            command.append("--verbose")
+        for path in versions:
+            command += ["--module", path]
+        run(command, root, env, timeout=None, capture=False)
+    elif args.phase == "final":
         check_changes(root)
         if git(root, "rev-parse", "HEAD") != args.source:
             raise CheckError("candidate execution moved HEAD")
-    return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
-            "branch": f"module-publication/{runid}-{attempt}"}
+        return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
+                "branch": f"module-publication/{runid}-{attempt}"}
+    return {}
 
 
 def prepare(args, versions, env):
@@ -542,6 +542,10 @@ def main(argv=None):
             sub.add_argument("--module", choices=ORDER, required=True)
         if command in ("publish", "open-pr"):
             sub.add_argument("--branch", required=True)
+        if command == "preflight":
+            sub.add_argument("--phase", choices=("validate", "workspace", "candidates", "final"), required=True)
+            sub.add_argument("--environment-dir", type=Path)
+            sub.add_argument("--verbose", choices=("true", "false"), nargs="?", const="true", default="false")
         if command == "prepare":
             sub.add_argument("--selection-only", action="store_true")
         if command == "prove":
@@ -567,10 +571,12 @@ def main(argv=None):
             return 0
         if hasattr(args, "root"):
             args.root = args.root.resolve()
-        with tempfile.TemporaryDirectory(prefix="module-publication-") as temporary, \
-                candidate.phase(f"publication {args.command}"):
+        with (nullcontext(args.environment_dir) if getattr(args, "environment_dir", None)
+              else tempfile.TemporaryDirectory(prefix="module-publication-")) as temporary:
             temporary = Path(temporary)
             env = environment(temporary)
+            if args.command == "preflight" and args.verbose == "true":
+                env["GOFLAGS"] = "-v"
             if args.command == "prove":
                 result = prove(args, versions, env, temporary)
             else:
@@ -583,5 +589,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, candidate.interrupted)
     sys.exit(main())
