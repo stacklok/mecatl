@@ -93,6 +93,12 @@ client IDs from it; the chart renders the same derived values.
 {{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
 {{- $broker := .Values.identityBroker -}}
 {{- $as1 := $broker.as1 -}}
+{{- /* An upgrade with --reuse-values keeps the previous release's values, which may lack trustDomain, audience, and keys; the schema requires them only with the broker enabled. */ -}}
+{{- $keys := $broker.keys | default dict -}}
+{{- $agentIssuer := $keys.agentIssuer | default dict -}}
+{{- $brokerClient := $keys.brokerClient | default dict -}}
+{{- $keySet := $brokerClient.keySet | default dict -}}
+{{- $as1Signing := $keys.as1Signing | default dict -}}
 {{- /* Checked first, so an upgrade with the old value learns where it went. */ -}}
 {{- with $as1.signingKey -}}{{- if or .secretName .key -}}{{ fail "identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing" }}{{- end -}}{{- end -}}
 {{- range $arg := .Values.extraArgs -}}
@@ -115,7 +121,7 @@ client IDs from it; the chart renders the same derived values.
 {{- else if regexMatch "^--?(identity-broker-as1-[a-z-]+|identity-broker-subject-claim|identity-broker-config)(=|$)" $a -}}
 {{- fail (printf "extraArgs entry %q sets an identity broker flag, which the chart owns when identityBroker.enabled is true; remove it and set identityBroker values instead" $a) -}}
 {{- else if regexMatch "^--?workspace(=|$)" $a -}}
-{{- fail (printf "extraArgs entry %q sets a workspace, which identityBroker.enabled refuses: the identity broker's keys are files in the mecak8s process's filesystem, which sessions' file tools could read" $a) -}}
+{{- fail (printf "extraArgs entry %q sets a workspace, which identityBroker.enabled refuses: the identity broker cannot run with a workspace on the mecak8s process's filesystem, as its keys are files there, which sessions' file tools could read; remove it for file-less sessions, or use redis.filesystem.enabled or execution.enabled instead" $a) -}}
 {{- else if regexMatch "^--?no-shell(=|$)" $a -}}
 {{- $noShell = regexMatch "^--?no-shell(=(1|t|T|TRUE|true|True))?$" $a -}}
 {{- else if regexMatch "^--?shell$" $a -}}
@@ -126,15 +132,17 @@ client IDs from it; the chart renders the same derived values.
 {{- end -}}
 {{- if not (or $noShell $emptyShell .Values.redis.filesystem.enabled) -}}{{ fail "identityBroker.enabled requires no shell in the mecak8s process: add --no-shell to extraArgs, or --shell= with execution.enabled to keep the remote Shell" }}{{- end -}}
 {{- /* Shortcut: the identity broker's keys are files in this process's filesystem, so it refuses a local workspace; removed by #2807 (the broker runs as its own service). */ -}}
-{{- if .Values.workspace -}}{{ fail "identityBroker.enabled cannot be used with workspace: the identity broker's keys are files in the mecak8s process's filesystem, which sessions' file tools could read; leave workspace empty for file-less sessions, or use redis.filesystem.enabled or execution.enabled" }}{{- end -}}
+{{- if .Values.workspace -}}{{ fail "identityBroker.enabled cannot be used with workspace: the identity broker cannot run with a workspace on the mecak8s process's filesystem, as its keys are files there, which sessions' file tools could read; leave workspace empty for file-less sessions, or use redis.filesystem.enabled or execution.enabled instead" }}{{- end -}}
 {{- $_ := required "identityBroker.trustDomain is required when identityBroker.enabled is true: the agent trust domain, such as agents.example.com, which every ID-JAG names as act.iss" $broker.trustDomain -}}
 {{- $_ := required "identityBroker.audience is required when identityBroker.enabled is true: the broker audience every agent credential names" $broker.audience -}}
-{{- $_ := required "identityBroker.keys.agentIssuer is required when identityBroker.enabled is true: the Secret key holding the agent issuer's PEM EC P-256 private key" $broker.keys.agentIssuer.secretName -}}
-{{- if ne (empty $broker.keys.brokerClient.secretName) (empty $broker.keys.brokerClient.keySet.secretName) -}}{{ fail "identityBroker.keys.brokerClient and identityBroker.keys.brokerClient.keySet are required together" }}{{- end -}}
+{{- $_ := required "identityBroker.keys.agentIssuer is required when identityBroker.enabled is true: the Secret key holding the agent issuer's PEM EC P-256 private key" $agentIssuer.secretName -}}
+{{- if ne (empty $brokerClient.secretName) (empty $keySet.secretName) -}}{{ fail "identityBroker.keys.brokerClient and identityBroker.keys.brokerClient.keySet are required together" }}{{- end -}}
 {{- end -}}
 {{- if and $broker.subjectClaim (not $as1.issuer) -}}{{ fail "identityBroker.subjectClaim requires identityBroker.as1.issuer" }}{{- end -}}
 {{- $as1Set := or $as1.tuiClientID $as1.upstream.issuer $as1.upstream.clientID $as1.upstream.clientSecret.secretName $as1.upstream.clientSecret.key $as1.upstream.caSecret.secretName $as1.upstream.caSecret.key $as1.upstream.allowPrivateAddresses -}}
 {{- if and $as1Set (not $as1.issuer) -}}{{ fail "identityBroker.as1 values require identityBroker.as1.issuer" }}{{- end -}}
+{{- /* mecak8s refuses AS-1's signing key without the AS-1 that uses it. */ -}}
+{{- if and $broker.enabled $as1Signing.secretName (not $as1.issuer) -}}{{ fail "identityBroker.keys.as1Signing requires identityBroker.as1.issuer: only a hosted AS-1 uses AS-1's signing key" }}{{- end -}}
 {{- if $as1.issuer -}}
 {{- if not $broker.enabled -}}{{ fail "identityBroker.as1.issuer requires identityBroker.enabled=true" }}{{- end -}}
 {{- if not .Values.oidc.enabled -}}{{ fail "identityBroker.as1.issuer requires oidc.enabled=true" }}{{- end -}}
@@ -142,9 +150,9 @@ client IDs from it; the chart renders the same derived values.
 {{- $_ := required "identityBroker.as1.upstream.issuer is required when identityBroker.as1.issuer is set" $as1.upstream.issuer -}}
 {{- $_ := required "identityBroker.as1.upstream.clientID is required when identityBroker.as1.issuer is set" $as1.upstream.clientID -}}
 {{- $_ := required "identityBroker.subjectClaim is required when identityBroker.as1.issuer is set: oid for Microsoft Entra ID, or sub for an identity provider whose sub is the same across applications" $broker.subjectClaim -}}
-{{- $_ := required "identityBroker.keys.brokerClient is required when identityBroker.as1.issuer is set: the Secret key holding the broker client's PEM EC P-256 private key" $broker.keys.brokerClient.secretName -}}
-{{- $_ := required "identityBroker.keys.brokerClient.keySet is required when identityBroker.as1.issuer is set: the Secret key holding the broker client's public JWK Set" $broker.keys.brokerClient.keySet.secretName -}}
-{{- $_ := required "identityBroker.keys.as1Signing is required when identityBroker.as1.issuer is set: the Secret key holding AS-1's PEM signing key" $broker.keys.as1Signing.secretName -}}
+{{- $_ := required "identityBroker.keys.brokerClient is required when identityBroker.as1.issuer is set: the Secret key holding the broker client's PEM EC P-256 private key" $brokerClient.secretName -}}
+{{- $_ := required "identityBroker.keys.brokerClient.keySet is required when identityBroker.as1.issuer is set: the Secret key holding the broker client's public JWK Set" $keySet.secretName -}}
+{{- $_ := required "identityBroker.keys.as1Signing is required when identityBroker.as1.issuer is set: the Secret key holding AS-1's PEM signing key" $as1Signing.secretName -}}
 {{- range $name, $url := dict "identityBroker.as1.issuer" $as1.issuer "identityBroker.as1.upstream.issuer" $as1.upstream.issuer -}}
 {{- if not (regexMatch "^https://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$" $url) -}}{{ fail (printf "%s must be an https URL with a host and no credentials, query, or fragment" $name) }}{{- end -}}
 {{- end -}}
@@ -158,7 +166,7 @@ client IDs from it; the chart renders the same derived values.
 {{- if and .Values.oidc.clientID (ne .Values.oidc.clientID $as1.tuiClientID) -}}{{ fail "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- if and .Values.oidc.acceptedClientIDs (not (has $as1.tuiClientID .Values.oidc.acceptedClientIDs)) -}}{{ fail "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID" }}{{- end -}}
 {{- end -}}
-{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $broker.keys.agentIssuer "identityBroker.keys.brokerClient" (pick $broker.keys.brokerClient "secretName" "key") "identityBroker.keys.brokerClient.keySet" $broker.keys.brokerClient.keySet "identityBroker.keys.as1Signing" $broker.keys.as1Signing "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret "identityBroker.as1.upstream.caSecret" $as1.upstream.caSecret -}}
+{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $agentIssuer "identityBroker.keys.brokerClient" (pick $brokerClient "secretName" "key") "identityBroker.keys.brokerClient.keySet" $keySet "identityBroker.keys.as1Signing" $as1Signing "identityBroker.as1.upstream.clientSecret" $as1.upstream.clientSecret "identityBroker.as1.upstream.caSecret" $as1.upstream.caSecret -}}
 {{- if or $ref.secretName $ref.key -}}
 {{- $_ := required (printf "%s.secretName is required when %s.key is set" $name $name) $ref.secretName -}}
 {{- $_ := required (printf "%s.key is required when %s.secretName is set" $name $name) $ref.key -}}
@@ -166,14 +174,14 @@ client IDs from it; the chart renders the same derived values.
 {{- end -}}
 {{- /* mecak8s refuses one key for two roles; the same Secret key is the same key. */ -}}
 {{- $roleOf := dict -}}
-{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $broker.keys.agentIssuer "identityBroker.keys.brokerClient" $broker.keys.brokerClient "identityBroker.keys.as1Signing" $broker.keys.as1Signing -}}
+{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $agentIssuer "identityBroker.keys.brokerClient" $brokerClient "identityBroker.keys.as1Signing" $as1Signing -}}
 {{- if $ref.secretName -}}
 {{- $pair := printf "%s/%s" $ref.secretName $ref.key -}}
 {{- with get $roleOf $pair -}}{{ fail (printf "%s and %s name the same Secret key %s; each role needs its own key" . $name $pair) }}{{- end -}}
 {{- $_ := set $roleOf $pair $name -}}
 {{- end -}}
 {{- end -}}
-{{- if and (not $broker.enabled) (or $broker.trustDomain $broker.audience $broker.keys.agentIssuer.secretName $broker.keys.brokerClient.secretName $broker.keys.brokerClient.keySet.secretName $broker.keys.as1Signing.secretName) -}}
+{{- if and (not $broker.enabled) (or $broker.trustDomain $broker.audience $agentIssuer.secretName $brokerClient.secretName $keySet.secretName $as1Signing.secretName) -}}
 {{- fail "identityBroker.trustDomain, audience, and keys require identityBroker.enabled=true" -}}
 {{- end -}}
 {{- end -}}

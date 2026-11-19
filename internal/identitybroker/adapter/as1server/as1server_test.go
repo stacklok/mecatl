@@ -582,7 +582,8 @@ func TestSigningKeyFileSurvivesRestart(t *testing.T) {
 // With operator keys, AS-1 publishes the same key set after a restart: its
 // signing key and its fallbacks, each in its own directory as separately
 // mounted Secrets are. A token the fallback key signed before a rotation
-// verifies against it.
+// verifies against it, and a sign-in after the rotation is signed by the new
+// key.
 func TestOperatorKeySetIsStableAcrossRestartAndIncludesFallbacks(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	oldKey := h.WriteSigningKey(t, t.TempDir())
@@ -609,6 +610,25 @@ func TestOperatorKeySetIsStableAcrossRestartAndIncludesFallbacks(t *testing.T) {
 	}
 	if err := verify(oldToken, again); err != nil {
 		t.Errorf("token signed by the fallback key does not verify against the published key set: %v", err)
+	}
+
+	// The rotated AS-1 signs new tokens with the new key alone.
+	newPub := &identityharness.ReadSigningKey(t, newKey).PublicKey
+	newKID := ""
+	for kid, key := range published {
+		if key.Equal(newPub) {
+			newKID = kid
+		}
+	}
+	if newKID == "" {
+		t.Fatal("the key set does not publish the new signing key")
+	}
+	newToken := startAS1(t, h, rotated).signIn(t, testAudience).AccessToken
+	if header, _ := parse(t, newToken); header["kid"] != newKID {
+		t.Fatalf("a token signed after the rotation has kid %v, want the new key's %q", header["kid"], newKID)
+	}
+	if err := verify(newToken, map[string]*ecdsa.PublicKey{newKID: newPub}); err != nil {
+		t.Errorf("a token signed after the rotation does not verify with the new public key alone: %v", err)
 	}
 }
 

@@ -812,6 +812,39 @@ func TestMecak8sHelmChart_IdentityBrokerConfigAndKeys(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_IdentityBrokerConfigChecksumDrivesRollout: the broker
+// reads its configuration file only at startup, so a change to it rolls the
+// pods, and a user's podAnnotations entry cannot replace the chart's checksum.
+func TestMecak8sHelmChart_IdentityBrokerConfigChecksumDrivesRollout(t *testing.T) {
+	checksum := func(set ...string) string {
+		t.Helper()
+		args := []string{"template", "ib", ".", "-f", "ci/production-identity-broker-values.yaml"}
+		for _, value := range set {
+			args = append(args, "--set", value)
+		}
+		rendered, err := helm(t, args...)
+		if err != nil {
+			t.Fatalf("render: %v\n%s", err, rendered)
+		}
+		return deploymentFromRender(t, rendered).Spec.Template.Annotations["checksum/identity-broker-config"]
+	}
+	first := checksum()
+	if first == "" {
+		t.Fatal("the chart rendered no checksum/identity-broker-config annotation")
+	}
+	for name, set := range map[string]string{
+		"trust domain":  "identityBroker.trustDomain=agents2.example.com",
+		"key file name": "identityBroker.keys.agentIssuer.key=next.pem",
+	} {
+		if changed := checksum(set); changed == "" || changed == first {
+			t.Errorf("changing the %s left checksum %q; a configuration change must roll the pods", name, changed)
+		}
+	}
+	if overridden := checksum(`podAnnotations.checksum/identity-broker-config=user`); overridden != first {
+		t.Errorf("checksum with a user podAnnotations entry = %q, want the chart's %q", overridden, first)
+	}
+}
+
 func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	base := []string{"template", "as1", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
 		"--set", "extraArgs={--no-shell}",

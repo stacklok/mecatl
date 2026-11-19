@@ -305,7 +305,12 @@ identityBroker:
   # them into the identity broker's configuration file (a ConfigMap, mounted
   # read-only with --identity-broker-config). The keys stay in existing Secrets the
   # chart never creates; it projects them read-only. No key is generated at
-  # startup, so every signed credential and token survives a restart.
+  # startup, so the signing keys stay the same across a restart and access
+  # tokens issued before it keep verifying until they expire; broker sessions,
+  # agent registrations, and AS-1's refresh tokens are in memory and lost. The
+  # broker reads its keys only at startup: a configuration change rolls the
+  # pod, but after changing a key in a Secret, run
+  # `kubectl rollout restart deployment/<release>-mecak8s`.
   # The agent trust domain, such as agents.example.com: the act.iss of every
   # ID-JAG. Do not change it once agents act.
   trustDomain: ""
@@ -330,7 +335,8 @@ identityBroker:
         secretName: ""
         key: ""
     # PEM private key (EC P-256 or RSA) AS-1 signs access tokens with; AS-1
-    # publishes it under <issuer>/.well-known/jwks.json. Required with as1.issuer.
+    # publishes its public key under <issuer>/.well-known/jwks.json. Required
+    # with as1.issuer, and allowed only with it.
     as1Signing:
       secretName: ""
       key: ""

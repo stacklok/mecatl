@@ -2,6 +2,9 @@ package identitybroker
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +17,8 @@ import (
 type Keys struct {
 	// AgentIssuer signs agent credentials. It is always required.
 	AgentIssuer crypto.Signer
-	// AgentIssuerFallbacks are earlier agent issuer public keys: credentials
-	// they signed still verify while they are configured
+	// AgentIssuerFallbacks are earlier agent issuer public keys, each ECDSA
+	// P-256: credentials they signed still verify while they are configured
 	// (WithAgentIssuerFallbacks).
 	AgentIssuerFallbacks []crypto.PublicKey
 	// BrokerClient signs the broker's client assertions at AS-1 and AS-2
@@ -28,16 +31,29 @@ type Keys struct {
 	BrokerClientKeySet []byte
 	// AS1Signing are AS-1's signing key's public key, then its fallbacks'.
 	// AS-1 reads the keys itself; the broker holds them only to refuse a key
-	// used for two roles. The signing key is required with a hosted AS-1.
+	// used for two roles. The signing key is required with a hosted AS-1 and
+	// refused without one.
 	AS1Signing []crypto.PublicKey
 }
 
-// Validate checks k for a broker that hosts AS-1 or not. It refuses a
-// missing required key, one key used for two roles, and a broker client key
-// set that holds no key or not the broker client key's public key under its
-// kid. Errors wrap ErrInvalidConfig or ErrInvalidSigner and never contain key
-// material.
-func (k Keys) Validate(hostedAS1 bool) error {
+// Host is what the process runs beside the broker, which decides the keys
+// Keys.Validate requires and accepts.
+type Host struct {
+	// AS1 reports that the process hosts AS-1, which requires the broker
+	// client key and AS-1's signing key; only a hosted AS-1 takes AS-1's
+	// signing key.
+	AS1 bool
+}
+
+// Validate checks k for a broker beside host. It refuses a missing required
+// key, an AS-1 signing key without a hosted AS-1, an agent issuer fallback
+// that is not ECDSA P-256, one key used for two roles, including any P-256
+// key in the broker client's key set, and a broker client key set that holds
+// no key or not the broker client key's public key under its kid. Errors wrap
+// ErrInvalidConfig or ErrInvalidSigner and never contain key material.
+//
+//nolint:gocyclo // One ordered list of the file's key rules, kept together so each refusal reads in the order an operator meets it.
+func (k Keys) Validate(host Host) error {
 	if k.AgentIssuer == nil {
 		return fmt.Errorf("%w: the agent issuer key is required", ErrInvalidConfig)
 	}
@@ -46,10 +62,12 @@ func (k Keys) Validate(hostedAS1 bool) error {
 		return fmt.Errorf("%w: the agent issuer key: %v", ErrInvalidSigner, err)
 	}
 	switch {
-	case hostedAS1 && k.BrokerClient == nil:
+	case host.AS1 && k.BrokerClient == nil:
 		return fmt.Errorf("%w: the broker client key is required with a hosted AS-1", ErrInvalidConfig)
-	case hostedAS1 && len(k.AS1Signing) == 0:
+	case host.AS1 && len(k.AS1Signing) == 0:
 		return fmt.Errorf("%w: AS-1's signing key is required with a hosted AS-1", ErrInvalidConfig)
+	case !host.AS1 && len(k.AS1Signing) != 0:
+		return fmt.Errorf("%w: AS-1's signing key requires a hosted AS-1, which this process does not run", ErrInvalidConfig)
 	case (k.BrokerClient == nil) != (len(k.BrokerClientKeySet) == 0):
 		return fmt.Errorf("%w: the broker client key and the broker client's key set are required together", ErrInvalidConfig)
 	}
@@ -58,7 +76,11 @@ func (k Keys) Validate(hostedAS1 bool) error {
 		pub  crypto.PublicKey
 	}
 	keys := []roleKey{{"agent issuer", issuerPub}}
-	for _, pub := range k.AgentIssuerFallbacks {
+	for i, pub := range k.AgentIssuerFallbacks {
+		// New refuses the same keys; checking here refuses them at load.
+		if _, err := copyP256Public(pub); err != nil {
+			return fmt.Errorf("%w: agent issuer fallback key %d: %v", ErrInvalidSigner, i, err)
+		}
 		keys = append(keys, roleKey{"agent issuer", pub})
 	}
 	if k.BrokerClient != nil {
@@ -70,10 +92,15 @@ func (k Keys) Validate(hostedAS1 bool) error {
 		if err != nil {
 			return fmt.Errorf("%w: the broker client key: %v", ErrInvalidSigner, err)
 		}
-		if err := checkClientKeySet(k.BrokerClientKeySet, jwk); err != nil {
+		// AS-1 and AS-2 accept assertions signed by any key in the set, so
+		// each is a broker client key; the set holds clientPub.
+		set, err := checkClientKeySet(k.BrokerClientKeySet, jwk)
+		if err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 		}
-		keys = append(keys, roleKey{"broker client", clientPub})
+		for _, pub := range set {
+			keys = append(keys, roleKey{"broker client", pub})
+		}
 	}
 	for _, pub := range k.AS1Signing {
 		keys = append(keys, roleKey{"AS-1 signing", pub})
@@ -91,25 +118,47 @@ func (k Keys) Validate(hostedAS1 bool) error {
 }
 
 // checkClientKeySet checks that raw, the broker client's JWK Set, holds at
-// least one key and client under client's kid.
-func checkClientKeySet(raw []byte, client JWK) error {
+// least one key and client under client's kid, and returns the set's ECDSA
+// P-256 keys.
+func checkClientKeySet(raw []byte, client JWK) ([]crypto.PublicKey, error) {
 	var set JWKSet
 	if err := json.Unmarshal(raw, &set); err != nil {
-		return errors.New("the broker client's key set is not a JSON JWK Set")
+		return nil, errors.New("the broker client's key set is not a JSON JWK Set")
 	}
 	if len(set.Keys) == 0 {
-		return errors.New("the broker client's key set holds no key")
+		return nil, errors.New("the broker client's key set holds no key")
 	}
+	found := false
+	var keys []crypto.PublicKey
 	for _, key := range set.Keys {
-		if key.KeyID != client.KeyID {
-			continue
+		if key.KeyID == client.KeyID {
+			if key.KeyType != client.KeyType || key.Curve != client.Curve || key.X != client.X || key.Y != client.Y {
+				return nil, fmt.Errorf("the broker client's key set holds another key under the broker client key's kid %q", client.KeyID)
+			}
+			found = true
 		}
-		if key.KeyType != client.KeyType || key.Curve != client.Curve || key.X != client.X || key.Y != client.Y {
-			return fmt.Errorf("the broker client's key set holds another key under the broker client key's kid %q", client.KeyID)
+		if pub, ok := p256JWKKey(key); ok {
+			keys = append(keys, pub)
 		}
-		return nil
 	}
-	return fmt.Errorf("the broker client's key set does not hold the broker client key's public key under its kid %q (its RFC 7638 thumbprint)", client.KeyID)
+	if !found {
+		return nil, fmt.Errorf("the broker client's key set does not hold the broker client key's public key under its kid %q (its RFC 7638 thumbprint)", client.KeyID)
+	}
+	return keys, nil
+}
+
+// p256JWKKey is jwk's public key when jwk is a valid ECDSA P-256 key.
+func p256JWKKey(jwk JWK) (*ecdsa.PublicKey, bool) {
+	if jwk.KeyType != "EC" || jwk.Curve != "P-256" {
+		return nil, false
+	}
+	x, errX := base64.RawURLEncoding.DecodeString(jwk.X)
+	y, errY := base64.RawURLEncoding.DecodeString(jwk.Y)
+	if errX != nil || errY != nil || len(x) != 32 || len(y) != 32 {
+		return nil, false
+	}
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+	return pub, err == nil
 }
 
 // WithAgentIssuerFallbacks has the broker also verify agent credentials

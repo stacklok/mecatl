@@ -37,10 +37,11 @@ var errIdentityBrokerWithShell = errors.New("the identity broker's keys are file
 
 // errIdentityBrokerWithLocalWorkspace refuses the identity broker while
 // sessions' file tools reach this process's filesystem, where its key files
-// are: out-of-root reads are allowed at some permission modes.
+// are: out-of-root reads are allowed at some permission modes. The command
+// flags and the Helm chart state the same rule and alternatives.
 //
-// Shortcut: the identity broker's keys are files in this process's filesystem, so it refuses a local workspace; removed by #2807 (the broker runs as its own service).
-var errIdentityBrokerWithLocalWorkspace = errors.New("the identity broker's keys are files in this process's filesystem, so it cannot run while sessions have a local workspace (--workspace); run without a workspace, with --redis-filesystem, or with Kubernetes execution")
+// Shortcut: the identity broker refuses a local workspace; removed by #2807 (the broker runs as its own service).
+var errIdentityBrokerWithLocalWorkspace = errors.New("the identity broker cannot run with a workspace on this process's filesystem (--workspace): its keys are files there, which sessions' file tools could read; run without a workspace for file-less sessions, or use --redis-filesystem or Kubernetes execution (--execution-enabled) instead")
 
 // IdentityBrokerAS1Config hosts AS-1, the identity broker's sign-in
 // authorization server, in this process. It requires Config.IdentityBroker.

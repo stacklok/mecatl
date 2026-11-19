@@ -156,7 +156,7 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 	}
 	// Read last, so a configuration error is reported without file access.
 	if err := checkKeySetFile(d.KeySetFile); err != nil {
-		return fmt.Errorf("%w: delegate client %q: %v", ErrInvalidConfig, d.ID, err)
+		return fmt.Errorf("%w: delegate client %q: %w", ErrInvalidConfig, d.ID, err)
 	}
 	return nil
 }

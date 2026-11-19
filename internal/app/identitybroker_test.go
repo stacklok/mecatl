@@ -376,11 +376,26 @@ func kidOf(t *testing.T, key *ecdsa.PrivateKey) string {
 	return signer.JWKS().Keys[0].KeyID
 }
 
-// testBrokerConfigFile writes an identity broker configuration file with
-// every key, one per role, for t and returns its path.
+// testBrokerConfigFile writes an identity broker configuration file for t
+// with a key for every role but AS-1's signing key, which only a hosted AS-1
+// takes, and returns its path.
 func testBrokerConfigFile(t *testing.T) string {
 	t.Helper()
 	return brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path
+}
+
+// testHostedAS1BrokerConfigFile is testBrokerConfigFile with AS-1's signing
+// key, for a hosted AS-1.
+func testHostedAS1BrokerConfigFile(t *testing.T) string {
+	t.Helper()
+	return brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true}).Path
+}
+
+// testBrokerConfigFileFor is the configuration file cfg takes: with AS-1's
+// signing key exactly when cfg hosts AS-1.
+func testBrokerConfigFileFor(t *testing.T, cfg Config) string {
+	t.Helper()
+	return brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: cfg.IdentityBrokerHostedAS1 != nil}).Path
 }
 
 // testBrokerFile writes an identity broker configuration file for t with
@@ -410,16 +425,16 @@ func TestIdentityBrokerRequiresItsConfigurationFile(t *testing.T) {
 // brokerconfig's tests cover each check.
 func TestIdentityBrokerRefusesAnInvalidConfigurationFile(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
-	sharedKey := brokerconfigtest.Write(t, brokerconfigtest.Options{})
+	sharedKey := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true})
 	brokerconfigtest.WriteKey(t, sharedKey.AS1SigningKeyFile, sharedKey.BrokerClientKey)
-	noKeySet := brokerconfigtest.Write(t, brokerconfigtest.Options{})
+	noKeySet := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true})
 	brokerconfigtest.WriteKeySet(t, noKeySet.BrokerClientKeySetFile, brokerconfigtest.NewKey(t))
 	for name, test := range map[string]struct{ path, want string }{
 		"absent":                              {path: filepath.Join(t.TempDir(), "absent.json"), want: "no such file"},
 		"one key for two roles":               {path: sharedKey.Path, want: "the broker client key is also the AS-1 signing key"},
 		"no broker client key in its key set": {path: noKeySet.Path, want: "does not hold the broker client key's public key"},
-		"no AS-1 signing key":                 {path: brokerConfigFileWithout(t, "as1_signing"), want: "AS-1's signing key is required with a hosted AS-1"},
-		"no broker client key":                {path: brokerConfigFileWithout(t, "broker_client"), want: "the broker client key is required with a hosted AS-1"},
+		"no AS-1 signing key":                 {path: brokerConfigFileWithout(t, brokerconfigtest.Options{HostedAS1: true}, "as1_signing"), want: "AS-1's signing key is required with a hosted AS-1"},
+		"no broker client key":                {path: brokerConfigFileWithout(t, brokerconfigtest.Options{HostedAS1: true}, "broker_client"), want: "the broker client key is required with a hosted AS-1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			built, err := buildIsolated(t, t.Context(), Config{
@@ -430,18 +445,31 @@ func TestIdentityBrokerRefusesAnInvalidConfigurationFile(t *testing.T) {
 				built.Close()
 				t.Fatal("Build started the identity broker from an invalid configuration file")
 			}
-			if !strings.Contains(err.Error(), "identity broker configuration "+test.path) || !strings.Contains(err.Error(), test.want) {
+			if !strings.Contains(err.Error(), "identity broker configuration") || !strings.Contains(err.Error(), test.path) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Build error = %v, want the file's, containing %q", err, test.want)
 			}
 		})
 	}
 }
 
-// brokerConfigFileWithout writes a configuration file with every key but
+// TestIdentityBrokerRefusesAnAS1WithoutTheBrokerClientKey: an AS-1 the broker
+// converts tokens at needs the broker client key, which a file loaded without
+// a hosted AS-1 may leave out.
+func TestIdentityBrokerRefusesAnAS1WithoutTheBrokerClientKey(t *testing.T) {
+	file, err := brokerconfig.Load(brokerConfigFileWithout(t, brokerconfigtest.Options{}, "broker_client"), brokerconfig.Host{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newIdentityBroker(Config{IdentityBrokerAS1: unusedAS1("https://as1.example")}, file); !errors.Is(err, errNoBrokerClientKey) {
+		t.Fatalf("newIdentityBroker = %v, want %v", err, errNoBrokerClientKey)
+	}
+}
+
+// brokerConfigFileWithout writes a configuration file with opts' keys but
 // role's and returns its path.
-func brokerConfigFileWithout(t *testing.T, role string) string {
+func brokerConfigFileWithout(t *testing.T, opts brokerconfigtest.Options, role string) string {
 	t.Helper()
-	path := brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path
+	path := brokerconfigtest.Write(t, opts).Path
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -508,7 +536,7 @@ func TestIdentityBrokerVerifiesCredentialsOfTheRotatedAgentIssuerKey(t *testing.
 func TestHostedAS1PublishesTheOperatorKeySet(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	const issuer = "https://mecatl.test/as1"
-	path := brokerconfigtest.Write(t, brokerconfigtest.Options{AS1Fallbacks: 1}).Path
+	path := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, AS1Fallbacks: 1}).Path
 	as1 := hostedAS1Config(t, h, issuer)
 	published := func() string {
 		built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, IdentityBroker: true, IdentityBrokerConfigFile: path, IdentityBrokerHostedAS1: as1})
@@ -658,7 +686,7 @@ func as1StorageRunning() bool {
 func TestIdentityBrokerHostsAS1(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	const issuer = "https://mecatl.test/as1"
-	built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, issuer)})
+	built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, IdentityBroker: true, IdentityBrokerConfigFile: testHostedAS1BrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, issuer)})
 	if err != nil {
 		t.Fatal(err)
 	}

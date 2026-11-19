@@ -1,6 +1,7 @@
 package mcpbroker
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +78,26 @@ func writeKeySetFile(t *testing.T, keySet []byte) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// keySetFileUnchanged fails t unless the file at path still holds want: the
+// key set file is the operator's, such as a mounted Secret, which AS-2 only
+// reads.
+func keySetFileUnchanged(t *testing.T, path string, want []byte, when string) {
+	t.Helper()
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("key set file %s: %v, changed = %v", when, err, !bytes.Equal(got, want))
+	}
+}
+
+// readFile is the contents of the file at path.
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // assertion is a fresh client assertion from the broker's own signer.
@@ -236,14 +258,20 @@ func TestAS2NeedsAProtectedUpstream(t *testing.T) {
 func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	spy := newRegisterClientSpy()
+	client := newAS2BrokerClient(t).config
+	keySet := readFile(t, client.KeySetFile)
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
-		BrokerClient: newAS2BrokerClient(t).config,
+		BrokerClient: client,
 	})
 	if err != nil {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
-	t.Cleanup(func() { _ = process.Close() })
+	t.Cleanup(func() {
+		_ = process.Close()
+		keySetFileUnchanged(t, client.KeySetFile, keySet, "after Close")
+	})
+	keySetFileUnchanged(t, client.KeySetFile, keySet, "after construction")
 	as2 := process.AS2
 	if as2 == nil || as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestResource {
 		t.Fatalf("AS-2 = %+v", as2)
@@ -334,6 +362,11 @@ func TestAS2RefusesAnInvalidBrokerClientBeforeConstruction(t *testing.T) {
 			if !errors.Is(err, ErrInvalidCatalogue) || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue containing %q", err, test.want)
 			}
+			// The file-system cause stays matchable, to tell a missing mount
+			// from a malformed key set.
+			if name == "absent key set file" && !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("NewToolHiveProcess = %v, want it to match fs.ErrNotExist", err)
+			}
 			if requests.Load() != 0 || spy.registered.Load() {
 				t.Errorf("construction ran before refusing: %d discovery requests, storage written %v", requests.Load(), spy.registered.Load())
 			}
@@ -363,6 +396,7 @@ func TestAS2ClosesTheAuthStorageWhenConstructionFails(t *testing.T) {
 		"invalid ID-JAG trust":     {client: valid, trust: NewAS2Trust(as2trust.Trust{})},
 	} {
 		t.Run(name, func(t *testing.T) {
+			keySet := readFile(t, test.client.KeySetFile)
 			spy := &closeSpy{registerClientSpy: newRegisterClientSpy()}
 			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
@@ -378,6 +412,7 @@ func TestAS2ClosesTheAuthStorageWhenConstructionFails(t *testing.T) {
 			if !spy.closed.Load() {
 				t.Error("the configured auth storage was not closed after a failed construction")
 			}
+			keySetFileUnchanged(t, test.client.KeySetFile, keySet, "after a failed construction")
 		})
 	}
 }
@@ -662,11 +697,18 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 // unexported helpers. Both build the trust with as2trust.Trust.WithDefaults.
 func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 	t.Helper()
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
+	return as1, broker, startTrustingAS2(t, as1, broker.config)
+}
+
+// startTrustingAS2 sets AS-2 up trusting as1, with client as its broker
+// client.
+func startTrustingAS2(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient) *Process {
+	t.Helper()
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
-		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: broker.config,
+		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: client,
 		AS2Trust: NewAS2Trust(as2trust.Trust{
 			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: as1.a.Harness.WriteCACert(t, t.TempDir()),
 			Subjects: []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
@@ -679,7 +721,51 @@ func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 	if process.AS2 == nil {
 		t.Fatal("AS-2 is not set up")
 	}
-	return as1, broker, process
+	return process
+}
+
+// TestAS2BrokerClientKeySetRotation: with the old and new broker client keys
+// in the key set file, AS-2 accepts client assertions signed by either;
+// rebuilt from a file holding only the new key, it accepts only the new
+// key's.
+func TestAS2BrokerClientKeySetRotation(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	oldKey, newKey := brokerconfigtest.NewKey(t), brokerconfigtest.NewKey(t)
+	start := func(keys ...*ecdsa.PrivateKey) *AS2 {
+		file := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "broker-client-jwks.json"), keys...)
+		return startTrustingAS2(t, as1, &ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: file}).AS2
+	}
+	// redeem redeems a fresh ID-JAG at as2, authenticated with an assertion
+	// key signs.
+	redeem := func(as2 *AS2, key *ecdsa.PrivateKey) (int, map[string]any) {
+		t.Helper()
+		signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertion, err := signer.ClientAssertion(as2.Issuer, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return postAS2Token(t, as2, url.Values{
+			"grant_type": {oauthproto.GrantTypeJWTBearer}, "assertion": {as1.idJAG(t, as2)}, "resource": {as2.Resource},
+			"client_assertion_type": {clientAssertionTyp}, "client_assertion": {assertion.Value()},
+		})
+	}
+
+	during := start(oldKey, newKey)
+	for name, key := range map[string]*ecdsa.PrivateKey{"old": oldKey, "new": newKey} {
+		if status, body := redeem(during, key); status != http.StatusOK {
+			t.Errorf("during the rotation, the %s key's assertion: status %d, body %v; want 200", name, status, body)
+		}
+	}
+	after := start(newKey)
+	if status, body := redeem(after, newKey); status != http.StatusOK {
+		t.Errorf("after the rotation, the new key's assertion: status %d, body %v; want 200", status, body)
+	}
+	if status, body := redeem(after, oldKey); status != http.StatusUnauthorized || body["error"] != "invalid_client" {
+		t.Errorf("after the rotation, the old key's assertion: status %d, body %v; want 401 invalid_client", status, body)
+	}
 }
 
 // TestAS2RedeemsAnAS1IDJAG configures AS-2 to trust the real AS-1 through

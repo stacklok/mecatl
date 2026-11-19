@@ -155,6 +155,8 @@ tests:
       identityBroker.as1.tuiClientID: ""
       identityBroker.as1.upstream.issuer: ""
       identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
@@ -162,6 +164,17 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-as1-issuer=https://mecatl.example.com/as1
+
+  - it: rejects AS-1's signing key without AS-1
+    set:
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.keys.as1Signing requires identityBroker.as1.issuer: only a hosted AS-1 uses AS-1's signing key"
 
   - it: rejects AS-1 without OIDC
     set:

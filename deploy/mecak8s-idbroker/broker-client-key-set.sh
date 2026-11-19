@@ -6,23 +6,35 @@
 #
 #   openssl ecparam -name prime256v1 -genkey -noout > key.pem
 #   deploy/mecak8s-idbroker/broker-client-key-set.sh < key.pem > jwks.json
+#
+# POSIX sh has no pipefail, so each openssl step is checked on its own, and
+# the values are checked before anything is written.
 
 set -eu
 
-pub=$(openssl ec -pubout 2>/dev/null) || {
-	echo 'stdin is not a PEM EC private key' >&2
+fail() {
+	echo "$1" >&2
 	exit 1
 }
-der() { printf '%s\n' "$pub" | openssl ec -pubin -outform DER 2>/dev/null; }
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+der=$(mktemp)
+trap 'rm -f "$der"' EXIT
+
+pub=$(openssl ec -pubout 2>/dev/null) || fail 'stdin is not a PEM EC private key'
+printf '%s\n' "$pub" | openssl ec -pubin -outform DER >"$der" 2>/dev/null || fail 'openssl could not encode the public key'
 
 # A P-256 public key's DER is 91 bytes and ends with the point: x, then y.
-[ "$(der | wc -c | tr -d ' ')" -eq 91 ] || {
-	echo 'the key is not EC P-256' >&2
-	exit 1
-}
-x=$(der | tail -c 64 | head -c 32 | b64url)
-y=$(der | tail -c 32 | b64url)
+[ "$(wc -c <"$der" | tr -d ' ')" -eq 91 ] || fail 'the key is not EC P-256'
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+x=$(tail -c 64 "$der" | dd bs=1 count=32 2>/dev/null | b64url)
+y=$(tail -c 32 "$der" | b64url)
 # RFC 7638: the SHA-256 of the required members in lexicographic order.
 kid=$(printf '{"crv":"P-256","kty":"EC","x":"%s","y":"%s"}' "$x" "$y" | openssl dgst -sha256 -binary | b64url)
+
+# 32 bytes in unpadded base64url are 43 characters; a failed step in a
+# pipeline above leaves a value short or empty.
+for value in "$x" "$y" "$kid"; do
+	[ "${#value}" -eq 43 ] || fail 'openssl produced a malformed coordinate or thumbprint'
+done
 printf '{"keys":[{"kty":"EC","crv":"P-256","x":"%s","y":"%s","kid":"%s","use":"sig","alg":"ES256"}]}\n' "$x" "$y" "$kid"

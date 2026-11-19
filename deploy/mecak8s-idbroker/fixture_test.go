@@ -407,6 +407,35 @@ func TestBrokerClientKeySetScript(t *testing.T) {
 	if out, err := cmd.Output(); err == nil {
 		t.Fatalf("%s accepted a P-384 key: %s", script, out)
 	}
+
+	// An openssl step inside a pipeline that fails or writes nothing fails
+	// the script, which writes no key set, rather than a wrong one.
+	realOpenSSL, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, fault := range map[string]string{
+		"the digest fails":           `[ "$1" = dgst ] && exit 1`,
+		"the digest writes nothing":  `[ "$1" = dgst ] && { cat >/dev/null; exit 0; }`,
+		"base64 fails":               `[ "$1" = base64 ] && exit 1`,
+		"the DER encoding fails":     `[ "$1" = ec ] && [ "${2:-}" = -pubin ] && exit 1`,
+		"the DER encoding truncates": `[ "$1" = ec ] && [ "${2:-}" = -pubin ] && { "$REAL_OPENSSL" "$@" | dd bs=1 count=60 2>/dev/null; exit 0; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin := t.TempDir()
+			wrapper := "#!/bin/sh\n" + fault + "\nexec \"$REAL_OPENSSL\" \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "openssl"), []byte(wrapper), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("sh", "broker-client-key-set.sh")
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "REAL_OPENSSL="+realOpenSSL, "TMPDIR="+t.TempDir())
+			cmd.Stdin = bytes.NewReader(key)
+			out, err := cmd.Output()
+			if err == nil || len(out) != 0 {
+				t.Fatalf("%s with a faulty openssl = %v, wrote %q; want a failure and no key set", script, err, out)
+			}
+		})
+	}
 }
 
 // TestChartRenders renders the overlay as kind-setup installs it, with the

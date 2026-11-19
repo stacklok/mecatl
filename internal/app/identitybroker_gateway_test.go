@@ -599,7 +599,7 @@ func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
 	hb := &hostedBuild{h: h, issuer: "https://" + ln.Addr().String() + "/as1"}
 	hb.cfg = Config{
 		UseMock: true, NoSoul: true, NoShell: true,
-		IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
+		IdentityBroker: true, IdentityBrokerConfigFile: testHostedAS1BrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
 		MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: gatewayServers,
 		identityBrokerAS2Transport: func(next http.RoundTripper) http.RoundTripper {
 			hb.as2 = identityharness.NewFaultTransport(next, as2TestIssuer+"/oauth/token")

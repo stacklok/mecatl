@@ -302,7 +302,7 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		"--mock",
 		"--enable-identity-broker", "--no-shell",
 		// AS-1's signing key, and so its access tokens, survive the restart.
-		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path,
+		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true}).Path,
 		"--permission-mode=yolo", "--guardrails=off",
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", httpAddr,

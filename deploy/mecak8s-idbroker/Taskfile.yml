@@ -293,7 +293,9 @@ tasks:
   # not rotate the identity broker's keys. identity-broker-client holds the
   # broker client key and its public JWK Set, which broker-client-key-set.sh
   # derives with the key's RFC 7638 thumbprint as its kid, as the broker checks
-  # at startup.
+  # at startup; one that lacks either is replaced. Each key is generated into a
+  # variable first, so an openssl failure stops setup instead of leaving an
+  # empty Secret behind (POSIX sh has no pipefail).
   secrets-apply:
     internal: true
     preconditions:
@@ -303,18 +305,36 @@ tasks:
       - task: cluster-ready
       - cmd: |
           set -eu
-          trap 'status=$?; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
+          keyset_file=
+          trap 'status=$?; [ -z "$keyset_file" ] || rm -f "$keyset_file"; deploy/mecak8s-idbroker/cleanup-on-failure.sh "$status"' EXIT
           k='kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}}'
-          $k get secret as1-signing-key >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic as1-signing-key --from-file=signing-key.pem=/dev/stdin >/dev/null
-          $k get secret identity-broker-agent-issuer >/dev/null 2>&1 || openssl ecparam -name prime256v1 -genkey -noout | $k create secret generic identity-broker-agent-issuer --from-file=key.pem=/dev/stdin >/dev/null
-          if ! $k get secret identity-broker-client >/dev/null 2>&1; then
-            key=$(openssl ecparam -name prime256v1 -genkey -noout)
-            keyset=$(printf '%s\n' "$key" | deploy/mecak8s-idbroker/broker-client-key-set.sh)
-            jwks=$(printf '%s' "$keyset" | openssl base64 -A)
-            # The private key goes through stdin only; the key set is public. A
-            # failed patch fails setup, which deletes the cluster.
-            printf '%s\n' "$key" | $k create secret generic identity-broker-client --from-file=key.pem=/dev/stdin >/dev/null
-            $k patch secret identity-broker-client --type=merge -p "{\"data\":{\"jwks.json\":\"$jwks\"}}" >/dev/null
+          # new_key prints a new PEM EC P-256 private key, or fails.
+          new_key() {
+            generated=$(openssl ecparam -name prime256v1 -genkey -noout)
+            [ -n "$generated" ] || { echo 'openssl generated no key' >&2; return 1; }
+            printf '%s\n' "$generated"
+          }
+          if ! $k get secret as1-signing-key >/dev/null 2>&1; then
+            key=$(new_key)
+            printf '%s\n' "$key" | $k create secret generic as1-signing-key --from-file=signing-key.pem=/dev/stdin >/dev/null
+          fi
+          if ! $k get secret identity-broker-agent-issuer >/dev/null 2>&1; then
+            key=$(new_key)
+            printf '%s\n' "$key" | $k create secret generic identity-broker-agent-issuer --from-file=key.pem=/dev/stdin >/dev/null
+          fi
+          # has_client_data reports whether identity-broker-client holds data
+          # under the escaped key $1; only a byte count leaves kubectl.
+          has_client_data() {
+            [ "$($k get secret identity-broker-client -o "jsonpath={.data.$1}" 2>/dev/null | wc -c)" -gt 0 ]
+          }
+          if ! has_client_data 'key\.pem' || ! has_client_data 'jwks\.json'; then
+            key=$(new_key)
+            keyset_file=$(mktemp)
+            printf '%s\n' "$key" | deploy/mecak8s-idbroker/broker-client-key-set.sh >"$keyset_file"
+            # The private key goes through stdin only; the key set is public.
+            # One create holds both, so a failure leaves no half-made Secret.
+            $k delete secret identity-broker-client --ignore-not-found >/dev/null
+            printf '%s\n' "$key" | $k create secret generic identity-broker-client --from-file=key.pem=/dev/stdin --from-file=jwks.json="$keyset_file" >/dev/null
           fi
           $k get secret dex-as1-client >/dev/null 2>&1 || openssl rand -hex 32 | tr -d '\n' | $k create secret generic dex-as1-client --from-file=client-secret=/dev/stdin >/dev/null
           if [ -n "${OPENROUTER_API_KEY:-}" ]; then

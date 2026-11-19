@@ -13,7 +13,7 @@
 //	  "trust_domain": "agents.example.com",
 //	  "audience": "https://broker.example.com",
 //	  "keys": {
-//	    "agent_issuer": {"key_file": "/keys/agent-issuer/key.pem", "fallback_key_files": ["/keys/agent-issuer-old/key.pem"]},
+//	    "agent_issuer": {"key_file": "/keys/agent-issuer/key.pem", "fallback_key_files": ["/keys/agent-issuer-old/public.pem"]},
 //	    "broker_client": {"key_file": "/keys/broker-client/key.pem", "key_set_file": "/keys/broker-client-jwks/jwks.json"},
 //	    "as1_signing": {"key_file": "/keys/as1/key.pem", "fallback_key_files": ["/keys/as1-old/key.pem"]}
 //	  }
@@ -23,8 +23,12 @@
 // PKCS #8, the forms AS-1's signing key file takes. The agent issuer and
 // broker client keys are ECDSA P-256; AS-1's signing keys may also be RSA. A
 // fallback key is an earlier key whose signatures still verify during a
-// rotation; the broker client rotates through its key set file instead,
-// which holds the old and new public keys.
+// rotation. The broker only verifies with an agent issuer fallback, so it may
+// be, and preferably is, a PEM public key (PKIX, "PUBLIC KEY"); AS-1's
+// fallbacks are private keys, as ToolHive loads them as signing keys. The
+// broker client rotates through its key set file instead, which holds the old
+// and new public keys. AS-1's signing key is configured only with a hosted
+// AS-1.
 package brokerconfig
 
 import (
@@ -89,29 +93,26 @@ type signingKey struct {
 }
 
 // Host is what the process runs beside the broker, which decides what the
-// file must hold.
-type Host struct {
-	// AS1 reports that the process hosts AS-1, which requires the broker
-	// client key and AS-1's signing key.
-	AS1 bool
-}
+// file must hold and may hold.
+type Host = identitybroker.Host
 
 // Load reads the configuration file at path and the keys it names, and
 // validates them for a broker beside host. Errors name the file and the
 // field, never key material.
 func Load(path string, host Host) (File, error) {
-	file, err := load(path, host)
+	raw, err := os.ReadFile(path) // #nosec G304 -- the operator names the file.
+	if err != nil {
+		// The file-system error names the path already.
+		return File{}, fmt.Errorf("identity broker configuration: %w", err)
+	}
+	file, err := load(raw, host)
 	if err != nil {
 		return File{}, fmt.Errorf("identity broker configuration %s: %w", path, err)
 	}
 	return file, nil
 }
 
-func load(path string, host Host) (File, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- the operator names the file.
-	if err != nil {
-		return File{}, err
-	}
+func load(raw []byte, host Host) (File, error) {
 	doc, err := decode(raw)
 	if err != nil {
 		return File{}, err
@@ -123,8 +124,13 @@ func load(path string, host Host) (File, error) {
 		return File{}, errors.New("audience is required")
 	case doc.Keys.AgentIssuer.KeyFile == "":
 		return File{}, errors.New("keys.agent_issuer.key_file is required")
+	case (doc.Keys.BrokerClient.KeyFile == "") != (doc.Keys.BrokerClient.KeySetFile == ""):
+		return File{}, errors.New("keys.broker_client.key_file and keys.broker_client.key_set_file are required together")
 	case doc.Keys.AS1Signing.KeyFile == "" && len(doc.Keys.AS1Signing.FallbackKeyFiles) != 0:
 		return File{}, errors.New("keys.as1_signing.fallback_key_files requires keys.as1_signing.key_file")
+	case !host.AS1 && doc.Keys.AS1Signing.KeyFile != "":
+		// Refused before the unused private key is read.
+		return File{}, errors.New("keys.as1_signing requires a hosted AS-1, which this process does not run")
 	}
 	if err := identitybroker.ValidateTrustDomain(doc.TrustDomain); err != nil {
 		return File{}, fmt.Errorf("trust_domain: %w", err)
@@ -139,33 +145,55 @@ func load(path string, host Host) (File, error) {
 	if err := file.Config.Validate(); err != nil {
 		return File{}, err
 	}
-	keys := &file.Keys
-	if keys.AgentIssuer, err = readKey("keys.agent_issuer.key_file", doc.Keys.AgentIssuer.KeyFile); err != nil {
+	if file.Keys, err = readKeys(doc); err != nil {
 		return File{}, err
 	}
-	if keys.AgentIssuerFallbacks, err = readPublicKeys("keys.agent_issuer.fallback_key_files", doc.Keys.AgentIssuer.FallbackKeyFiles); err != nil {
-		return File{}, err
-	}
-	if name := doc.Keys.BrokerClient.KeyFile; name != "" {
-		if keys.BrokerClient, err = readKey("keys.broker_client.key_file", name); err != nil {
-			return File{}, err
-		}
-	}
-	if name := doc.Keys.BrokerClient.KeySetFile; name != "" {
-		if keys.BrokerClientKeySet, err = readFile("keys.broker_client.key_set_file", name); err != nil {
-			return File{}, err
-		}
-	}
-	if name := doc.Keys.AS1Signing.KeyFile; name != "" {
-		names := append([]string{name}, doc.Keys.AS1Signing.FallbackKeyFiles...)
-		if keys.AS1Signing, err = readPublicKeys("keys.as1_signing", names); err != nil {
-			return File{}, err
-		}
-	}
-	if err := keys.Validate(host.AS1); err != nil {
+	if err := file.Keys.Validate(host); err != nil {
 		return File{}, err
 	}
 	return file, nil
+}
+
+// readKeys reads the keys doc names, which load has checked are named
+// together where they must be.
+func readKeys(doc document) (identitybroker.Keys, error) {
+	var keys identitybroker.Keys
+	var err error
+	if keys.AgentIssuer, err = readKey("keys.agent_issuer.key_file", doc.Keys.AgentIssuer.KeyFile); err != nil {
+		return keys, err
+	}
+	for _, name := range doc.Keys.AgentIssuer.FallbackKeyFiles {
+		pub, err := readPublicKey("keys.agent_issuer.fallback_key_files", name)
+		if err != nil {
+			return keys, err
+		}
+		keys.AgentIssuerFallbacks = append(keys.AgentIssuerFallbacks, pub)
+	}
+	if client := doc.Keys.BrokerClient; client.KeyFile != "" {
+		if keys.BrokerClient, err = readKey("keys.broker_client.key_file", client.KeyFile); err != nil {
+			return keys, err
+		}
+		if keys.BrokerClientKeySet, err = readFile("keys.broker_client.key_set_file", client.KeySetFile); err != nil {
+			return keys, err
+		}
+	}
+	if doc.Keys.AS1Signing.KeyFile == "" {
+		return keys, nil
+	}
+	// ToolHive loads AS-1's fallbacks as signing keys, so they are private
+	// keys too.
+	for i, name := range append([]string{doc.Keys.AS1Signing.KeyFile}, doc.Keys.AS1Signing.FallbackKeyFiles...) {
+		field := "keys.as1_signing.fallback_key_files"
+		if i == 0 {
+			field = "keys.as1_signing.key_file"
+		}
+		key, err := readKey(field, name)
+		if err != nil {
+			return keys, err
+		}
+		keys.AS1Signing = append(keys.AS1Signing, key.Public())
+	}
+	return keys, nil
 }
 
 // decode decodes raw strictly: one JSON object with no unknown field.
@@ -202,6 +230,11 @@ func readKey(field, path string) (crypto.Signer, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseKey(field, path, raw)
+}
+
+// parseKey parses raw, the file at path, as readKey reads it.
+func parseKey(field, path string, raw []byte) (crypto.Signer, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil {
 		return nil, fmt.Errorf("%s: %s is not PEM", field, path)
@@ -223,16 +256,24 @@ func readKey(field, path string) (crypto.Signer, error) {
 	return signer, nil
 }
 
-// readPublicKeys reads the private keys at paths, which field names, and
-// returns their public keys.
-func readPublicKeys(field string, paths []string) ([]crypto.PublicKey, error) {
-	var keys []crypto.PublicKey
-	for _, path := range paths {
-		key, err := readKey(field, path)
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, key.Public())
+// readPublicKey reads the PEM public key (PKIX, "PUBLIC KEY") at path, which
+// field names, or the public key of the private key there, as readKey reads
+// it.
+func readPublicKey(field, path string) (crypto.PublicKey, error) {
+	raw, err := readFile(field, path)
+	if err != nil {
+		return nil, err
 	}
-	return keys, nil
+	if block, _ := pem.Decode(raw); block != nil && block.Type == "PUBLIC KEY" {
+		pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s is not a PKIX public key", field, path)
+		}
+		return pub, nil
+	}
+	key, err := parseKey(field, path, raw)
+	if err != nil {
+		return nil, err
+	}
+	return key.Public(), nil
 }
