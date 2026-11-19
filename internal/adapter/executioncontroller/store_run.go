@@ -25,40 +25,70 @@ func generationMatches(o *unstructured.Unstructured, generation uint64) bool {
 }
 
 // ValidateRunClaim checks the durable run, binding, client and current policy before dispatch.
-//
-//nolint:gocyclo // Every durable claim, reference, and policy precondition is checked before dispatch.
 func (s *Store) ValidateRunClaim(ctx context.Context, client, owner string, rc executionenv.RequestContext) error {
+	_, err := s.validateRunClaim(ctx, client, owner, rc)
+	return err
+}
+
+//nolint:gocyclo // Every durable claim, reference, and policy precondition is checked.
+func (s *Store) validateRunClaim(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+) (*unstructured.Unstructured, error) {
 	if rc.Epoch == 0 || rc.Epoch > math.MaxInt64 || rc.GrantGeneration == 0 || rc.GrantGeneration > math.MaxInt64 {
-		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "run claim identity is invalid"}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeInvalidArgument,
+			Message: "run claim identity is invalid",
+		}
 	}
 	o, err := s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
 	if err != nil {
-		return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotFound,
+			Message: environmentNotFoundMessage,
+		}
 	}
 	if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
-		return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotFound,
+			Message: environmentNotFoundMessage,
+		}
 	}
 	if err := requireCurrentSchema(o); err != nil {
-		return err
+		return nil, err
 	}
 	if s.profiles.isRevoked(o) {
-		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: templateRevokedMessage,
+		}
 	}
 	claim, _, expiry, ok := activeRunFrom(o)
 	if !ok || !s.now().Before(expiry) || claim.Environment != rc.Environment || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
-		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim is not current"}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeConflict,
+			Message: "run claim is not current",
+		}
 	}
 	refs, err := referenceRecords(o)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !publishedReference(refs, rc.BindingID) || textNested(o.Object, "spec", "desired") != activeDesired || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
-		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "run binding is not ready"}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: "run binding is not ready",
+		}
 	}
 	if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
-		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: "client policy is unavailable or revoked",
+		}
 	}
-	return nil
+	return o, nil
 }
 
 func activeRunFrom(o *unstructured.Unstructured) (executionenv.RunClaim, string, time.Time, bool) {

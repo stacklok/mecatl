@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// RPCLimiter bounds active unary RPCs globally and per authorized client.
+// RPCLimiter bounds active RPCs and streams globally and per authorized client.
 type RPCLimiter struct {
 	security  *SecurityManager
 	globalMax int
@@ -33,19 +33,45 @@ func NewRPCLimiter(security *SecurityManager, globalMax, clientMax int) (*RPCLim
 
 // UnaryInterceptor authenticates against current policy before reserving capacity.
 func (l *RPCLimiter) UnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	chain, _, err := clientCertificates(ctx)
+	id, err := l.admit(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, "execution provider request failed")
-	}
-	id, _, err := l.security.authorize(ctx, chain)
-	if err != nil {
-		return nil, securityAuthorizationError(err)
-	}
-	if !l.acquire(id) {
-		return nil, status.Error(codes.ResourceExhausted, "execution provider is at its concurrency limit")
+		return nil, err
 	}
 	defer l.release(id)
 	return handler(ctx, req)
+}
+
+// StreamInterceptor holds the same capacity as UnaryInterceptor for a stream's lifetime.
+func (l *RPCLimiter) StreamInterceptor(
+	srv any,
+	ss grpc.ServerStream,
+	_ *grpc.StreamServerInfo,
+	handler grpc.StreamHandler,
+) error {
+	id, err := l.admit(ss.Context())
+	if err != nil {
+		return err
+	}
+	defer l.release(id)
+	return handler(srv, ss)
+}
+
+func (l *RPCLimiter) admit(ctx context.Context) (string, error) {
+	chain, _, err := clientCertificates(ctx)
+	if err != nil {
+		return "", status.Error(codes.Unauthenticated, "execution provider request failed")
+	}
+	id, _, err := l.security.authorize(ctx, chain)
+	if err != nil {
+		return "", securityAuthorizationError(err)
+	}
+	if !l.acquire(id) {
+		return "", status.Error(
+			codes.ResourceExhausted,
+			"execution provider is at its concurrency limit",
+		)
+	}
+	return id, nil
 }
 
 func clientCertificates(ctx context.Context) ([]*x509.Certificate, bool, error) {

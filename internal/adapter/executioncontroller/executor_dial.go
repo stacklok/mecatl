@@ -12,11 +12,14 @@ import (
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 )
 
 var (
@@ -138,6 +141,41 @@ func (d *ExecutorDialer) Dial(ctx context.Context, pin ExecutorPin, port int) (*
 		return nil, errors.New("executor connection is not TLS")
 	}
 	return tlsConn, nil
+}
+
+// Connector returns an ExecutorConnector for the executor server on port. Every
+// connection it opens re-resolves the pinned Pod, so a replacement Pod reusing
+// the address is refused before the handshake.
+func (d *ExecutorDialer) Connector(port int) ExecutorConnector {
+	return executorConnector{dialer: d, port: port}
+}
+
+type executorConnector struct {
+	dialer *ExecutorDialer
+	port   int
+}
+
+func (c executorConnector) Connect(
+	_ context.Context,
+	pin ExecutorPin,
+) (grpc.ClientConnInterface, func(), error) {
+	dial := func(ctx context.Context, _ string) (net.Conn, error) {
+		ip, err := c.dialer.Resolve(ctx, pin)
+		if err != nil {
+			return nil, err
+		}
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(c.port)))
+	}
+	conn, err := executorclient.Dial(
+		"passthrough:///"+pin.PodName,
+		credentials.NewTLS(c.dialer.TLSConfig(pin)),
+		grpc.WithContextDialer(dial),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, func() { _ = conn.Close() }, nil
 }
 
 func (d *ExecutorDialer) clientCertificate() (*tls.Certificate, error) {

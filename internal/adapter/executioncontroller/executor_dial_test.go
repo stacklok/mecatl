@@ -94,6 +94,36 @@ func startExecutorServer(
 	chain ...[]byte,
 ) executorServer {
 	t.Helper()
+	cfg, fingerprint := executorServerTLS(t, env, pki, chain...)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				if conn.(*tls.Conn).Handshake() == nil {
+					_, _ = conn.Write([]byte("ok"))
+				}
+			}()
+		}
+	}()
+	return executorServer{port: ln.Addr().(*net.TCPAddr).Port, fingerprint: fingerprint}
+}
+
+func executorServerTLS(
+	t *testing.T,
+	env string,
+	pki platformPKI,
+	chain ...[]byte,
+) (*tls.Config, string) {
+	t.Helper()
 	certPEM, keyPEM, fingerprint, err := generateExecutorCertificate(env, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -117,26 +147,7 @@ func startExecutorServer(
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer func() { _ = conn.Close() }()
-				if conn.(*tls.Conn).Handshake() == nil {
-					_, _ = conn.Write([]byte("ok"))
-				}
-			}()
-		}
-	}()
-	return executorServer{port: ln.Addr().(*net.TCPAddr).Port, fingerprint: fingerprint}
+	return cfg, fingerprint
 }
 
 func executorPodAt(name, uid, ip string) *corev1.Pod {

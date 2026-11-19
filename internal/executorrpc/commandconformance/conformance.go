@@ -35,6 +35,15 @@ type Harness struct {
 	ChildGone func(ctx context.Context) error
 	// Survivor exits 0, leaving a process that survives the kill.
 	Survivor string
+	// Context is sent with every request; nil sends an empty one.
+	Context func() *executorv1.RequestContext
+}
+
+func (h Harness) context() *executorv1.RequestContext {
+	if h.Context == nil {
+		return &executorv1.RequestContext{}
+	}
+	return h.Context()
 }
 
 const waitLimit = 30 * time.Second
@@ -70,7 +79,7 @@ func start(
 		req.Timeout = durationpb.New(timeout)
 	}
 	if err := stream.Send(&executorv1.RunCommandRequest{
-		Context: &executorv1.RequestContext{},
+		Context: h.context(),
 		Action:  &executorv1.RunCommandRequest_Start{Start: req},
 	}); err != nil {
 		t.Fatalf("send start: %v", err)
@@ -194,10 +203,13 @@ func testOutcomeUnknown(t *testing.T, h Harness) {
 
 func testRejectsInvalidStart(t *testing.T, h Harness) {
 	startWith := func(s *executorv1.StartCommand) *executorv1.RunCommandRequest {
-		return &executorv1.RunCommandRequest{Action: &executorv1.RunCommandRequest_Start{Start: s}}
+		return &executorv1.RunCommandRequest{
+			Context: h.context(),
+			Action:  &executorv1.RunCommandRequest_Start{Start: s},
+		}
 	}
 	for name, req := range map[string]*executorv1.RunCommandRequest{
-		"cancel first": {Action: &executorv1.RunCommandRequest_Cancel{
+		"cancel first": {Context: h.context(), Action: &executorv1.RunCommandRequest_Cancel{
 			Cancel: &executorv1.CancelCommand{},
 		}},
 		"empty": startWith(&executorv1.StartCommand{}),
