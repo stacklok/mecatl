@@ -437699,6 +437699,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795124151361,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8cfb70267c6b70d5bc52f477c1ac4900f571ddc4",
+          "message": "fix(release): forward the environment key to module writers (#2902)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T15:23:59-08:00",
+          "tree_id": "065eea827f262c9a7a78b790122be4ef04ac96aa",
+          "url": "https://github.com/stacklok/mecatl/commit/8cfb70267c6b70d5bc52f477c1ac4900f571ddc4"
+        },
+        "date": 1795131358441,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13395.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12889,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -569977,6 +570016,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795131354792,
+  "lastUpdate": 1795131359283,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
