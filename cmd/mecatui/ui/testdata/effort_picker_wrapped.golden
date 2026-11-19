@@ -1,0 +1,32 @@
+ mecatui · Golden sess…
+────────────────────────
+
+┏━━━━━━━━━━━━━━━━━━━━━━┓
+┃                      ┃
+┃  Reasoning effort    ┃
+┃     auto    (operat  ┃
+┃     low              ┃
+┃  ▶● medium           ┃
+┃     high             ┃
+┃     xhigh            ┃
+┃     max              ┃
+┃  [enter Apply]       ┃
+┃  [esc Close]         ┃
+┃  ↑/↓ move · pgup/pg  ┃
+┃  dn page · home/end  ┃
+┃   first/last         ┃
+┃  ● current  ·  auto  ┃
+┃   = provider defaul  ┃
+┃  t                   ┃
+┃                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+│
+│ Ask mecatl to do
+│ something…  (enter to
+│ send · shift+enter
+────────────────────────
+ connected      ctx 50%
+? help · / commands · ctrl+c quit

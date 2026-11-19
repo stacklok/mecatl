@@ -1,0 +1,40 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Tool calls
+
+ … Read · file-0.go · running
+ … Read · file-1.go · running
+▶… Read · file-2.go · running
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[enter Open details] [esc Close]  ·  ↑/↓ select · pgup/pgdn scroll
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ready                                                    ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

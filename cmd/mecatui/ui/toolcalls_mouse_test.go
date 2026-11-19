@@ -418,3 +418,50 @@ func TestMecatuiToolcalls_RemappedFooterKeys(t *testing.T) {
 		t.Fatal("remapped Close did not close list")
 	}
 }
+
+func TestMecatuiToolcalls_Goldens(t *testing.T) {
+	t.Run("populated-list", func(t *testing.T) {
+		m := newToolcallsGoldenModel(t, 100, 40)
+		m = addToolcallsForTest(t, m, 3)
+		m = openToolcallsForTest(t, m)
+		compareGolden(t, "toolcalls_list.golden", stripANSI([]byte(m.View().Content)))
+	})
+
+	t.Run("detail", func(t *testing.T) {
+		m := newToolcallsGoldenModel(t, 100, 40)
+		m = addToolcallsForTest(t, m, 2)
+		m.conv.resolveTool("call-1", "read fixture result", false)
+		m.syncToolcalls()
+		m = openToolcallsForTest(t, m)
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		m = updated.(Model)
+		compareGolden(t, "toolcalls_detail.golden", stripANSI([]byte(m.View().Content)))
+	})
+
+	t.Run("narrow-wrapped-footer-list", func(t *testing.T) {
+		m := newToolcallsGoldenModel(t, 20, 30)
+		m = addToolcallsForTest(t, m, 3)
+		m = openToolcallsForTest(t, m)
+		view := m.View().Content
+		open := toolcallsActionHit(t, m, toolcallsHitOpen)
+		closeHit := toolcallsActionHit(t, m, toolcallsHitClose)
+		if open.rect.y0 == closeHit.rect.y0 {
+			t.Fatal("narrow golden fixture did not wrap the footer controls")
+		}
+		compareGolden(t, "toolcalls_list_narrow.golden", stripANSI([]byte(view)))
+	})
+
+	t.Run("empty-disabled-open", func(t *testing.T) {
+		m := openToolcallsForTest(t, newToolcallsGoldenModel(t, 100, 40))
+		view := m.View().Content
+		if !strings.Contains(stripANSIstr(view), "[enter Open details] (unavailable)") {
+			t.Fatal("empty golden fixture lacks disabled Open")
+		}
+		for _, region := range m.hits.frame {
+			if toolcallsForTest(t, m).hitTargets[region.id].action == toolcallsHitOpen {
+				t.Fatal("disabled Open published a hit")
+			}
+		}
+		compareGolden(t, "toolcalls_empty_disabled.golden", stripANSI([]byte(view)))
+	})
+}
