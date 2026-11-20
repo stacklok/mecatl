@@ -399564,6 +399564,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795204460064,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aab9a4f9d28995dddac2de4e19bd08a3faa74dad",
+          "message": "build: make ordinary validation workspace-first (#2911)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T20:24:36Z",
+          "tree_id": "88bb762432d87787484bab56276516c69cfd1f1d",
+          "url": "https://github.com/stacklok/mecatl/commit/aab9a4f9d28995dddac2de4e19bd08a3faa74dad"
+        },
+        "date": 1795207073612,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -576586,6 +576620,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795207069964,
+  "lastUpdate": 1795207074581,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
