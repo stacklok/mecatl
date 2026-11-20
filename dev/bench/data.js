@@ -438890,6 +438890,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795137717427,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac29020918c37967faac9f154ef6b9ed6bad03c2",
+          "message": "Merge pull request #2906 from stacklok/module-publication/44637421400-1\n\nAdopt published Go module metadata",
+          "timestamp": "2026-11-19T17:33:33-08:00",
+          "tree_id": "df6d5916d0d3809e2946d3adec19e73a0c35d2af",
+          "url": "https://github.com/stacklok/mecatl/commit/ac29020918c37967faac9f154ef6b9ed6bad03c2"
+        },
+        "date": 1795139168089,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13421.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12916,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680.5,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -571510,6 +571549,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795139164413,
+  "lastUpdate": 1795139169328,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
