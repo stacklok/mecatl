@@ -570337,9 +570337,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795131349905,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1014ebfd89296aa54f24328d799befc6b2933e7a",
+          "message": "perf(release): use blobless module publication fetches (#2905)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T00:56:15Z",
+          "tree_id": "a3aa145039e9deb48a5d3f9fb3dbc28f2d198815",
+          "url": "https://github.com/stacklok/mecatl/commit/1014ebfd89296aa54f24328d799befc6b2933e7a"
+        },
+        "date": 1795136984012,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 780,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32198.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795136979112,
+  "lastUpdate": 1795136984894,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
