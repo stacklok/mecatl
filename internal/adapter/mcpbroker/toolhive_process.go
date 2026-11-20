@@ -341,7 +341,8 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		// The vMCP is served at its resource URL, so the embedded gateway's
 		// endpoint is that URL too.
-		endpoint := as2Resource(issuer)
+		// Shortcut: the embedded gateway's resource is AS-2's resource by construction, so the startup check that they match cannot fail; removed by #2812 (gateway built from a gateway entry with its own vMCP resource).
+		endpoint := resource
 		client, err := config.EmbeddedGatewayClient(vmcpHandler, endpoint)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create gateway client: %w", err))
