@@ -656,6 +656,9 @@ func (t *sessionTool) HelperGatewayTool() (tool.Tool, bool) {
 	return t, true
 }
 
+// GatewayServer names the gateway server t's calls are routed to.
+func (t *sessionTool) GatewayServer() string { return t.route.backend }
+
 func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }
 func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
 

@@ -3,6 +3,7 @@ package identitybroker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -123,7 +124,12 @@ type Service interface {
 	//     that is not a root instance; a run naming a delegation not reported
 	//     for this run and agent; or a run owner that is not the run's owner
 	//     and the grant's owner: CodePermissionDenied, ReasonDenied;
-	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied.
+	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied;
+	//   - a call the acting agent's effective ceiling does not allow (its
+	//     definition's ceiling, narrowed by its parent's when it registered):
+	//     a tool the ceiling excludes or on a server it does not grant, or a
+	//     listing of a server it does not grant: CodePermissionDenied,
+	//     ReasonDenied, recorded with the ceiling checked.
 	//
 	// A call that passes the run checks records a run the broker had not
 	// seen: as a root run of the acting agent with the reported owner, or, for
@@ -427,7 +433,8 @@ type AuthorizeCallRequest struct {
 	// Server is the gateway backend the call is routed to, such as "github".
 	Server string
 	// Tool is the exact tool name the call sends as params.name, such as
-	// "github.pull_request_read". Set for tools/call only.
+	// "github.pull_request_read": the server's name, a dot, and the tool's
+	// name on the server. Set for tools/call only.
 	Tool string
 	// ArgumentsSHA256 is the argument hash, 64 lowercase hex characters, as
 	// credentials-and-lifecycle.md step (8), "The argument hash", defines it:
@@ -463,6 +470,9 @@ func (r AuthorizeCallRequest) Validate() error {
 	case MethodToolsCall:
 		if !isToken(r.Tool) {
 			return invalid("a tools/call must name its tool in printable text without spaces")
+		}
+		if name, ok := strings.CutPrefix(r.Tool, r.Server+"."); !ok || name == "" {
+			return invalid("a tools/call must name its tool as its server's name, a dot, and the tool's name on the server")
 		}
 		if !isSHA256Hex(r.ArgumentsSHA256) {
 			return invalid("a tools/call must carry its arguments' SHA-256 as 64 lowercase hex characters")

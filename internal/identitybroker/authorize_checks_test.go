@@ -74,9 +74,14 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 	}
 	as2 := identitybroker.GatewayAS2{Issuer: "https://as2.example.com", Resource: "https://vmcp.example.com/mcp", AuthServer: &fakeAS2{}}
 	for name, g := range map[string]identitybroker.Gateway{
-		"no servers":             {},
-		"an empty server":        {Servers: []string{""}},
-		"a spaced server":        {Servers: []string{"git hub"}},
+		"no servers":      {},
+		"an empty server": {Servers: []string{""}},
+		"a spaced server": {Servers: []string{"git hub"}},
+		// A dot or a double underscore would let one server's name begin
+		// another's in "<server>.<tool>" and "mcp__<server>__<tool>".
+		"a dotted server":        {Servers: []string{"github", "github.ent"}},
+		"a double underscore":    {Servers: []string{"github__ent"}},
+		"a hyphenated server":    {Servers: []string{"git-hub"}},
 		"a repeat":               {Servers: []string{"github", "calendar", "github"}},
 		"an AS-2 issuer only":    {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer}},
 		"an AS-2 without a port": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource}},
@@ -141,7 +146,7 @@ func TestAuthorizeCallRefusesAnInvalidCredential(t *testing.T) {
 		f := openGranted(t, gateway, identitybroker.WithRecorder(rec))
 		*f.clock = f.clock.Add(6 * time.Minute)
 		req := callRequest(f.s.ID, f.cred)
-		req.Server = "calendar"
+		req.Server, req.Tool = "calendar", "calendar.pull_request_read"
 		_, err := f.authorize(req)
 		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired, f.cred)
 		d := rec.Decisions()
@@ -176,7 +181,7 @@ func TestAuthorizeCallUnroutedServerIsDenied(t *testing.T) {
 
 	// A routed server passes check 6.
 	req := callRequest(f.s.ID, f.cred)
-	req.Server = "calendar"
+	req.Server, req.Tool = "calendar", "calendar.pull_request_read"
 	_, err = f.authorize(req)
 	var e *identitybroker.Error
 	if !errors.As(err, &e) || strings.Contains(e.Detail, "no gateway routes") {

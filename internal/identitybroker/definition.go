@@ -112,11 +112,16 @@ type Provenance struct {
 }
 
 // DefinitionRecord is one loaded definition as the identity core sees it: the
-// reference and its provenance. It deliberately carries no instructions,
-// tools, or execution settings.
+// reference, its provenance, and the ceiling the loader resolved for it. It
+// deliberately carries no instructions or execution settings.
 type DefinitionRecord struct {
 	Ref        DefinitionRef
 	Provenance Provenance
+	// Ceiling is the definition's limit on gateway calls, resolved by the
+	// loader from its MCP servers and excluded tools against the gateway's
+	// servers. An instance's effective ceiling is this one, narrowed by its
+	// parent's at registration. The zero Ceiling allows no call.
+	Ceiling Ceiling
 }
 
 // Validate reports whether r is a well-formed definition record, applying the
@@ -161,7 +166,7 @@ func (r DefinitionRecord) clone() DefinitionRecord {
 }
 
 func (r DefinitionRecord) equal(o DefinitionRecord) bool {
-	return r.Ref == o.Ref &&
+	return r.Ref == o.Ref && r.Ceiling.equal(o.Ceiling) &&
 		r.Provenance.Profile == o.Provenance.Profile &&
 		r.Provenance.SourceDigest == o.Provenance.SourceDigest &&
 		r.Provenance.DefinitionDigest == o.Provenance.DefinitionDigest &&

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
 // helperGatewayScript has the main agent delegate to a default subagent,
@@ -37,23 +36,12 @@ func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	gw := serveGatewayIdentityBroker(t, notesRoute(t), []string{"--mock-script", script}, nil)
-	h, api, built, alice := gw.h, gw.api, gw.built, gw.alice
+	api, alice := gw.api, gw.alice
 
 	created := createSession(t, api, alice)
-	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice, GrantType: session.GrantTypeUser})
 	toolResult := func(id session.SessionID, call session.ToolCallID) session.ToolResult {
 		t.Helper()
-		sess, err := built.Service.GetSession(owner, id)
-		if err != nil {
-			t.Fatalf("GetSession(%s): %v", id, err)
-		}
-		for _, m := range sess.Conversation.Messages {
-			if m.ToolResult != nil && m.ToolResult.CallID == call {
-				return *m.ToolResult
-			}
-		}
-		t.Fatalf("session %s has no result for %s", id, call)
-		return session.ToolResult{}
+		return gw.toolResult(t, id, call)
 	}
 
 	promptApprovingAsks(t, api, alice, created, "delegate", nil)

@@ -93,7 +93,7 @@ func TestSessionScopedAgentIdentity_Scenario1_ResolvedCatalog(t *testing.T) {
 				tc.def.MCPServers[0].URL = newMCPTestServer(t)
 			}
 			cat, _, _, mcpClose, _, _, _ := resolvedAgentDefCatalog(context.Background(), cfg, tc.def, "test",
-				"model-x", tc.base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace)
+				"model-x", tc.base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace, nil)
 			if mcpClose != nil {
 				t.Cleanup(func() { _ = mcpClose() })
 			}

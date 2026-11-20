@@ -219,7 +219,7 @@ func snapshotDefinitions(records []DefinitionRecord) (map[DefinitionRef]Definiti
 		}
 		if existing, ok := snapshot[rec.Ref]; ok {
 			if !existing.equal(rec) {
-				return nil, fmt.Errorf("%w: record %d repeats %+v with different provenance", ErrConflictingDefinition, i, rec.Ref)
+				return nil, fmt.Errorf("%w: record %d repeats %+v with different provenance or ceiling", ErrConflictingDefinition, i, rec.Ref)
 			}
 			continue
 		}

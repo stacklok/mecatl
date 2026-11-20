@@ -694,11 +694,11 @@ type Config struct {
 	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
 	operatorProfileSource prompt.OperatorProfileSource
 	// helperTools are the identity broker gateway tools of the session whose
-	// catalog is being assembled, which its def-less helper agents (the
-	// default and writable explorers, parallel branches, and generic team
-	// members) also get (#2555). Empty outside such a per-session catalog.
-	//
-	// Shortcut: helpers that run a named definition get no gateway tools, since their definition decides their tools; removed by #2842.
+	// catalog is being assembled. Its def-less helper agents (the default and
+	// writable explorers, parallel branches, and generic team members) get
+	// them all (#2555); a helper that runs a named definition gets those of
+	// the servers its definition references (defGatewayTools, #2842). Empty
+	// outside such a per-session catalog.
 	helperTools []tool.Tool
 	// enableDurableEvidence is derived from the actual EventLog selected by Build.
 	// Every user-facing engine inherits it; Sink is deliberately not a proxy.
@@ -8646,6 +8646,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 						"member", spec.Name, "agent", def.Name, "tool", mt.Spec().Name, "err", err)
 				}
 			}
+			// Gateway tools, like the def's own MCP tools, touch only the remote
+			// server, so the read-only-member backstop exempts them too.
+			names2 = append(names2, registerHelperTools(classified, defGatewayTools(def, cfg.helperTools), cfg.diag())...)
 			mcpClose, mcpNames = cl, names2
 			memberLimits = defLimits(def, session.Limits{}) // only def-set fields; AddMember merges with the team default
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
