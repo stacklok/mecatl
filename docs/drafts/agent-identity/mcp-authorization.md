@@ -1,8 +1,8 @@
 # MCP authorization
 
-*This chapter describes the intended architecture, not current implementation status. The ceiling check it describes belongs to the [authority work](README.md#order-of-work), which follows the identity work.*
+*This chapter describes the intended architecture, not current implementation status. The ceiling check it describes belongs to the [authority work](implementation.md#order-of-work), which follows the identity work.*
 
-The broker authorizes each protected MCP call and issues the gateway access token for it; mecak8s's MCP client sends the call. The proposal adds agent-instance identity and authority checks to that decision; it does not introduce a separate authorization service. **Cedar is the selected policy engine. It evaluates only the acting instance's effective MCP server/tool ceiling: its definition ceiling narrowed by its parent's. This check is part of the [authority work](README.md#order-of-work), which follows the identity work.** It supplements existing local permissions and the user and connection checks that AS-2 and vMCP enforce downstream; a Cedar permit is not proof of user entitlement. Obtaining an OAuth token is a separate credential step, not a substitute for authorization.
+The broker authorizes each protected MCP call and issues the gateway access token for it; mecak8s's MCP client sends the call. The proposal adds agent-instance identity and authority checks to that decision; it does not introduce a separate authorization service. **Cedar is the selected policy engine. It evaluates only the acting instance's effective MCP server/tool ceiling: its definition ceiling narrowed by its parent's. This check is part of the [authority work](implementation.md#order-of-work), which follows the identity work.** It supplements existing local permissions and the user and connection checks that AS-2 and vMCP enforce downstream; a Cedar permit is not proof of user entitlement. Obtaining an OAuth token is a separate credential step, not a substitute for authorization.
 
 ## Definition-derived ceiling
 
