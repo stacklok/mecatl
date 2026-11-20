@@ -1537,7 +1537,6 @@ func (g *runContext) replace(claim executionenv.RunClaim) {
 // workspace is bound to one provider-authorized durable run.
 type workspace struct {
 	credentials *runContext
-	opMu        sync.Mutex
 }
 
 var _ tool.AuthorityResourceResolver = (*workspace)(nil)
@@ -1560,11 +1559,6 @@ func (w *workspace) AuthorityResourcePath(path string) (target, root string, err
 }
 
 func (w *workspace) call(ctx context.Context, op executionenv.Operation, path, dest, pattern string, data []byte, version string) (executionenv.FileResponse, error) {
-	// The provider's CRD deliberately carries one active operation. The engine may
-	// dispatch read-only sibling tools concurrently, so serialize this bound
-	// workspace before claiming that provider-side operation slot.
-	w.opMu.Lock()
-	defer w.opMu.Unlock()
 	credentials, err := w.credentials.current(ctx)
 	if err != nil {
 		return executionenv.FileResponse{}, mapFileError(path, err)

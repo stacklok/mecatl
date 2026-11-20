@@ -498,7 +498,8 @@ func publishCreatedEnvironmentsReady(client *dynamicfake.FakeDynamicClient, stop
 			}
 			for i := range list.Items {
 				// The fake does not enforce resourceVersion conflicts; a stale full status update can erase reference intents.
-				patch := []byte(`{"status":{"pod":{"name":"executor"},"conditions":[{"type":"Ready","status":"True"}]}}`)
+				patch := []byte(`{"status":{` + fakeExecutorStatus +
+					`,"conditions":[{"type":"Ready","status":"True"}]}}`)
 				_, _ = client.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Patch(context.Background(), list.Items[i].GetName(), types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 			}
 		}

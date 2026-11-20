@@ -270,7 +270,7 @@ type CommandStatusResponse struct {
 	TerminalReceipt string       `json:"terminal_receipt,omitempty"`
 }
 
-// ExecutorRequest is the credential-free provider-to-workload stdin protocol.
+// ExecutorRequest is one provider file or command request for the session's executor.
 // It deliberately cannot select an environment, root, Pod, image, argv, or process environment.
 type ExecutorRequest struct {
 	Operation     Operation `json:"operation"`
@@ -285,14 +285,8 @@ type ExecutorRequest struct {
 	TimeoutMillis int64     `json:"timeout_ms,omitempty"`
 }
 
-// ExecutorResponse carries one credential-free helper result.
+// ExecutorResponse carries one executor result.
 type ExecutorResponse struct {
 	FileResponse
 	Command *CommandStatusResponse `json:"command,omitempty"`
-}
-
-// ExecutorEnvelope provides a terminal, credential-free result over pods/exec.
-type ExecutorEnvelope struct {
-	Response *ExecutorResponse `json:"response,omitempty"`
-	Error    *Error            `json:"error,omitempty"`
 }

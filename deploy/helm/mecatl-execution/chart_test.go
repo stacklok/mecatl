@@ -30,6 +30,9 @@ func TestChartRetainsCRDAndScopesSecretAPI(t *testing.T) {
 	if strings.Contains(string(rbac), `resources: ["*"]`) {
 		t.Fatal("cluster-scoped profile preflight RBAC must not grant wildcard resources")
 	}
+	if strings.Contains(string(rbac), "pods/exec") {
+		t.Fatal("provider must not be granted Pod exec")
+	}
 }
 func TestChartHasNoDeletionHook(t *testing.T) {
 	entries, err := os.ReadDir("templates")

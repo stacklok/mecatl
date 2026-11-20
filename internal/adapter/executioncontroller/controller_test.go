@@ -21,8 +21,6 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	"k8s.io/client-go/util/workqueue"
-	clocktesting "k8s.io/utils/clock/testing"
 )
 
 func TestReconcileRefusesForeignExistingPVCWithoutPersistingUID(t *testing.T) {
@@ -442,114 +440,6 @@ func TestRepeatedReconcileDoesNotRewriteUnchangedStatus(t *testing.T) {
 	}
 }
 
-func TestActiveOperationExpiryRequeuesWithoutAnotherEvent(t *testing.T) {
-	ctx := t.Context()
-	env := testEnvironment()
-	env.SetFinalizers([]string{environmentFinalizer})
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	kubeClient := kubefake.NewSimpleClientset()
-	r := NewReconciler(dynamicClient, kubeClient, "ns", testProfiles())
-	initialQueue := r.queue
-	t.Cleanup(initialQueue.ShutDown)
-
-	// Establish a fully reconciled, ready environment so only operation expiry can
-	// cause the transition below.
-	if err := r.Reconcile(ctx, env.GetName()); err != nil {
-		t.Fatal(err)
-	}
-	pod, err := kubeClient.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-	if _, err := kubeClient.CoreV1().Pods("ns").UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Reconcile(ctx, env.GetName()); err != nil {
-		t.Fatal(err)
-	}
-	initialQueue.ShutDown()
-
-	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	deadline := now.Add(100 * time.Millisecond)
-	current, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := unstructured.SetNestedMap(current.Object, map[string]any{
-		"id": "operation", "expiresAt": deadline.Format(time.RFC3339Nano),
-	}, "status", "activeOperation"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	fakeClock := clocktesting.NewFakeClock(now)
-	delayingQueue := workqueue.NewTypedDelayingQueueWithConfig[string](workqueue.TypedDelayingQueueConfig[string]{Clock: fakeClock})
-	replacementQueue := workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.DefaultTypedControllerRateLimiter[string](),
-		workqueue.TypedRateLimitingQueueConfig[string]{DelayingQueue: delayingQueue},
-	)
-	t.Cleanup(replacementQueue.ShutDown)
-	r.queue = replacementQueue
-	r.now = fakeClock.Now
-	if err := r.Reconcile(ctx, env.GetName()); err != nil {
-		t.Fatal(err)
-	}
-	beforeExpiry, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !conditionTrue(beforeExpiry, "Ready") || textNested(beforeExpiry.Object, "status", "fenceState") != fenceHealthy {
-		t.Fatalf("future operation lease disturbed ready state: %v", beforeExpiry.Object["status"])
-	}
-
-	waitUntil := time.Now().Add(time.Second)
-	for fakeClock.Waiters() < 2 && time.Now().Before(waitUntil) {
-		time.Sleep(time.Millisecond)
-	}
-	if fakeClock.Waiters() < 2 {
-		t.Fatal("reconcile did not register the operation-expiry deadline with the delayed queue")
-	}
-
-	done := make(chan struct{})
-	go func() {
-		r.worker(ctx)
-		close(done)
-	}()
-	t.Cleanup(func() {
-		replacementQueue.ShutDown()
-		<-done
-	})
-
-	fakeClock.Step(99 * time.Millisecond)
-	preDeadline, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !conditionTrue(preDeadline, "Ready") || textNested(preDeadline.Object, "status", "fenceState") != fenceHealthy {
-		t.Fatalf("operation fenced before its deadline: %v", preDeadline.Object["status"])
-	}
-
-	fakeClock.Step(time.Millisecond)
-	workerDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(workerDeadline) {
-		got, getErr := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
-		if getErr != nil {
-			t.Fatal(getErr)
-		}
-		if textNested(got.Object, "status", "fenceState") == "FenceUnknown" {
-			if textNested(got.Object, "status", "activeOperation", "id") != "operation" || conditionTrue(got, "Ready") {
-				t.Fatalf("expiry did not retain unresolved operation identity and clear readiness: %v", got.Object["status"])
-			}
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("worker did not reconcile the active-operation deadline without another Kubernetes event")
-}
-
 func TestRuntimeAndRelevantStatusUpdatesEnqueue(t *testing.T) {
 	r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), kubefake.NewSimpleClientset(), "ns", testProfiles())
 	r.enqueueRuntime(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"execution.mecatl.dev/environment": "exec-pod"}}})
@@ -560,7 +450,7 @@ func TestRuntimeAndRelevantStatusUpdatesEnqueue(t *testing.T) {
 
 	oldEnv := testEnvironment()
 	newEnv := oldEnv.DeepCopy()
-	_ = unstructured.SetNestedField(newEnv.Object, "op", "status", "activeOperation", "id")
+	_ = unstructured.SetNestedField(newEnv.Object, "FenceUnknown", "status", "fenceState")
 	r.enqueueUpdate(oldEnv, newEnv)
 	if r.queue.Len() != 3 {
 		t.Fatalf("relevant status update was not queued: len=%d", r.queue.Len())
@@ -608,11 +498,13 @@ func conditionTransition(env *unstructured.Unstructured, name string) string {
 	return ""
 }
 
-func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
+func TestStartupIgnoresLegacyOperationLease(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	env := testEnvironment()
-	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "old", "operation": "file.replace"}, "status", "activeOperation")
+	expired := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	lease := map[string]any{"id": "old", "operation": "file.replace", "expiresAt": expired}
+	_ = unstructured.SetNestedMap(env.Object, lease, "status", "activeOperation")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	r := NewReconciler(d, profileResourceClient(), "ns", testProfiles())
 	peer := NewReconciler(d, profileResourceClient(), "ns", testProfiles())
@@ -632,8 +524,8 @@ func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if textNested(got.Object, "status", "fenceState") != "Healthy" || textNested(got.Object, "status", "activeOperation", "id") != "old" {
-		t.Fatalf("startup mutated a potentially live peer operation: status=%v", got.Object["status"])
+	if textNested(got.Object, "status", "fenceState") != "Healthy" {
+		t.Fatalf("startup fenced on a legacy operation lease: status=%v", got.Object["status"])
 	}
 }
 func TestProfilePreflightSkipsUnusedHistoricalClass(t *testing.T) {

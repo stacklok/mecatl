@@ -20,8 +20,6 @@ def quota_keys:
    pvc_present:($pvc != null), pvc_uid_matches:($pvc != null and .status.pvc.uid != null and .status.pvc.uid == $pvc.metadata.uid),
    operation_pvc_uid_matches:(.status.lifecycleOperation.expectedPVCUID != null and .status.lifecycleOperation.expectedPVCUID == .status.pvc.uid),
    operation_pod_uid_matches:(.status.lifecycleOperation.expectedPodUID != null and .status.lifecycleOperation.expectedPodUID == .status.pod.uid),
-   lease_present:(.status.activeOperation.expiresAt != null),
-   lease_expired:((.status.activeOperation.expiresAt // "" | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $expiry | if $expiry == null then null else $expiry <= now end),
    conditions:[.status.conditions[:16][]? | {type:(.type | known(["Ready","Retired","ExecutorTerminated","DeletionBlocked"])), status:(.status | known(["True","False","Unknown"])), reason:(.reason | known(["FenceUnknown","ExactLifecycleRequired","WorkspaceRetained","TerminalPodProof","AwaitingTerminalExecutor","Retained","ReplacementStarting","ReplacementReady","PVCUnavailable","ExecutorUnavailable","Reconciled","InvalidProfile","IncompatibleSchema"]))}]}),
 ($pods[:64][] | {kind:"pod", deleting:(.metadata.deletionTimestamp != null), finalizers:finalizers,
  phase:(.status.phase | known(["Pending","Running","Succeeded","Failed","Unknown"])),

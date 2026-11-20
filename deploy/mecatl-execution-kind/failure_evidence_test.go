@@ -33,7 +33,8 @@ func TestFailureEvidenceRejectsProducerText(t *testing.T) {
 			t.Fatal(err)
 		}
 		if v["kind"] == "environment" {
-			if v["pod_uid_matches"] != false || v["pvc_uid_matches"] != true || v["lease_expired"] != true || v["deleting"] != true || len(v["finalizers"].([]any)) != 1 {
+			if v["pod_uid_matches"] != false || v["pvc_uid_matches"] != true ||
+				v["deleting"] != true || len(v["finalizers"].([]any)) != 1 {
 				t.Fatalf("lost diagnostic facts: %s", line)
 			}
 		}

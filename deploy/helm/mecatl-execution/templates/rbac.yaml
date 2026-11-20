@@ -37,9 +37,6 @@ rules:
 - apiGroups: [""]
   resources: ["persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: [""]
-  resources: ["pods/exec"]
-  verbs: ["create"]
 # Executor server certificates. Generated names cannot be scoped by RBAC, so
 # this is namespace-wide; provider-secret-policy.yaml confines create and delete.
 - apiGroups: [""]

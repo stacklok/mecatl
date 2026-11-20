@@ -9242,8 +9242,8 @@ const (
 		"`mecatui connect ADDRESS`; mecated the general-purpose gRPC and HTTP/SSE server; mecak8s the " +
 		"Kubernetes-native server keeping session state in Redis; mecatequi a one-shot CI task returning " +
 		"a patch; mecatl-execution-provider the authenticated Kubernetes control plane that owns persistent " +
-		"execution-environment lifecycle; mecatl-executor the credential-free workload helper that performs " +
-		"one confined filesystem or command operation inside an executor Pod."
+		"execution-environment lifecycle; mecatl-executor the credential-free workload server that runs " +
+		"confined filesystem and command operations inside an executor Pod."
 
 	// selfKnowledgePostureAxes is the load-bearing content clause: the three safety
 	// axes, kept distinct. Conflating the per-session permission mode with the

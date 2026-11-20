@@ -182,14 +182,15 @@ content reads; Remove remains non-recursive.
 The optional Kubernetes execution provider stores environment ownership in a
 namespaced `ExecutionEnvironment`. Provider replicas coordinate through
 Kubernetes resource-version compare-and-swap; a replica restart does not clear
-another replica's operation. When a caller resolves a persisted ordinary
+another replica's run claim. File and command calls on one environment can run
+concurrently, and the provider writes no Kubernetes state for an individual call.
+When a caller resolves a persisted ordinary
 approval after a server restart, the server reacquires native run ownership,
-renews it while the resumed run drains, and releases it after the drain. A lost
-or cancelled operation can still leave the environment in `FenceUnknown`, which
-requires the documented manual recovery path. There is no force takeover.
+renews it while the resumed run drains, and releases it after the drain. An
+environment in `FenceUnknown` requires the documented manual recovery path.
+There is no force takeover.
 
-Operation lease expiry fences the environment and retains the unresolved
-operation identity for administrator recovery. A `503` response with
+A `503` response with
 `placement_unavailable` is generic: check provider readiness, the configured
 profile's capacity, and retained allocations. Use the existing
 [administrative lifecycle operation](/operating/mecak8s/execution-provider-lifecycle.md#run-an-administrative-lifecycle-operation)
@@ -305,7 +306,9 @@ checks. Policy withdrawal does not prove that an executor has stopped.
 
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
 current positive `grant_generation` (the wire name for the durable revocation
-fence); success increments it without changing the execution epoch. Old operations then cannot renew or authorize more work.
+fence); success increments it without changing the execution epoch. The provider
+then refuses calls under the old generation; calls already in progress are not
+stopped.
 Revocation is not executor termination proof; a new run needs a fresh claim
 after the old claim is released or fenced.
 
