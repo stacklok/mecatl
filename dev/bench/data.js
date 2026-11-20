@@ -440478,6 +440478,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795184686913,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5205fd1afd0fe423d9f10a8dc40b78af35c94354",
+          "message": "feat(mcpbroker): list gateway tools over HTTP, per server, failing closed (#2888)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T15:24:47+01:00",
+          "tree_id": "4633e07c8486c325195d6c1d494c486eb3b62cdd",
+          "url": "https://github.com/stacklok/mecatl/commit/5205fd1afd0fe423d9f10a8dc40b78af35c94354"
+        },
+        "date": 1795185387144,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13403,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12897,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -573554,6 +573593,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795185383433,
+  "lastUpdate": 1795185387847,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
