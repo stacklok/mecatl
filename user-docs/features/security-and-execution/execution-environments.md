@@ -320,7 +320,8 @@ controller caches, and Kubernetes access. Liveness reports process health only.
 Production values require two or more provider replicas, explicit
 provider-client selectors, API-server and DNS CIDRs, and finite
 ResourceQuota/LimitRange values. Executor pods are default-deny for ingress and
-egress. Add only profile-specific CIDR and port egress under
+egress, except ingress from provider pods to the executor server on TCP port
+7443. Add only profile-specific CIDR and port egress under
 `networkPolicy.workloadProfiles`; there is no implicit DNS, metadata-service,
 API-server, provider, or peer access. Each profile requires an explicit
 RuntimeClass supplied by the cluster, but do not treat a RuntimeClass name alone

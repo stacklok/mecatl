@@ -376,10 +376,15 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 	if !r.profiles.executorTrust.valid() {
 		return nil, errors.New("executor provider trust sources are not configured")
 	}
+	admitted, err := r.profiles.admittedCapabilities(env)
+	if err != nil {
+		return nil, err
+	}
 	inputs := executorPodInputs{
 		pvc:            pvc,
 		serviceAccount: r.profiles.executorServiceAccount,
 		trust:          r.profiles.executorTrust,
+		serverArgs:     executorServerArgs(admitted, p.Spec.MaxFileBytes),
 	}
 	pods := r.kube.CoreV1().Pods(r.namespace)
 	cur, err := pods.Get(ctx, name, metav1.GetOptions{})
@@ -450,7 +455,7 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 			Tolerations:                  expectedPodTolerations(p.Spec.Tolerations),
 			AutomountServiceAccountToken: &noPriv,
 			RuntimeClassName:             &p.Spec.RuntimeClassName,
-			RestartPolicy:                corev1.RestartPolicyNever,
+			RestartPolicy:                corev1.RestartPolicyAlways,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: &nonroot,
 				RunAsUser:    &uid,
@@ -464,9 +469,10 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 				Name:            "executor",
 				Image:           p.Spec.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{
-					"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait",
-				},
+				Command:         executorServerCommand(),
+				Args:            slices.Clone(inputs.serverArgs),
+				Ports:           executorServerPorts(),
+				ReadinessProbe:  executorReadinessProbe(),
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: &noPriv,
 					ReadOnlyRootFilesystem:   &ro,
@@ -513,6 +519,7 @@ type executorPodInputs struct {
 	serviceAccount string
 	tlsSecret      string
 	trust          ExecutorTrust
+	serverArgs     []string
 }
 
 func expectedPodTolerations(configured []corev1.Toleration) []corev1.Toleration {
@@ -595,7 +602,7 @@ func validatePod( //nolint:gocyclo // Every security-sensitive immutable field i
 	if !equalNodeSelectors(pod.Spec.NodeSelector, p.Spec.NodeSelector) || !validPodTolerations(pod.Spec.Tolerations, p.Spec.Tolerations) || pod.Spec.Affinity != nil {
 		return errors.New("pod scheduling specification mismatch")
 	}
-	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever ||
+	if pod.Spec.RestartPolicy != corev1.RestartPolicyAlways ||
 		pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken ||
 		pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != p.Spec.RuntimeClassName ||
 		len(pod.Spec.Containers) != 1 ||
@@ -611,8 +618,7 @@ func validatePod( //nolint:gocyclo // Every security-sensitive immutable field i
 	c := pod.Spec.Containers[0]
 	if c.Name != "executor" ||
 		c.Image != p.Spec.Image ||
-		!reflect.DeepEqual(c.Command,
-			[]string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}) ||
+		!validExecutorServer(&c, inputs.serverArgs) ||
 		!reflect.DeepEqual(c.VolumeMounts, executorVolumeMounts()) {
 		return errors.New("executor container specification mismatch")
 	}

@@ -11,6 +11,9 @@
 {{- end -}}
 {{- end -}}
 
+{{/* Fixed by the provider's executor Pod spec. */}}
+{{- define "mecatl-execution.executorServerPort" -}}7443{{- end -}}
+
 {{- define "mecatl-execution.executorTrustConfigMap" -}}
 {{- $prefix := include "mecatl-execution.fullname" . | trunc 48 | trimSuffix "-" -}}
 {{- printf "%s-executor-trust" $prefix -}}

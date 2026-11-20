@@ -836,6 +836,7 @@ func testPodInputs(profiles *Profiles, pod *corev1.Pod) executorPodInputs {
 		pvc:            "workspace-test",
 		serviceAccount: profiles.executorServiceAccount,
 		trust:          profiles.executorTrust,
+		serverArgs:     testServerArgs(),
 	}
 	for _, volume := range pod.Spec.Volumes {
 		if volume.Name == serverTLSVolume && volume.Secret != nil {

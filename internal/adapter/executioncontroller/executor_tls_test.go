@@ -287,6 +287,7 @@ func TestExecutorDriftCheckCoversCertificateAndTrustVolumes(t *testing.T) {
 		serviceAccount: profiles.executorServiceAccount,
 		tlsSecret:      readServerCertificatePin(env).SecretName,
 		trust:          testExecutorTrust(),
+		serverArgs:     testServerArgs(),
 	}
 	if err := validatePod(env, profile, inputs, pod); err != nil {
 		t.Fatal(err)

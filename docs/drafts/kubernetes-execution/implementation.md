@@ -258,7 +258,7 @@ Defining the contract comes first, because every stream builds against it:
 1. The file and command services as an authorizing proxy: read the request context from the opaque context, authorize
    the call, refuse services the session was not admitted for, and forward it to the session's executor. The proxy
    enforces the template's size limits on streamed output as it flows, and passes the `fsconformance` suite.
-2. Executor Pods that run the server as their main process, restart failed containers, report readiness, admit inbound
+2. Executor Pods that run the server as their main process, restart it whenever it exits, report readiness, admit inbound
    traffic from the trusted service only, and receive their server certificate.
 3. Per-executor certificates: a key pair and self-signed certificate generated before each executor Pod, delivered in
    a Secret, and pinned by fingerprint and Pod UID.

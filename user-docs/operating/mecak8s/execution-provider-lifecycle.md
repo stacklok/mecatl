@@ -43,9 +43,21 @@ The provider creates and deletes only its per-executor certificate Secrets.
 
 Executor Pods created by a release without
 [executor certificates](native-execution.md#executor-certificates-and-provider-trust)
-lack the certificate and provider trust volumes. After upgrading, they report
-`ExecutorUnavailable`; [replace each executor](#replace-or-retire-an-executor)
-to give it a pinned certificate on its retained workspace.
+lack the certificate and provider trust volumes, and Pods that don't run
+`/mecatl-executor serve` as their main process don't serve the executor API.
+After upgrading, both report `ExecutorUnavailable`. Because the environment is
+not ready, the provider accepts its replacement only after the old Pod has
+stopped. For each such environment,
+[capture its identity](#capture-the-exact-environment-identity), then delete the
+executor Pod and wait until its phase is `Succeeded` or `Failed`:
+
+```sh
+kubectl --namespace <NAMESPACE> delete pod <POD_NAME> --wait=false
+kubectl --namespace <NAMESPACE> get pod <POD_NAME> -o jsonpath='{.status.phase}{"\n"}'
+```
+
+Then [replace the executor](#replace-or-retire-an-executor). The replacement
+keeps the workspace PVC and gets a pinned certificate.
 
 Finish and verify any external authority rotation before starting a chart
 upgrade. Do not rotate the authority ConfigMap while Helm is writing chart
@@ -88,7 +100,8 @@ every old revision in the upgrade that adds its replacement. Then set
 
 For a compatible provider upgrade:
 
-1. Stop new client traffic and finish or explicitly fence active work. Stop all
+1. Stop new client traffic and finish or explicitly fence active work,
+   including any executor replacement or retirement in progress. Stop all
    provider replicas before Helm reads the ledgers:
 
    ```sh
