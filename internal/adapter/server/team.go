@@ -456,7 +456,10 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 	}
 	// Generic members of a team rooted in a session get the root's gateway
 	// tools, as the root's own def-less helpers do.
-	helperTools, helperToolNames := s.teamHelperTools(ctx, ts.rootSessionID)
+	helperTools, helperToolNames, err := s.teamHelperTools(ctx, ts.rootSessionID)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(helperTools) != 0 {
 		if withTools := s.cfg.MemberEngineWithHelperTools(ctx, helperTools); withTools != nil {
 			memberEngine = withTools

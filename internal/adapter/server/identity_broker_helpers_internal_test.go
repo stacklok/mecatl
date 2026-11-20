@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -75,7 +77,7 @@ func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if tools, names := svc.teamHelperTools(t.Context(), root.ID); tools != nil || names != nil {
+	if tools, names, err := svc.teamHelperTools(t.Context(), root.ID); err != nil || tools != nil || names != nil {
 		t.Fatalf("with no resident attachment, teamHelperTools = %v, %v; want none", tools, names)
 	}
 	svc.mu.Lock()
@@ -85,11 +87,14 @@ func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
 		helperTestTool{name: "mcp__notes__ping"},                    // not a gateway route
 	}}
 	svc.mu.Unlock()
-	_, names := svc.teamHelperTools(t.Context(), root.ID)
+	_, names, err := svc.teamHelperTools(t.Context(), root.ID)
+	if err != nil {
+		t.Fatalf("teamHelperTools: %v", err)
+	}
 	if !slices.Equal(names, []string{"mcp__calendar__echo"}) {
 		t.Fatalf("teamHelperTools names = %v, want the root's allowed gateway tool", names)
 	}
-	if tools, names := svc.teamHelperTools(t.Context(), ""); tools != nil || names != nil {
+	if tools, names, err := svc.teamHelperTools(t.Context(), ""); err != nil || tools != nil || names != nil {
 		t.Fatalf("a team with no root got %v, %v; want none", tools, names)
 	}
 	// A root with no bound authority gives members nothing: fail closed.
@@ -100,7 +105,7 @@ func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
 	svc.mu.Lock()
 	svc.brokerAttachments[unbound.ID] = svc.brokerAttachments[root.ID]
 	svc.mu.Unlock()
-	if tools, names := svc.teamHelperTools(t.Context(), unbound.ID); tools != nil || names != nil {
+	if tools, names, err := svc.teamHelperTools(t.Context(), unbound.ID); err != nil || tools != nil || names != nil {
 		t.Fatalf("a root with no bound authority gave %v, %v; want none", tools, names)
 	}
 
@@ -167,5 +172,56 @@ func TestAPITeamMembersGetTheRootsGatewayTools(t *testing.T) {
 	authority, bound := member.BoundAuthority()
 	if !bound || !authority.CapabilitySet.AllowsTool("mcp__calendar__echo") || authority.CapabilitySet.AllowsTool("mcp__notes__ping") {
 		t.Fatalf("member authority = %+v (bound %t), want the gateway tool and not the other route", authority.CapabilitySet.Tools, bound)
+	}
+}
+
+// failingLoadStore is a store whose Load fails with err.
+type failingLoadStore struct {
+	port.SessionStore
+	err error
+}
+
+func (f failingLoadStore) Load(context.Context, session.SessionID) (*session.Session, error) {
+	return nil, f.err
+}
+
+// TestTeamHelperToolsRootLoadFailureFailsTheStart pins that a team root the
+// server cannot load fails the team's start instead of starting its members
+// without the gateway tools they should have: a missing root is not found,
+// a store failure is internal, and buildTeamForOperation returns the error.
+func TestTeamHelperToolsRootLoadFailureFailsTheStart(t *testing.T) {
+	built := 0
+	memberFactory := func(_ *team.Team, _ agent.MemberSpec, _ string) agent.MemberBuild {
+		built++
+		return agent.MemberBuild{Engine: brokerEngineResult().Engine}
+	}
+	svc, _ := newRegisteringService(t, func(cfg *Config) {
+		cfg.MemberEngine = memberFactory
+		cfg.MemberEngineWithHelperTools = func(context.Context, []tool.Tool) MemberEngineFactory { return memberFactory }
+	})
+	svc.mu.Lock()
+	svc.brokerAttachments["root"] = helperTestAttachment{tools: []tool.Tool{helperTestTool{name: "mcp__calendar__echo", gateway: true}}}
+	svc.mu.Unlock()
+
+	// The root is not in the store.
+	if _, _, err := svc.teamHelperTools(t.Context(), "root"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("teamHelperTools for a missing root = %v, want ErrNotFound", err)
+	}
+	// The store fails.
+	svc.cfg.Store = failingLoadStore{SessionStore: svc.cfg.Store, err: errors.New("store unavailable")}
+	if _, _, err := svc.teamHelperTools(t.Context(), "root"); !errors.Is(err, ErrInternal) {
+		t.Fatalf("teamHelperTools with a failing store = %v, want ErrInternal", err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	ts := &teamState{
+		env:  tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
+		name: "reviewers", goal: "goal", rootSessionID: "root",
+		specs: []agent.MemberSpec{{Name: "lead", Lead: true}},
+	}
+	if _, _, err := svc.buildTeamForOperation(t.Context(), "team-1", ts); !errors.Is(err, ErrInternal) {
+		t.Fatalf("buildTeamForOperation with a failing store = %v, want ErrInternal", err)
+	}
+	if built != 0 {
+		t.Fatalf("a team whose root could not be loaded built %d members", built)
 	}
 }
