@@ -39,7 +39,7 @@ func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T)
 			for _, pointer := range []bool{false, true} {
 				m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 				m.deps.NoAltScreen = false
-				m.resolvedSessionModel.ReasoningEffort = effortValue(tier)
+				m.resolvedSessionModel.ReasoningEffort = echoedEffort(tier)
 				choose := tea.KeyPressMsg{Code: tea.KeyEnter}
 				if remap {
 					m.keys = applyKeyOverrides(m.keys, map[string][]string{"Choose": {"a"}, "Close": {"c"}})
@@ -73,7 +73,7 @@ func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T)
 					updated, cmd = m.Update(choose)
 					m = updated.(Model)
 				}
-				if m.modal != nil || m.phase != phaseConnecting || cmd == nil || m.createModelSelection.ReasoningEffort != effortValue(tier) {
+				if m.modal != nil || m.phase != phaseConnecting || cmd == nil || m.createModelSelection.ReasoningEffort != tier {
 					t.Fatal("Apply and keyboard must use selected offscreen tier, including auto mapping")
 				}
 				token := m.modelSwitchRequestToken
@@ -86,7 +86,7 @@ func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T)
 				batch := runCmd(cmd).(tea.BatchMsg)
 				_ = runCmd(batch[0])
 				conv := m.deps.Session.(*fakeConv)
-				if conv.forkCount != 1 || conv.forkedEffort != effortValue(tier) {
+				if conv.forkCount != 1 || conv.forkedEffort != tier {
 					t.Fatal("wrong fork count or effort")
 				}
 			}

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -53,7 +54,8 @@ func (f *fakeModelsClient) CreateSession(_ context.Context, in *mecatlv1.CreateS
 func TestListModelsMapping(t *testing.T) {
 	fake := &fakeModelsClient{listResp: &mecatlv1.ListModelsResponse{
 		Models: []*mecatlv1.ModelInfo{
-			{Id: "gpt-5", ProviderId: "openai", DisplayName: "GPT-5", Image: true, Reasoning: true, ContextLimit: 200000},
+			{Id: "gpt-5", ProviderId: "openai", DisplayName: "GPT-5", Image: true, Reasoning: true, ContextLimit: 200000,
+				EffortLevels: []string{"low", "medium", "high"}, EffortLevelsKnown: true},
 			{Id: "o3", ProviderId: "openai", Reasoning: true},
 		},
 	}}
@@ -76,6 +78,12 @@ func TestListModelsMapping(t *testing.T) {
 	if !m0.Image || !m0.Reasoning || m0.ContextLimit != 200000 {
 		t.Fatalf("model[0] caps = img:%v reason:%v ctx:%d", m0.Image, m0.Reasoning, m0.ContextLimit)
 	}
+	if !m0.EffortLevelsKnown || !reflect.DeepEqual(m0.EffortLevels, []string{"low", "medium", "high"}) {
+		t.Fatalf("model[0] effort = %v known=%v", m0.EffortLevels, m0.EffortLevelsKnown)
+	}
+	if ms[1].EffortLevelsKnown || len(ms[1].EffortLevels) != 0 {
+		t.Fatalf("model[1] effort = %v known=%v, want unknown", ms[1].EffortLevels, ms[1].EffortLevelsKnown)
+	}
 	// The second model has no display name / no image — verify the bools default
 	// false and the empty fields stay empty (no spurious fallback in the mapper).
 	m1 := ms[1]
@@ -97,7 +105,7 @@ func TestListModelsNilSafe(t *testing.T) {
 		t.Fatalf("statuses = %d, want 0 (nil response → empty)", len(statuses))
 	}
 	// mapModelInfo(nil) is zero.
-	if got := mapModelInfo(nil); got != (ModelInfo{}) {
+	if got := mapModelInfo(nil); !reflect.DeepEqual(got, ModelInfo{}) {
 		t.Fatalf("mapModelInfo(nil) = %+v, want zero", got)
 	}
 }
@@ -273,6 +281,20 @@ func TestCreateSessionReadsSessionPermissionModesFeature(t *testing.T) {
 		{name: "older yolo server without the feature", features: []string{"server_info"}, want: false},
 		{name: "server advertising the feature", features: []string{"server_info", SessionPermissionModesFeature}, want: true},
 	} {
+		t.Run(tc.name+"/effort levels", func(t *testing.T) {
+			features := append([]string(nil), tc.features...)
+			if tc.want {
+				features = append(features, ModelEffortLevelsFeature)
+			}
+			fake := &fakeModelsClient{caps: &mecatlv1.ServerCapabilities{}, features: features}
+			_, caps, _, err := newFakeClient(fake).CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if caps.ModelEffortLevels != tc.want {
+				t.Fatalf("capabilities modelEffortLevels=%v, want %v", caps.ModelEffortLevels, tc.want)
+			}
+		})
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeModelsClient{caps: &mecatlv1.ServerCapabilities{Posture: "yolo"}, features: tc.features}
 			_, caps, _, err := newFakeClient(fake).CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})

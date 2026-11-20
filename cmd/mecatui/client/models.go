@@ -32,6 +32,12 @@ type ModelInfo struct {
 	// cacher the upstream may still cache regardless, which is why the renderer
 	// scopes its marker (see modelCapSegments).
 	PromptCached bool
+	// EffortLevels are the reasoning-effort levels a session on this model sends,
+	// in vocabulary order. Meaningful only when EffortLevelsKnown; then an empty
+	// list means the model gets no effort. Both are zero on a server without the
+	// model_effort_levels feature (Capabilities.ModelEffortLevels).
+	EffortLevels      []string
+	EffortLevelsKnown bool
 }
 
 // ModelSelection is the chosen (provider, model) the client sends on
@@ -40,8 +46,9 @@ type ModelInfo struct {
 type ModelSelection struct {
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the chosen reasoning-effort tier: "" / "auto"
-	// (unset — operator/provider default) or low/medium/high/xhigh/max. It is sent
+	// ReasoningEffort is the chosen reasoning-effort tier: "" (unset — the
+	// operator default, else the provider default), "auto" (the provider default),
+	// or low/medium/high/xhigh/max. It is sent
 	// on CreateSession.reasoning_effort and is meaningful WITHOUT a provider/model
 	// (it rides the server-default provider), so an effort-only selection is NOT
 	// zero (IsZero counts it).
@@ -166,6 +173,9 @@ func mapModelInfo(m *mecatlv1.ModelInfo) ModelInfo {
 		Reasoning:    m.GetReasoning(),
 		ContextLimit: m.GetContextLimit(),
 		PromptCached: m.GetPromptCached(),
+		// Clone: the slice must not alias the proto message.
+		EffortLevels:      append([]string(nil), m.GetEffortLevels()...),
+		EffortLevelsKnown: m.GetEffortLevelsKnown(),
 	}
 }
 

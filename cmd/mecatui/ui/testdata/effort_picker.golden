@@ -6,7 +6,7 @@
                        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
                        ┃                                                   ┃
                        ┃  Reasoning effort                                 ┃
-                       ┃     auto    (operator / provider default)         ┃
+                       ┃     auto    (provider default)                    ┃
                        ┃     low                                           ┃
                        ┃   ● medium                                        ┃
                        ┃  ▶  high                                          ┃
