@@ -13,7 +13,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -606,45 +605,6 @@ func (c *Client) listReferenceIntents(ctx context.Context, req *executionv1.List
 	return out, nil
 }
 
-// File executes one authorized filesystem operation.
-func (c *Client) File(ctx context.Context, req executionenv.FileRequest) (executionenv.FileResponse, error) {
-	if req.Limit < 0 || req.Limit > executionenv.MaxListEntries {
-		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "invalid file request limit"}
-	}
-	v, err := c.rpc.Files(ctx, &executionv1.FileRequest{Context: contextToProto(req.Context), Operation: fileOperationToProto(req.Operation), Path: req.Path, Destination: req.Destination, Pattern: req.Pattern, Data: req.Data, Version: []byte(req.Version), Limit: int32(req.Limit)}) //nolint:gosec // bounded above
-	if err != nil {
-		return executionenv.FileResponse{}, decodeError(ctx, err)
-	}
-	return fileFromProto(v), nil
-}
-
-// StartCommand executes one foreground command.
-func (c *Client) StartCommand(ctx context.Context, req executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	v, err := c.rpc.StartCommand(ctx, &executionv1.CommandStartRequest{Context: contextToProto(req.Context), Command: req.Command, TimeoutMillis: req.TimeoutMillis})
-	if err != nil {
-		return executionenv.CommandStartResponse{}, decodeError(ctx, err)
-	}
-	return commandStartFromProto(v)
-}
-
-// CommandStatus queries a command after the request has been authorized.
-func (c *Client) CommandStatus(ctx context.Context, req executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	v, err := c.rpc.CommandStatus(ctx, &executionv1.CommandQueryRequest{Context: contextToProto(req.Context), CommandId: req.CommandID, Offset: req.Offset})
-	if err != nil {
-		return executionenv.CommandStatusResponse{}, decodeError(ctx, err)
-	}
-	return commandStatusFromProto(v)
-}
-
-// CancelCommand cancels a command after the request has been authorized.
-func (c *Client) CancelCommand(ctx context.Context, req executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	v, err := c.rpc.CancelCommand(ctx, &executionv1.CommandQueryRequest{Context: contextToProto(req.Context), CommandId: req.CommandID, Offset: req.Offset})
-	if err != nil {
-		return executionenv.CommandStatusResponse{}, decodeError(ctx, err)
-	}
-	return commandStatusFromProto(v)
-}
-
 // ReleaseReference releases one durable binding reference.
 func (c *Client) ReleaseReference(ctx context.Context, req executionenv.ReferenceReleaseRequest) error {
 	_, err := c.rpc.ReleaseReference(ctx, &executionv1.ReleaseReferenceRequest{Context: contextToProto(req.Context)})
@@ -802,130 +762,23 @@ func checkedTime(v interface {
 	}
 	return v.AsTime(), nil
 }
-func fileOperationToProto(op executionenv.Operation) executionv1.FileOperation {
-	switch op {
-	case executionenv.OpFileRead:
-		return executionv1.FileOperation_FILE_OPERATION_READ
-	case executionenv.OpFileResolveAuthority:
-		return executionv1.FileOperation_FILE_OPERATION_RESOLVE_AUTHORITY
-	case executionenv.OpFileStat:
-		return executionv1.FileOperation_FILE_OPERATION_STAT
-	case executionenv.OpFileCreate:
-		return executionv1.FileOperation_FILE_OPERATION_CREATE
-	case executionenv.OpFileReplace:
-		return executionv1.FileOperation_FILE_OPERATION_REPLACE
-	case executionenv.OpFileList:
-		return executionv1.FileOperation_FILE_OPERATION_LIST
-	case executionenv.OpFileRemove:
-		return executionv1.FileOperation_FILE_OPERATION_REMOVE
-	case executionenv.OpFileRename:
-		return executionv1.FileOperation_FILE_OPERATION_RENAME
-	case executionenv.OpFileCopy:
-		return executionv1.FileOperation_FILE_OPERATION_COPY
-	case executionenv.OpFileGlob:
-		return executionv1.FileOperation_FILE_OPERATION_GLOB
-	case executionenv.OpFileGrep:
-		return executionv1.FileOperation_FILE_OPERATION_GREP
-	}
-	return executionv1.FileOperation_FILE_OPERATION_UNSPECIFIED
-}
-func fileFromProto(v *executionv1.FileResponse) executionenv.FileResponse {
-	r := executionenv.FileResponse{Data: v.GetData(), Version: string(v.GetVersion()), Paths: v.GetPaths(), AuthorityTarget: v.GetAuthorityTarget(), AuthorityWorkspace: v.GetAuthorityWorkspace()}
-	if v.Info != nil {
-		x := fileInfoFromProto(v.Info)
-		r.Info = &x
-	}
-	for _, x := range v.Entries {
-		r.Entries = append(r.Entries, fileInfoFromProto(x))
-	}
-	for _, x := range v.Matches {
-		r.Matches = append(r.Matches, executionenv.GrepMatch{Path: x.Path, Line: int(x.Line), Text: x.Text})
-	}
-	return r
-}
-func fileInfoFromProto(v *executionv1.FileInfo) executionenv.FileInfo {
-	var mt time.Time
-	if v.ModTime != nil && v.ModTime.CheckValid() == nil {
-		mt = v.ModTime.AsTime()
-	}
-	return executionenv.FileInfo{Name: v.Name, Size: v.Size, Mode: v.Mode, ModTime: mt, IsDir: v.IsDir}
-}
-func commandStartFromProto(v *executionv1.CommandStartResponse) (executionenv.CommandStartResponse, error) {
-	if v == nil {
-		return executionenv.CommandStartResponse{}, sanitizedProviderError()
-	}
-	state, ok := commandStateFromProto(v.GetState())
-	if !ok {
-		return executionenv.CommandStartResponse{}, sanitizedProviderError()
-	}
-	result, err := commandStatusFromProto(v.GetResult())
-	if err != nil {
-		return executionenv.CommandStartResponse{}, err
-	}
-	return executionenv.CommandStartResponse{CommandID: v.GetCommandId(), State: state, Result: result}, nil
-}
-func commandStatusFromProto(v *executionv1.CommandStatusResponse) (executionenv.CommandStatusResponse, error) {
-	if v == nil {
-		return executionenv.CommandStatusResponse{}, sanitizedProviderError()
-	}
-	state, ok := commandStateFromProto(v.State)
-	if !ok {
-		return executionenv.CommandStatusResponse{}, sanitizedProviderError()
-	}
-	return executionenv.CommandStatusResponse{CommandID: v.CommandId, State: state, ExitCode: int(v.ExitCode), Stdout: v.Stdout, Stderr: v.Stderr, NextOffset: v.NextOffset, Truncated: v.Truncated, TerminalReceipt: v.TerminalReceipt}, nil
-}
-func commandStateFromProto(v executionv1.CommandState) (executionenv.CommandState, bool) {
-	switch v {
-	case executionv1.CommandState_COMMAND_STATE_RUNNING:
-		return executionenv.CommandRunning, true
-	case executionv1.CommandState_COMMAND_STATE_SUCCEEDED:
-		return executionenv.CommandSucceeded, true
-	case executionv1.CommandState_COMMAND_STATE_FAILED:
-		return executionenv.CommandFailed, true
-	case executionv1.CommandState_COMMAND_STATE_CANCELLED:
-		return executionenv.CommandCancelled, true
-	case executionv1.CommandState_COMMAND_STATE_FENCE_UNKNOWN:
-		return executionenv.CommandFenceUnknown, true
-	default:
-		return "", false
-	}
-}
 
 // Provider adapts the execution service to server placement binding.
 type Provider struct {
-	client           *Client
-	profile          string
-	revision         string
-	executorServices bool
-}
-
-// ProviderOption configures a Provider.
-type ProviderOption func(*Provider)
-
-// WithExecutorServices serves run environments through the executor FileService
-// and CommandService instead of ExecutionProviderService's file and command RPCs.
-func WithExecutorServices() ProviderOption {
-	return func(p *Provider) { p.executorServices = true }
+	client   *Client
+	profile  string
+	revision string
 }
 
 // NewTemplateProvider pins the deployment default to an exact execution revision.
-func NewTemplateProvider(
-	client *Client,
-	id string,
-	revision string,
-	opts ...ProviderOption,
-) (*Provider, error) {
+func NewTemplateProvider(client *Client, id string, revision string) (*Provider, error) {
 	if client == nil || id == "" || len(revision) != 67 || !strings.HasPrefix(revision, "v1-") || revision != strings.ToLower(revision) {
 		return nil, errors.New("execution client: template ID and exact v1 revision are required")
 	}
 	if _, err := hex.DecodeString(revision[3:]); err != nil {
 		return nil, errors.New("execution client: template ID and exact v1 revision are required")
 	}
-	p := &Provider{client: client, profile: id, revision: revision}
-	for _, opt := range opts {
-		opt(p)
-	}
-	return p, nil
+	return &Provider{client: client, profile: id, revision: revision}, nil
 }
 
 type referenceDeleteHandle struct {
@@ -1159,12 +1012,11 @@ func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunReques
 		return nil, server.ErrPlacementChanged
 	}
 	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}, expiresAt: claim.ExpiresAt}
-	var ws tool.Workspace = &workspace{credentials: credentials}
-	var commands tool.CommandRunner = &runner{credentials: credentials}
-	if p.executorServices {
-		ws = executorclient.NewWorkspace(p.client, remoteRoot, credentials.executorContext)
-		commands = executorclient.NewRunner(p.client, remoteRoot, credentials.executorContext)
+	ws := &runWorkspace{
+		Workspace:   executorclient.NewWorkspace(p.client, remoteRoot, credentials.executorContext),
+		credentials: credentials,
 	}
+	commands := executorclient.NewRunner(p.client, remoteRoot, credentials.executorContext)
 	env, envErr := tool.NewEnvironment(req.Ref, ws, memledger.New(), commands)
 	if envErr != nil {
 		return nil, server.ErrPlacementUnavailable
@@ -1201,10 +1053,12 @@ func (p *Provider) ListExecutionTemplates(ctx context.Context, principal *sessio
 	return items, response.GetInventoryRevision(), nil
 }
 
-// ValidatePlacement performs side-effect-free profile preflight.
+// ValidatePlacement performs side-effect-free profile and service preflight.
 func (p *Provider) ValidatePlacement(ctx context.Context) error {
-	_, err := p.client.ValidateTemplate(ctx, p.profile, p.revision)
-	return mapPlacementError(err)
+	if _, err := p.client.ValidateTemplate(ctx, p.profile, p.revision); err != nil {
+		return mapPlacementError(err)
+	}
+	return p.client.CheckExecutorServices(ctx)
 }
 
 func ownerOf(principal *session.Principal) (executionenv.Owner, error) {
@@ -1352,10 +1206,13 @@ func (p *Provider) binding(owner executionenv.Owner, binding string, attached ex
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, GrantGeneration: attached.GrantGeneration}, expiresAt: time.Time{}}
-	ws := &workspace{credentials: credentials}
+	ws := &runWorkspace{
+		Workspace:   executorclient.NewWorkspace(p.client, remoteRoot, credentials.executorContext),
+		credentials: credentials,
+	}
 	var commands tool.CommandRunner
 	if slices.Contains(attached.AdmittedCapabilities, executionenv.CapabilityForegroundCommand) {
-		commands = &runner{credentials: credentials}
+		commands = executorclient.NewRunner(p.client, remoteRoot, credentials.executorContext)
 	}
 	sref := toSessionRef(attached.Environment)
 	env, err := tool.NewEnvironment(sref, ws, memledger.New(), commands)
@@ -1482,6 +1339,10 @@ func (g *runContext) executorContext(ctx context.Context) (*executorv1.RequestCo
 	if err != nil {
 		return nil, err
 	}
+	return executorContext(rc), nil
+}
+
+func executorContext(rc executionenv.RequestContext) *executorv1.RequestContext {
 	return &executorv1.RequestContext{
 		Environment: &executorv1.EnvironmentRef{
 			Id:       rc.Environment.ID,
@@ -1493,7 +1354,7 @@ func (g *runContext) executorContext(ctx context.Context) (*executorv1.RequestCo
 		RunId:           rc.RunID,
 		ClaimId:         rc.ClaimID,
 		GrantGeneration: rc.GrantGeneration,
-	}, nil
+	}
 }
 
 func (g *runContext) refresh(ctx context.Context) (executionenv.RequestContext, error) {
@@ -1532,198 +1393,4 @@ func (g *runContext) replace(claim executionenv.RunClaim) {
 	defer g.mu.Unlock()
 	g.context.RunID, g.context.ClaimID, g.context.Epoch, g.context.GrantGeneration = claim.RunID, claim.ClaimID, claim.Epoch, claim.GrantGeneration
 	g.expiresAt = claim.ExpiresAt
-}
-
-// workspace is bound to one provider-authorized durable run.
-type workspace struct {
-	credentials *runContext
-}
-
-var _ tool.AuthorityResourceResolver = (*workspace)(nil)
-
-func (*workspace) Root() string { return remoteRoot }
-
-// AuthorityResourcePath asks the authenticated executor to derive the same
-// physical, confined identity that the subsequent filesystem operation uses.
-func (w *workspace) AuthorityResourcePath(path string) (target, root string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), authorityResolveRequestTimeout)
-	defer cancel()
-	response, err := w.call(ctx, executionenv.OpFileResolveAuthority, path, "", "", nil, "")
-	if err != nil {
-		return "", "", err
-	}
-	if response.AuthorityWorkspace != remoteRoot || (response.AuthorityTarget != remoteRoot && !strings.HasPrefix(response.AuthorityTarget, remoteRoot+"/")) {
-		return "", "", errors.New("execution provider returned an invalid authority resource identity")
-	}
-	return response.AuthorityTarget, response.AuthorityWorkspace, nil
-}
-
-func (w *workspace) call(ctx context.Context, op executionenv.Operation, path, dest, pattern string, data []byte, version string) (executionenv.FileResponse, error) {
-	credentials, err := w.credentials.current(ctx)
-	if err != nil {
-		return executionenv.FileResponse{}, mapFileError(path, err)
-	}
-	limit := 0
-	if op == executionenv.OpFileList || op == executionenv.OpFileGlob || op == executionenv.OpFileGrep {
-		limit = executionenv.MaxListEntries
-	}
-	request := executionenv.FileRequest{Context: credentials, Operation: op, Path: path, Destination: dest, Pattern: pattern, Data: data, Version: version, Limit: limit}
-	out, err := w.credentials.client.File(ctx, request)
-	if isDefinitiveAuthDenial(err) && readOnlyFileOperation(op) {
-		credentials, refreshErr := w.credentials.refresh(ctx)
-		if refreshErr != nil {
-			return executionenv.FileResponse{}, mapFileError(path, refreshErr)
-		}
-		request.Context = credentials
-		out, err = w.credentials.client.File(ctx, request)
-	}
-	return out, mapFileError(path, err)
-}
-
-func isDefinitiveAuthDenial(err error) bool {
-	var remote *executionenv.Error
-	return errors.As(err, &remote) && remote.Code == executionenv.CodeUnauthenticated && remote.Retryable
-}
-
-func readOnlyFileOperation(op executionenv.Operation) bool {
-	switch op {
-	case executionenv.OpFileRead, executionenv.OpFileResolveAuthority, executionenv.OpFileStat, executionenv.OpFileList, executionenv.OpFileGlob, executionenv.OpFileGrep:
-		return true
-	default:
-		return false
-	}
-}
-func (w *workspace) Read(ctx context.Context, path string) ([]byte, error) {
-	r, e := w.call(ctx, executionenv.OpFileRead, path, "", "", nil, "")
-	return r.Data, e
-}
-func (w *workspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
-	r, e := w.call(ctx, executionenv.OpFileRead, path, "", "", nil, "")
-	if e != nil {
-		return nil, tool.FileVersion{}, e
-	}
-	return r.Data, tool.DecodeFileVersion(r.Version), nil
-}
-func (w *workspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
-	r, e := w.call(ctx, executionenv.OpFileStat, path, "", "", nil, "")
-	if e != nil {
-		return tool.FileInfo{}, e
-	}
-	if r.Info == nil {
-		return tool.FileInfo{}, errors.New("execution provider omitted file metadata")
-	}
-	return fileInfo(*r.Info), nil
-}
-func (w *workspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
-	r, e := w.call(ctx, executionenv.OpFileCreate, path, "", "", data, "")
-	if e != nil {
-		return tool.FileVersion{}, e
-	}
-	return tool.DecodeFileVersion(r.Version), nil
-}
-func (w *workspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
-	v, e := tool.EncodeFileVersion(old)
-	if e != nil {
-		if _, statErr := w.Stat(ctx, path); statErr != nil {
-			return tool.FileVersion{}, statErr
-		}
-		return tool.FileVersion{}, e
-	}
-	r, e := w.call(ctx, executionenv.OpFileReplace, path, "", "", data, v)
-	if e != nil {
-		return tool.FileVersion{}, e
-	}
-	return tool.DecodeFileVersion(r.Version), nil
-}
-func (w *workspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
-	r, e := w.call(ctx, executionenv.OpFileList, path, "", "", nil, "")
-	if e != nil {
-		return nil, e
-	}
-	out := make([]tool.FileInfo, len(r.Entries))
-	for i := range r.Entries {
-		out[i] = fileInfo(r.Entries[i])
-	}
-	return out, nil
-}
-func (w *workspace) Remove(ctx context.Context, path string) error {
-	_, e := w.call(ctx, executionenv.OpFileRemove, path, "", "", nil, "")
-	return e
-}
-func (w *workspace) Rename(ctx context.Context, a, b string) error {
-	_, e := w.call(ctx, executionenv.OpFileRename, a, b, "", nil, "")
-	return e
-}
-func (w *workspace) CopyFile(ctx context.Context, a, b string) (tool.FileVersion, error) {
-	r, e := w.call(ctx, executionenv.OpFileCopy, a, b, "", nil, "")
-	if e != nil {
-		return tool.FileVersion{}, e
-	}
-	return tool.DecodeFileVersion(r.Version), nil
-}
-func (w *workspace) Glob(ctx context.Context, pattern string) ([]string, error) {
-	r, e := w.call(ctx, executionenv.OpFileGlob, "", "", pattern, nil, "")
-	return r.Paths, e
-}
-func (w *workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
-	r, e := w.call(ctx, executionenv.OpFileGrep, pathGlob, "", pattern, nil, "")
-	if e != nil {
-		return nil, e
-	}
-	out := make([]tool.GrepMatch, len(r.Matches))
-	for i, m := range r.Matches {
-		out[i] = tool.GrepMatch{Path: m.Path, Line: m.Line, Text: m.Text}
-	}
-	return out, nil
-}
-func fileInfo(i executionenv.FileInfo) tool.FileInfo {
-	return tool.FileInfo{Name: i.Name, Size: i.Size, Mode: fs.FileMode(i.Mode), ModTime: i.ModTime, IsDir: i.IsDir}
-}
-func mapFileError(path string, err error) error {
-	if err == nil {
-		return nil
-	}
-	var remote *executionenv.Error
-	if errors.As(err, &remote) {
-		switch remote.Code {
-		case executionenv.CodeNotFound:
-			return fmt.Errorf("%s: %w", path, fs.ErrNotExist)
-		case executionenv.CodeAlreadyExists:
-			return fmt.Errorf("%s: %w", path, fs.ErrExist)
-		case executionenv.CodeVersionMismatch:
-			return &tool.VersionMismatchError{Path: path}
-		case executionenv.CodeDirectoryNotEmpty:
-			return fmt.Errorf("%s: %w", path, tool.ErrDirectoryNotEmpty)
-		}
-	}
-	return err
-}
-
-// runner deliberately implements only foreground CommandRunner.
-type runner struct {
-	credentials *runContext
-}
-
-func (*runner) BoundWorkspaceRoot() string { return remoteRoot }
-func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
-	credentials, err := r.credentials.current(ctx)
-	if err != nil {
-		return tool.CommandResult{}, err
-	}
-	resp, err := r.credentials.client.StartCommand(ctx, executionenv.CommandStartRequest{Context: credentials, Command: command})
-	if err != nil {
-		return tool.CommandResult{}, err
-	}
-	result := resp.Result
-	out := tool.CommandResult{Stdout: session.ToValidUTF8(string(result.Stdout)), Stderr: session.ToValidUTF8(string(result.Stderr)), ExitCode: result.ExitCode}
-	switch result.State {
-	case executionenv.CommandSucceeded, executionenv.CommandFailed:
-		return out, nil
-	case executionenv.CommandCancelled:
-		return out, context.Canceled
-	case executionenv.CommandFenceUnknown:
-		return out, errors.New("execution provider lost terminal command receipt; environment fencing is unknown")
-	default:
-		return out, errors.New("execution provider returned a non-terminal foreground command")
-	}
 }

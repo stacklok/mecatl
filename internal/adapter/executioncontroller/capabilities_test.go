@@ -111,7 +111,7 @@ func TestTemplateEndpointsReportDeclaredCapabilities(t *testing.T) {
 	revision := profiles.defaultRevision["go"]
 	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{
 		clientID: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}},
-	}}, NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", profiles, nil))
+	}}, NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", profiles))
 	check := func(want []string) {
 		t.Helper()
 		ctx := authenticatedContext(clientID)

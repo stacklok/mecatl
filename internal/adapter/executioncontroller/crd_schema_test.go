@@ -66,9 +66,21 @@ func TestExecutionEnvironmentSchemaAdmission(t *testing.T) {
 	}{
 		{"current", func(map[string]any) {}, true},
 		{"omitted-spec", func(o map[string]any) { delete(o["spec"].(map[string]any), "schemaVersion") }, false},
-		{"old-spec", func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = int64(1) }, false},
-		{"unknown-spec", func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = int64(3) }, false},
-		{"malformed-spec", func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = "2" }, false},
+		{
+			"old-spec",
+			func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = int64(2) },
+			false,
+		},
+		{
+			"unknown-spec",
+			func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = int64(4) },
+			false,
+		},
+		{
+			"malformed-spec",
+			func(o map[string]any) { o["spec"].(map[string]any)["schemaVersion"] = "3" },
+			false,
+		},
 		{"status-not-initialized", func(o map[string]any) { delete(o, "status") }, true},
 		{"admitted-capabilities", func(o map[string]any) {
 			admitted := []any{"filesystem", "foreground-command"}
@@ -80,9 +92,21 @@ func TestExecutionEnvironmentSchemaAdmission(t *testing.T) {
 		{"empty-admitted-capabilities", func(o map[string]any) {
 			o["spec"].(map[string]any)["admittedCapabilities"] = []any{}
 		}, false},
-		{"old-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(1) }, false},
-		{"unknown-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(3) }, false},
-		{"malformed-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = "2" }, false},
+		{
+			"old-status",
+			func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(2) },
+			false,
+		},
+		{
+			"unknown-status",
+			func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(4) },
+			false,
+		},
+		{
+			"malformed-status",
+			func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = "3" },
+			false,
+		},
 		{"legacy-operation-lease", func(o map[string]any) {
 			o["status"].(map[string]any)["activeOperation"] = legacyOperationLease()
 		}, true},
@@ -126,7 +150,12 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj := map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env"}, "spec": map[string]any{}, "status": map[string]any{
-		"schemaVersion": int64(2), "observedGeneration": int64(9), "epoch": int64(3), "grantGeneration": int64(4), "fenceState": "Healthy",
+		"schemaVersion":      int64(3),
+		"observedGeneration": int64(9),
+		"epoch":              int64(3),
+		"grantGeneration":    int64(4),
+		"fenceState":         "Healthy",
+
 		"references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "op", "sourceBindingID": "source", "createdAt": "2026-09-17T00:00:00Z"}},
 		"pvc":        map[string]any{"name": "pvc", "uid": "pvc-uid"}, "pod": map[string]any{"name": "pod", "uid": "pod-uid"},
 		"activeRun":          map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "clientHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "epoch": int64(3), "grantGeneration": int64(4), "expiresAt": "2026-09-17T00:01:00Z"},

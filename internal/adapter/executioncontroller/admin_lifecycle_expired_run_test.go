@@ -17,10 +17,20 @@ import (
 
 func TestExpiredExactRunDoesNotPermanentlyBlockFinalReferenceRetirement(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	env := lifecycleAdminEnvironment(2, []any{map[string]any{"bindingID": "binding", "state": string(executionenv.ReferencePublished), operationIDField: "seed", "createdAt": now.Add(-time.Hour).Format(time.RFC3339Nano)}})
+	env := lifecycleAdminEnvironment(
+		3,
+		[]any{
+			map[string]any{
+				"bindingID":      "binding",
+				"state":          string(executionenv.ReferencePublished),
+				operationIDField: "seed",
+				"createdAt":      now.Add(-time.Hour).Format(time.RFC3339Nano),
+			},
+		},
+	)
 	setLifecycleRunClaim(env, now.Add(-time.Second), 4, 1)
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	store.now = func() time.Time { return now }
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 	if err := store.ReleaseReference(t.Context(), ref, "client", "owner", "binding"); err != nil {
@@ -67,14 +77,14 @@ func TestExpiredExactRunAdmitsReadyFalseLifecycleWithTerminalProof(t *testing.T)
 		{name: "scoped administrator uses creator run tuple", existingProof: true, administrator: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			setConditionObject(env, "Ready", false, "PodTerminated", "executor exited")
 			setLifecycleRunClaim(env, now.Add(-time.Second), 4, 1)
 			if tc.existingProof {
 				setLifecycleTerminationProof(env, "prior-operation")
 			}
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			store := NewStore(client, "ns", testProfiles(), nil)
+			store := NewStore(client, "ns", testProfiles())
 			if !tc.existingProof {
 				store = store.WithKubeClient(kubernetesfake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
 			}
@@ -125,14 +135,14 @@ func TestLifecycleRefusesLiveMalformedAndMismatchedClaimsWithoutMutation(t *test
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			setConditionObject(env, "Ready", false, "PodTerminated", "executor exited")
 			setLifecycleRunClaim(env, now.Add(-time.Second), 4, 1)
 			setLifecycleTerminationProof(env, "prior-operation")
 			tc.plant(env)
 			before := env.DeepCopy()
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			store := NewStore(client, "ns", testProfiles(), nil)
+			store := NewStore(client, "ns", testProfiles())
 			store.now = func() time.Time { return now }
 			err := store.RetireExact(t.Context(), adminRequestFixture())
 			var controlled *executionenv.Error

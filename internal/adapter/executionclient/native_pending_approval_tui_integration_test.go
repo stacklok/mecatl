@@ -38,7 +38,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
-	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 const (
@@ -195,8 +194,8 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			release := make(chan struct{})
 			releaseCommand := sync.OnceFunc(func() { close(release) })
 			defer releaseCommand()
-			executor := &recordingExecutor{executed: make(chan executionenv.ExecutorRequest, 1), release: release}
-			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, executor)
+			executor := &recordingExecutor{executed: make(chan executorCall, 1), release: release}
+			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles)
 			revision := profiles.DefaultRevision("coding")
 			profile, err := controllerStore.ValidateTemplate(ctx, "coding", revision)
 			if err != nil {
@@ -210,14 +209,41 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env-" + tc.name, Revision: "rev-1"}
 			envObj := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": ref.ID, "namespace": "ns"},
-				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
-				"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": string(sessionID), "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+				"spec": map[string]any{
+					"schemaVersion":    int64(3),
+					"revision":         ref.Revision,
+					"ownerHash":        hex.EncodeToString(ownerSum[:]),
+					"ownerIssuer":      owner.Issuer,
+					"ownerSubject":     owner.Subject,
+					"clientHash":       hex.EncodeToString(clientSum[:]),
+					"bindingID":        string(sessionID),
+					"templateID":       "coding",
+					"templateRevision": revision,
+					"templateDigest":   profile.Digest,
+					"desired":          "Active",
+				},
+				"status": map[string]any{
+					"schemaVersion":   int64(3),
+					"epoch":           int64(1),
+					"grantGeneration": int64(1),
+					"fenceState":      "Healthy",
+					"pod":             map[string]any{"name": "executor-pod"},
+					"references": []any{
+						map[string]any{
+							"bindingID":   string(sessionID),
+							"state":       "Published",
+							"operationID": "seed",
+							"createdAt":   now.Format(time.RFC3339Nano),
+						},
+					},
+					"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+				},
 			}}
 			pinFakeExecutor(envObj)
 			if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(ctx, envObj, metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			executionFixture := startFixture(t, controllerStore, nil)
+			executionFixture := startFixture(t, controllerStore, nil, executor.conn(t))
 			defer executionFixture.stop()
 			executionClient, err := New(executionFixture.endpoint, executionFixture.clientTLS)
 			if err != nil {
@@ -519,7 +545,8 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if tc.wantRun {
 				select {
 				case request := <-executor.executed:
-					if request.Operation != executionenv.OpCommandStart || request.Command != "printf bridge-command" {
+					if request.Operation != opCommandStart ||
+						request.Command != "printf bridge-command" {
 						t.Fatalf("native request operation=%v command=%q", request.Operation, request.Command)
 					}
 				case <-ctx.Done():
@@ -605,10 +632,13 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				t.Fatalf("detail view lost draft, continuation, or one-line resolved tool summary:\n%s", detailView)
 			}
 			executor.mu.Lock()
-			operations := append([]executionenv.Operation(nil), executor.operations...)
+			operations := append([]string(nil), executor.operations...)
 			executor.mu.Unlock()
 			if tc.wantRun {
-				if len(operations) != 1 || operations[0] != executionenv.OpCommandStart || !strings.Contains(toolResult.Content, "out�") || !strings.Contains(toolResult.Content, "[exit code: 0]") || strings.Contains(view, "out�") || strings.Contains(view, "[exit code: 0]") {
+				ran := len(operations) == 1 && operations[0] == opCommandStart
+				if !ran || !strings.Contains(toolResult.Content, "out�") ||
+					!strings.Contains(toolResult.Content, "[exit code: 0]") ||
+					strings.Contains(view, "out�") || strings.Contains(view, "[exit code: 0]") {
 					t.Fatalf("allow result/summary projection: operations=%v result=%q\n%s", operations, toolResult.Content, view)
 				}
 			} else if len(operations) != 0 || !strings.Contains(toolResult.Content, "denied") {

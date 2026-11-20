@@ -7,6 +7,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	grpchealth "google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -14,6 +16,39 @@ import (
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
+
+// MaxCommandDuration is the longest command any template may allow.
+const MaxCommandDuration = 30 * time.Minute
+
+// RegisterExecutorServices serves the authorizing FileService and
+// CommandService on server and reports both as serving through gRPC health,
+// which clients check before placing work on this provider.
+func RegisterExecutorServices(server *grpc.Server, h *Handler, connect ExecutorConnectFunc) {
+	executorv1.RegisterFileServiceServer(server, NewFileProxy(h, connect))
+	executorv1.RegisterCommandServiceServer(server, NewCommandProxy(h, connect))
+	health := grpchealth.NewServer()
+	for _, service := range executorServiceNames() {
+		health.SetServingStatus(service, healthpb.HealthCheckResponse_SERVING)
+	}
+	healthpb.RegisterHealthServer(server, health)
+}
+
+// executorServiceNames names the services file and command calls need.
+func executorServiceNames() []string {
+	return []string{
+		executorv1.FileService_ServiceDesc.ServiceName,
+		executorv1.CommandService_ServiceDesc.ServiceName,
+	}
+}
+
+// errRunClaimNotCurrent is the definitive denial of a stale or expired run
+// claim: UNAUTHENTICATED, retryable, and never forwarded, so the caller may
+// renew its claim and retry.
+var errRunClaimNotCurrent = &executionenv.Error{
+	Code:      executionenv.CodeUnauthenticated,
+	Message:   "run claim is not current",
+	Retryable: true,
+}
 
 // ExecutorRoute is where an authorized call goes and the template limits it runs under.
 type ExecutorRoute struct {

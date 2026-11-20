@@ -1,6 +1,7 @@
 package executioncontroller
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"net"
@@ -19,7 +20,11 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/internal/executionenv"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
+	"github.com/stacklok/mecatl/internal/executorrpc/memexecutor"
 )
 
 func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
@@ -38,14 +43,48 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 		{name: "foreign owner subject", request: func(r *executionv1.RequestContext) { r.Owner.Subject = "other" }, want: codes.NotFound},
 		{name: "foreign owner issuer", request: func(r *executionv1.RequestContext) { r.Owner.Issuer = "https://other.example" }, want: codes.NotFound},
 		{name: "foreign environment", request: func(r *executionv1.RequestContext) { r.Environment.Id = "other" }, want: codes.NotFound},
-		{name: "foreign revision", request: func(r *executionv1.RequestContext) { r.Environment.Revision = "other" }, want: codes.Aborted},
-		{name: "foreign binding", request: func(r *executionv1.RequestContext) { r.BindingId = "other" }, want: codes.Aborted},
-		{name: "foreign run", request: func(r *executionv1.RequestContext) { r.RunId = "other" }, want: codes.Aborted},
-		{name: "foreign claim", request: func(r *executionv1.RequestContext) { r.ClaimId = "other" }, want: codes.Aborted},
-		{name: "stale epoch", request: func(r *executionv1.RequestContext) { r.Epoch++ }, want: codes.Aborted},
-		{name: "stale generation", request: func(r *executionv1.RequestContext) { r.GrantGeneration++ }, want: codes.Aborted},
-		{name: "revoked generation", field: []string{"status", "grantGeneration"}, value: int64(2), want: codes.Aborted},
-		{name: "expired lease", field: []string{"status", "activeRun", "expiresAt"}, value: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), want: codes.Aborted},
+		{
+			name:    "foreign revision",
+			request: func(r *executionv1.RequestContext) { r.Environment.Revision = "other" },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:    "foreign binding",
+			request: func(r *executionv1.RequestContext) { r.BindingId = "other" },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:    "foreign run",
+			request: func(r *executionv1.RequestContext) { r.RunId = "other" },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:    "foreign claim",
+			request: func(r *executionv1.RequestContext) { r.ClaimId = "other" },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:    "stale epoch",
+			request: func(r *executionv1.RequestContext) { r.Epoch++ },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:    "stale generation",
+			request: func(r *executionv1.RequestContext) { r.GrantGeneration++ },
+			want:    codes.Unauthenticated,
+		},
+		{
+			name:  "revoked generation",
+			field: []string{"status", "grantGeneration"},
+			value: int64(2),
+			want:  codes.Unauthenticated,
+		},
+		{
+			name:  "expired lease",
+			field: []string{"status", "activeRun", "expiresAt"},
+			value: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano),
+			want:  codes.Unauthenticated,
+		},
 		{name: "reference removed", field: []string{"status", "references"}, value: []any{}, want: codes.Unavailable},
 		{name: "unpublished pending create", reference: executionenv.ReferencePendingCreate, want: codes.Unavailable},
 		{name: "unpublished pending delete", reference: executionenv.ReferencePendingDelete, want: codes.Unavailable},
@@ -113,10 +152,18 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 				}
 			}
 			dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			executor := &recordingTransport{}
-			store := NewStore(dynamic, "ns", testProfiles(), executor).WithSecurityManager(manager)
+			files := memfs.NewFileSystem(proxyRoot)
+			if err := files.Write(t.Context(), "sentinel", []byte("ok")); err != nil {
+				t.Fatal(err)
+			}
+			executor := &recordingConnector{conn: memexecutor.Dial(t, memexecutor.Executor{
+				Files: memfs.NewWorkspaceOverFileSystem(files),
+			})}
+			store := NewStore(dynamic, "ns", testProfiles()).WithSecurityManager(manager)
 			server := grpc.NewServer(grpc.Creds(credentials.NewTLS(manager.TLSConfig())))
-			executionv1.RegisterExecutionProviderServiceServer(server, NewHandler(HandlerConfig{Security: manager}, store))
+			handler := NewHandler(HandlerConfig{Security: manager}, store)
+			executionv1.RegisterExecutionProviderServiceServer(server, handler)
+			RegisterExecutorServices(server, handler, executor.Connect)
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -132,32 +179,30 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = conn.Close() })
-			client := executionv1.NewExecutionProviderServiceClient(conn)
 			request := &executionv1.RequestContext{Environment: &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}, Owner: &executionv1.Owner{Issuer: scopeOwner.Issuer, Subject: scopeOwner.Subject}, BindingId: "binding", RunId: "run", ClaimId: "claim", Epoch: 1, GrantGeneration: 1}
 			if tc.request != nil {
 				tc.request(request)
 			}
-
-			// Detached control has no Store dispatch fallback: removing the handler's
-			// mandatory validator must fail this matrix, not merely hit execute's checks.
-			_, err = client.CommandStatus(t.Context(), &executionv1.CommandQueryRequest{Context: request, CommandId: "command"})
-			wantQuery := tc.want
-			if wantQuery == codes.OK {
-				wantQuery = codes.Unimplemented
-			}
-			if status.Code(err) != wantQuery {
-				t.Fatalf("command authorization: got %v, want %v", err, wantQuery)
-			}
-			response, err := client.Files(t.Context(), &executionv1.FileRequest{Context: request, Operation: executionv1.FileOperation_FILE_OPERATION_READ, Path: "sentinel"})
+			rc := executorRequest(request)
+			_, err = executorv1.NewFileServiceClient(conn).StatFile(
+				t.Context(),
+				&executorv1.StatFileRequest{Context: rc, Path: "sentinel"},
+			)
 			if status.Code(err) != tc.want {
 				t.Fatalf("file authorization: got %v, want %v", err, tc.want)
 			}
-			if dispatched := executor.calls() != 0; dispatched != (tc.want == codes.OK) {
+			if dispatched := executor.count() != 0; dispatched != (tc.want == codes.OK) {
 				t.Fatalf("dispatched=%t for want %v", dispatched, tc.want)
 			}
 			if tc.want == codes.OK {
-				if string(response.GetData()) != "ok" || string(response.GetVersion()) != "v1" {
-					t.Fatalf("executor result was not returned: %v", response)
+				ws := executorclient.NewWorkspace(
+					conn,
+					proxyRoot,
+					func(context.Context) (*executorv1.RequestContext, error) { return rc, nil },
+				)
+				data, err := ws.Read(t.Context(), "sentinel")
+				if err != nil || string(data) != "ok" {
+					t.Fatalf("executor result was not returned: %q, %v", data, err)
 				}
 			} else {
 				for _, action := range dynamic.Actions() {

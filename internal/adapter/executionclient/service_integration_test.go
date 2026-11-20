@@ -1,14 +1,12 @@
 package executionclient
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -32,45 +30,6 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
-type recordingExecutor struct {
-	mu         sync.Mutex
-	operations []executionenv.Operation
-	executed   chan executionenv.ExecutorRequest
-	release    <-chan struct{}
-}
-
-func (e *recordingExecutor) Execute(
-	ctx context.Context,
-	_ executioncontroller.ExecutorRoute,
-	req executionenv.ExecutorRequest,
-) (executionenv.ExecutorResponse, error) {
-	e.mu.Lock()
-	e.operations = append(e.operations, req.Operation)
-	e.mu.Unlock()
-	if e.executed != nil {
-		select {
-		case e.executed <- req:
-		case <-ctx.Done():
-			return executionenv.ExecutorResponse{}, ctx.Err()
-		}
-		select {
-		case <-e.release:
-		case <-ctx.Done():
-			return executionenv.ExecutorResponse{}, ctx.Err()
-		}
-	}
-	switch req.Operation {
-	case executionenv.OpFileResolveAuthority:
-		return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}}, nil
-	case executionenv.OpFileRead:
-		return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{Data: []byte("package main\n"), Version: "v1"}}, nil
-	case executionenv.OpCommandStart:
-		return executionenv.ExecutorResponse{Command: &executionenv.CommandStatusResponse{CommandID: req.CommandID, State: executionenv.CommandSucceeded, Stdout: []byte("out\xff"), Stderr: []byte("err\xe2"), TerminalReceipt: "complete"}}, nil
-	default:
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "unsupported test operation"}
-	}
-}
-
 var fakeExecutorFingerprint = strings.Repeat("ab", 32)
 
 // fakeExecutorStatus pins the fake executor so the provider routes tool calls to it.
@@ -91,7 +50,7 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	executor := &recordingExecutor{}
-	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, executor)
+	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles)
 	revision := profiles.DefaultRevision("coding")
 	profile, err := controllerStore.ValidateTemplate(t.Context(), "coding", revision)
 	if err != nil {
@@ -103,14 +62,41 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 	now := time.Now().UTC()
 	envObj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env-real", "namespace": "ns"},
-		"spec":   map[string]any{"schemaVersion": int64(2), "revision": "rev-1", "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": "service-session", "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
-		"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": "service-session", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+		"spec": map[string]any{
+			"schemaVersion":    int64(3),
+			"revision":         "rev-1",
+			"ownerHash":        hex.EncodeToString(ownerSum[:]),
+			"ownerIssuer":      owner.Issuer,
+			"ownerSubject":     owner.Subject,
+			"clientHash":       hex.EncodeToString(clientSum[:]),
+			"bindingID":        "service-session",
+			"templateID":       "coding",
+			"templateRevision": revision,
+			"templateDigest":   profile.Digest,
+			"desired":          "Active",
+		},
+		"status": map[string]any{
+			"schemaVersion":   int64(3),
+			"epoch":           int64(1),
+			"grantGeneration": int64(1),
+			"fenceState":      "Healthy",
+			"pod":             map[string]any{"name": "executor-pod"},
+			"references": []any{
+				map[string]any{
+					"bindingID":   "service-session",
+					"state":       "Published",
+					"operationID": "seed",
+					"createdAt":   now.Format(time.RFC3339Nano),
+				},
+			},
+			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+		},
 	}}
 	pinFakeExecutor(envObj)
 	if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(t.Context(), envObj, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	fx := startFixture(t, controllerStore, nil)
+	fx := startFixture(t, controllerStore, nil, executor.conn(t))
 	defer fx.stop()
 	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
@@ -175,9 +161,9 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 		t.Fatalf("private protobuf bytes were not repaired identically for client/model: stream=%q model=%q", streamedShellResult, modelShellResult)
 	}
 	executor.mu.Lock()
-	operations := append([]executionenv.Operation(nil), executor.operations...)
+	operations := append([]string(nil), executor.operations...)
 	executor.mu.Unlock()
-	wantOperations := []executionenv.Operation{executionenv.OpFileRead, executionenv.OpCommandStart}
+	wantOperations := []string{opFileRead, opCommandStart}
 	if !reflect.DeepEqual(operations, wantOperations) {
 		t.Fatalf("executor operations=%v, want %v", operations, wantOperations)
 	}

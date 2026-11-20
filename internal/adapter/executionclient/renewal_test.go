@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
@@ -45,17 +46,23 @@ func (s *renewalServer) run(ctx context.Context, kind string) error {
 	}
 	return nil
 }
-func (s *renewalServer) Files(ctx context.Context, _ *executionv1.FileRequest) (*executionv1.FileResponse, error) {
-	if err := s.run(ctx, "file"); err != nil {
+func (s *renewalServer) ValidateTemplate(
+	ctx context.Context,
+	_ *executionv1.ValidateTemplateRequest,
+) (*executionv1.ValidateTemplateResponse, error) {
+	if err := s.run(ctx, "read"); err != nil {
 		return nil, err
 	}
-	return &executionv1.FileResponse{}, nil
+	return &executionv1.ValidateTemplateResponse{}, nil
 }
-func (s *renewalServer) StartCommand(ctx context.Context, _ *executionv1.CommandStartRequest) (*executionv1.CommandStartResponse, error) {
-	if err := s.run(ctx, "command"); err != nil {
+func (s *renewalServer) ReleaseReference(
+	ctx context.Context,
+	_ *executionv1.ReleaseReferenceRequest,
+) (*emptypb.Empty, error) {
+	if err := s.run(ctx, "mutation"); err != nil {
 		return nil, err
 	}
-	return &executionv1.CommandStartResponse{}, nil
+	return &emptypb.Empty{}, nil
 }
 func writeRenewalPair(t *testing.T, f TLSFiles, leaf tls.Certificate, key *ecdsa.PrivateKey) {
 	t.Helper()
@@ -123,8 +130,14 @@ func TestReloadTLSDrainsVerifiedSameIdentityRPCs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	results := make(chan error, 2)
-	go func() { _, e := client.rpc.Files(ctx, &executionv1.FileRequest{}); results <- e }()
-	go func() { _, e := client.rpc.StartCommand(ctx, &executionv1.CommandStartRequest{}); results <- e }()
+	go func() {
+		_, e := client.rpc.ValidateTemplate(ctx, &executionv1.ValidateTemplateRequest{})
+		results <- e
+	}()
+	go func() {
+		_, e := client.rpc.ReleaseReference(ctx, &executionv1.ReleaseReferenceRequest{})
+		results <- e
+	}()
 	for range 2 {
 		select {
 		case <-svc.started:
@@ -143,7 +156,8 @@ func TestReloadTLSDrainsVerifiedSameIdentityRPCs(t *testing.T) {
 		t.Fatal("renewal did not replace transport")
 	}
 	// The new call must authenticate with the renewed leaf while old RPCs remain blocked.
-	if _, err := client.rpc.Files(ctx, &executionv1.FileRequest{}); err != nil {
+	_, err = client.rpc.ValidateTemplate(ctx, &executionv1.ValidateTemplateRequest{})
+	if err != nil {
 		t.Fatalf("new call: %v", err)
 	}
 	serial1, serial2, serial3 := <-svc.serials, <-svc.serials, <-svc.serials
@@ -264,7 +278,10 @@ func TestReloadTLSWithdrawsTrustDuringActiveRPC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { _, e := client.rpc.StartCommand(ctx, &executionv1.CommandStartRequest{}); result <- e }()
+	go func() {
+		_, e := client.rpc.ReleaseReference(ctx, &executionv1.ReleaseReferenceRequest{})
+		result <- e
+	}()
 	select {
 	case <-svc.started:
 	case <-ctx.Done():

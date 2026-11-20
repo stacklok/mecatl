@@ -19,7 +19,7 @@ import (
 func TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete(t *testing.T) {
 	for _, mode := range []string{"peer-before-delete", "already-terminating", "stale-resource-version"} {
 		t.Run(mode, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			env.SetResourceVersion("1")
 			setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 			setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
@@ -47,7 +47,7 @@ func TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete(t *testing.T) {
 			}
 			d.PrependReactor("update", "executionenvironments", versionedUpdate)
 			k := kubefake.NewSimpleClientset(retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}})
-			store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
+			store := NewStore(d, "ns", testProfiles()).WithKubeClient(k)
 			if err := store.DeleteRetiredEnvironment(t.Context(), adminRequestFixture()); err != nil {
 				t.Fatal(err)
 			}
@@ -157,12 +157,12 @@ func TestRetainedDeletePeerBetweenFinalizerUpdateAndDelete(t *testing.T) {
 }
 
 func TestRetainedDeleteDoesNotRemoveForeignCR(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	k := kubefake.NewSimpleClientset()
-	store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
+	store := NewStore(d, "ns", testProfiles()).WithKubeClient(k)
 	if err := store.DeleteRetiredEnvironment(t.Context(), adminRequestFixture()); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRetainedDeleteDoesNotRemoveForeignCR(t *testing.T) {
 }
 
 func TestDirectCRDeleteStillBlocked(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	now := metav1.Now()
 	env.SetDeletionTimestamp(&now)
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)

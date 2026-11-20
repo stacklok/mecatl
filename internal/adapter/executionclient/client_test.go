@@ -11,12 +11,15 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,8 +27,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/protoadapt"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
@@ -34,10 +39,11 @@ import (
 )
 
 type integrationBackend struct {
-	allocation                          executioncontroller.Allocation
-	claim                               executionenv.RunClaim
-	ensureCalls, attachCalls, fileCalls int
-	expireNextRead                      bool
+	mu                                    sync.Mutex
+	allocation                            executioncontroller.Allocation
+	claim                                 executionenv.RunClaim
+	ensureCalls, attachCalls, renewCalls  int
+	fileRoutes, commandRoutes, staleRoute int
 }
 
 const codingRevision = "v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -91,27 +97,6 @@ func (*integrationBackend) ReleaseReference(context.Context, executionenv.Enviro
 func (*integrationBackend) Retire(context.Context, executionenv.EnvironmentRef, string) error {
 	return nil
 }
-func (b *integrationBackend) File(_ context.Context, _, _ string, q executionenv.FileRequest) (executionenv.FileResponse, error) {
-	b.fileCalls++
-	if b.expireNextRead && q.Operation == executionenv.OpFileRead {
-		b.expireNextRead = false
-		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "lease renewal required", Retryable: true}
-	}
-	if q.Operation == executionenv.OpFileResolveAuthority {
-		return executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}, nil
-	}
-	return executionenv.FileResponse{Data: []byte("from-grpc"), Version: string([]byte{0xff, 0, 1})}, nil
-}
-func (*integrationBackend) StartCommand(context.Context, string, string, executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	return executionenv.CommandStartResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Result: executionenv.CommandStatusResponse{CommandID: "c1", State: executionenv.CommandSucceeded, Stdout: []byte("ok\n\xff"), Stderr: []byte("err\xe2")}}, nil
-}
-func (*integrationBackend) CommandStatus(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInternal, Message: "unimplemented"}
-}
-func (*integrationBackend) CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInternal, Message: "unimplemented"}
-}
-
 func (b *integrationBackend) EnsurePending(ctx context.Context, client, owner, binding, profile, fp, _ string) (executioncontroller.Allocation, error) {
 	return b.Ensure(ctx, client, owner, binding, profile, fp)
 }
@@ -122,13 +107,46 @@ func (b *integrationBackend) AcquireRun(_ context.Context, ref executionenv.Envi
 	b.claim = executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: run, ClaimID: "claim", Epoch: b.allocation.Epoch + 1, GrantGeneration: 1, ExpiresAt: time.Now().Add(ttl)}
 	return b.claim, nil
 }
-func (b *integrationBackend) ValidateRunClaim(_ context.Context, client, owner string, rc executionenv.RequestContext) error {
+
+// ExecutorRoute refuses the next staleRoute calls as a stale run claim.
+func (b *integrationBackend) ExecutorRoute(
+	_ context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+	capability string,
+) (executioncontroller.ExecutorRoute, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if client != b.allocation.Client || owner != b.allocation.OwnerHash || rc.Environment != b.claim.Environment || rc.BindingID != b.claim.BindingID || rc.RunID != b.claim.RunID || rc.ClaimID != b.claim.ClaimID || rc.Epoch != b.claim.Epoch || rc.GrantGeneration != b.claim.GrantGeneration || !time.Now().Before(b.claim.ExpiresAt) {
-		return &executionenv.Error{Code: executionenv.CodePermissionDenied, Message: "run unavailable"}
+		return executioncontroller.ExecutorRoute{}, &executionenv.Error{
+			Code:    executionenv.CodePermissionDenied,
+			Message: "run unavailable",
+		}
 	}
-	return nil
+	if b.staleRoute > 0 {
+		b.staleRoute--
+		return executioncontroller.ExecutorRoute{}, &executionenv.Error{
+			Code:      executionenv.CodeUnauthenticated,
+			Message:   "run claim is not current",
+			Retryable: true,
+		}
+	}
+	if capability == executionenv.CapabilityFilesystem {
+		b.fileRoutes++
+	} else {
+		b.commandRoutes++
+	}
+	return executioncontroller.ExecutorRoute{
+		MaxFileBytes:       executionenv.MaxFileBytes,
+		MaxCommandBytes:    executionenv.MaxCommandBytes,
+		MaxCommandDuration: time.Minute,
+	}, nil
 }
 func (b *integrationBackend) RenewRun(_ context.Context, _ executionenv.EnvironmentRef, _ string, _ string, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.renewCalls++
 	b.claim = executionenv.RunClaim{Environment: req.Environment, BindingID: req.BindingID, RunID: req.RunID, ClaimID: req.ClaimID, Epoch: req.Epoch, GrantGeneration: 1, ExpiresAt: time.Now().Add(req.TTL)}
 	return b.claim, nil
 }
@@ -208,11 +226,27 @@ type grpcFixture struct {
 	stop      func()
 }
 
+// startFixture serves the provider; file and command calls reach executor, if given.
 func startFixture(
 	t *testing.T,
 	backend executioncontroller.Backend,
 	ready func() bool,
-	register ...func(*grpc.Server),
+	executor ...grpc.ClientConnInterface,
+) grpcFixture {
+	t.Helper()
+	var conn grpc.ClientConnInterface
+	if len(executor) > 0 {
+		conn = executor[0]
+	}
+	return startProvider(t, backend, ready, true, conn)
+}
+
+func startProvider(
+	t *testing.T,
+	backend executioncontroller.Backend,
+	ready func() bool,
+	executorServices bool,
+	executor grpc.ClientConnInterface,
 ) grpcFixture {
 	t.Helper()
 	_, ca, caKey := certificate(t, nil, nil, "ca", false)
@@ -227,8 +261,14 @@ func startFixture(
 	}
 	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(executioncontroller.TLSConfig(serverCert, pool))), grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes), grpc.MaxSendMsgSize(executionenv.MaxMessageBytes))
 	executionv1.RegisterExecutionProviderServiceServer(s, h)
-	for _, r := range register {
-		r(s)
+	if executorServices {
+		connect := func(executioncontroller.ExecutorPin) (grpc.ClientConnInterface, func(), error) {
+			if executor == nil {
+				return nil, nil, errors.New("no executor")
+			}
+			return executor, func() {}, nil
+		}
+		executioncontroller.RegisterExecutorServices(s, h, connect)
 	}
 	go func() { _ = s.Serve(ln) }()
 	roots := x509.NewCertPool()
@@ -323,7 +363,13 @@ func TestTemplateProviderRequiresExactRevision(t *testing.T) {
 
 func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *testing.T) {
 	backend := &integrationBackend{}
-	fx := startFixture(t, backend, nil)
+	executor := &recordingExecutor{
+		data:    []byte("from-grpc"),
+		version: []byte{0xff, 0, 1},
+		stdout:  "ok\n\xff",
+		stderr:  "err\xe2",
+	}
+	fx := startFixture(t, backend, nil, executor.conn(t))
 	defer fx.stop()
 	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
@@ -368,38 +414,192 @@ func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *te
 	if err != nil || result.Stdout != "ok\n�" || result.Stderr != "err�" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if backend.ensureCalls != 1 || backend.attachCalls < 2 || backend.fileCalls != 2 {
-		t.Fatalf("ensure=%d attach=%d file=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
+	if backend.ensureCalls != 1 || backend.attachCalls < 2 || backend.fileRoutes != 2 {
+		t.Fatalf(
+			"ensure=%d attach=%d file=%d",
+			backend.ensureCalls,
+			backend.attachCalls,
+			backend.fileRoutes,
+		)
 	}
 }
 
-func TestCommandStatusIsUnimplementedOnlyAfterAuthorization(t *testing.T) {
+func TestReadOnlyFileCallsRenewAStaleClaimOnce(t *testing.T) {
 	backend := &integrationBackend{}
-	fx := startFixture(t, backend, nil)
-	defer fx.stop()
-	client, err := New(fx.endpoint, fx.clientTLS)
+	fx := startFixture(t, backend, nil, (&recordingExecutor{}).conn(t))
+	t.Cleanup(fx.stop)
+	ws := acquireRemoteRun(t, fx).Workspace()
+	backend.mu.Lock()
+	backend.staleRoute = 1
+	backend.mu.Unlock()
+	data, err := ws.Read(t.Context(), "main.go")
+	if err != nil || string(data) != "package main\n" {
+		t.Fatalf("read after a stale claim = %q, %v", data, err)
+	}
+	backend.mu.Lock()
+	renewed, reads := backend.renewCalls, backend.fileRoutes
+	backend.staleRoute = 2
+	backend.mu.Unlock()
+	if renewed != 1 || reads != 1 {
+		t.Fatalf("renewals=%d forwarded reads=%d, want one each", renewed, reads)
+	}
+	_, err = ws.Read(t.Context(), "main.go")
+	if refusal := Refusal(err); refusal == nil || refusal.Code != executionenv.CodeUnauthenticated {
+		t.Fatalf("read refused twice = %v, want the stale-claim refusal", err)
+	}
+	backend.mu.Lock()
+	backend.staleRoute = 1
+	backend.mu.Unlock()
+	if _, err := ws.CreateFile(t.Context(), "new.go", []byte("x")); Refusal(err) == nil {
+		t.Fatalf("write after a stale claim = %v, want the refusal unretried", err)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.renewCalls != 2 || backend.fileRoutes != 1 {
+		t.Fatalf(
+			"renewals=%d forwarded=%d after the refusals",
+			backend.renewCalls,
+			backend.fileRoutes,
+		)
+	}
+}
+
+func TestConcurrentFileCallsReachTheExecutorTogether(t *testing.T) {
+	const calls = 4
+	release := make(chan struct{})
+	executor := &recordingExecutor{executed: make(chan executorCall, calls), release: release}
+	fx := startFixture(t, &integrationBackend{}, nil, executor.conn(t))
+	t.Cleanup(fx.stop)
+	ws := acquireRemoteRun(t, fx).Workspace()
+	done := make(chan error, calls)
+	for range calls {
+		go func() {
+			_, err := ws.Read(t.Context(), "main.go")
+			done <- err
+		}()
+	}
+	for range calls {
+		select {
+		case <-executor.executed:
+		case err := <-done:
+			t.Fatalf("read finished while others were held: %v", err)
+		}
+	}
+	close(release)
+	for range calls {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestConcurrentCreatesAndReplacesThroughTheProvider(t *testing.T) {
+	fx := startFixture(t, &integrationBackend{}, nil, osfsExecutor(t, t.TempDir()))
+	t.Cleanup(fx.stop)
+	ws := acquireRemoteRun(t, fx).Workspace()
+	if _, err := ws.CreateFile(t.Context(), "shared.txt", []byte("base")); err != nil {
+		t.Fatal(err)
+	}
+	_, base, err := ws.ReadVersion(t.Context(), "shared.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
-	ensured, err := client.EnsureTemplate(context.Background(), "binding", "coding", codingRevision, owner, "create")
-	if err != nil {
-		t.Fatal(err)
+	const n = 8
+	var wg sync.WaitGroup
+	var replaced, mismatched atomic.Int32
+	errs := make(chan error, 2*n)
+	for i := range n {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			path := fmt.Sprintf("file-%d.txt", i)
+			if _, err := ws.CreateFile(t.Context(), path, []byte(path)); err != nil {
+				errs <- err
+				return
+			}
+			if data, err := ws.Read(t.Context(), path); err != nil || string(data) != path {
+				errs <- fmt.Errorf("read %s = %q, %w", path, data, err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := ws.ReplaceFile(t.Context(), "shared.txt", base, []byte(fmt.Sprint(i)))
+			var mismatch *tool.VersionMismatchError
+			switch {
+			case err == nil:
+				replaced.Add(1)
+			case errors.As(err, &mismatch):
+				mismatched.Add(1)
+			default:
+				errs <- err
+			}
+		}()
 	}
-	claim, err := client.AcquireRun(context.Background(), executionenv.RunClaimRequest{Environment: ensured.Environment, Owner: owner, BindingID: "binding", RunID: "run", OperationID: "acquire", TTL: time.Minute})
-	if err != nil {
-		t.Fatal(err)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
-	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: "binding", RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
-	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("authorized status code=%v", status.Code(err))
+	if replaced.Load() != 1 || mismatched.Load() != n-1 {
+		t.Fatalf("replaced=%d mismatched=%d, want one winner", replaced.Load(), mismatched.Load())
 	}
-	rc.Owner.Subject = "mallory"
-	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("wrong-owner status code=%v", status.Code(err))
+}
+
+func TestValidatePlacementRequiresExecutorServices(t *testing.T) {
+	for name, services := range map[string]bool{"current": true, "older provider": false} {
+		t.Run(name, func(t *testing.T) {
+			fx := startProvider(t, &integrationBackend{}, nil, services, nil)
+			t.Cleanup(fx.stop)
+			client, err := New(fx.endpoint, fx.clientTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(client.Close)
+			provider, err := NewTemplateProvider(client, "coding", codingRevision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = provider.ValidatePlacement(t.Context())
+			if services && err != nil {
+				t.Fatalf("preflight = %v", err)
+			}
+			if !services && !errors.Is(err, ErrExecutorServicesMissing) {
+				t.Fatalf("preflight against an older provider = %v", err)
+			}
+		})
+	}
+}
+
+func TestRefusalNeedsNotForwardedAndAConsistentCode(t *testing.T) {
+	refusal := func(grpcCode codes.Code, code executionenv.ErrorCode, forwarded bool) error {
+		details := []protoadapt.MessageV1{
+			&executionv1.ErrorDetail{Code: string(code), Retryable: true},
+		}
+		if !forwarded {
+			details = append(details, &executorv1.ErrorDetail{
+				Reason: executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED,
+			})
+		}
+		st, err := status.New(grpcCode, "peer text").WithDetails(details...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Errorf("main.go: %w", st.Err())
+	}
+	got := Refusal(refusal(codes.Unauthenticated, executionenv.CodeUnauthenticated, false))
+	if got == nil || got.Code != executionenv.CodeUnauthenticated || !got.Retryable ||
+		strings.Contains(got.Error(), "peer text") {
+		t.Fatalf("refusal = %v", got)
+	}
+	for name, err := range map[string]error{
+		"forwarded":    refusal(codes.Unauthenticated, executionenv.CodeUnauthenticated, true),
+		"inconsistent": refusal(codes.NotFound, executionenv.CodeUnauthenticated, false),
+		"unknown code": refusal(codes.Internal, "future", false),
+		"plain":        errors.New("main.go: not found"),
+	} {
+		if got := Refusal(err); got != nil {
+			t.Fatalf("%s decoded as %v", name, got)
+		}
 	}
 }
 
@@ -477,15 +677,6 @@ func TestDecodeErrorAcceptsClosedTypedErrorAndLocalCancellation(t *testing.T) {
 	cancel()
 	if got := decodeError(ctx, status.Error(codes.Canceled, "peer text")); !errors.Is(got, context.Canceled) {
 		t.Fatalf("local cancellation=%v", got)
-	}
-}
-
-func TestCommandResponsesRejectUnknownStates(t *testing.T) {
-	if _, err := commandStartFromProto(&executionv1.CommandStartResponse{State: executionv1.CommandState_COMMAND_STATE_UNSPECIFIED, Result: &executionv1.CommandStatusResponse{State: executionv1.CommandState_COMMAND_STATE_SUCCEEDED}}); err == nil {
-		t.Fatal("accepted unspecified command-start state")
-	}
-	if _, err := commandStatusFromProto(&executionv1.CommandStatusResponse{State: executionv1.CommandState(99), TerminalReceipt: "clean"}); err == nil {
-		t.Fatal("accepted unknown command-status state")
 	}
 }
 

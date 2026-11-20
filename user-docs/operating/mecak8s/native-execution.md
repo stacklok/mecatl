@@ -58,7 +58,7 @@ For the **`v1-` execution-template contract**, preserve these runtime requiremen
 
 | Requirement | Downstream image contract |
 | --- | --- |
-| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider API version is `execution-grpc/1`; the provider calls the executor's private gRPC server, which has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
+| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider forwards file and command calls to the executor's gRPC server, which has no version negotiation. Pair provider and executor from the same release, and rebuild the derivative and regenerate its template revision for every upgrade rather than assuming cross-release executor compatibility. |
 | Identity | The Pod runs as UID **65532**, GID **65532**, with filesystem group **65532**. Added programs must be executable by that identity without privilege escalation or Linux capabilities. |
 | Startup | The provider overrides the image entrypoint and runs `/mecatl-executor serve` as the container's main process, listening on TCP port 7443. Kubernetes restarts the container in the same Pod if the server exits. Keep `/bin/sh`; foreground commands use it. |
 | Writable paths | `/workspace` is the retained workspace PVC; `/tmp` is a size-bounded ephemeral `emptyDir`. The image root filesystem is read-only. Put caches and generated files on those writable mounts, and install utilities into the image at build time. Image contents under the mount points are hidden by the mounts. |
@@ -143,6 +143,9 @@ recipes:
     maxCommandBytes: 1048576
     maxCommandDuration: 5m
 ```
+
+`maxCommandDuration` is at most `30m` and caps every command's timeout; the
+provider shortens a longer requested timeout to it.
 
 An optional `capabilities` list declares the most access the template's
 environments provide: `filesystem` for the file tools and `foreground-command`
@@ -367,10 +370,23 @@ generates a key pair and a self-signed certificate for that environment, stores
 both in an immutable Secret named `executor-tls-<ENVIRONMENT>-<FINGERPRINT>`,
 and records the certificate's SHA-256 fingerprint in the environment's
 `status.serverCertificate`. It adds the executor Pod's UID to that status once
-the Pod exists. A container restart keeps the Pod and its certificate; a
-replacement Pod gets a new Secret and fingerprint. The provider deletes the
-Secret after its Pod is gone during replacement, retirement, and retained
-deletion.
+the Pod exists. The provider connects to the Pod's IP on TCP port 7443 and
+accepts only the pinned fingerprint. After the TLS handshake, and before it sends
+a request, it reads the Pod again and requires the same UID, no deletion
+timestamp, and the IP it dialled. A container restart keeps the Pod and its
+certificate; a replacement Pod gets a new Secret and fingerprint. The provider
+deletes the Secret after its Pod is gone during replacement, retirement, and
+retained deletion.
+
+The chart's network policies allow this connection: the provider may connect
+to executor Pods in its namespace on TCP port 7443, and executor Pods accept
+inbound traffic only from provider Pods on that port. If other policies in your
+cluster restrict traffic, allow the same path.
+
+The executor server and the workload's commands run in one container as the same
+user, so a command can read the server's private key. The post-handshake Pod
+check limits a copied key to impersonating that same executor Pod, not a
+replacement or another environment's executor.
 
 The chart therefore grants the provider `create`, `get`, and `delete` on
 Secrets in its namespace, with no `list`, `watch`, `update`, or `patch`.
@@ -457,9 +473,14 @@ kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
 
 Add the following block to the existing `mecak8s` values. The endpoint is a
 `host:port` gRPC target (no URL scheme) and must use the provider certificate's
-DNS identity. The private `mecatl.execution.v1.ExecutionProviderService` uses
-protocol `execution-grpc/1` with mandatory mTLS. Keep OIDC caller authentication
-enabled; the remote binding is scoped to the verified issuer and subject.
+DNS identity. Over mandatory mTLS, the provider serves the private
+`mecatl.execution.v1.ExecutionProviderService` for environment lifecycle and
+`mecatl.executor.v1.FileService` and `mecatl.executor.v1.CommandService` for
+file and command calls. At startup `mecak8s` checks through gRPC health that the
+provider serves both executor services, and refuses to start otherwise, so run
+`mecak8s` and the provider from the same release. Keep OIDC caller
+authentication enabled; the remote binding is scoped to the verified issuer and
+subject.
 
 ```yaml
 execution:
@@ -601,6 +622,15 @@ to apply configuration; retain the immutable recipe unless explicit pruning is
 safe. A deprecated or revoked revision with an allocation still requires its
 classes. There is no runtime fallback or per-allocation startup isolation.
 
+### mecak8s or an environment reports a version mismatch
+
+If `mecak8s` fails to start with `execution provider does not serve the executor
+file and command services`, the provider comes from an older release. An
+environment that reports `Ready=False` with reason `IncompatibleSchema` was
+created by an older release, and only a provider from that release can retire
+and delete it. Follow
+[Upgrade from v0.0.52 or earlier](execution-provider-lifecycle.md#upgrade-from-v0052-or-earlier).
+
 ### Allocation or image startup fails
 
 If allocation reports `Ready=false` with `PVCUnavailable` or
@@ -663,10 +693,24 @@ Follow
 [execution-provider recovery](execution-provider-lifecycle.md#recover-a-fenced-environment)
 when terminal proof is required.
 
+When the executor container restarts, Kubernetes keeps the Pod, so its UID, IP,
+and pinned certificate stay the same and the session reattaches once the server
+is ready again. Calls made during the restart fail as not ready and can be
+retried. A command that was running when the container restarted ends with an
+unknown outcome: `mecak8s` does not retry it, and the provider does not fence the
+environment. A replacement Pod gets a new certificate pin.
+
+The executor writes files in place through the operating system without
+`fsync`. A completed write survives an executor container restart or a Pod
+replacement on a healthy node, but a node or storage failure before the kernel
+flushes it to the volume can lose it. A write interrupted by a restart can
+leave the file truncated or partly written.
+
 Run claims renew before expiry while the exact peer identity and current
 client policy remain valid. Exact retained retries preserve the claim and
 original expiry. Conflicting or expired replay cannot extend or resurrect the
-claim. Withdrawn trust or expired certificates abort affected in-flight RPCs.
+claim. Withdrawn trust or an expired certificate refuses new calls; calls already
+in progress finish.
 
 ## Next steps
 

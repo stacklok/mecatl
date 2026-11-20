@@ -30,7 +30,7 @@ import (
 func TestNativeBorrowedSchedulePublishesDistinctFireReferences(t *testing.T) {
 	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	controller := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
+	controller := executioncontroller.NewStore(dyn, "ns", profiles)
 	fixture := startFixture(t, controller, nil)
 	defer fixture.stop()
 	client, err := New(fixture.endpoint, fixture.clientTLS)

@@ -49,7 +49,7 @@ func TestControlledRenewalLiveOrdering(t *testing.T) {
 		"return client.ReloadTLS()",
 		"executorExec(inflightReleaseCommand)",
 		"case <-done:",
-		`Path: "after-renewal"`,
+		`workspace.CreateFile(ctx, "after-renewal"`,
 	} {
 		_, remaining, found := strings.Cut(body, step)
 		if !found {

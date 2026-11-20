@@ -70,7 +70,7 @@ func newAdmissionFixture(t *testing.T, profiles *Profiles) admissionFixture {
 		ExecutionEnvironmentGVR: "ExecutionEnvironmentList",
 	}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), kinds)
-	store := NewStore(client, "ns", profiles, nil)
+	store := NewStore(client, "ns", profiles)
 	policy := ClientPolicy{MayAttestOwner: true, ExecutionTemplates: []string{"go"}}
 	clients := map[string]ClientPolicy{admissionClient: policy}
 	return admissionFixture{
@@ -199,7 +199,7 @@ func TestAdmittedCapabilitiesReturnedOnReattach(t *testing.T) {
 func TestPreAdmissionEnvironmentReportsTemplateCapabilities(t *testing.T) {
 	env := lifecycleEnvironment(time.Now())
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 	attached, err := store.Attach(t.Context(), ref, "client", "owner", "source")
 	if err != nil || !slices.Equal(attached.AdmittedCapabilities, bothCapabilities) {

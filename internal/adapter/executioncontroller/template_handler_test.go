@@ -24,7 +24,7 @@ func TestAuthenticatedTemplateCatalogAndBinding(t *testing.T) {
 	revision := fixtureRevision(t, spec)
 	registry, _ := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec, Display: TemplateDisplay{Name: "Docs"}}}, revision)
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	store := NewStore(dyn, "ns", registry, nil)
+	store := NewStore(dyn, "ns", registry)
 	allowed := "spiffe://cluster/ns/allowed"
 	denied := "spiffe://cluster/ns/denied"
 	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{allowed: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}, denied: {MayAttestOwner: true}}}, store)
@@ -76,7 +76,15 @@ func TestEnsureTemplateStatusConflictExhaustionPreservesWireCodeAndSafeDiagnosti
 	})
 	diagnostics := &handlerDiagnosticRecorder{}
 	const clientID = "spiffe://cluster/ns/allowed"
-	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{clientID: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}}, Diagnostics: diagnostics}, NewStore(dyn, "ns", profiles, nil))
+	h := NewHandler(
+		HandlerConfig{
+			Clients: map[string]ClientPolicy{
+				clientID: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}},
+			},
+			Diagnostics: diagnostics,
+		},
+		NewStore(dyn, "ns", profiles),
+	)
 	_, err := h.EnsureTemplate(authenticatedContext(clientID), &executionv1.EnsureTemplateRequest{
 		BindingId: "binding", Template: &executionv1.TemplateSelector{Id: "go", Revision: profiles.defaultRevision["go"]},
 		Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "op",
@@ -102,7 +110,15 @@ func TestEnsureTemplateUnknownBackendErrorDiagnosticIsBounded(t *testing.T) {
 	})
 	diagnostics := &handlerDiagnosticRecorder{}
 	const clientID = "spiffe://cluster/ns/allowed"
-	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{clientID: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}}, Diagnostics: diagnostics}, NewStore(dyn, "ns", profiles, nil))
+	h := NewHandler(
+		HandlerConfig{
+			Clients: map[string]ClientPolicy{
+				clientID: {MayAttestOwner: true, ExecutionTemplates: []string{"go"}},
+			},
+			Diagnostics: diagnostics,
+		},
+		NewStore(dyn, "ns", profiles),
+	)
 	_, err := h.EnsureTemplate(authenticatedContext(clientID), &executionv1.EnsureTemplateRequest{
 		BindingId: "binding", Template: &executionv1.TemplateSelector{Id: "go", Revision: profiles.defaultRevision["go"]},
 		Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "op",

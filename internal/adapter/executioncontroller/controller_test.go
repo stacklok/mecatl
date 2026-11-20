@@ -740,5 +740,29 @@ func testPodInputs(profiles *Profiles, pod *corev1.Pod) executorPodInputs {
 func testEnvironment() *unstructured.Unstructured {
 	registry := testProfiles()
 	revision := registry.defaultRevision["go"]
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"schemaVersion": int64(2), "templateID": "go", "templateRevision": revision, "templateDigest": registry.byName["go"].Digest, "revision": "rev", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}
+	return &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "execution.mecatl.dev/v1alpha1",
+			"kind":       "ExecutionEnvironment",
+			"metadata": map[string]any{
+				"name":      "exec-test",
+				"namespace": "ns",
+				"uid":       string(types.UID("uid")),
+			},
+			"spec": map[string]any{
+				"schemaVersion":    int64(3),
+				"templateID":       "go",
+				"templateRevision": revision,
+				"templateDigest":   registry.byName["go"].Digest,
+				"revision":         "rev",
+				"desired":          "Active",
+			},
+			"status": map[string]any{
+				"schemaVersion": int64(3),
+				"epoch":         int64(1),
+				"references":    []any{},
+				"fenceState":    "Healthy",
+			},
+		},
+	}
 }

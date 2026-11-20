@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -40,12 +41,12 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	rc, release := acquireRun(t, ctx, client, owner, binding, attached, "helm-lifetime-write")
 	probe := []byte("package main\nimport (\"net\";\"os\";\"time\")\nfunc main(){c,e:=net.DialTimeout(\"tcp\",os.Args[1],2*time.Second);if e!=nil{os.Exit(42)};c.Close()}\n")
 	for path, data := range map[string][]byte{"helm-sentinel": []byte("retained-helm-data\n"), "helm-probe.go": probe} {
-		if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: path, Data: data}); err != nil {
+		if _, err := client.Workspace(rc).CreateFile(ctx, path, data); err != nil {
 			t.Fatal("create lifetime workspace data:", remoteErrorCode(err))
 		}
 	}
-	built, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go build -o helm-probe helm-probe.go", TimeoutMillis: 120000})
-	if err != nil || built.State != executionenv.CommandSucceeded || built.Result.ExitCode != 0 {
+	built, err := runCommand(ctx, client, rc, "go build -o helm-probe helm-probe.go", 2*time.Minute)
+	if err != nil || built.ExitCode != 0 {
 		t.Fatal("build lifetime probe failed")
 	}
 	waitFileContent(t, ctx, client, rc, "helm-sentinel", "retained-helm-data\n", "current run after provisioning")
@@ -354,8 +355,8 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	oldReady := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
 	oldRun, done := acquireRun(t, ctx, newClient, owner, binding, oldReady, "historical-revision-shell")
 	waitFileContent(t, ctx, newClient, oldRun, "helm-sentinel", "retained-helm-data\n", "historical template after provider restart")
-	shell, err := newClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: oldRun, Command: "go version", TimeoutMillis: 30000})
-	if err != nil || shell.State != executionenv.CommandSucceeded || shell.Result.ExitCode != 0 {
+	shell, err := runCommand(ctx, newClient, oldRun, "go version", 30*time.Second)
+	if err != nil || shell.ExitCode != 0 {
 		t.Fatal("historical revision lost its bound Shell")
 	}
 	done()
@@ -444,12 +445,20 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		t.Fatal("acquire revocation proof run:", remoteErrorCode(err))
 	}
 	active := executionenv.RequestContext{Environment: claim.Environment, Owner: newOwner, BindingID: newSession, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
-	commandResult := make(chan executionenv.CommandStartResponse, 1)
-	commandError := make(chan error, 1)
+	type commandOutcome struct {
+		result tool.CommandResult
+		err    error
+	}
+	commandDone := make(chan commandOutcome, 1)
 	go func() {
-		result, err := deprecatedClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: active, Command: "printf 'running\\n' > revoke-running; sleep 220", TimeoutMillis: 240000})
-		commandResult <- result
-		commandError <- err
+		result, err := runCommand(
+			ctx,
+			deprecatedClient,
+			active,
+			"printf 'running\\n' > revoke-running; sleep 220",
+			4*time.Minute,
+		)
+		commandDone <- commandOutcome{result: result, err: err}
 	}()
 	newPod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "execution.mecatl.dev/environment="+newRef.ID, "-o", "jsonpath={.items[0].metadata.name}")
 	startDeadline := time.Now().Add(30 * time.Second)
@@ -473,11 +482,10 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	// Revocation retains the Pod finalizer as evidence; require kubelet termination, not deletion.
 	waitExecutorTerminal(ctx, t, kubeconfig, newRef.ID, newStatus.PodUID)
 	select {
-	case result := <-commandResult:
-		if result.State == executionenv.CommandSucceeded {
+	case out := <-commandDone:
+		if out.err == nil && out.result.ExitCode == 0 {
 			t.Fatal("revoked active command completed successfully")
 		}
-		<-commandError
 	case <-time.After(30 * time.Second):
 		t.Fatal("revoked active command was not canceled after executor termination")
 	}
@@ -490,7 +498,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if _, err := revokedClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: newRef, Owner: newOwner, BindingID: newSession, RunID: "revoked-new-run", OperationID: "revoked-new-run", TTL: time.Minute}); err == nil {
 		t.Fatal("revoked allocation admitted a new run")
 	}
-	if _, err := revokedClient.File(ctx, executionenv.FileRequest{Context: active, Operation: executionenv.OpFileRead, Path: "revoke-running"}); err == nil {
+	if _, err := revokedClient.Workspace(active).Read(ctx, "revoke-running"); err == nil {
 		t.Fatal("revoked allocation admitted file access")
 	}
 	// The derivative has only one published revision. Remove its default and

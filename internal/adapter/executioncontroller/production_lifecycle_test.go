@@ -79,10 +79,12 @@ func adminRequestFixture() adminLifecycleRequest {
 }
 
 func TestHealthyTerminalPodCanStartLifecycleWithoutReadyCondition(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	setConditionObject(env, "Ready", false, "PodTerminated", "executor exited naturally")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
+	store := NewStore(dynamicClient, "ns", testProfiles()).WithKubeClient(
+		kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()),
+	)
 	q := adminRequestFixture()
 	if err := store.RetireExact(t.Context(), q); err != nil {
 		t.Fatal(err)
@@ -106,7 +108,7 @@ func TestHealthyTerminalLifecycleRejectsIncompleteEvidence(t *testing.T) {
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			setConditionObject(env, "Ready", false, "PodTerminated", "executor exited naturally")
 			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 			objects := []runtime.Object{retainedPVC()}
@@ -115,7 +117,11 @@ func TestHealthyTerminalLifecycleRejectsIncompleteEvidence(t *testing.T) {
 				mutate(pod)
 				objects = append(objects, pod)
 			}
-			store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(objects...))
+			store := NewStore(
+				dynamicClient,
+				"ns",
+				testProfiles(),
+			).WithKubeClient(kubefake.NewSimpleClientset(objects...))
 			if err := store.RetireExact(t.Context(), adminRequestFixture()); err == nil {
 				t.Fatal("incomplete terminal evidence admitted lifecycle")
 			}
@@ -128,7 +134,7 @@ func TestHealthyTerminalLifecycleRejectsIncompleteEvidence(t *testing.T) {
 }
 
 func TestRetiredEnvironmentIsTerminalWithoutDesiredSpecTransition(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
 	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
@@ -153,7 +159,7 @@ func TestRetiredEnvironmentIsTerminalWithoutDesiredSpecTransition(t *testing.T) 
 }
 
 func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	q := adminRequestFixture()
 	_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "RetireEnvironment", "phase": "WaitingForPodDeletion", "expectedEpoch": int64(4), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID, "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}, "status", "lifecycleOperation")
@@ -162,7 +168,7 @@ func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
 	if err := r.finishRetirement(t.Context(), env, q.OperationID); err != nil {
 		t.Fatal(err)
 	}
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 	if err := store.RetireExact(t.Context(), q); err != nil {
 		t.Fatalf("lost-reply retry failed: %v", err)
 	}
@@ -178,14 +184,14 @@ func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
 }
 
 func TestRetiredEnvironmentRejectsNewReplacementButKeepsExactReplaysAndDelete(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	q := adminRequestFixture()
 	_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
 	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
 	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 
 	if err := store.RetireExact(t.Context(), q); err != nil {
 		t.Fatalf("exact completed retirement replay failed: %v", err)
@@ -216,7 +222,7 @@ func TestRetiredEnvironmentRejectsNewReplacementButKeepsExactReplaysAndDelete(t 
 }
 
 func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	q := adminRequestFixture()
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{
 		operationIDField: q.OperationID, "previousPodUID": q.ExpectedPodUID,
@@ -228,7 +234,7 @@ func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T
 	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 
 	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
 		t.Fatalf("exact completed replacement replay failed after retirement: %v", err)
@@ -245,7 +251,7 @@ func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T
 func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 	for _, mode := range []string{"removed", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			pod, pvc := terminalExecutor(), retainedPVC()
 			pod.Name, pvc.Name = resourceName("executor", "env"), resourceName("workspace", "env")
 			pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName = pvc.Name
@@ -261,7 +267,7 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 				}
 				return len(obj.(*corev1.Pod).Finalizers) != 0, nil, nil
 			})
-			store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
+			store := NewStore(dynamicClient, "ns", testProfiles()).WithKubeClient(kube)
 			q := adminRequestFixture()
 			if err := store.RetireExact(t.Context(), q); err != nil {
 				t.Fatal(err)
@@ -323,7 +329,7 @@ func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
 	for _, mode := range []string{"removed", "revoked"} {
 		for _, phase := range []string{"Quiescing", "WaitingForTermination", "RemovingPodFinalizer", "WaitingForPodDeletion", "CreatingReplacement"} {
 			t.Run(mode+"/"+phase, func(t *testing.T) {
-				env := lifecycleAdminEnvironment(2, []any{})
+				env := lifecycleAdminEnvironment(3, []any{})
 				q := adminRequestFixture()
 				_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "ReplaceExecutor", "phase": phase, "expectedEpoch": int64(q.ExpectedEpoch), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID}, "status", "lifecycleOperation")
 				if phase == "RemovingPodFinalizer" || phase == "WaitingForPodDeletion" || phase == "CreatingReplacement" {
@@ -370,7 +376,7 @@ func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
 func TestProfileDriftStillBlocksProvisioningAndReplacementCreation(t *testing.T) {
 	for _, phase := range []string{"provisioning", "CreatingReplacement"} {
 		t.Run(phase, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			if phase == "CreatingReplacement" {
 				q := adminRequestFixture()
 				_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
@@ -411,17 +417,18 @@ func TestUnsupportedSchemaFailsClosedWithoutMutation(t *testing.T) {
 	}{
 		{"schema-zero", int64(0), int64(0)},
 		{"schema-one", int64(1), int64(1)},
+		{"schema-two", int64(2), int64(2)},
 		{"missing", nil, nil},
-		{"missing-spec", nil, int64(2)},
-		{"missing-status", int64(2), nil},
+		{"missing-spec", nil, int64(3)},
+		{"missing-status", int64(3), nil},
 		{"unknown", int64(7), int64(7)},
-		{"mismatched-spec", int64(1), int64(2)},
-		{"mismatched-status", int64(2), int64(1)},
-		{"malformed-spec", "2", int64(2)},
-		{"malformed-status", int64(2), "2"},
+		{"mismatched-spec", int64(2), int64(3)},
+		{"mismatched-status", int64(3), int64(2)},
+		{"malformed-spec", "3", int64(3)},
+		{"malformed-status", int64(3), "3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			for field, value := range map[string]any{"spec": tc.spec, "status": tc.status} {
 				if value == nil {
 					unstructured.RemoveNestedField(env.Object, field, "schemaVersion")
@@ -431,7 +438,7 @@ func TestUnsupportedSchemaFailsClosedWithoutMutation(t *testing.T) {
 			}
 			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 			k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
-			store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
+			store := NewStore(d, "ns", testProfiles()).WithKubeClient(k)
 			_, err := store.Attach(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "session-a")
 			var controlled *executionenv.Error
 			if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeNotReady {
@@ -482,10 +489,12 @@ func TestUnsupportedSchemaFailsClosedWithoutMutation(t *testing.T) {
 }
 
 func TestRecoverRequiresExactTerminalPodAndPersistsProof(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
+	store := NewStore(dynamicClient, "ns", testProfiles()).WithKubeClient(
+		kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()),
+	)
 	q := adminRequestFixture()
 	q.OperationID = "recover-op"
 	if err := store.RecoverEnvironment(t.Context(), q); err != nil {
@@ -499,11 +508,13 @@ func TestRecoverRequiresExactTerminalPodAndPersistsProof(t *testing.T) {
 }
 
 func TestRecoveredTerminalProofCanStartExactReplacement(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	setConditionObject(env, "Ready", false, "FenceUnknown", "holder lost")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
+	store := NewStore(dynamicClient, "ns", testProfiles()).WithKubeClient(
+		kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()),
+	)
 	q := adminRequestFixture()
 	q.OperationID = "recover-op"
 	if err := store.RecoverEnvironment(t.Context(), q); err != nil {
@@ -520,10 +531,14 @@ func TestRecoveredTerminalProofCanStartExactReplacement(t *testing.T) {
 }
 
 func TestRecoverMissingPodRemainsFenceUnknown(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(retainedPVC()))
+	store := NewStore(
+		dynamicClient,
+		"ns",
+		testProfiles(),
+	).WithKubeClient(kubefake.NewSimpleClientset(retainedPVC()))
 	if err := store.RecoverEnvironment(t.Context(), adminRequestFixture()); err == nil {
 		t.Fatal("missing executor accepted as termination proof")
 	}
@@ -534,12 +549,26 @@ func TestRecoverMissingPodRemainsFenceUnknown(t *testing.T) {
 }
 
 func TestCompletedReplacementReceiptReplaysExactOperation(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}})
+	env := lifecycleAdminEnvironment(
+		3,
+		[]any{
+			map[string]any{
+				"bindingID":   "binding",
+				"state":       "Published",
+				"operationID": "seed",
+				"createdAt":   time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		},
+	)
 	q := adminRequestFixture()
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{operationIDField: q.OperationID, "previousPodUID": q.ExpectedPodUID, "replacementPodUID": "new-pod", "pvcUID": q.ExpectedPVCUID, "previousEpoch": int64(q.ExpectedEpoch), "replacementEpoch": int64(q.ExpectedEpoch + 1)}, "status", "lastReplacement")
 	_ = unstructured.SetNestedField(env.Object, int64(q.ExpectedEpoch+1), "status", "epoch")
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"name": "executor", "uid": "new-pod"}, "status", "pod")
-	store := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), "ns", testProfiles(), nil)
+	store := NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env),
+		"ns",
+		testProfiles(),
+	)
 	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
 		t.Fatalf("exact completed replacement did not replay: %v", err)
 	}
@@ -551,9 +580,9 @@ func TestCompletedReplacementReceiptReplaysExactOperation(t *testing.T) {
 
 func TestReplacementQuiescesAndPendingReferenceBlocksRetirement(t *testing.T) {
 	published := map[string]any{"bindingID": "session", "state": "Published", "operationID": "publish", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}
-	env := lifecycleAdminEnvironment(2, []any{published})
+	env := lifecycleAdminEnvironment(3, []any{published})
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 	q := adminRequestFixture()
 	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
 		t.Fatal(err)
@@ -567,15 +596,19 @@ func TestReplacementQuiescesAndPendingReferenceBlocksRetirement(t *testing.T) {
 	}
 
 	pending := map[string]any{"bindingID": "pending", "state": "PendingDelete", "operationID": "delete", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}
-	env = lifecycleAdminEnvironment(2, []any{pending})
-	store = NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), "ns", testProfiles(), nil)
+	env = lifecycleAdminEnvironment(3, []any{pending})
+	store = NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env),
+		"ns",
+		testProfiles(),
+	)
 	if err := store.RetireExact(t.Context(), q); err == nil {
 		t.Fatal("pending reference did not block retirement")
 	}
 }
 
 func TestReplacementPersistsTerminalProofBeforeRemovingPodFinalizer(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "replace", "type": "ReplaceExecutor", "phase": "WaitingForTermination", "expectedEpoch": int64(4), "expectedPodUID": "pod-uid", "expectedPVCUID": "pvc-uid", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}, "status", "lifecycleOperation")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	kube := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
@@ -618,7 +651,17 @@ func replacementExecutor(ready bool) *corev1.Pod {
 }
 
 func replacementLifecycleEnvironment() *unstructured.Unstructured {
-	env := lifecycleAdminEnvironment(2, []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}})
+	env := lifecycleAdminEnvironment(
+		3,
+		[]any{
+			map[string]any{
+				"bindingID":   "binding",
+				"state":       "Published",
+				"operationID": "seed",
+				"createdAt":   time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		},
+	)
 	q := adminRequestFixture()
 	_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
 	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "ReplaceExecutor", "phase": "CreatingReplacement", "expectedEpoch": int64(4), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID, "createdAt": "2026-09-21T00:00:00Z"}, "status", "lifecycleOperation")
@@ -663,7 +706,7 @@ func TestStaleReplacementObservationCannotOverwriteCompletion(t *testing.T) {
 	if !conditionTrue(got, "Ready") || intNested(got.Object, "status", "epoch") != 5 || textNested(got.Object, "status", "pod", "uid") != "new-pod" {
 		t.Fatalf("stale unready write damaged completion: %v", got.Object["status"])
 	}
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 	if allocation, err := store.Attach(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "binding"); err != nil || !allocation.Ready || allocation.Epoch != 5 {
 		t.Fatalf("attach after completed replacement: allocation=%+v err=%v", allocation, err)
 	}
@@ -706,7 +749,7 @@ func TestLifecycleStatusWritersRejectStaleObservations(t *testing.T) {
 	})
 
 	t.Run("ordinary reconcile after admission", func(t *testing.T) {
-		stale := lifecycleAdminEnvironment(2, []any{})
+		stale := lifecycleAdminEnvironment(3, []any{})
 		current := stale.DeepCopy()
 		_ = unstructured.SetNestedMap(current.Object, map[string]any{"id": "replace", "type": "ReplaceExecutor", "phase": "Quiescing", "expectedEpoch": int64(4), "expectedPodUID": "pod-uid", "expectedPVCUID": "pvc-uid", "createdAt": "2026-09-21T00:00:00Z"}, "status", "lifecycleOperation")
 		setConditionObject(current, "Ready", false, "Quiescing", "replacement admitted")
@@ -723,11 +766,11 @@ func TestLifecycleStatusWritersRejectStaleObservations(t *testing.T) {
 }
 
 func TestWrongPVCUIDCannotStartRetainedDeletion(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
 	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+	store := NewStore(dynamicClient, "ns", testProfiles())
 	q := adminRequestFixture()
 	q.ExpectedPVCUID = "wrong"
 	if err := store.DeleteRetiredEnvironment(t.Context(), q); err == nil {

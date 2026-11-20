@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/executorrpc/commandserver"
 	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
@@ -120,5 +123,13 @@ func TestDroppedConnectionDuringCommandIsUnknownAndNotRetried(t *testing.T) {
 	if starts.Load() != 1 || streams.Load() != 1 {
 		t.Fatalf("command started %d times over %d streams, want once",
 			starts.Load(), streams.Load())
+	}
+}
+
+func TestUnservedCommandServiceDidNotStart(t *testing.T) {
+	f := serve(t, memfs.NewWorkspace(root), nil)
+	_, err := executorclient.NewRunner(f.conn, root, nil).Run(t.Context(), "true")
+	if status.Code(err) != codes.Unimplemented || errors.Is(err, executorclient.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want Unimplemented without an unknown outcome", err)
 	}
 }

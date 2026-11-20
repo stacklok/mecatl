@@ -203,13 +203,15 @@ func resultError(ctx context.Context, state executorv1.CommandState) error {
 }
 
 // startError classifies a failure before Started. Only a refusal the executor
-// tagged means the command never ran; transport errors can follow a start.
+// tagged, or a service it does not serve, means the command never ran;
+// transport errors can follow a start.
 func startError(err error) error {
 	code, why := status.Code(err), reason(err)
 	switch {
 	case why == executorv1.ErrorReason_ERROR_REASON_NO_SHELL:
 		return tool.ErrNoShell
 	case why == executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED,
+		code == codes.Unimplemented,
 		code == codes.InvalidArgument,
 		code == codes.ResourceExhausted &&
 			why == executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,

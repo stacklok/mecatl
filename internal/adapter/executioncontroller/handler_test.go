@@ -27,7 +27,6 @@ import (
 type fakeBackend struct {
 	ensureCalls, created int
 	allocations          map[string]Allocation
-	commandState         executionenv.CommandState
 	claim                executionenv.RunClaim
 	intents              []executionenv.ReferenceIntent
 }
@@ -84,23 +83,6 @@ func (*fakeBackend) ReleaseReference(context.Context, executionenv.EnvironmentRe
 	return nil
 }
 func (*fakeBackend) Retire(context.Context, executionenv.EnvironmentRef, string) error { return nil }
-func (*fakeBackend) File(context.Context, string, string, executionenv.FileRequest) (executionenv.FileResponse, error) {
-	return executionenv.FileResponse{}, nil
-}
-func (f *fakeBackend) StartCommand(context.Context, string, string, executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	state := f.commandState
-	if state == "" {
-		state = executionenv.CommandSucceeded
-	}
-	return executionenv.CommandStartResponse{CommandID: "command", State: state, Result: executionenv.CommandStatusResponse{CommandID: "command", State: state}}, nil
-}
-func (*fakeBackend) CommandStatus(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, nil
-}
-func (*fakeBackend) CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, nil
-}
-
 func (f *fakeBackend) EnsurePending(ctx context.Context, client, owner, binding, profile, fp, _ string) (Allocation, error) {
 	return f.Ensure(ctx, client, owner, binding, profile, fp)
 }
@@ -353,38 +335,6 @@ func TestHandlerWithNilBackendRejectsEveryRPCWithoutPanicking(t *testing.T) {
 			_, err := h.RetireEnvironment(ctx, q)
 			return err
 		},
-		func(valid bool) error {
-			var q *executionv1.FileRequest
-			if valid {
-				q = &executionv1.FileRequest{Operation: executionv1.FileOperation_FILE_OPERATION_READ, Path: "x"}
-			}
-			_, err := h.Files(ctx, q)
-			return err
-		},
-		func(valid bool) error {
-			var q *executionv1.CommandStartRequest
-			if valid {
-				q = &executionv1.CommandStartRequest{Command: "true"}
-			}
-			_, err := h.StartCommand(ctx, q)
-			return err
-		},
-		func(valid bool) error {
-			var q *executionv1.CommandQueryRequest
-			if valid {
-				q = &executionv1.CommandQueryRequest{CommandId: "command"}
-			}
-			_, err := h.CommandStatus(ctx, q)
-			return err
-		},
-		func(valid bool) error {
-			var q *executionv1.CommandQueryRequest
-			if valid {
-				q = &executionv1.CommandQueryRequest{CommandId: "command"}
-			}
-			_, err := h.CancelCommand(ctx, q)
-			return err
-		},
 	}
 	for i, call := range calls {
 		for _, valid := range []bool{false, true} {
@@ -392,25 +342,6 @@ func TestHandlerWithNilBackendRejectsEveryRPCWithoutPanicking(t *testing.T) {
 				t.Fatalf("RPC %d valid=%t code=%v", i, valid, status.Code(err))
 			}
 		}
-	}
-}
-
-func TestHandlerRejectsUnknownBackendCommandState(t *testing.T) {
-	backend := newFakeBackend()
-	backend.commandState = executionenv.CommandState("future")
-	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{"spiffe://cluster/ns/mecak8s": {MayAttestOwner: true, ExecutionTemplates: []string{"go"}}}}, backend)
-	ctx := authenticatedContext("spiffe://cluster/ns/mecak8s")
-	ensured, err := h.EnsureTemplate(ctx, &executionv1.EnsureTemplateRequest{BindingId: "session-1", Template: &executionv1.TemplateSelector{Id: "go", Revision: testTemplateRevision}, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, OperationId: "create"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	claim, err := h.AcquireRun(ctx, &executionv1.AcquireRunRequest{Environment: ensured.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", RunId: "run", OperationId: "acquire", TtlMillis: time.Minute.Milliseconds()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := &executionv1.CommandStartRequest{Context: &executionv1.RequestContext{Environment: claim.Environment, Owner: &executionv1.Owner{Issuer: "issuer", Subject: "alice"}, BindingId: "session-1", RunId: claim.RunId, ClaimId: claim.ClaimId, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}, Command: "true"}
-	if _, err := h.StartCommand(ctx, q); status.Code(err) != codes.Internal || status.Convert(err).Message() != "execution provider request failed" {
-		t.Fatalf("unexpected invalid-state result: code=%v message=%q", status.Code(err), status.Convert(err).Message())
 	}
 }
 

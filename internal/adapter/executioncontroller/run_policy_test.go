@@ -49,7 +49,7 @@ func TestRunTemplatePolicyWithdrawalOverMTLS(t *testing.T) {
 				_ = unstructured.SetNestedField(env.Object, hashText(scopeCreator), "spec", "clientHash")
 				_ = unstructured.SetNestedField(env.Object, ownerHash(scopeOwner), "spec", "ownerHash")
 				dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-				store := NewStore(dynamic, "ns", testProfiles(), nil).WithSecurityManager(storeManager)
+				store := NewStore(dynamic, "ns", testProfiles()).WithSecurityManager(storeManager)
 				store.now = func() time.Time { return now }
 				limiter, err := NewRPCLimiter(manager, 4, 2)
 				if err != nil {

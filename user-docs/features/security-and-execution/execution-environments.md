@@ -186,7 +186,9 @@ another replica's run claim. File and command calls on one environment can run
 concurrently, and the provider writes no Kubernetes state for an individual call.
 When a caller resolves a persisted ordinary
 approval after a server restart, the server reacquires native run ownership,
-renews it while the resumed run drains, and releases it after the drain. An
+renews it while the resumed run drains, and releases it after the drain. A
+command whose outcome is unknown, for example because the executor restarted
+while it ran, is not retried and does not fence the environment. An
 environment in `FenceUnknown` requires the documented manual recovery path.
 There is no force takeover.
 
@@ -215,8 +217,10 @@ provider workflow is unsupported. Do not remove the retention or executor
 finalizers manually; follow the operator's external-fencing runbook when the
 provider cannot independently observe terminal compute.
 
-Execution environments require schema version 2 in both spec and status. Missing,
-unsupported, or mismatched versions fail closed. Preserve the objects, PVCs, and
+Execution environments require schema version 3 in both spec and status. Missing,
+unsupported, or mismatched versions fail closed: the environment reports
+`Ready=False` with reason `IncompatibleSchema`, and the provider refuses every
+call and administrative operation on it. Preserve the objects, PVCs, and
 authority records when diagnosing a schema rejection; do not edit version fields,
 reset ledgers, or delete workspace data to bypass validation.
 
@@ -253,8 +257,8 @@ client authorization policy and names the TLS files:
 }
 ```
 
-The provider checks the original peer certificate and current client policy at
-admission, renewal, and completion. A policy change increments `generation`;
+The provider checks the peer certificate and current client policy when each
+call starts. A policy change increments `generation`;
 TLS certificate or trust renewal is independent of that generation. Service
 mTLS identifies `mecak8s` or an administrator; the session owner remains the
 user's verified OIDC issuer and subject. The workload helper receives no client
@@ -288,9 +292,9 @@ provider's projected TLS identity and client CA bundle). Kubernetes projected
 rejected. The provider reloads renewed valid TLS material independently of the
 client-policy manifest. For client-policy changes, publish a higher-generation
 manifest and verify provider readiness. A stale replica denies requests rather
-than using a rolled-back policy. TLS trust withdrawal or certificate expiry
-aborts affected in-flight operations; old RPCs drain only while their original
-peer identity remains authorized. See the
+than using a rolled-back policy. TLS trust withdrawal, certificate expiry, or a
+policy change refuses new calls from the affected client; calls already in
+progress are not withdrawn and finish. See the
 [policy and TLS rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
 ### Template policy
@@ -307,8 +311,8 @@ checks. Policy withdrawal does not prove that an executor has stopped.
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
 current positive `grant_generation` (the wire name for the durable revocation
 fence); success increments it without changing the execution epoch. The provider
-then refuses calls under the old generation; calls already in progress are not
-stopped.
+then refuses calls under the old generation. Calls already in progress, including
+a running command, are not withdrawn and finish under the revoked authority.
 Revocation is not executor termination proof; a new run needs a fresh claim
 after the old claim is released or fenced.
 
@@ -324,7 +328,8 @@ Production values require two or more provider replicas, explicit
 provider-client selectors, API-server and DNS CIDRs, and finite
 ResourceQuota/LimitRange values. Executor pods are default-deny for ingress and
 egress, except ingress from provider pods to the executor server on TCP port
-7443. Add only profile-specific CIDR and port egress under
+7443; the provider's own policy allows egress to that port on executor pods in
+its namespace. Add only profile-specific CIDR and port egress under
 `networkPolicy.workloadProfiles`; there is no implicit DNS, metadata-service,
 API-server, provider, or peer access. Each profile requires an explicit
 RuntimeClass supplied by the cluster, but do not treat a RuntimeClass name alone
@@ -352,7 +357,7 @@ same-release reinstalls. A missing ledger with retained allocations is not a new
 installation: do not bootstrap it at generation 1. See the
 [provider lifecycle procedure](/operating/mecak8s/execution-provider-lifecycle.md#upgrade-uninstall-and-reinstall-the-execution-provider)
 for ownership checks, retained network protection, and quiesced CRD/provider
-upgrade order. Verify that retained environments use schema version 2 before
+upgrade order. Verify that retained environments use schema version 3 before
 enabling new sessions.
 
 ## Limitations

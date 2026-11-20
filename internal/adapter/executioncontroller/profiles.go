@@ -267,7 +267,7 @@ func resolveProfileQuantities(name string, s ProfileSpec) (resolvedProfile, erro
 func validExecutionBounds(s ProfileSpec) bool {
 	return s.MaxFileBytes > 0 && s.MaxFileBytes <= 5<<20 &&
 		s.MaxCommandBytes > 0 && s.MaxCommandBytes <= 1<<20 &&
-		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= 30*time.Minute
+		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= MaxCommandDuration
 }
 
 func positiveQuantity(profile, field, value string) (resource.Quantity, error) {

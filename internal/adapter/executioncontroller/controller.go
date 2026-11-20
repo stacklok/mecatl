@@ -256,7 +256,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 		stopErr = r.stopRevokedExecutor(ctx, env)
 	}
 	if requireCurrentSchema(env) != nil {
-		return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported"))
+		return errors.Join(
+			stopErr,
+			r.setCondition(
+				ctx,
+				env,
+				"Ready",
+				false,
+				"IncompatibleSchema",
+				"only schema version 3 is supported",
+			),
+		)
 	}
 	if revoked {
 		if stopErr != nil {

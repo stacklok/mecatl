@@ -94,7 +94,7 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 		t.Run(map[bool]string{true: "shared_engine", false: "per_session_engine"}[sharedEngine], func(t *testing.T) {
 			dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 			profiles := explicitIDProfiles(t)
-			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
+			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles)
 			fixture := startFixture(t, controllerStore, nil)
 			defer fixture.stop()
 			client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -187,7 +187,7 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	profiles := explicitIDProfiles(t)
-	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
+	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles)
 	fixture := startFixture(t, controllerStore, nil)
 	defer fixture.stop()
 	client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -274,7 +274,7 @@ func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *tes
 func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency(t *testing.T) {
 	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
+	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles)
 	fixture := startFixture(t, controllerStore, nil)
 	defer fixture.stop()
 	client, err := New(fixture.endpoint, fixture.clientTLS)
