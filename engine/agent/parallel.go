@@ -1218,7 +1218,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	}
 	// Publish create-only: a branch id derived from a provider tool-call id must
 	// never overwrite an existing owner's durable transcript.
-	if err := createSessionIfSupported(ctx, t.store, childSess); err != nil {
+	if err := createChildSession(ctx, t.store, childSess, ""); err != nil {
 		res.failed = true
 		res.failReason = neutraliseChildText(fmt.Sprintf("durable branch session could not be created: %v", err))
 		be.branchEnd(res, session.StopError, session.Usage{}, 0, branchEngine.now().Sub(start))

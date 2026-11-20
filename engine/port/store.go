@@ -86,6 +86,33 @@ type SessionCreator interface {
 	Create(ctx context.Context, s *session.Session) error
 }
 
+// ChildSessionCreator is the OPTIONAL child-publication capability of a
+// SessionStore. When the engine first publishes a child session (a subagent, a
+// parallel branch, or a team member), it calls CreateChild instead of Create,
+// before the child runs. A resumed child is not published again.
+//
+// CreateChild has Create's contract for publishing s. A host may also use it to
+// admit the child: an error stops the child before its first turn, exactly like
+// a failed Create, and the parent sees the same creation failure. The engine
+// calls CreateChild even when the store negotiated no Create support; the
+// implementation then decides whether to publish.
+//
+// A decorator that adds CreateChild must still forward the optional operations
+// and capability signals of the store it wraps; see SessionCapabilitySupport.
+type ChildSessionCreator interface {
+	CreateChild(ctx context.Context, s *session.Session, child ChildSessionInfo) error
+}
+
+// ChildSessionInfo describes a child session the engine publishes, beyond what
+// the session itself records.
+type ChildSessionInfo struct {
+	// DefinitionName is the agent definition the child runs, as the engine
+	// selected it: a subagent call's agent argument, or a team member's agent
+	// type. It is empty for a child that runs no named definition: the default
+	// subagent explorer, a parallel branch, or a generic team member.
+	DefinitionName string
+}
+
 // SessionCapabilitySupport is the authoritative optional-operation signal for
 // adapters that retain optional interfaces even when their negotiated backend
 // does not provide every operation. Stores without this signal advertise

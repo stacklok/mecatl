@@ -958,7 +958,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	}
 	sess.ProviderID = provider
 	sess.ModelID = eng.Model()
-	if err := s.publishMemberSession(ctx, spec.Name, sess, cleanup); err != nil {
+	if err := s.publishMemberSession(ctx, spec.Name, spec.AgentType, sess, cleanup); err != nil {
 		return err
 	}
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
@@ -1855,8 +1855,8 @@ func (s *Supervisor) stampMemberOwner(sess *session.Session) {
 	_ = sess.RestoreLabels(s.directOwner, session.Authority{})
 }
 
-func (s *Supervisor) publishMemberSession(ctx context.Context, name string, sess *session.Session, cleanup func() error) error {
-	if err := createSessionIfSupported(ctx, s.store, sess); err != nil {
+func (s *Supervisor) publishMemberSession(ctx context.Context, name, definitionName string, sess *session.Session, cleanup func() error) error {
+	if err := createChildSession(ctx, s.store, sess, definitionName); err != nil {
 		if cleanup != nil {
 			_ = cleanup()
 		}

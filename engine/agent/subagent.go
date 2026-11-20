@@ -2647,7 +2647,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// tool-call id, so an overwrite would clobber another owner's transcript. A
 	// resume loads an existing snapshot and must not be re-created.
 	if !resuming {
-		if err := createSessionIfSupported(ctx, t.store, child); err != nil {
+		if err := createChildSession(ctx, t.store, child, args.Agent); err != nil {
 			_ = cleanupWS()
 			return session.NewToolError(call.ID, fmt.Sprintf("Subagent: durable child session could not be created: %v", err)), nil
 		}
@@ -3020,7 +3020,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	}
 	// Create-only for a fresh background child, same reason as the foreground path.
 	if !b.resuming {
-		if err := createSessionIfSupported(ctx, t.store, child); err != nil {
+		if err := createChildSession(ctx, t.store, child, b.args.Agent); err != nil {
 			endOnError(session.NewToolError(b.call.ID,
 				fmt.Sprintf("Subagent: durable child session could not be created: %v", err)))
 			return
@@ -4783,6 +4783,17 @@ func createSessionIfSupported(ctx context.Context, store port.SessionStore, sess
 		return nil
 	}
 	return creator.Create(ctx, sess)
+}
+
+// createChildSession first-publishes a child session. A store that implements
+// port.ChildSessionCreator gets CreateChild, with the definition the child runs,
+// so the host can admit the child before it starts; any other store gets the
+// create-only publication createSessionIfSupported performs.
+func createChildSession(ctx context.Context, store port.SessionStore, sess *session.Session, definitionName string) error {
+	if creator, ok := store.(port.ChildSessionCreator); ok {
+		return creator.CreateChild(ctx, sess, port.ChildSessionInfo{DefinitionName: definitionName})
+	}
+	return createSessionIfSupported(ctx, store, sess)
 }
 
 func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session) {
