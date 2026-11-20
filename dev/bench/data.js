@@ -572892,9 +572892,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795181862699,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b233a0997f45ba15290ac78a509e71f1c5f17c03",
+          "message": "feat(executioncontroller): add the authorizing Files and Commands proxy (#2899)\n\nThe execution provider now implements the executor `FileService`\nand `CommandService` as an authorizing proxy. Each call must carry\na complete `RequestContext` and pass the same run claim, epoch,\ngrant generation and client policy checks as `ValidateRunClaim`.\nCalls during a lifecycle operation and services the session was\nnot admitted for are refused. Nothing reaches the executor until\nthe call passes.\n\nThe proxy enforces the template's file and command size limits as\ndata streams, clipping command output at `MaxCommandBytes` and\nsetting `output_truncated`. It dials only the pinned executor Pod\nand certificate. Per-client limits now apply to streaming RPCs.\n\nRefusals before forwarding carry the new executor reason\n`ERROR_REASON_NOT_FORWARDED`, so `executorclient` reports the\ncommand as not started rather than outcome unknown. The provider\ndoes not register the services until the transport switch.\n\nCloses: #2701",
+          "timestamp": "2026-11-20T14:12:01Z",
+          "tree_id": "1f8899a558a7593aa917bb6f1810938f92ca0390",
+          "url": "https://github.com/stacklok/mecatl/commit/b233a0997f45ba15290ac78a509e71f1c5f17c03"
+        },
+        "date": 1795184677313,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 780,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32184,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795184673100,
+  "lastUpdate": 1795184678334,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
