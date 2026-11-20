@@ -440081,6 +440081,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795181872915,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b233a0997f45ba15290ac78a509e71f1c5f17c03",
+          "message": "feat(executioncontroller): add the authorizing Files and Commands proxy (#2899)\n\nThe execution provider now implements the executor `FileService`\nand `CommandService` as an authorizing proxy. Each call must carry\na complete `RequestContext` and pass the same run claim, epoch,\ngrant generation and client policy checks as `ValidateRunClaim`.\nCalls during a lifecycle operation and services the session was\nnot admitted for are refused. Nothing reaches the executor until\nthe call passes.\n\nThe proxy enforces the template's file and command size limits as\ndata streams, clipping command output at `MaxCommandBytes` and\nsetting `output_truncated`. It dials only the pinned executor Pod\nand certificate. Per-client limits now apply to streaming RPCs.\n\nRefusals before forwarding carry the new executor reason\n`ERROR_REASON_NOT_FORWARDED`, so `executorclient` reports the\ncommand as not started rather than outcome unknown. The provider\ndoes not register the services until the transport switch.\n\nCloses: #2701",
+          "timestamp": "2026-11-20T14:12:01Z",
+          "tree_id": "1f8899a558a7593aa917bb6f1810938f92ca0390",
+          "url": "https://github.com/stacklok/mecatl/commit/b233a0997f45ba15290ac78a509e71f1c5f17c03"
+        },
+        "date": 1795184686913,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13385,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -573043,6 +573082,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795184683102,
+  "lastUpdate": 1795184687977,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
