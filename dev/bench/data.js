@@ -396342,6 +396342,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795139163161,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b026d3aab545b768f1246ba7e772eafe66f3db09",
+          "message": "feat(mcpbroker): carry the vMCP resource on Gateway (#2887)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-11-20T13:24:40+01:00",
+          "tree_id": "8ba18609dad7cb4307c5e20482bfe13983c5af83",
+          "url": "https://github.com/stacklok/mecatl/commit/b026d3aab545b768f1246ba7e772eafe66f3db09"
+        },
+        "date": 1795178220508,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -571987,6 +572021,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795178216782,
+  "lastUpdate": 1795178221529,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
