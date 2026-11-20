@@ -398132,6 +398132,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795188096553,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "028d4b53db9c2dc1f4ee6c8420fbdf5eb432ccbe",
+          "message": "chore(agents): correct stale and dated agent instruction files (#2924)\n\nFix instruction-file statements the repository contradicts:\nlearning budgets use the durable ledger, `models.allowlist` has no\neffect, provider-aware aliases exist, and `encoding/json/v2` is\nstandard from Go 1.27. Subagents now defer only to installed agents\nand no longer carry another project's invariants. Remove numeric word\ncaps, history narrative, and dangling skill references.",
+          "timestamp": "2026-11-20T16:54:20Z",
+          "tree_id": "e6e23fb45ea035b6087eb263569079e710d9b946",
+          "url": "https://github.com/stacklok/mecatl/commit/028d4b53db9c2dc1f4ee6c8420fbdf5eb432ccbe"
+        },
+        "date": 1795194351724,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -574542,6 +574576,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795194348820,
+  "lastUpdate": 1795194352330,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
