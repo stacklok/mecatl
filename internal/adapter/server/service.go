@@ -120,14 +120,18 @@ type SessionEngineResult struct {
 	// echo and the running engine agree after a live-catalog swap with no rebuild.
 	ProviderID string
 	ModelID    string
-	// ReasoningEffort is the EFFECTIVE, normalised + per-provider-clamped reasoning
-	// effort this session resolved to: "" when unset (provider default),
-	// else the neutral token actually sent to the adapter (e.g. openai + "max" echoes
-	// "high"). Computed ONCE in composition from the SAME resolved value that re-mints
-	// (or reuses) the engine's adapter; the server echoes it verbatim on
+	// ReasoningEffort is the EFFECTIVE reasoning effort requests for this session's
+	// model carry: "" when unset (provider default) or when the model doesn't accept
+	// the requested level, else that level. Computed ONCE in composition by the SAME
+	// per-model check the engine's adapter applies; the server echoes it verbatim on
 	// CreateSessionResponse.resolved_model and never recomputes — the SAME single-
 	// source discipline as ProviderID/ModelID.
 	ReasoningEffort string
+	// RequestedReasoningEffort is the normalised level the session asks for ("" for
+	// Auto), before the per-model check. An agent-bound session persists it, so a
+	// rebuild resolves the same request even when what its model accepts has
+	// changed, and a model that accepts the level gets it again.
+	RequestedReasoningEffort string
 	// BuiltForMode is the session PermissionMode the factory RESOLVED THE MODEL FOR
 	// (the mode→model re-resolution). The factory echoes back the
 	// mode it was handed — the SAME single-source discipline as ProviderID/ModelID —
@@ -2370,9 +2374,9 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 const reasoningEffortAuto = "auto"
 
 // storedProviderSelector rebuilds the construction selector from a session's
-// persisted labels. Those labels hold the EFFECTIVE reasoning effort, where an
-// agent-bound session's explicit "auto" is stored as "" (see
-// SessionEngineResult.ReasoningEffort). Feeding that "" back as a selector would
+// persisted labels. An agent-bound session's labels hold its REQUESTED reasoning
+// effort, where an explicit "auto" is stored as "" (see
+// SessionEngineResult.RequestedReasoningEffort). Feeding that "" back as a selector would
 // instead mean "inherit the operator default", so an agent-bound session's empty
 // effort is reconstructed as explicit "auto". Unbound sessions keep their
 // existing semantics.
@@ -2404,7 +2408,7 @@ func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelecto
 		if !carried.bound {
 			brokerKeys, brokerKeysPresent = res.BrokerRegistrationKeys, true
 		}
-		sel = ProviderSelector{ProviderID: res.ProviderID, ModelID: res.ModelID, ReasoningEffort: res.ReasoningEffort}
+		sel = ProviderSelector{ProviderID: res.ProviderID, ModelID: res.ModelID, ReasoningEffort: res.RequestedReasoningEffort}
 		return setSessionLabels(sess, sel, profile, owner, res.Authority, brokerKeys, brokerKeysPresent)
 	}
 	authority := s.rootAuthority(sess.Kind, carried)
@@ -7329,14 +7333,14 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		}
 		if replace {
 			if res.BuiltForMode != sess.Mode || limits != sess.Limits ||
-				res.ProviderID != sess.ProviderID || res.ModelID != sess.ModelID || res.ReasoningEffort != sess.ReasoningEffort {
+				res.ProviderID != sess.ProviderID || res.ModelID != sess.ModelID || res.RequestedReasoningEffort != sess.ReasoningEffort {
 				err = errors.New("agent runtime contradicts fixed session configuration")
 			}
 		} else {
 			// Only an unpublished successor can adopt newly tightened configuration.
 			// Keep its inherited authority/ceiling, never the factory's fresh grant.
 			err = configured.TightenConfiguration(res.BuiltForMode, limits)
-			configured.ProviderID, configured.ModelID, configured.ReasoningEffort = res.ProviderID, res.ModelID, res.ReasoningEffort
+			configured.ProviderID, configured.ModelID, configured.ReasoningEffort = res.ProviderID, res.ModelID, res.RequestedReasoningEffort
 		}
 		if err != nil {
 			closeCandidate()

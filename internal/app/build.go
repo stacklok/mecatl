@@ -2847,7 +2847,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				if !ok {
 					return server.ReflectionReceipt{}, fmt.Errorf("%w: reflection session provider is unavailable", server.ErrFailedPrecondition)
 				}
-				reflectionProvider = entry.provider
+				reflectionProvider = atAuto(entry.provider)
 				if reflectionCfg.Model == "" {
 					reflectionCfg.Model = reg.DefaultModelFor(sess.ProviderID)
 				}
@@ -3019,7 +3019,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if cfg.awaitContextWindowObserver != nil {
 				cfg.awaitContextWindowObserver(p, m)
 			}
-			return awaitContextWindow(awaitCtx, reg, p, m)
+			if err := awaitContextWindow(awaitCtx, reg, p, m); err != nil {
+				return err
+			}
+			awaitEffortLevels(awaitCtx, reg, p, m)
+			return nil
 		},
 		// Session lease: nil unless a backend was selected;
 		// when nil, the session takes no lease, starts no renewer, and releases
@@ -3330,11 +3334,7 @@ func resolvedSessionProjection(cfg Config, reg *providerRegistry, sel server.Pro
 	if strings.TrimSpace(sel.ReasoningEffort) == "" || !ok {
 		effort, _ = NormalizeReasoningEffort(cfg.ReasoningEffort)
 	}
-	effort, _ = clampEffortForProvider(providerID, effort)
-	if supported, known := modelReasoningSupport(reg, providerID, model); effort != "" && known && !supported {
-		effort = ""
-	}
-	return server.ResolvedModel{ProviderID: providerID, ModelID: model, ReasoningEffort: effort}
+	return server.ResolvedModel{ProviderID: providerID, ModelID: model, ReasoningEffort: reg.appliedEffortFor(providerID, model, effort)}
 }
 
 // debugSessionEngineFactory builds the deliberately narrow analysis engine for a
@@ -3551,28 +3551,23 @@ func sessionEngineFactoryWithTools(
 			}
 			resolvedProvider = entry.provider
 		}
-		// REASONING EFFORT, re-minted via the engine FACTORY — never a
+		// REASONING EFFORT, wrapped via the engine FACTORY — never a
 		// clone-and-swap-LLM (the "provider FIXED per session" discipline). Precedence:
 		// the per-session selector value OUT-RANKS the operator default; both normalise
 		// through resolveSessionEffort (an unknown token falls back + WARNs). The
-		// resolved neutral token is then per-provider CLAMPED here in composition (xhigh/
-		// max→high for openai, with a diagnostic — the adapter has no port.Diagnostics)
-		// and CAPABILITY-GATED (a model the catalog/live source says has NO reasoning →
-		// DEGRADE: drop the effort + WARN; an UNKNOWN model fails open and sends it, the
-		// thinking-path posture). resolvedEffort is the EFFECTIVE token echoed on
-		// resolved_model. The DEFAULT PATH stays BYTE-IDENTICAL: when the resolved effort
-		// equals the operator default the entry was built with, the shared entry.provider
-		// is reused (no re-mint); a re-mint happens ONLY when effort OR the per-session
-		// capability intersection differs and the entry exposes a remint closure.
-		// utilityProvider is the OPERATOR-DEFAULT provider (the entry's shared
-		// .provider). Reasoning effort binds the AGENT's reasoning (the main engine) and
-		// its SUBAGENTS (the catalog parent below) — NOT the harness's own internal
-		// classifier/one-turn calls. So the three utility engines (the guardrail content
-		// checker, the child-ask reviewer, the model-router classifier) are built off
-		// THIS provider, never the session-re-minted resolvedProvider — a session that
-		// dials reasoning_effort:max must not silently raise the spend of those
-		// cost-sensitive internal calls.
-		utilityProvider := resolvedProvider
+		// session's provider becomes an effortProvider that checks EVERY request against
+		// its own model's effort levels: a model that lists the level, or whose levels
+		// are unknown, gets it; a model that doesn't list it gets none (a WARN, once).
+		// resolvedEffort carries the requested level and the level the session's own
+		// model gets, which is echoed on resolved_model.
+		// utilityProvider runs at Auto. Reasoning effort binds the AGENT's reasoning
+		// (the main engine) and its SUBAGENTS (the catalog parent below) — NOT the
+		// harness's own internal classifier/one-turn calls. So the three utility
+		// engines (the guardrail content checker, the child-ask reviewer, the
+		// model-router classifier) are built off THIS provider, never the session's
+		// wrapped resolvedProvider — a session that dials reasoning_effort:max must not
+		// silently raise the spend of those cost-sensitive internal calls.
+		utilityProvider := atAuto(resolvedProvider)
 		// The per-session input capability is the catalog ∩ adapter INTERSECTION for
 		// the resolved (provider, model), computed HERE in composition — the single
 		// source the server echoes verbatim on session_capabilities. It is a NEUTRAL
@@ -3699,7 +3694,7 @@ func sessionEngineFactoryWithTools(
 		// content checker, over the session's resolved provider/model. OFF-by-default
 		// (returns deps.Hooks unchanged when unconfigured); wired onto the MAIN engine's
 		// hooks only — buildCatalog's child hooks above stay RAW (the recursion guard).
-		// The three utility engines pin utilityProvider (the OPERATOR-DEFAULT effort), NOT
+		// The three utility engines pin utilityProvider (no reasoning effort), NOT
 		// resolvedProvider — reasoning effort binds the agent, not the harness's internal
 		// classifier/one-turn calls.
 		attachGuardrailReviewer(&deps, buildGuardrailsActionReviewer(cfg, reg, utilityProvider, resolvedProviderID, guardrailWaiver), cfg.guardrailDetails)
@@ -3727,11 +3722,11 @@ func sessionEngineFactoryWithTools(
 			// (resolve-at-use), so the echo and the running engine never diverge.
 			ProviderID: resolvedProviderID,
 			ModelID:    resolvedModel,
-			// The EFFECTIVE reasoning-effort this session resolved to: the
-			// normalised + per-provider-clamped + capability-gated token actually wired
-			// into the (possibly re-minted) adapter. The server echoes it on
-			// resolved_model — the SAME single-source discipline as the ids.
-			ReasoningEffort: resolvedEffort,
+			// The EFFECTIVE reasoning-effort requests for the session's model carry
+			// (the per-model check effortProvider applies), echoed on resolved_model,
+			// and the requested level the session keeps.
+			ReasoningEffort:          resolvedEffort.applied,
+			RequestedReasoningEffort: resolvedEffort.requested,
 			// Echo the mode this engine resolved its model for, so the
 			// Service stamps sessionEngine.builtForMode from this one source and detects a
 			// later mode→model staleness — the SAME single-source discipline as the ids.
@@ -5018,7 +5013,8 @@ func engineDepsForProvider(
 	// supplies a request-local budget derived from the live session window and complete
 	// request. The tier-4 Model remains the load-bearing slot swap (the heuristic
 	// compactor has no Model/Counter at all, so it is unaffected).
-	compactorCfg, compactorCounter, compactorProvider, compactorProviderID := modelCfg, counter, provider, providerModel.ProviderID
+	// Compaction runs at Auto: a session's reasoning effort never raises its spend.
+	compactorCfg, compactorCounter, compactorProvider, compactorProviderID := modelCfg, counter, atAuto(provider), providerModel.ProviderID
 	if cp, cpID, cm, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotCompaction, provider, providerModel.ProviderID, model); ok {
 		compactorProvider, compactorProviderID = cp, cpID
 		compactorCfg = modelCfg
@@ -6688,7 +6684,7 @@ func buildUserModelReviewEngine(cfg Config, reg *providerRegistry, providerID st
 		}
 	}
 	mustValidateClassifiedCatalog(classified, "user-model review tool catalog")
-	return newChildEngineForProvider(cfg, "usermodel-review", provider, session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model},
+	return newChildEngineForProvider(cfg, "usermodel-review", atAuto(provider), session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model},
 		reg.windowResolver(cfg, providerID, cfg.Model), classified.catalog, promptConfig(cfg, cfg.gitStatus), nil)
 }
 
@@ -7486,7 +7482,7 @@ func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegis
 			if !ok {
 				return nil, false
 			}
-			provider = entry.provider
+			provider = inheritEffort(parentProvider, entry.provider)
 		}
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
 		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
@@ -7510,7 +7506,7 @@ func buildParallelTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 			if !ok {
 				return nil, false
 			}
-			provider = entry.provider
+			provider = inheritEffort(parentProvider, entry.provider)
 		}
 		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog")
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
@@ -7588,7 +7584,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	// SUPERSEDES the flag's model (the flag still gates ON/OFF). Otherwise resolve the
 	// flag's value through the alias machinery.
 	model := parentModel
-	reviewerProvider, reviewerProviderID := provider, parentProviderID
+	reviewerProvider, reviewerProviderID := atAuto(provider), parentProviderID
 	if slotProvider, slotProviderID, slotModel, ok := resolveAuxiliarySlotTarget(cfg, provReg, slotAskReviewer, provider, parentProviderID, parentModel); ok {
 		reviewerProvider, reviewerProviderID, model = slotProvider, slotProviderID, slotModel
 	} else if sel != "" {
@@ -7596,7 +7592,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 			model = target.Model
 			if target.ProviderID != parentProviderID && provReg != nil {
 				if entry, found := provReg.Lookup(target.ProviderID); found {
-					reviewerProvider, reviewerProviderID = entry.provider, target.ProviderID
+					reviewerProvider, reviewerProviderID = atAuto(entry.provider), target.ProviderID
 				}
 			}
 		}
@@ -7671,7 +7667,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		return nil
 	}
 	classifierModel := resolveRouterClassifierModel(cfg, parentModel)
-	classifierProvider, classifierProviderID := provider, parentProviderID
+	classifierProvider, classifierProviderID := atAuto(provider), parentProviderID
 	classifierSlot := slotRouter
 	if cfg.RouterClassifierSlot != "" {
 		classifierSlot = cfg.RouterClassifierSlot
@@ -7909,7 +7905,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// remain a v1 scope limit (the factory declines; selectChildEngine reports it).
 	opts = append(opts,
 		agent.WithAgentModelEngineFactory(
-			buildAgentTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+			buildAgentTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
 	)
 	// ROUTABLE agent defs (issue #286): the SET of def names that expressed NO model intent
 	// (absent `model:`), don't switch provider, and have no inline MCP — so the OPT-IN router
@@ -7930,7 +7926,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)
 	opts = append(opts,
 		agent.WithAgentWritableEngineFactory(writableAgentFactory),
-		agent.WithAgentWritableModelEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, mainMgr)),
+		agent.WithAgentWritableModelEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, provider, parentProviderID, reg, skillIdx, hooks, mainMgr)),
 	)
 	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
@@ -8016,7 +8012,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 				if !ok {
 					return nil, false
 				}
-				childProvider = entry.provider
+				childProvider = inheritEffort(provider, entry.provider)
 			}
 			return newNoFSChild("task:model="+model, childProvider, providerID, model, childWindowFor(cfg, provReg, providerID, model)), true
 		}),
@@ -8133,7 +8129,7 @@ func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 			if !ok {
 				return nil, false
 			}
-			provider = entry.provider
+			provider = inheritEffort(parentProvider, entry.provider)
 		}
 		childCat := readOnlyExplorerCatalog(runner)
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
@@ -8143,7 +8139,7 @@ func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 	}
 }
 
-func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
 		if reg == nil || agentName == "" || target.Model == "" {
@@ -8165,7 +8161,7 @@ func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *pro
 			return nil, false
 		}
 		windowFn := childWindowFor(cfg, provReg, target.Provider, target.Model)
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), inheritEffort(parentProvider, entry.provider), session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, windowFn,
 			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
@@ -8177,7 +8173,7 @@ func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *pro
 	}
 }
 
-func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
 	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
 		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
@@ -8199,7 +8195,7 @@ func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, prov
 		if !found || !entry.available || entry.provider == nil {
 			return nil, false
 		}
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, childWindowFor(cfg, provReg, target.Provider, target.Model),
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), inheritEffort(parentProvider, entry.provider), session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, childWindowFor(cfg, provReg, target.Provider, target.Model),
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil, skillIdx, defaultHooks, mainRunner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
@@ -8502,7 +8498,7 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 						_ = generationClose()
 						return agent.MemberBuild{}
 					}
-					childProvider, childProviderID = entry.provider, selectedProvider
+					childProvider, childProviderID = inheritEffort(provider, entry.provider), selectedProvider
 				}
 				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 			}
@@ -8692,7 +8688,7 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 						_ = generationClose()
 						return agent.MemberBuild{}
 					}
-					childProvider, childProviderID = entry.provider, selectedProvider
+					childProvider, childProviderID = inheritEffort(provider, entry.provider), selectedProvider
 				}
 				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 				pc = promptConfig(modelCfgFor(cfg, model), cfg.gitStatus)

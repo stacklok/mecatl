@@ -163,7 +163,7 @@ func TestBuildAgentWritableModelEngineFactoryGuards(t *testing.T) {
 	if got := routableAgentNames(provReg, defs, providerOpenAI); !slices.Equal(got, []string{"unknown-provider"}) {
 		t.Fatalf("router eligibility = %v, want only the unknown-provider fallback def", got)
 	}
-	factory := buildAgentWritableTargetEngineFactory(context.Background(), cfg, provReg, providerOpenAI, defs, nil, hookexec.New(nil), nil)
+	factory := buildAgentWritableTargetEngineFactory(context.Background(), cfg, provReg, nil, providerOpenAI, defs, nil, hookexec.New(nil), nil)
 
 	for _, name := range []string{"pinned", "inline"} {
 		if eng, ok := factory(name, agent.ModelTarget{Model: routerLarge}); ok || eng != nil {

@@ -541,19 +541,6 @@ func TestToolhiveExplicitBaseURL_SkipsConfigFile(t *testing.T) {
 	}
 }
 
-// (9) clampEffortForProvider joins toolhive to the openai/openrouter clamp case.
-func TestClampEffortForProvider_Toolhive(t *testing.T) {
-	for _, effort := range []string{effortMax, effortXHigh} {
-		got, didClamp := clampEffortForProvider(providerToolhive, effort)
-		if !didClamp || got != effortHigh {
-			t.Errorf("clampEffortForProvider(toolhive, %q) = (%q, %v), want (high, true)", effort, got, didClamp)
-		}
-	}
-	if got, didClamp := clampEffortForProvider(providerToolhive, effortLow); didClamp || got != effortLow {
-		t.Errorf("clampEffortForProvider(toolhive, low) = (%q, %v), want (low, false)", got, didClamp)
-	}
-}
-
 // (12) Status projection: providerStatusProto covers ok/unreachable/
 // unauthorized/empty for intent-driven, Codex, and custom-provider entries;
 // ordinary built-ins such as openrouter/anthropic produce NO status rows.

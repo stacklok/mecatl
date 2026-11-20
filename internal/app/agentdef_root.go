@@ -106,9 +106,9 @@ func buildAgentDefRootEngine(
 	// sites use (build.go's shared engine and per-session factory) — never the
 	// removed buildGuardrailsHooks. This is what keeps an agent-bound session's
 	// contextual review indistinguishable from any other main session's (AC1.6).
-	guardrailProvider := provider
+	guardrailProvider := atAuto(provider)
 	if entry, ok := provReg.Lookup(providerModel.ProviderID); ok {
-		guardrailProvider = entry.provider
+		guardrailProvider = atAuto(entry.provider)
 	}
 	attachGuardrailReviewer(&deps, buildGuardrailsActionReviewer(cfg, provReg, guardrailProvider, parentProviderID, guardrailWaiver), cfg.guardrailDetails)
 
@@ -256,17 +256,18 @@ func agentDefSessionEngineFactory(
 			"agent", def.Name, "provider", pid, "model", model, "no_fs", noFS)
 
 		return server.SessionEngineResult{
-			AgentDefinitionName: def.Name,
-			Engine:              eng,
-			Capabilities:        caps,
-			ReasoningEffort:     effort,
-			RuntimeRevision:     revision,
-			ProviderID:          pid,
-			ModelID:             model,
-			BuiltForMode:        clampedMode,
-			Limits:              &clampedLimits,
-			Authority:           authority,
-			Close:               closeFn,
+			AgentDefinitionName:      def.Name,
+			Engine:                   eng,
+			Capabilities:             caps,
+			ReasoningEffort:          effort.applied,
+			RequestedReasoningEffort: effort.requested,
+			RuntimeRevision:          revision,
+			ProviderID:               pid,
+			ModelID:                  model,
+			BuiltForMode:             clampedMode,
+			Limits:                   &clampedLimits,
+			Authority:                authority,
+			Close:                    closeFn,
 		}, nil
 	}
 }

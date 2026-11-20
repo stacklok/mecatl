@@ -152,11 +152,10 @@ func (p *Provider) applyCacheDialect(params *responses.ResponseNewParams, req po
 // reasoningEffortFor maps a NEUTRAL composition effort token to the SDK's
 // shared.ReasoningEffort. It returns ok=false (OMIT the field) for "" / "auto" and
 // for any UNRECOGNISED token — fail-soft, so a stray/forward token never 400s a
-// reasoning request. Composition clamps xhigh/max→high for OpenAI BEFORE the
-// adapter sees the value (this adapter has no port.Diagnostics to narrate a
-// clamp), so in practice only low/medium/high reach here; the remaining native SDK
-// tiers (none/minimal/xhigh) are mapped too, for forward safety should composition
-// ever loosen the clamp.
+// reasoning request. Composition sends a level only when the request's model
+// accepts it (this adapter has no port.Diagnostics to narrate a drop), so any of
+// low/medium/high/xhigh/max can reach here; none/minimal are mapped too, for
+// forward safety.
 func reasoningEffortFor(token string) (shared.ReasoningEffort, bool) {
 	switch token {
 	case "low":
@@ -171,6 +170,8 @@ func reasoningEffortFor(token string) (shared.ReasoningEffort, bool) {
 		return shared.ReasoningEffortMinimal, true
 	case "xhigh":
 		return shared.ReasoningEffortXhigh, true
+	case "max":
+		return shared.ReasoningEffortMax, true
 	default:
 		// "", "auto", or an unknown/forward token: omit reasoning.effort entirely.
 		return "", false

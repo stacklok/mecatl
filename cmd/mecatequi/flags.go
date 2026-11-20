@@ -352,7 +352,7 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 
 	fs.StringVar(&f.permissionMode, "permission-mode", "", permissionModeHelp)
 	fs.StringVar(&f.posture, "posture", "", "DEPRECATED: use --permission-mode. Permission posture: strict (default), trusted, auto, or yolo. Headless runs need an explicit trust source such as --trust-project to admit project content. Deny and configured ask rules still apply. Unknown values use strict.")
-	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. OpenAI maps xhigh and max to high. Unknown values use the provider or operator setting.")
+	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. A model that doesn't accept the level gets none. Unknown values use the provider or operator setting.")
 	fs.BoolVar(&f.trustProject, "trust-project", false, "Allow workspace content to provide project instructions, rules, agents, skills, souls, commands, Git snapshots, and the read-only child worktree shell. Default: false. Enable only for a repository and Git metadata you trust.")
 
 	// Headless telemetry (issue #343): OPT-IN OTLP trace + metrics push.

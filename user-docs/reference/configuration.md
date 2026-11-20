@@ -99,11 +99,11 @@ DEPRECATED: use permissionMode: instead; still honoured with a WARN for one rele
 
 Tier: **operator**
 
-OPERATOR-TIER reasoning-effort scalar: "" / "auto" (unset — the provider default) / "low" / "medium" / "high" / "xhigh" / "max". OpenAI clamps xhigh/max down to high; Anthropic maps all five. A per-session CreateSession.reasoning_effort out-ranks this default. A project-tier reasoning-effort: is IGNORED with a WARN (a project cannot raise the model's reasoning spend). Empty = keep the CLI/default (provider default).
+OPERATOR-TIER reasoning-effort scalar: "" / "auto" (unset — the provider default) / "low" / "medium" / "high" / "xhigh" / "max". Each request carries it only when its model accepts the level (models.effort_levels, the live listing, or the catalog decides); a model of unknown levels gets it. A per-session CreateSession.reasoning_effort out-ranks this default. A project-tier reasoning-effort: is IGNORED with a WARN (a project cannot raise the model's reasoning spend). Empty = keep the CLI/default (provider default).
 
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |
-| `reasoning-effort` | `string` | `(empty)` | ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max"). Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN (operator-tier only, for consistency — a project cannot raise the model's reasoning spend). Empty = absent (the resolver returns "" and composition uses the provider default). The composition layer interprets + clamps the token; permconfig only reads the scalar. |
+| `reasoning-effort` | `string` | `(empty)` | ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max"). Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN (operator-tier only, for consistency — a project cannot raise the model's reasoning spend). Empty = absent (the resolver returns "" and composition uses the provider default). The composition layer sends the level only to models that accept it; permconfig only reads the scalar. |
 
 ## `plan-mode-auto-approve`
 

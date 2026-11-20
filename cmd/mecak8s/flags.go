@@ -517,7 +517,7 @@ func parseFlags(argv []string) (config, error) {
 
 	// Reasoning-effort tier: operator-tier only; help text verbatim from mecated.
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
-		"Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto uses configured or provider defaults; unsupported or invalid values fall back to a supported default")
+		"Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto uses configured or provider defaults; invalid values fall back to them, and a model that doesn't accept the level gets none")
 
 	// Security (no rate-limit: a pod is fronted by the Service/mesh).
 	fs.StringVar(&cfg.authToken, "auth-token", "", "Bearer token for RPC/API requests. Empty disables static bearer authentication; OIDC or mTLS may still apply. Reads MECATL_AUTH_TOKEN when unset")
