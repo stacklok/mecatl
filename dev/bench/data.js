@@ -442066,6 +442066,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795195121987,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d033d60704b768ff1e344e6eea51e3ba50e02a3b",
+          "message": "fix(mcp): prevent initialize cancellation from stalling handshake cleanup (#2910)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T09:37:30-08:00",
+          "tree_id": "62ff6f99fbc63b120395759b37769629bed389c3",
+          "url": "https://github.com/stacklok/mecatl/commit/d033d60704b768ff1e344e6eea51e3ba50e02a3b"
+        },
+        "date": 1795197062105,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -575598,6 +575637,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795197058086,
+  "lastUpdate": 1795197063125,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
