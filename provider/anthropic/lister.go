@@ -59,6 +59,15 @@ type ThinkingDescriptor struct {
 	Enabled  bool // Capabilities.Thinking.Types.enabled.supported (manual)
 }
 
+// EffortDescriptor is the adapter's neutral projection of a model's effort
+// capability (Capabilities.Effort). Known is false when the listing doesn't say,
+// so the caller keeps its own fallback. A known descriptor with no Levels means
+// the model takes no effort.
+type EffortDescriptor struct {
+	Known  bool
+	Levels []string // supported levels in the order low, medium, high, xhigh, max
+}
+
 // Model is the lister's OWN neutral result type — the rich, self-described
 // per-model metadata Anthropic's /v1/models returns. It carries nothing
 // provider-private (no key, no URL); the composition layer maps it to its
@@ -72,6 +81,7 @@ type Model struct {
 	OutputLimit  int // MaxTokens (the max_tokens output ceiling)
 	Image        bool
 	Thinking     ThinkingDescriptor
+	Effort       EffortDescriptor
 }
 
 // Lister fetches the LIVE Anthropic model catalog from the KEYED /v1/models
@@ -168,5 +178,38 @@ func mapModelInfo(info sdk.ModelInfo) Model {
 			Adaptive: !unsupported && caps.Thinking.Types.Adaptive.Supported,
 			Enabled:  !unsupported && caps.Thinking.Types.Enabled.Supported,
 		},
+		Effort: mapEffort(caps),
 	}
+}
+
+// mapEffort reads Capabilities.Effort. An absent capability, or one without a
+// supported flag, is unknown. supported:false is known with no levels.
+// supported:true lists the levels marked supported; if it marks none, the
+// listing hasn't said which, so the descriptor stays unknown.
+func mapEffort(caps sdk.ModelCapabilities) EffortDescriptor {
+	if !caps.JSON.Effort.Valid() || !caps.Effort.JSON.Supported.Valid() {
+		return EffortDescriptor{}
+	}
+	if !caps.Effort.Supported {
+		return EffortDescriptor{Known: true}
+	}
+	var levels []string
+	for _, level := range []struct {
+		name    string
+		support sdk.CapabilitySupport
+	}{
+		{"low", caps.Effort.Low},
+		{"medium", caps.Effort.Medium},
+		{"high", caps.Effort.High},
+		{"xhigh", caps.Effort.Xhigh},
+		{"max", caps.Effort.Max},
+	} {
+		if level.support.Supported {
+			levels = append(levels, level.name)
+		}
+	}
+	if len(levels) == 0 {
+		return EffortDescriptor{}
+	}
+	return EffortDescriptor{Known: true, Levels: levels}
 }

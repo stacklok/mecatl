@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,23 @@ func TestListModels_MappingFromFixture(t *testing.T) {
 	gptChat := byID["openai/gpt-chat-latest"]
 	if !gptChat.ToolCall || gptChat.Reasoning {
 		t.Errorf("gpt-chat-latest tools=%v reasoning=%v, want tools=true reasoning=false", gptChat.ToolCall, gptChat.Reasoning)
+	}
+
+	// reasoning.supported_efforts: listed as upstream tokens, or not listed.
+	for _, tc := range []struct {
+		id     string
+		listed bool
+		want   []string
+	}{
+		{"openai/gpt-5.5-pro", true, []string{"xhigh", "high", "medium"}},
+		{"nvidia/nemotron-3-ultra-550b-a55b:free", true, []string{"high", "medium", "none"}},
+		{"qwen/qwen3.7-plus", false, nil},
+		{"openrouter/fusion", false, nil},
+	} {
+		got := byID[tc.id]
+		if got.ReasoningEffortsListed != tc.listed || !slices.Equal(got.ReasoningEfforts, tc.want) {
+			t.Errorf("%s: efforts = %v listed=%v, want %v listed=%v", tc.id, got.ReasoningEfforts, got.ReasoningEffortsListed, tc.want, tc.listed)
+		}
 	}
 }
 

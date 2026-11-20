@@ -376,6 +376,7 @@ Provider/model aliases, slots, defaults, and delegated router taxonomy. Every ef
 | `models.router.default-category` | `string` | `(empty)` | DefaultCategory is the category the classifier is told to choose when none clearly fits (advisory to the classifier; the real safety net is the fail-soft inherit). |
 | `models.router.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (mirroring GuardrailsSection.Disabled): a non-empty taxonomy ENABLES the router, so `disabled: true` is the "taxonomy defined but temporarily off" override. The CLI kill-switch --subagent-model-router=false also sets it (the two OR together). Default false ⇒ the router is enabled whenever categories are present. |
 | `models.context_windows` | `map[string]map[string]int` | `(absent)` | ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID → total context token override map. It is intentionally not a selector map: aliases and slots are resolved before this lookup, and project values are ignored. |
+| `models.effort_levels` | `map[string]map[string][]string` | `(absent)` | EffortLevels is the OPERATOR-TIER exact provider ID → exact final model ID → effort levels map, for models whose levels mecatl can't learn or learns wrongly. Each list names the levels the model accepts, from low, medium, high, xhigh and max; an empty list means the model takes no effort. An entry takes precedence over the live model listing and the embedded catalog. Aliases and slots are resolved before this lookup, and project values are ignored. |
 
 ## `openrouter`
 

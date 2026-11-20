@@ -514,6 +514,13 @@
 #   # total context token override map. It is intentionally not a selector map: aliases
 #   # and slots are resolved before this lookup, and project values are ignored.
 #   context_windows: {}
+#   # EffortLevels is the OPERATOR-TIER exact provider ID → exact final model ID →
+#   # effort levels map, for models whose levels mecatl can't learn or learns wrongly.
+#   # Each list names the levels the model accepts, from low, medium, high, xhigh and max;
+#   # an empty list means the model takes no effort. An entry takes precedence over the
+#   # live model listing and the embedded catalog. Aliases and slots are resolved before
+#   # this lookup, and project values are ignored.
+#   effort_levels: {}
 
 #| === openrouter === (tier: operator)
 #| OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model

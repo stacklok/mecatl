@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"time"
 
@@ -43,7 +44,8 @@ func anyProviderHasLister(reg *providerRegistry) bool {
 // modelEntry is source-neutral observed metadata. Nil modalities mean unknown;
 // a non-nil declaration, including an empty one, is authoritative. An omitted
 // reasoning capability can be marked unknown without changing other listers'
-// existing interpretation of a listed Reasoning:false row.
+// existing interpretation of a listed Reasoning:false row. Effort's zero value
+// is unknown, so a lister that can't tell leaves it unset.
 type modelEntry struct {
 	ID               string
 	DisplayName      string
@@ -54,6 +56,7 @@ type modelEntry struct {
 	reasoningUnknown bool // a listed model may omit reasoning support; false preserves legacy known-row behavior
 	ToolCall         bool
 	Thinking         thinkingDescriptor
+	Effort           effortLevels
 }
 
 type thinkingDescriptor struct{ Known, Adaptive, Enabled bool }
@@ -120,6 +123,9 @@ func (l openAICodexLister) ListModels(ctx context.Context) ([]modelEntry, error)
 		if !m.ReasoningKnown && catalogued {
 			entry.Reasoning = catalog.Reasoning
 		}
+		if m.ReasoningKnown {
+			entry.Effort = knownEffortLevels(m.ReasoningEfforts)
+		}
 		out = append(out, entry)
 	}
 	return out, nil
@@ -132,9 +138,23 @@ func (l openRouterLister) ListModels(ctx context.Context) ([]modelEntry, error) 
 	}
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
-		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: m.InputModalities, Reasoning: m.Reasoning, ToolCall: m.ToolCall})
+		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: m.InputModalities, Reasoning: m.Reasoning, ToolCall: m.ToolCall,
+			Effort: openRouterEffortLevels(m)})
 	}
 	return out, nil
+}
+
+// openRouterEffortLevels reads OpenRouter's reasoning metadata. A model that
+// doesn't accept the reasoning parameter takes no effort; a reasoning model
+// without supported_efforts hasn't said which levels it takes.
+func openRouterEffortLevels(m openrouter.Model) effortLevels {
+	switch {
+	case !m.Reasoning:
+		return knownEffortLevels(nil)
+	case m.ReasoningEffortsListed:
+		return knownEffortLevels(m.ReasoningEfforts)
+	}
+	return effortLevels{}
 }
 
 type anthropicLister struct{ inner *anthropic.Lister }
@@ -150,9 +170,13 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 		if m.Image {
 			mods = append(mods, "image")
 		}
-		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
+		entry := modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
 			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, reasoningUnknown: !m.Thinking.Known, ToolCall: true,
-			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
+			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}}
+		if m.Effort.Known {
+			entry.Effort = knownEffortLevels(m.Effort.Levels)
+		}
+		out = append(out, entry)
 	}
 	return out, nil
 }
@@ -164,11 +188,33 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	publishes := publishesEffortLevels(raw)
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
-		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, InputModalities: m.InputModalities, ToolCall: true})
+		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, InputModalities: m.InputModalities, ToolCall: true,
+			Effort: gatewayEffortLevels(m, publishes)})
 	}
 	return out, nil
+}
+
+// publishesEffortLevels reports whether an OpenAI-compatible listing carries
+// reasoning.supported_efforts for any model.
+func publishesEffortLevels(raw []openaicompat.Model) bool {
+	return slices.ContainsFunc(raw, func(m openaicompat.Model) bool { return m.ReasoningEffortsListed })
+}
+
+// gatewayEffortLevels reads one model of an OpenAI-compatible listing. A listing
+// that publishes levels omits them for models that take no effort, so an omitted
+// model is known to take none. A listing that publishes no levels at all, such as
+// a gateway that predates the field, says nothing, and its models stay unknown.
+func gatewayEffortLevels(m openaicompat.Model, listingPublishesLevels bool) effortLevels {
+	switch {
+	case m.ReasoningEffortsListed:
+		return knownEffortLevels(m.ReasoningEfforts)
+	case listingPublishesLevels:
+		return knownEffortLevels(nil)
+	}
+	return effortLevels{}
 }
 
 type openCodeLister struct{ inner *openaicompat.Lister }
@@ -178,9 +224,11 @@ func (l openCodeLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	publishes := publishesEffortLevels(raw)
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
-		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, ToolCall: true, InputModalities: []string{"text", "image"}})
+		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, ToolCall: true, InputModalities: []string{"text", "image"},
+			Effort: gatewayEffortLevels(m, publishes)})
 	}
 	return out, nil
 }
@@ -208,7 +256,8 @@ func embeddedModels(pid string) []modelEntry {
 	}
 	out := make([]modelEntry, 0, len(p.Models()))
 	for _, m := range p.Models() {
-		out = append(out, modelEntry{ID: m.ID(), DisplayName: m.Name(), ContextLimit: m.ContextLimit(), OutputLimit: m.OutputLimit(), InputModalities: append([]string{}, m.InputModalities()...), Reasoning: m.SupportsReasoning(), ToolCall: m.SupportsToolCall()})
+		out = append(out, modelEntry{ID: m.ID(), DisplayName: m.Name(), ContextLimit: m.ContextLimit(), OutputLimit: m.OutputLimit(), InputModalities: append([]string{}, m.InputModalities()...), Reasoning: m.SupportsReasoning(), ToolCall: m.SupportsToolCall(),
+			Effort: knownEffortLevels(m.EffortLevels())})
 	}
 	return out
 }

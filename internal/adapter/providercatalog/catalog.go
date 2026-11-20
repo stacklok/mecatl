@@ -94,12 +94,18 @@ type rawProvider struct {
 // rawModel mirrors one model entry's wire shape. Only the fields S2 surfaces are
 // declared; the rest of the (retained) JSON is ignored on parse.
 type rawModel struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Family     string `json:"family"`
-	Reasoning  bool   `json:"reasoning"`
-	ToolCall   bool   `json:"tool_call"`
-	Attachment bool   `json:"attachment"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Family    string `json:"family"`
+	Reasoning bool   `json:"reasoning"`
+	// ReasoningOptions lists the reasoning controls the model accepts. The entry
+	// of type "effort" carries its effort levels as upstream tokens.
+	ReasoningOptions []struct {
+		Type   string   `json:"type"`
+		Values []string `json:"values"`
+	} `json:"reasoning_options"`
+	ToolCall   bool `json:"tool_call"`
+	Attachment bool `json:"attachment"`
 	Modalities struct {
 		Input  []string `json:"input"`
 		Output []string `json:"output"`
@@ -143,6 +149,7 @@ type Model struct {
 	outputLimit     int
 	inputModalities []string
 	reasoning       bool
+	effortLevels    []string
 	toolCall        bool
 	attachment      bool
 }
@@ -192,6 +199,7 @@ func parse(data []byte) (*Catalog, error) {
 				outputLimit:     rm.Limit.Output,
 				inputModalities: append([]string(nil), rm.Modalities.Input...),
 				reasoning:       rm.Reasoning,
+				effortLevels:    effortOption(rm),
 				toolCall:        rm.ToolCall,
 				attachment:      rm.Attachment,
 			})
@@ -208,6 +216,20 @@ func parse(data []byte) (*Catalog, error) {
 		}
 	}
 	return &Catalog{providers: providers}, nil
+}
+
+// effortOption returns the values of a reasoning model's "effort" option, or nil
+// when the model doesn't reason or has no effort option.
+func effortOption(rm rawModel) []string {
+	if !rm.Reasoning {
+		return nil
+	}
+	for _, option := range rm.ReasoningOptions {
+		if option.Type == "effort" {
+			return append([]string(nil), option.Values...)
+		}
+	}
+	return nil
 }
 
 // Provider returns the provider entry for id and whether it is in the catalog.
@@ -296,6 +318,11 @@ func (m Model) SupportsImageInput() bool {
 
 // SupportsReasoning reports whether the model exposes reasoning (for S5).
 func (m Model) SupportsReasoning() bool { return m.reasoning }
+
+// EffortLevels returns the model's effort levels as upstream tokens in catalog
+// order, or nil when the model takes no effort. Tokens are not filtered: the
+// caller owns its own effort vocabulary.
+func (m Model) EffortLevels() []string { return append([]string(nil), m.effortLevels...) }
 
 // SupportsToolCall reports whether the model supports tool/function calls.
 func (m Model) SupportsToolCall() bool { return m.toolCall }

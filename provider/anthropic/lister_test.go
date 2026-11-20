@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -261,5 +262,44 @@ func TestThinkingResolverLiveThenPrefixFloor(t *testing.T) {
 	cfg = thinkingConfigFor("claude-3-5-haiku-20241022", 64000, 4096, miss)
 	if (cfg != sdk.ThinkingConfigParamUnion{}) {
 		t.Errorf("3.5 incapable via prefix floor must omit thinking, got %+v", cfg)
+	}
+}
+
+// TestMapModelInfoEffort pins how Capabilities.Effort maps to the neutral effort
+// descriptor: listed levels in vocabulary order, supported:false as known with no
+// levels, and anything that doesn't say which levels as unknown.
+func TestMapModelInfoEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name, capabilities string
+		known              bool
+		levels             []string
+	}{
+		{
+			name:         "three levels",
+			capabilities: `{"effort":{"supported":true,"low":{"supported":true},"medium":{"supported":true},"high":{"supported":true},"xhigh":{"supported":false},"max":{"supported":false}}}`,
+			known:        true, levels: []string{"low", "medium", "high"},
+		},
+		{
+			name:         "all five in vocabulary order",
+			capabilities: `{"effort":{"max":{"supported":true},"xhigh":{"supported":true},"high":{"supported":true},"medium":{"supported":true},"low":{"supported":true},"supported":true}}`,
+			known:        true, levels: []string{"low", "medium", "high", "xhigh", "max"},
+		},
+		{name: "unsupported", capabilities: `{"effort":{"supported":false}}`, known: true},
+		{name: "unsupported overrides contradictory levels", capabilities: `{"effort":{"supported":false,"max":{"supported":true}}}`, known: true},
+		{name: "supported without levels", capabilities: `{"effort":{"supported":true}}`},
+		{name: "effort without supported flag", capabilities: `{"effort":{"low":{"supported":true}}}`},
+		{name: "no effort capability", capabilities: `{"thinking":{"supported":true}}`},
+		{name: "no capabilities", capabilities: `null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var info sdk.ModelInfo
+			if err := json.Unmarshal([]byte(`{"id":"m","capabilities":`+tc.capabilities+`}`), &info); err != nil {
+				t.Fatalf("unmarshal model info: %v", err)
+			}
+			got := mapModelInfo(info).Effort
+			if got.Known != tc.known || !slices.Equal(got.Levels, tc.levels) {
+				t.Fatalf("effort = %+v, want known=%v levels=%v", got, tc.known, tc.levels)
+			}
+		})
 	}
 }

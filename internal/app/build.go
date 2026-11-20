@@ -1455,6 +1455,10 @@ type Config struct {
 	// captured from settings.yaml. It is unexported because config parsing and model
 	// resolution are both composition details.
 	contextWindows map[string]map[string]int
+	// effortLevels is the operator-tier exact provider/model effort-levels map
+	// captured from settings.yaml (models.effort_levels). An empty list declares
+	// that the model takes no effort.
+	effortLevels map[string]map[string][]string
 
 	// --- Scheduled tasks (issue #189): the in-process scheduler
 	// (internal/adapter/scheduler) owns the tick loop that polls the durable
@@ -1975,6 +1979,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		if models := resolver.OperatorModelPolicy(); models != nil {
 			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
+			cfg.effortLevels = map[string]map[string][]string(models.EffortLevels)
 		}
 	} else if cfg.MCPAuthorityLoader != nil {
 		authority, err := cfg.MCPAuthorityLoader.LoadAuthority(nil, cfg.MCPAuthorityDefault, cfg.MCPBrokerSupported)

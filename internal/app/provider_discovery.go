@@ -288,7 +288,8 @@ func (d *providerDiscovery) complete(pid string, attempt *discoveryAttempt, mode
 func cloneModelEntries(models []modelEntry) []modelEntry {
 	out := slices.Clone(models)
 	for i := range out {
-		out[i].InputModalities = slices.Clone(models[i].InputModalities)
+		out[i].InputModalities = slices.Clone(out[i].InputModalities)
+		out[i].Effort.levels = slices.Clone(out[i].Effort.levels)
 	}
 	return out
 }
