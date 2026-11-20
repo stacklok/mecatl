@@ -176,7 +176,7 @@ such as `engine/vX.Y.Z` or `adapters/vX.Y.Z`, and are lightweight tags. Root app
 tags remain annotated.
 
 When a request concerns an independently published Go module, use the bounded workflow in
-[the Go module publication procedure](../../../docs/module-development.md#4-publish-selected-go-modules).
+[the Go module publication procedure](../../../docs/module-publication.md).
 Do not create an engine tag, or any other module tag, by hand. Do not add a module
 release to the root application release flow.
 

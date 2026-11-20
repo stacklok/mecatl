@@ -1,4 +1,4 @@
-# Operator procedure: docs/module-development.md, "Publish selected Go modules".
+# Operator procedure: docs/module-publication.md.
 # `source` fixes the reviewed main implementation; `parent` advances through
 # metadata-only release commits. Tooling always comes from the dispatch's github.sha,
 # not from either candidate revision. Exact versions are operator-selected: absent

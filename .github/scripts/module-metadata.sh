@@ -35,10 +35,10 @@ fi
 if [ "$failed" -ne 0 ]; then
   cat >&2 <<'EOF'
 Review the files above and include legitimate metadata changes in the commit.
-If requirements need updating, tidy the affected module deliberately and inspect
-its replacements; `task tidy` also runs `go work sync` and can upgrade requirements.
-After committing the intended metadata, rerun verification and
-`task test:module-metadata`.
+For workspace version drift, run `task deps:sync` and review
+`git diff -- go.work '**/go.mod' '**/go.sum'` and its staged counterpart.
+After committing intended metadata, rerun `task test:workspace-sync`.
+Metadata changes alone do not imply synchronization is needed.
 EOF
   exit 1
 fi
