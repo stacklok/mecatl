@@ -440875,6 +440875,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795185387144,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "015a75584f868e6f07a0cdc02e4ce8ae13d864a8",
+          "message": "feat(identitybroker): give each agent its own identity, checked against loaded definitions (#2883)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-20T10:09:18-05:00",
+          "tree_id": "af0376fac684d6aa5140772d9ade12448be44aff",
+          "url": "https://github.com/stacklok/mecatl/commit/015a75584f868e6f07a0cdc02e4ce8ae13d864a8"
+        },
+        "date": 1795188100953,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13379,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12874,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -574065,6 +574104,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795188097623,
+  "lastUpdate": 1795188101988,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
