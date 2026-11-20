@@ -399206,6 +399206,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795197057083,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "731e328c0c784f5e052271bcc8b47aec84c4bba5",
+          "message": "refactor(kernel): unify Session and history resource identity (#2934)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T19:42:37Z",
+          "tree_id": "ff3553cc6dd3317554382a4455ef3f074b7731ad",
+          "url": "https://github.com/stacklok/mecatl/commit/731e328c0c784f5e052271bcc8b47aec84c4bba5"
+        },
+        "date": 1795204460064,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -576075,6 +576109,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795204456553,
+  "lastUpdate": 1795204461214,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
