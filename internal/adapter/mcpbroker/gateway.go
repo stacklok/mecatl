@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
+
+	"golang.org/x/oauth2"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/agentcredential"
@@ -29,6 +32,20 @@ type Gateway interface {
 	// Route returns the gateway backend and the tool name the gateway routes
 	// for the model-visible tool name on backend.
 	Route(backend, modelVisibleName string) (server, tool string, err error)
+	// ListTools lists the tools the gateway routes to server, each under its
+	// name on that server, sent with credential as the bearer. The gateway
+	// attributes each tool to its server. An error never carries the
+	// credential.
+	ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error)
+}
+
+// GatewayTool is one tool a gateway lists for a server.
+type GatewayTool struct {
+	// Name is the tool's name on its server, without the gateway's routing.
+	Name        string
+	Description string
+	InputSchema map[string]any
+	ReadOnly    bool
 }
 
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
@@ -47,6 +64,36 @@ func (g embeddedGateway) HTTPClient() *http.Client { return g.client }
 func (embeddedGateway) Route(backend, modelVisibleName string) (string, string, error) {
 	tool, err := toolHiveAdvertisedToolName(backend, modelVisibleName)
 	return backend, tool, err
+}
+
+// ListTools lists the vMCP's tools routed to server.
+func (g embeddedGateway) ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
+	if server == "" || credential == nil {
+		return nil, mcpadapter.ErrGatewayList
+	}
+	token, err := credential.Token()
+	if err != nil || !validBearerToken(token) {
+		return nil, mcpadapter.ErrGatewayList
+	}
+	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, identitybroker.NewToken(token.AccessToken))
+	if err != nil {
+		return nil, err
+	}
+	// Shortcut: the embedded gateway filters the vMCP's aggregate listing by its routed-name prefix; removed by #2729 (a listing V the vMCP answers with only that server's tools, toolhive#7062).
+	prefix := server + "."
+	var tools []GatewayTool
+	for _, t := range listed {
+		name, ok := strings.CutPrefix(t.Name, prefix)
+		if !ok {
+			continue
+		}
+		// The SDK decodes a listed schema as a JSON object; any other value is
+		// left nil for the catalogue to refuse.
+		schema, _ := t.InputSchema.(map[string]any)
+		tools = append(tools, GatewayTool{Name: name, Description: t.Description, InputSchema: schema,
+			ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint})
+	}
+	return tools, nil
 }
 
 // CallAuthorizer authorizes one gateway call; identitybroker.Service

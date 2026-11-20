@@ -35,6 +35,7 @@ const (
 	diagnosticReasonReauthRequired               = "reauth_required"
 	diagnosticReasonDiscoveryFailed              = "discovery_failed"
 	diagnosticReasonDiscovered                   = "discovered"
+	diagnosticReasonNoTools                      = "no_tools"
 	diagnosticReasonValidationFailed             = "validation_failed"
 	diagnosticReasonMaterializeFailed            = "materialize_failed"
 	diagnosticReasonAuthorityUnavailable         = "authority_unavailable"
