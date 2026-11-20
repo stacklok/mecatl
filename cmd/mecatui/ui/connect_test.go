@@ -61,7 +61,7 @@ func TestConnectRequiresConfirmationAndEmitsPublicIntent(t *testing.T) {
 	if _, ok := m.ConnectRestartIntent(); ok {
 		t.Fatal("first Enter restarted")
 	}
-	for _, want := range []string{"Connect to this saved target?", "enter: connect", "esc: back"} {
+	for _, want := range []string{"Connect to this saved target?", "[enter connect]", "[esc Back]"} {
 		if out := stripANSIstr(m.View().Content); !strings.Contains(out, want) {
 			t.Fatalf("confirmation missing %q: %s", want, out)
 		}
@@ -89,7 +89,7 @@ func TestConnectCopyNamesTheSelectedAction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := openTestConnect(newConnectModel([]ConnectTarget{{Target: "remote.example:443"}}), tc.reason, "remote.example:443", "")
 			m.modal.(*connectState).list.SetCursor(tc.cursor)
-			if out := stripANSIstr(m.View().Content); !strings.Contains(out, "enter: "+connectActionLabel(tc.action)) {
+			if out := stripANSIstr(m.View().Content); !strings.Contains(out, "[enter "+connectActionLabel(tc.action)+"]") {
 				t.Fatal(out)
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})

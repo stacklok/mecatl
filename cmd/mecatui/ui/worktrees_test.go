@@ -157,7 +157,7 @@ func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
 	mm, cmd := m.openWorktrees()
 	m = feedWorktreesList(t, mm.(Model), cmd)
 	panel := stripANSIstr(m.View().Content)
-	for _, want := range []string{"select a worktree to start a new session there", "enter: select", "esc: close"} {
+	for _, want := range []string{"select a worktree to start a new session there", "[enter Start session]", "[esc Close]"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("worktree picker missing %q:\n%s", want, panel)
 		}
@@ -169,7 +169,7 @@ func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
 	}
 	m = mm.(Model)
 	confirm := stripANSIstr(m.View().Content)
-	for _, want := range []string{"start session in worktree", "a new session will start in:", "enter: start session", "esc: back"} {
+	for _, want := range []string{"start session in worktree", "a new session will start in:", "[enter Start session]", "[esc Back]"} {
 		if !strings.Contains(confirm, want) {
 			t.Fatalf("worktree confirmation missing %q:\n%s", want, confirm)
 		}

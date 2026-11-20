@@ -707,7 +707,7 @@ func TestModelsNoMatchNote(t *testing.T) {
 		t.Fatalf("filtered len = %d, want 0", len(modelsSurface(t, m).filtered))
 	}
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, `no models match "zzzzz" — esc to clear`) {
+	if !strings.Contains(out, `no models match "zzzzz"`) || !strings.Contains(out, "[esc Clear filter]") {
 		t.Errorf("the no-match note (with recovery hint) should render, got:\n%s", out)
 	}
 	if strings.Contains(out, "No selectable models advertised") || strings.Contains(out, "not available on this server") {
@@ -1773,22 +1773,28 @@ func TestModelsPickerGolden(t *testing.T) {
 	compareGolden(t, "models.golden", got)
 }
 
-// TestModelsPickerRetainsNaturalCardWidth prevents list-row bounding from narrowing
-// Models chrome before the surrounding card measures its natural width.
-func TestModelsPickerRetainsNaturalCardWidth(t *testing.T) {
+func TestModelsPickerMeasuresChromeWithinOffer(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(),
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
-	out := stripANSIstr(m.View().Content)
-
-	const help = "type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close"
-	if !strings.Contains(out, help) {
-		t.Errorf("Models help action was truncated:\n%s", out)
+	const provenance = "current: a deliberately long server-resolved model identity whose provenance must retain its natural chrome width"
+	s := modelsSurface(t, m)
+	s.provenance = provenance
+	if s.modalMaxOuterWidth() <= 100 {
+		t.Fatal("preferred width did not account for provenance chrome")
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "┏") && strings.Count(line, "━") <= 100 {
-			t.Errorf("Models card width regressed to bounded content width: %q", line)
+	for _, width := range []int{200, 100, 32} {
+		m = effortOffer(m, width, 30)
+		out := stripANSIstr(m.View().Content)
+		if bounds := m.metrics.outerBounds; bounds.x0 < 0 || bounds.x1 > m.width || bounds.x1-bounds.x0 > 128 {
+			t.Fatalf("card outside capped offer: %+v", bounds)
+		}
+		if width == 200 && !strings.Contains(out, provenance) {
+			t.Fatalf("roomy card truncated provenance:\n%s", out)
+		}
+		if !strings.Contains(out, "[enter Use model]") {
+			t.Fatalf("bounded card lost primary action:\n%s", out)
 		}
 	}
 }
@@ -1885,7 +1891,7 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
-	if !bytes.Contains(got, []byte("↑ 26 items")) {
+	if !bytes.Contains(got, []byte("↑ 27 items")) {
 		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
 	}
 	compareGolden(t, "models_scrolled.golden", got)

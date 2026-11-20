@@ -47,7 +47,7 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 			models[i] = client.ModelInfo{ProviderID: "provider", ID: long + string(rune('a'+i))}
 		}
 		picker := &modelsState{catalog: modelCatalog{models: models}, filtered: models, deps: surfaceDeps{keys: defaultKeys(), theme: th, marks: hk}}
-		prefix, suffix := modelsFixedLines(*picker, "")
+		prefix, suffix := modelsFixedLines(*picker)
 		height := len(prefix) + len(suffix) + 3
 		out, _ := picker.Render(width, height)
 		assertFits(t, "models initial", out)

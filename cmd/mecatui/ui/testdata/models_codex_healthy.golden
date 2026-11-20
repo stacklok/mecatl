@@ -2,22 +2,22 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                     ┃
-┃  Models  (1)                                                                                        ┃
-┃  current: gpt-5 (server default)                                                                    ┃
-┃  > filter models…                                                                                   ┃
-┃                                                                                                     ┃
-┃  Switching models is expensive as it clears caches.                                                 ┃
-┃                                                                                                     ┃
-┃  ▶   openai-codex · GPT-5                                                                           ┃
-┃                                                                                                     ┃
-┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
-┃  ● current  ★ global default                                                                        ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
-┃                                                                                                     ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
+                 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                 ┃                                                               ┃
+                 ┃  Models  (1)                                                  ┃
+                 ┃  current: gpt-5 (server default)                              ┃
+                 ┃  > filter models…                                             ┃
+                 ┃                                                               ┃
+                 ┃  Switching models is expensive as it clears caches.           ┃
+                 ┃                                                               ┃
+                 ┃  ▶   openai-codex · GPT-5                                     ┃
+                 ┃                                                               ┃
+                 ┃  [enter Use model] [esc Close]                                ┃
+                 ┃  type to filter · ↑/↓/pgup move · ctrl+g set global default   ┃
+                 ┃  ● current  ★ global default                                  ┃
+                 ┃  reason = emits reasoning · set its effort tier with /effort  ┃
+                 ┃                                                               ┃
+                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

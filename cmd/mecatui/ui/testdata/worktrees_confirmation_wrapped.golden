@@ -1,0 +1,32 @@
+ mecatui · Golden sess…
+────────────────────────────────
+
+
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                              ┃
+┃  start session in worktree   ┃
+┃  a new session will start i  ┃
+┃  n:                          ┃
+┃  worktree-00                 ┃
+┃  branch: topic               ┃
+┃  [enter Start session]       ┃
+┃  [esc Back]                  ┃
+┃                              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+│
+│ Ask mecatl to do something…
+│ (enter to send · shift+enter
+│ for newline · ? for help)
+────────────────────────────────
+ connected     ctx ▒▒▒▒░░░░ 50%
+? help · / commands · ctrl+c quit

@@ -13,6 +13,107 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
+func TestModelsCardGeometryStableWhileBrowsing(t *testing.T) {
+	for _, count := range []int{4, 40} {
+		t.Run(fmt.Sprintf("models=%d", count), func(t *testing.T) {
+			inventory := modelsMouseInventory(count)
+			inventory[count-1].DisplayName = strings.Repeat("wide model 界\t", 12) + "\ncontinuation"
+			m := modelsMouseModel(t, inventory)
+			s := modelsSurface(t, m)
+			for _, size := range [][2]int{{200, 24}, {80, 18}, {80, 10}, {34, 24}, {200, 24}} {
+				m = effortOffer(m, size[0], size[1])
+				_ = m.View()
+				bounds := m.metrics.outerBounds
+				if bounds.x1-bounds.x0 != min(m.width, 128) {
+					t.Fatalf("long inventory row did not set capped width: %+v", bounds)
+				}
+				primary := modelsMouseControl(t, m, true).rect
+				selected := s.list.CursorID()
+				for _, button := range []tea.MouseButton{tea.MouseWheelDown, tea.MouseWheelUp} {
+					for range 80 {
+						m = applyAll(m, tea.MouseWheelMsg{Button: button})
+						_ = m.View()
+						if got := m.metrics.outerBounds; got != bounds {
+							t.Fatalf("%dx%d wheel %v resized card: %+v -> %+v", size[0], size[1], button, bounds, got)
+						}
+						if got := modelsMouseControl(t, m, true).rect; got != primary {
+							t.Fatalf("wheel moved primary control: %+v -> %+v", primary, got)
+						}
+						if s.list.CursorID() != selected {
+							t.Fatal("wheel changed selection")
+						}
+					}
+				}
+				for _, code := range []rune{tea.KeyEnd, tea.KeyHome, tea.KeyPgDown, tea.KeyPgUp} {
+					m = applyAll(m, tea.KeyPressMsg{Code: code})
+					_ = m.View()
+					if got := m.metrics.outerBounds; got != bounds {
+						t.Fatalf("%dx%d key %v resized card: %+v -> %+v", size[0], size[1], code, bounds, got)
+					}
+				}
+			}
+			chosen, _ := s.chosen()
+			m, cmd := effortClick(m, modelsMouseControl(t, m, true), false)
+			if cmd == nil || m.modal != nil || m.createModelSelection != (client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}) {
+				t.Fatal("footer click after resize did not activate the selected model")
+			}
+		})
+	}
+}
+
+func TestModelsSmallCardUsesContentWidth(t *testing.T) {
+	for _, labelWidth := range []int{70, 90} {
+		inventory := modelsMouseInventory(4)
+		inventory[3].DisplayName = strings.Repeat("x", labelWidth)
+		m := modelsMouseModel(t, inventory)
+		m = effortOffer(m, 200, 30)
+		_ = m.View()
+		want := 4 + len("provider") + 3 + labelWidth + m.deps.Theme.Style("askCard").GetHorizontalFrameSize()
+		if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != want {
+			t.Fatalf("inventory label width %d: card %+v, want width %d", labelWidth, bounds, want)
+		}
+	}
+}
+
+func TestModelsTabbedRowsMatchExpandedLayout(t *testing.T) {
+	for _, label := range []string{"wide\t界" + strings.Repeat("x", 45), "wide    界" + strings.Repeat("x", 45)} {
+		m := modelsMouseModel(t, []client.ModelInfo{{ProviderID: "provider", ID: "model", DisplayName: label}})
+		m = effortOffer(m, 200, 30)
+		_ = m.View()
+		want := 4 + len("provider") + 3 + len("wide") + 4 + 2 + 45 + m.deps.Theme.Style("askCard").GetHorizontalFrameSize()
+		if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != want {
+			t.Fatalf("tabbed/expanded card %+v, want width %d", bounds, want)
+		}
+	}
+	for _, width := range []int{20, 40, 80} {
+		var rendered [2]string
+		for i, label := range []string{strings.Repeat("wide\t界", 12), strings.Repeat("wide    界", 12)} {
+			m := modelsMouseModel(t, []client.ModelInfo{{ProviderID: "provider", ID: "model", DisplayName: label}})
+			rendered[i], _ = modelsSurface(t, m).Render(width, 20)
+		}
+		if rendered[0] != rendered[1] {
+			t.Fatalf("%d-cell tabbed row differs from expanded layout:\n%s\n%s", width, rendered[0], rendered[1])
+		}
+	}
+}
+
+func TestModelsCardHeightStableAfterResizeFromScrolledWindow(t *testing.T) {
+	m := modelsMouseModel(t, modelsMouseInventory(4))
+	m = effortOffer(m, 80, 10)
+	_ = m.View()
+	for range 4 {
+		m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+	m = effortOffer(m, 80, 30)
+	_ = m.View()
+	bounds := m.metrics.outerBounds
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	_ = m.View()
+	if got := m.metrics.outerBounds; got != bounds {
+		t.Fatalf("revealing selection after resize changed card dimensions: %+v -> %+v", bounds, got)
+	}
+}
+
 func TestModelsNavigationThroughUpdate(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disabled=%t", disabled), func(t *testing.T) {
@@ -405,8 +506,8 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 
 	withoutStatus := picker
 	withoutStatus.catalog.statuses = nil
-	withPrefix, withSuffix := modelsFixedLines(picker, "")
-	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus, "")
+	withPrefix, withSuffix := modelsFixedLines(picker)
+	withoutPrefix, withoutSuffix := modelsFixedLines(withoutStatus)
 	if got, want := len(withPrefix)+len(withSuffix), len(withoutPrefix)+len(withoutSuffix)+2; got != want {
 		t.Fatalf("actual chrome rows with status and separator = %d, want %d", got, want)
 	}
@@ -414,7 +515,7 @@ func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
 		t.Fatalf("provider status suffix does not begin with separator then status: %q", withSuffix)
 	}
 	picker.deps = surfaceDeps{keys: defaultKeys(), theme: th}
-	prefix, suffix := modelsFixedLines(picker, "")
+	prefix, suffix := modelsFixedLines(picker)
 	_, _ = picker.Render(100, len(prefix)+len(suffix)+4)
 	if picker.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want 4 after status separation", picker.rowBudget)
@@ -432,7 +533,7 @@ func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 		filtered: models,
 		deps:     surfaceDeps{keys: defaultKeys(), theme: theme.New("aztec", theme.AztecPalette())},
 	}
-	prefix, suffix := modelsFixedLines(*s, "")
+	prefix, suffix := modelsFixedLines(*s)
 	_, _ = s.Render(100, len(prefix)+len(suffix)+4)
 	if s.rowBudget != 4 {
 		t.Fatalf("page budget = %d, want Render-derived 4", s.rowBudget)
@@ -451,12 +552,12 @@ func TestModelsNoCacheLegendConsumesFixedChromeBudget(t *testing.T) {
 		filter:   textinput.New(),
 		deps:     surfaceDeps{keys: defaultKeys(), marks: defaultHelpKeys(), theme: aztec()},
 	}
-	prefix, cachedSuffix := modelsFixedLines(picker, "")
+	prefix, cachedSuffix := modelsFixedLines(picker)
 
 	uncached := cached
 	uncached.PromptCached = false
 	picker.catalog.models, picker.filtered = []client.ModelInfo{uncached}, []client.ModelInfo{uncached}
-	_, uncachedSuffix := modelsFixedLines(picker, "")
+	_, uncachedSuffix := modelsFixedLines(picker)
 	if got, want := len(uncachedSuffix), len(cachedSuffix)+1; got != want {
 		t.Fatalf("uncached fixed chrome rows = %d, want %d", got, want)
 	}
