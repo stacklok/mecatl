@@ -230,3 +230,65 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 		t.Fatalf("manifest leaked request content: %s", encoded)
 	}
 }
+
+// TestRequestManifestAppliedEffort pins that the manifest records the effort the
+// host reports for the request's model beside the session's requested level:
+// the level when one is sent, "auto" when none is, and nothing when the host
+// doesn't report it.
+func TestRequestManifestAppliedEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		applied func(string) string
+		want    string
+	}{
+		{"level sent", func(model string) string {
+			if model != "manifest-model" {
+				return "wrong-model"
+			}
+			return "max"
+		}, "max"},
+		{"none sent", func(string) string { return "" }, session.AppliedReasoningEffortNone},
+		{"not reported", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := newEngine(agent.Deps{
+				LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(),
+				EnableDurableEvidence: true, Model: "manifest-model", AppliedReasoningEffort: tc.applied,
+			})
+			sess := session.New("manifest-effort", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{})
+			sess.ReasoningEffort = "max"
+			var manifest *session.RequestManifestPayload
+			for _, ev := range drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"})) {
+				if ev.Type == session.EvRequestManifest {
+					manifest = ev.RequestManifest
+				}
+			}
+			if manifest == nil {
+				t.Fatal("no request.manifest emitted")
+			}
+			if manifest.ReasoningEffort != "max" || manifest.AppliedReasoningEffort != tc.want {
+				t.Fatalf("requested=%q applied=%q, want max/%q", manifest.ReasoningEffort, manifest.AppliedReasoningEffort, tc.want)
+			}
+		})
+	}
+}
+
+// TestRequestManifestLegacyDecode pins that a manifest stored before the applied
+// effort existed still decodes, with the field empty.
+func TestRequestManifestLegacyDecode(t *testing.T) {
+	const legacy = `{"provider":"p","model":"m","reasoning_effort":"high","tool_names":[],"tool_decisions":[],"advertised_tool_schema_bytes":0,"message_count":1,"message_bytes":2,"prompt":[]}`
+	var payload session.RequestManifestPayload
+	if err := json.Unmarshal([]byte(legacy), &payload); err != nil {
+		t.Fatalf("decode legacy manifest: %v", err)
+	}
+	if payload.ReasoningEffort != "high" || payload.AppliedReasoningEffort != "" {
+		t.Fatalf("legacy manifest = %+v", payload)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "applied_reasoning_effort") {
+		t.Fatalf("an unreported applied effort was encoded: %s", encoded)
+	}
+}

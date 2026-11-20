@@ -38,6 +38,17 @@ func (e *Engine) requestManifest(r *Run, sess *session.Session, env tool.Environ
 			payload.ContextWindow = window
 		}
 	}
+	if e.deps.AppliedReasoningEffort != nil {
+		model := req.Model
+		if model == "" {
+			model = e.deps.Model
+		}
+		applied := e.deps.AppliedReasoningEffort(model)
+		if applied == "" {
+			applied = session.AppliedReasoningEffortNone
+		}
+		payload.AppliedReasoningEffort = manifestIdentifier(applied)
+	}
 	for _, spec := range req.Tools {
 		payload.ToolNames = append(payload.ToolNames, manifestLabel(spec.Name))
 	}

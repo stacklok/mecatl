@@ -257,7 +257,7 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 		{Type: session.EvToolResult, RunID: "run-1", ToolResult: ptr(session.NewToolError(call.ID, "failed once"))},
 		{Type: session.EvTeamEnd, RunID: "run-1", Team: &session.TeamPayload{ParentCallID: string(call.ID), Stop: session.StopEndTurn, Tasks: []session.TeamTaskSnapshot{{ID: "task", Description: "work", State: "completed", Assignee: "lead"}}, Findings: []session.TeamFindingSnapshot{{Member: "lead", Body: "found"}}, Dispositions: []session.TeamMemberDisposition{{Name: "lead", Disposition: "done", ErrorRounds: 1}}}},
 		{Type: session.EvCompactionArchive, RunID: "run-1", CompactionArchive: &session.CompactionArchivePayload{Replaced: messages}},
-		{Type: session.EvRequestManifest, RunID: "run-1", Turn: 1, RequestManifest: &session.RequestManifestPayload{Provider: "mock", Model: "m", ReasoningEffort: "high", ContextWindow: 8192, ToolNames: []string{"Read", "Team"}, ToolDecisions: []session.RequestToolDecision{{Name: "Read", Source: session.RequestToolSourceCatalog, Decision: session.RequestToolAdvertised}}, MessageCount: 2, MessageBytes: 42, Prompt: []session.RequestPromptComponent{{Kind: session.RequestPromptSystem, Provenance: session.RequestProvenanceStable, Bytes: 7}}}},
+		{Type: session.EvRequestManifest, RunID: "run-1", Turn: 1, RequestManifest: &session.RequestManifestPayload{Provider: "mock", Model: "m", ReasoningEffort: "high", AppliedReasoningEffort: session.AppliedReasoningEffortNone, ContextWindow: 8192, ToolNames: []string{"Read", "Team"}, ToolDecisions: []session.RequestToolDecision{{Name: "Read", Source: session.RequestToolSourceCatalog, Decision: session.RequestToolAdvertised}}, MessageCount: 2, MessageBytes: 42, Prompt: []session.RequestPromptComponent{{Kind: session.RequestPromptSystem, Provenance: session.RequestProvenanceStable, Bytes: 7}}}},
 		{Type: session.EvResult, RunID: "run-1", Result: &session.ResultPayload{Stop: session.StopEndTurn}},
 	}
 	for _, ev := range events {
@@ -280,7 +280,8 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 		t.Fatalf("related used event fallback: %s", related.Content)
 	}
 	manifest := execute(t, New(root.ID, store, log), `{"view":"manifest"}`)
-	if !strings.Contains(manifest.Content, `"tools":["Read","Team"]`) || !strings.Contains(manifest.Content, `"provider":"mock"`) || !strings.Contains(manifest.Content, `"context_window":8192`) || strings.Contains(manifest.Content, "digest") {
+	if !strings.Contains(manifest.Content, `"tools":["Read","Team"]`) || !strings.Contains(manifest.Content, `"provider":"mock"`) || !strings.Contains(manifest.Content, `"context_window":8192`) ||
+		!strings.Contains(manifest.Content, `"reasoning_effort":"high","applied_reasoning_effort":"auto"`) || strings.Contains(manifest.Content, "digest") {
 		t.Fatalf("manifest=%s", manifest.Content)
 	}
 	history := execute(t, New(root.ID, store, log), `{"view":"history"}`)

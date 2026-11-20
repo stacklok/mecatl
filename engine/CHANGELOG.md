@@ -12,6 +12,15 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **Applied reasoning effort in request manifests**: adds
+  `agent.Deps.AppliedReasoningEffort`, an optional host function that reports
+  the reasoning-effort token a request for a model is sent at, and
+  `session.RequestManifestPayload.AppliedReasoningEffort`, which records it beside
+  the session's requested `ReasoningEffort`. `session.AppliedReasoningEffortNone`
+  (`"auto"`) records a request that carried no effort; the field stays empty when
+  the host doesn't report it, so manifests stored earlier decode unchanged. The
+  engine never branches on the value. Added (minor).
+
 - **Generated resource-ID persistence methods**: adds `id.ID.CheckCBOR`,
   `AppendCBOR`, `ReadCBOR`, `Clone`, and `Equal` for compositional persistence
   codecs. The methods validate the existing ID contract when checking and
