@@ -367,6 +367,14 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 // roundTripOther sends a request other than the tools/call and notes a
 // refusing answer to the handshake.
 func (w *gatewayWire) roundTripOther(out *http.Request, method string) (*http.Response, error) {
+	w.mu.Lock()
+	cancelHandshake := method == "notifications/cancelled" && !w.callStarted
+	w.mu.Unlock()
+	if cancelHandshake {
+		// Initialize must not be cancelled. The SDK sends this notification
+		// on a detached context; waiting for it can stall failed-handshake cleanup.
+		return nil, errGatewayRefused
+	}
 	resp, err := w.base.RoundTrip(out)
 	if method == "notifications/cancelled" {
 		w.cancelOnce.Do(func() { close(w.cancelled) })
