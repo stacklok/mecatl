@@ -309,7 +309,7 @@ with a higher `--permission-mode`. See
 |Command|Result|
 |-|-|
 |`/models`|Starts a session on the selected model and keeps the conversation. Switching models clears model caches and can increase cost.|
-|`/effort`|Forks the conversation onto the selected reasoning-effort tier. The server reports unsupported tiers.|
+|`/effort`|Forks the conversation onto the selected reasoning-effort tier. It offers `auto` (the provider default) and the levels the current model accepts; see [Configure reasoning effort](/features/sessions/choose-models.md#configure-reasoning-effort).|
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|

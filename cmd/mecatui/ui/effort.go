@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -21,17 +23,21 @@ import (
 // itself. Like /models it renders purely from client state (no proto in ui) and is
 // idle-only / esc-dismissable.
 //
-// # Vocab + the auto sentinel
+// # Vocab + the auto token
 //
 // The neutral picker enum (in order) is auto, low, medium, high, xhigh, max. "auto"
-// means UNSET — operator/provider default — and is sent to the server as the EMPTY
-// string (client.ModelSelection.ReasoningEffort == ""). The picker presents it as
-// "auto" for readability but maps it to "" when building the selection, so the
-// persisted state stays clean (an unset effort is absent from models.yaml, not the
-// literal "auto"). effortValue does that mapping; effortLabel does the inverse for
-// display. The server normalises/clamps anyway (e.g. openai "max" echoes "high"),
-// and the LIVE display reads m.resolvedSessionModel.ReasoningEffort (the resolved value),
-// so the picker only ever needs to send the operator's REQUEST.
+// asks for the provider default and is sent as the explicit "auto" token, so a fork
+// from a session at another level resets it instead of inheriting it (an empty
+// effort would). effortLabel maps the empty (unset) value back to "auto" for
+// display. The LIVE display reads m.resolvedSessionModel.ReasoningEffort (the
+// level the server applies), so the picker only ever sends the operator's REQUEST.
+//
+// # Per-model levels
+//
+// When the server reports per-model effort levels (Capabilities.ModelEffortLevels),
+// the picker offers auto plus the levels the session's model accepts, and says
+// why when that is fewer than all five (effortChoicesFor). Without the feature it
+// offers every tier.
 
 // effortAuto is the picker label for the UNSET tier; it maps to the empty string on
 // the wire and in persisted state (see the package header). Named once so the label
@@ -42,6 +48,8 @@ const (
 	effortMaxOuterWidth  = 128
 	effortRowGutterWidth = 3
 	effortWarning        = "this model has no reasoning support — a tier will be ignored"
+	effortNoLevels       = "This model has no effort levels"
+	effortUnknownLevels  = "This model's effort levels are unknown; the provider may refuse a level"
 )
 
 // effortTiers is the neutral reasoning-effort vocabulary in picker order. "auto" is
@@ -56,15 +64,23 @@ const (
 // but keep the two aligned.
 var effortTiers = []string{effortAuto, "low", "medium", "high", "xhigh", "max"}
 
+// effortChoices is what the picker offers for the session's model: the tiers, in
+// order with auto first, and an optional explanation shown under them.
+type effortChoices struct {
+	tiers   []string
+	note    string
+	warning bool // render note as a warning rather than muted text
+}
+
 // effortState owns the picker for one open lifetime; session effects stay on Model.
 type effortState struct {
-	deps        surfaceDeps
-	list        bounded.List
-	noReasoning bool
-	intent      surfaceIntent
-	compact     bool   // view cache: refreshed from every Render offer
-	offer       [2]int // view cache: last Render geometry, for selection reveal on resize
-	hitTargets  map[HitID]effortHit
+	deps       surfaceDeps
+	list       bounded.List
+	choices    effortChoices
+	intent     surfaceIntent
+	compact    bool   // view cache: refreshed from every Render offer
+	offer      [2]int // view cache: last Render geometry, for selection reveal on resize
+	hitTargets map[HitID]effortHit
 }
 
 type effortHit struct {
@@ -85,15 +101,13 @@ func (s *effortState) takeSurfaceIntent() surfaceIntent {
 func (s *effortState) modalMaxOuterWidth() int {
 	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
 	width := ansi.StringWidth("Reasoning effort")
-	for _, tier := range effortTiers {
+	for _, tier := range s.choices.tiers {
 		width = max(width, effortRowGutterWidth+ansi.StringWidth(effortRowText(tier)))
 	}
 	for _, line := range s.footerLines(effortMaxOuterWidth - frame) {
 		width = max(width, ansi.StringWidth(line))
 	}
-	if s.noReasoning {
-		width = max(width, ansi.StringWidth(effortWarning))
-	}
+	width = max(width, ansi.StringWidth(s.choices.note))
 	return min(effortMaxOuterWidth, width+frame)
 }
 func (s *effortState) modalFrame() bool { return !s.compact }
@@ -124,7 +138,7 @@ func (s *effortState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 
 func (s *effortState) apply() {
 	if !s.compact && s.list.Valid() && s.deps.keys.Choose.Enabled() {
-		s.intent = effortSelectIntent{effort: effortValue(s.list.CursorID())}
+		s.intent = effortSelectIntent{effort: s.list.CursorID()}
 	}
 }
 
@@ -152,19 +166,9 @@ func (s *effortState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// effortValue maps a picker label to the wire/state value: the auto sentinel becomes
-// "" (unset), every other tier is itself. This is the SINGLE place the "auto"→""
-// convention is applied when building a selection.
-func effortValue(label string) string {
-	if label == effortAuto {
-		return ""
-	}
-	return label
-}
-
-// effortLabel is the inverse: the empty (unset) value displays as the auto sentinel,
-// every other value is itself. Used to mark the current row and to find the cursor's
-// initial position.
+// effortLabel maps an effort value to its picker label: the empty (unset) value
+// displays as auto, every other value is itself. Used to mark the current row and
+// to find the cursor's initial position.
 func effortLabel(value string) string {
 	if value == "" {
 		return effortAuto
@@ -182,32 +186,84 @@ func (m Model) openEffort() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || !m.caps.ModelSelection {
 		return m, nil
 	}
-	s := &effortState{deps: (&m).surfaceDeps(), noReasoning: m.currentModelNoReasoning(), compact: true}
-	items := make([]bounded.ListItem, len(effortTiers))
-	for i, tier := range effortTiers {
+	s := &effortState{deps: (&m).surfaceDeps(), choices: m.effortChoicesFor(), compact: true}
+	items := make([]bounded.ListItem, len(s.choices.tiers))
+	for i, tier := range s.choices.tiers {
 		items[i] = bounded.ListItem{ID: tier, Text: effortRowText(tier)}
 		if tier == effortLabel(m.resolvedSessionModel.ReasoningEffort) {
 			items[i].StatusCells[0] = "●"
 		}
 	}
 	s.list.SetItems(items)
-	s.list.SetCursor(effortCursorFor(m.resolvedSessionModel.ReasoningEffort))
+	s.list.SetCursor(effortCursorFor(s.choices.tiers, m.resolvedSessionModel.ReasoningEffort))
 	m.modal = s
 	m.prompt.Blur()
 	return m, nil
 }
 
-// effortCursorFor returns the effortTiers index whose label matches the current
+// effortCursorFor returns the index of the tier whose label matches the current
 // (effective) effort value, or 0 (auto) when none matches (an unknown/unset effort
 // lands on auto, the safe default).
-func effortCursorFor(current string) int {
+func effortCursorFor(tiers []string, current string) int {
 	want := effortLabel(current)
-	for i, tier := range effortTiers {
+	for i, tier := range tiers {
 		if tier == want {
 			return i
 		}
 	}
 	return 0
+}
+
+// effortChoicesFor decides what the picker offers for the session's model. With
+// per-model levels it offers auto plus the levels the model accepts: a model known
+// to take none offers auto alone and says so, a model whose levels are unknown
+// offers every tier and says the provider may refuse one, and a requested level
+// the model doesn't accept is named. Without the feature, or before the model is
+// in the inventory, it offers every tier without a claim.
+func (m Model) effortChoicesFor() effortChoices {
+	if !m.caps.ModelEffortLevels {
+		choices := effortChoices{tiers: effortTiers}
+		if m.currentModelNoReasoning() {
+			choices.note, choices.warning = effortWarning, true
+		}
+		return choices
+	}
+	info, found := m.currentModelInfo()
+	switch {
+	case !found:
+		return effortChoices{tiers: effortTiers}
+	case !info.EffortLevelsKnown:
+		return effortChoices{tiers: effortTiers, note: effortUnknownLevels}
+	}
+	choices := effortChoices{tiers: []string{effortAuto}}
+	for _, tier := range effortTiers[1:] {
+		if slices.Contains(info.EffortLevels, tier) {
+			choices.tiers = append(choices.tiers, tier)
+		}
+	}
+	requested := m.resolvedSessionModel.RequestedReasoningEffort
+	switch {
+	case len(choices.tiers) == 1:
+		choices.note, choices.warning = effortNoLevels, true
+	case requested != "" && requested != effortAuto && !slices.Contains(choices.tiers, requested):
+		choices.note = "This model doesn't accept " + terminaltext.SanitizeSingleLine(requested) + "; requests use the provider default"
+		choices.warning = true
+	}
+	return choices
+}
+
+// currentModelInfo finds the session's effective model in the loaded inventory.
+func (m Model) currentModelInfo() (client.ModelInfo, bool) {
+	id, pid := m.resolvedSessionModel.ModelID, m.resolvedSessionModel.ProviderID
+	if id == "" {
+		return client.ModelInfo{}, false
+	}
+	for _, mi := range m.modelCatalog.models {
+		if mi.ID == id && mi.ProviderID == pid {
+			return mi, true
+		}
+	}
+	return client.ModelInfo{}, false
 }
 
 // currentModelNoReasoning reports whether the CURRENT effective model is KNOWN (from
@@ -321,8 +377,12 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 	footer := s.footerLines(width)
 	controlsText, controls := s.footerControls(width)
 	var warning []string
-	if s.noReasoning {
-		warning = skillsTextLines(th.Style("warning"), effortWarning, width)
+	if s.choices.note != "" {
+		style := th.Style("muted")
+		if s.choices.warning {
+			style = th.Style("warning")
+		}
+		warning = skillsTextLines(style, s.choices.note, width)
 	}
 	rows := height - len(title) - len(warning) - len(footer)
 	if rows < 1 {
@@ -375,7 +435,7 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 // sentinel so "auto" is self-explanatory in the list. ASCII-safe, layout-stable.
 func effortRowText(tier string) string {
 	if tier == effortAuto {
-		return effortAuto + "    (operator / provider default)"
+		return effortAuto + "    (provider default)"
 	}
 	return tier
 }

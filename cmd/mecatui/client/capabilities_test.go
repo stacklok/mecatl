@@ -162,6 +162,11 @@ func TestResolvedModelFrom(t *testing.T) {
 			want: ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 400000},
 		},
 		{
+			name: "requested effort maps beside the applied one",
+			in:   &mecatlv1.ResolvedModel{ProviderId: "openai", ModelId: "gpt-5", ReasoningEffort: "", RequestedReasoningEffort: "max"},
+			want: ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", RequestedReasoningEffort: "max"},
+		},
+		{
 			name: "passthrough model id with no provider still maps",
 			in:   &mecatlv1.ResolvedModel{ModelId: "some/passthrough"},
 			want: ResolvedModel{ModelID: "some/passthrough"},

@@ -260,7 +260,7 @@ func TestEffortSurfaceMeasuredGeometry(t *testing.T) {
 func TestEffortSurfaceExactlyOneRow(t *testing.T) {
 	for _, tier := range []string{"auto", "medium", "max"} {
 		t.Run(tier, func(t *testing.T) {
-			m, s := openedEffort(t, effortValue(tier), false)
+			m, s := openedEffort(t, echoedEffort(tier), false)
 			m = offerCardBody(m, 100, 5) // title + three footer rows + exactly one tier
 			out := checkEffortBodyFits(t, m)
 			if s.compact || s.list.Height() != 1 || !strings.Contains(out, "▶● "+tier) || !strings.Contains(out, "more") {
@@ -275,20 +275,20 @@ func TestEffortSurfaceExactlyOneRow(t *testing.T) {
 			m = mm.(Model)
 			offset := s.list.Offset()
 			out = checkEffortBodyFits(t, m)
-			if s.list.CursorID() != tier || offset == effortCursorFor(effortValue(tier)) || s.list.Offset() != offset || strings.Contains(out, "▶") || m.vp.YOffset() != beforeConversation {
+			if s.list.CursorID() != tier || offset == effortCursorFor(effortTiers, echoedEffort(tier)) || s.list.Offset() != offset || strings.Contains(out, "▶") || m.vp.YOffset() != beforeConversation {
 				t.Fatalf("wheel must move only window and survive Render: cursor=%s offset=%d\n%s", s.list.CursorID(), offset, out)
 			}
 			// Enter may apply the selection outside the manually wheeled window.
 			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
-			if cmd == nil || m.modal != nil || m.phase != phaseConnecting || m.createModelSelection.ReasoningEffort != effortValue(tier) || !m.prompt.Focused() {
+			if cmd == nil || m.modal != nil || m.phase != phaseConnecting || m.createModelSelection.ReasoningEffort != tier || !m.prompt.Focused() {
 				t.Fatal("one-row Enter must directly apply selected tier with legacy connecting focus")
 			}
 			if s.takeSurfaceIntent() != nil {
 				t.Fatal("selection intent was not drained once")
 			}
 
-			m, s = openedEffort(t, effortValue(tier), false)
+			m, s = openedEffort(t, echoedEffort(tier), false)
 			m = offerCardBody(m, 100, 5)
 			_ = checkEffortBodyFits(t, m)
 			mm, _ = m.Update(tea.MouseWheelMsg{Button: wheel})
