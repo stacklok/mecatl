@@ -395268,6 +395268,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795131353938,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1014ebfd89296aa54f24328d799befc6b2933e7a",
+          "message": "perf(release): use blobless module publication fetches (#2905)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T00:56:15Z",
+          "tree_id": "a3aa145039e9deb48a5d3f9fb3dbc28f2d198815",
+          "url": "https://github.com/stacklok/mecatl/commit/1014ebfd89296aa54f24328d799befc6b2933e7a"
+        },
+        "date": 1795136989387,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -570454,6 +570488,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795136984894,
+  "lastUpdate": 1795136990089,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
