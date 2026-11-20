@@ -454,6 +454,19 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 	if s.cfg.MemberEngineForOperation != nil {
 		memberEngine = s.cfg.MemberEngineForOperation(ctx)
 	}
+	// Generic members of a team rooted in a session get the root's gateway
+	// tools, as the root's own def-less helpers do.
+	helperTools, helperToolNames, err := s.teamHelperTools(ctx, ts.rootSessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(helperTools) != 0 {
+		if withTools := s.cfg.MemberEngineWithHelperTools(ctx, helperTools); withTools != nil {
+			memberEngine = withTools
+		} else {
+			helperToolNames = nil
+		}
+	}
 	if memberEngine == nil {
 		return nil, nil, ErrTeamsDisabled
 	}
@@ -468,9 +481,9 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 		agent.WithTeamReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 	}
 	if s.cfg.RootAuthorityForOperation != nil {
-		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthorityForOperation(ctx, session.SessionKindTeamMember)))
+		opts = append(opts, agent.WithRootAuthority(withHelperToolNames(s.cfg.RootAuthorityForOperation(ctx, session.SessionKindTeamMember), helperToolNames)))
 	} else if s.cfg.RootAuthority != nil {
-		opts = append(opts, agent.WithRootAuthority(s.cfg.RootAuthority(session.SessionKindTeamMember)))
+		opts = append(opts, agent.WithRootAuthority(withHelperToolNames(s.cfg.RootAuthority(session.SessionKindTeamMember), helperToolNames)))
 	}
 	if s.cfg.TeamGoalUntrusted {
 		opts = append(opts, agent.WithUntrustedGoal(true))

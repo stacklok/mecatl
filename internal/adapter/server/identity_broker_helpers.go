@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
@@ -198,4 +200,87 @@ func helperDefinitionRef(loaded []identitybroker.DefinitionRef, kind session.Ses
 		builtin = identitybroker.BuiltinMember
 	}
 	return loadedDefinitionRef(loaded, name, builtin)
+}
+
+// gatewayRouted is a broker session tool that can say whether its calls take
+// the identity broker's gateway, presenting the acting agent's own
+// credential, and give the tool a helper agent uses for it.
+type gatewayRouted interface {
+	HelperGatewayTool() (tool.Tool, bool)
+}
+
+// HelperGatewayTools returns the tools helper agents get for sessionTools:
+// one for each broker tool whose calls take the identity broker's gateway,
+// which presents the acting agent's own credential. Any other broker route
+// acts as the session, with its shared grant, so a helper never gets one.
+func HelperGatewayTools(sessionTools []tool.Tool) []tool.Tool {
+	var out []tool.Tool
+	for _, t := range sessionTools {
+		if g, ok := t.(gatewayRouted); ok {
+			if helperTool, ok := g.HelperGatewayTool(); ok {
+				out = append(out, helperTool)
+			}
+		}
+	}
+	return out
+}
+
+// teamHelperTools returns the gateway tools the generic members of a team
+// rooted in root get, limited to those root's bound authority allows, and
+// their names. It needs the root's broker attachment resident in this
+// process, as it is once the root has run here, and a root with a bound
+// authority; otherwise members get none and their gateway calls fail closed.
+// A root it cannot load fails the team's start, which can then be retried,
+// rather than starting members without the tools they should have.
+func (s *Service) teamHelperTools(ctx context.Context, root session.SessionID) ([]tool.Tool, []string, error) {
+	if s.cfg.IdentityBroker == nil || s.cfg.MemberEngineWithHelperTools == nil || root == "" {
+		return nil, nil, nil
+	}
+	s.mu.Lock()
+	attachment := s.brokerAttachments[root]
+	s.mu.Unlock()
+	if attachment == nil {
+		return nil, nil, nil
+	}
+	sess, err := s.cfg.Store.Load(ctx, root)
+	if err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "team root session could not be loaded for its gateway tools",
+			"session", string(root), "err", err.Error(), "class", port.ClassifySessionLoadFailure(err).String())
+		if errors.Is(err, port.ErrSessionNotFound) {
+			return nil, nil, fmt.Errorf("%w: team root session %q", ErrNotFound, root)
+		}
+		return nil, nil, fmt.Errorf("%w: load team root session for its gateway tools: %v", ErrInternal, err)
+	}
+	authority, bound := sess.BoundAuthority()
+	if !bound {
+		return nil, nil, nil
+	}
+	var tools []tool.Tool
+	var names []string
+	for _, t := range HelperGatewayTools(attachment.Tools()) {
+		name := t.Spec().Name
+		if !authority.CapabilitySet.AllowsTool(name) {
+			continue
+		}
+		tools = append(tools, t)
+		names = append(names, name)
+	}
+	return tools, names, nil
+}
+
+// withHelperToolNames returns authority with names added to its tools, so a
+// team member's authority allows the gateway tools its root allows.
+func withHelperToolNames(authority session.Authority, names []string) session.Authority {
+	if len(names) == 0 {
+		return authority
+	}
+	tools := slices.Clone(authority.CapabilitySet.Tools)
+	for _, name := range names {
+		if !slices.Contains(tools, name) {
+			tools = append(tools, name)
+		}
+	}
+	slices.Sort(tools)
+	authority.CapabilitySet.Tools = tools
+	return authority
 }

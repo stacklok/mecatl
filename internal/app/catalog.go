@@ -299,8 +299,10 @@ func assembleCatalogDetailed(ctx context.Context, cfg Config, reg *providerRegis
 	}
 	var subagentClose func() error
 	// Child sessions are published through a store that registers each helper
-	// agent with the identity broker before it runs.
+	// agent with the identity broker before it runs, and def-less helpers get
+	// this session's gateway tools.
 	childStore := a.helpers.wrap(store)
+	cfg.helperTools = server.HelperGatewayTools(s.sessionTools)
 	if !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
 			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, childStore, hooks, *a, s, refMgr)
@@ -828,6 +830,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, a)
 	})
+	registerHelperTools(classified, cfg.helperTools, cfg.diag())
 	return classified
 }
 
