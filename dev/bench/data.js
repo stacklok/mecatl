@@ -438096,6 +438096,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795131358441,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1014ebfd89296aa54f24328d799befc6b2933e7a",
+          "message": "perf(release): use blobless module publication fetches (#2905)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T00:56:15Z",
+          "tree_id": "a3aa145039e9deb48a5d3f9fb3dbc28f2d198815",
+          "url": "https://github.com/stacklok/mecatl/commit/1014ebfd89296aa54f24328d799befc6b2933e7a"
+        },
+        "date": 1795136994918,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12913,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680.5,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -570488,6 +570527,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795136990089,
+  "lastUpdate": 1795136995737,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
