@@ -15,7 +15,7 @@ import (
 )
 
 const databaseName = "history.sqlite"
-const applicationID = 0x4d484953 // MHIS
+const applicationID = 0x4d484953 // "MHIS" (Mecatl history), the database format marker.
 const schemaVersion = 1
 const identitySchema = `CREATE TABLE identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), history TEXT NOT NULL CHECK(length(history)>0)) STRICT`
 const commitsSchema = `CREATE TABLE commits (seq INTEGER PRIMARY KEY CHECK(seq>0), cid BLOB NOT NULL CHECK(length(cid)=36), payload BLOB NOT NULL CHECK(length(payload)>0)) STRICT`
