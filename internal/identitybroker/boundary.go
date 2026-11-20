@@ -39,7 +39,8 @@ func (w Workload) Validate() error {
 //     included, so a verified and an unverified workload with the same name
 //     are different workloads.
 //   - Another workload cannot tell another workload's broker session from
-//     none: closing, registering into, or calling through it fails exactly
+//     none: closing, registering into, calling through, or reporting a
+//     delegation into it fails exactly
 //     as for an unknown session ID (CodePermissionDenied, before any closing
 //     reason), and FindSession reports none open. Opening its host session is
 //     refused with CodePermissionDenied.

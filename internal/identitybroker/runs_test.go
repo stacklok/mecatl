@@ -143,6 +143,10 @@ func TestAuthorizeCallRunIsBoundToItsAgent(t *testing.T) {
 func TestAuthorizeCallUnreportedDelegationIsDenied(t *testing.T) {
 	f := newRunFixture(t)
 	f.wantRunDenied(t, f.childCall("R43", "D9"), "not reported")
+	// A delegation reported for another run starts no new run: one
+	// delegation is one run.
+	f.delegate(t, "D1", "R43")
+	f.wantRunDenied(t, f.childCall("R99", "D1"), "not reported")
 }
 
 func TestAuthorizeCallDelegatedRunKeepsItsDelegationAndOwner(t *testing.T) {

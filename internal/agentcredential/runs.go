@@ -2,6 +2,7 @@ package agentcredential
 
 import (
 	"context"
+	"slices"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
@@ -60,10 +61,8 @@ const maxDelegationsPerRoot = 4096
 
 // SetDelegation records d as the current delegation of key's helper, once
 // the broker accepted it. It returns ErrNoCredential, recording nothing, when
-// no credential is held for key: a delegation is kept only while its helper
-// is.
-//
-// Shortcut: delegations have no end; each is kept until its root is dropped; removed by the run lifecycle work (docs/drafts/agent-identity/README.md, "Order of work").
+// no credential is held for key. The design gives a delegation no end, so
+// each is kept, and reported again after a reopen, until its root is dropped.
 func (h *Holder) SetDelegation(key Key, d Delegation) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -80,6 +79,17 @@ func (h *Holder) SetDelegation(key Key, d Delegation) error {
 	}
 	r.delegations = append(r.delegations, HelperDelegation{AgentSessionID: key.AgentSessionID, Delegation: d})
 	return nil
+}
+
+// ClearDelegation forgets the current delegation of key's helper, so its
+// gateway calls name no run until it is delegated again. Delegations already
+// recorded stay listed for reporting again.
+func (h *Holder) ClearDelegation(key Key) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r := h.roots[key.RootSessionID]; r != nil {
+		delete(r.current, key.AgentSessionID)
+	}
 }
 
 // Delegation returns the current delegation of key's helper, and whether one
@@ -102,7 +112,7 @@ func (h *Holder) Delegations(root string) []HelperDelegation {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if r := h.roots[root]; r != nil {
-		return append([]HelperDelegation(nil), r.delegations...)
+		return slices.Clone(r.delegations)
 	}
 	return nil
 }

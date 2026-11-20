@@ -126,7 +126,8 @@ type Service interface {
 	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied.
 	//
 	// A call that passes the run checks records a run the broker had not
-	// seen, as a root run of the acting agent with the reported owner.
+	// seen: as a root run of the acting agent with the reported owner, or, for
+	// a call naming a reported delegation, as that delegation's run.
 	//
 	// Then the broker obtains a fresh gateway token for this call alone,
 	// failing as shown:

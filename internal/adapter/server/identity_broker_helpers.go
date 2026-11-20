@@ -160,12 +160,14 @@ func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parent
 	} else if d, ok := s.cfg.IdentityAgents.Delegation(agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}); ok {
 		delegating = d.Run
 	}
+	key := agentcredential.Key{RootSessionID: root, AgentSessionID: host}
 	if delegating.IsZero() {
+		// A resumed helper must not keep acting in its earlier run.
+		s.cfg.IdentityAgents.ClearDelegation(key)
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker helper's parent agent has no run; the helper's gateway calls fail closed",
 			"session", host, "parent_session", parentHost)
 		return nil
 	}
-	key := agentcredential.Key{RootSessionID: root, AgentSessionID: host}
 	helper, ok := s.cfg.IdentityAgents.Held(key)
 	if !ok {
 		// Dropped since it registered: the root's next run entry opens its

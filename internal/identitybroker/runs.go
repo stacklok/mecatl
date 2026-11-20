@@ -31,7 +31,7 @@ type delegationRecord struct {
 // runLedger holds each session's run and delegation records until the
 // session closes. Its methods are guarded by sessionTable.mu.
 //
-// Shortcut: runs and delegations are held in memory, have no end, and are per replica; removed by #2563 (durable state) and phase 3 (runs across replicas).
+// Shortcut: runs and delegations are held in memory, have no end, and are per replica; removed by #2563 (durable state) and #2805 (runs across replicas).
 type runLedger struct {
 	bySession map[string]*sessionRuns
 }

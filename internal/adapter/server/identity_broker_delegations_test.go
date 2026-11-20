@@ -95,6 +95,24 @@ func TestRegisterHelperReportsItsDelegation(t *testing.T) {
 		}
 	})
 
+	t.Run("a helper resumed by a parent with no run keeps no earlier delegation", func(t *testing.T) {
+		f := newHelperFixture(t)
+		child := newSubagentSession(t, "child-1", f.root.ID)
+		if err := f.svc.RegisterHelper(f.runContext(t, "run_first"), child, port.ChildSessionInfo{}); err != nil {
+			t.Fatalf("RegisterHelper: %v", err)
+		}
+		before := len(f.broker.delegationRequests())
+		if err := f.svc.RegisterResumedHelper(f.rootContext(t), child, port.ChildSessionInfo{}); err != nil {
+			t.Fatalf("RegisterResumedHelper: %v", err)
+		}
+		if n := len(f.broker.delegationRequests()); n != before {
+			t.Fatalf("a resume with no run reported %d delegations", n-before)
+		}
+		if d, ok := f.svc.IdentityDelegationForTest(f.root.ID, "child-1"); ok {
+			t.Fatalf("the resumed helper still acts under %+v, want no run so its gateway calls fail closed", d)
+		}
+	})
+
 	t.Run("a parent with no run reports nothing and the helper still starts", func(t *testing.T) {
 		f := newHelperFixture(t)
 		if err := f.svc.RegisterHelper(f.rootContext(t), newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{}); err != nil {
