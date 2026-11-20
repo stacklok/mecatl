@@ -13,6 +13,8 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	"golang.org/x/oauth2"
+
+	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 // ErrAuthenticatedDiscovery reports a provider-scoped capability discovery
@@ -117,7 +119,7 @@ func (r *Runtime) discoverBackend(ctx context.Context, credential oauth2.TokenSo
 		return AuthenticatedCapabilities{}, errGatewayListingFailed
 	}
 	// The embedded gateway routes each backend under its own name.
-	listed, err := r.gateway.ListTools(ctx, backend, oauth2.StaticTokenSource(token))
+	listed, err := r.gateway.ListTools(ctx, backend, identitybroker.NewToken(token.AccessToken))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return AuthenticatedCapabilities{}, ctxErr

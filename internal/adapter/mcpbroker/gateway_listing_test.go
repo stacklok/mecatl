@@ -16,9 +16,9 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/oauth2"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
 )
 
@@ -106,7 +106,7 @@ func vmcpToken(t *testing.T, process *Process) string {
 
 func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 	process := embeddedGatewayProcess(t, mcpadapter.GatewayListLimits{})
-	credential := staticTokenSource(vmcpToken(t, process))
+	token := identitybroker.NewToken(vmcpToken(t, process))
 	for server, want := range map[string][]GatewayTool{
 		"notes": {
 			{Name: "echo", Description: "notes echo", ReadOnly: true},
@@ -114,7 +114,7 @@ func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 		},
 		"other": {{Name: "ping", Description: "other ping"}},
 	} {
-		listed, err := process.Gateway.ListTools(t.Context(), server, credential)
+		listed, err := process.Gateway.ListTools(t.Context(), server, token)
 		if err != nil {
 			t.Fatalf("ListTools(%s): %v", server, err)
 		}
@@ -139,10 +139,10 @@ func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 			t.Fatalf("ListTools(%s) = %+v, want %+v", server, listed, want)
 		}
 	}
-	if listed, err := process.Gateway.ListTools(t.Context(), "private", credential); err != nil || len(listed) != 0 {
+	if listed, err := process.Gateway.ListTools(t.Context(), "private", token); err != nil || len(listed) != 0 {
 		t.Fatalf("ListTools(private) without an upstream credential = %+v, %v; want no tools", listed, err)
 	}
-	if _, err := process.Gateway.ListTools(t.Context(), "notes", staticTokenSource("not-a-vmcp-token")); !errors.Is(err, mcpadapter.ErrGatewayList) {
+	if _, err := process.Gateway.ListTools(t.Context(), "notes", identitybroker.NewToken("not-a-vmcp-token")); !errors.Is(err, mcpadapter.ErrGatewayList) {
 		t.Fatalf("ListTools with a token the vMCP refuses = %v, want ErrGatewayList", err)
 	}
 }
@@ -151,14 +151,14 @@ func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 // GatewayCalls sets: the vMCP lists three tools, over a one-tool limit.
 func TestEmbeddedGatewayListsWithinGatewayCallsLimits(t *testing.T) {
 	process := embeddedGatewayProcess(t, mcpadapter.GatewayListLimits{MaxTools: 1})
-	if listed, err := process.Gateway.ListTools(t.Context(), "other", staticTokenSource(vmcpToken(t, process))); !errors.Is(err, mcpadapter.ErrGatewayList) || listed != nil {
+	if listed, err := process.Gateway.ListTools(t.Context(), "other", identitybroker.NewToken(vmcpToken(t, process))); !errors.Is(err, mcpadapter.ErrGatewayList) || listed != nil {
 		t.Fatalf("ListTools over the tool limit = %+v, %v; want nil and ErrGatewayList", listed, err)
 	}
 }
 
 // gatewayCatalogue is a runtime whose "first" backend is discovered in
 // process and whose "second" is a gateway route listed by list.
-func gatewayCatalogue(t *testing.T, list func(string, oauth2.TokenSource) ([]GatewayTool, error)) (*Attachment, *orderedCapabilityQueries, *recordingBrokerDiagnostics) {
+func gatewayCatalogue(t *testing.T, list func(string, identitybroker.Token) ([]GatewayTool, error)) (*Attachment, *orderedCapabilityQueries, *recordingBrokerDiagnostics) {
 	t.Helper()
 	runtime := testAnonymousRuntime(t)
 	diag := &recordingBrokerDiagnostics{}
@@ -177,13 +177,9 @@ func objectSchema() map[string]any { return map[string]any{"type": "object"} }
 func TestFreezeListsGatewayRoutesThroughTheGateway(t *testing.T) {
 	var mu sync.Mutex
 	var listedServers, bearers []string
-	attachment, queries, _ := gatewayCatalogue(t, func(server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
-		token, err := credential.Token()
-		if err != nil {
-			return nil, err
-		}
+	attachment, queries, _ := gatewayCatalogue(t, func(server string, token identitybroker.Token) ([]GatewayTool, error) {
 		mu.Lock()
-		listedServers, bearers = append(listedServers, server), append(bearers, token.AccessToken)
+		listedServers, bearers = append(listedServers, server), append(bearers, token.Value())
 		mu.Unlock()
 		return []GatewayTool{{Name: "two", Description: "two", InputSchema: objectSchema(), ReadOnly: true}}, nil
 	})
@@ -225,7 +221,7 @@ func TestFreezeFailsClosedOnAGatewayListing(t *testing.T) {
 		"no schema":      {listed: []GatewayTool{{Name: "two"}}, want: errGatewayListingFailed, reason: diagnosticReasonDiscoveryFailed},
 	} {
 		t.Run(name, func(t *testing.T) {
-			attachment, _, diag := gatewayCatalogue(t, func(string, oauth2.TokenSource) ([]GatewayTool, error) { return tc.listed, tc.err })
+			attachment, _, diag := gatewayCatalogue(t, func(string, identitybroker.Token) ([]GatewayTool, error) { return tc.listed, tc.err })
 			_, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("enrollment-token"))
 			if !errors.Is(err, tc.want) || !errors.Is(err, ErrAuthenticatedDiscovery) {
 				t.Fatalf("FreezeAuthenticatedCatalogue = %v, want %v", err, tc.want)
@@ -276,11 +272,11 @@ func TestGatewayListingNeverLeaksTheBearer(t *testing.T) {
 			}))
 			t.Cleanup(gateway.Close)
 			embedded := embeddedGateway{endpoint: gateway.URL, resource: gateway.URL, client: gateway.Client()}
-			attachment, _, diag := gatewayCatalogue(t, func(server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
-				return embedded.ListTools(t.Context(), server, credential)
+			attachment, _, diag := gatewayCatalogue(t, func(server string, token identitybroker.Token) ([]GatewayTool, error) {
+				return embedded.ListTools(t.Context(), server, token)
 			})
 			_, freezeErr := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource(canary))
-			_, listErr := embedded.ListTools(t.Context(), "second", staticTokenSource(canary))
+			_, listErr := embedded.ListTools(t.Context(), "second", identitybroker.NewToken(canary))
 			if freezeErr == nil {
 				t.Fatal("the freeze succeeded")
 			}

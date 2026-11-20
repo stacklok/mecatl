@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"golang.org/x/oauth2"
-
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -33,10 +31,12 @@ type Gateway interface {
 	// for the model-visible tool name on backend.
 	Route(backend, modelVisibleName string) (server, tool string, err error)
 	// ListTools lists the tools the gateway routes to server, each under its
-	// name on that server, sent with credential as the bearer. The gateway
-	// attributes each tool to its server. An error never carries the
-	// credential.
-	ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error)
+	// name on that server, sent with token as the bearer. token is a value,
+	// not a source, so the bearer sent is the one the caller holds and checks
+	// listed tools for. The caller checks the token before passing it. The
+	// gateway attributes each tool to its server. An error never carries the
+	// token.
+	ListTools(ctx context.Context, server string, token identitybroker.Token) ([]GatewayTool, error)
 }
 
 // GatewayTool is one tool a gateway lists for a server.
@@ -73,15 +73,11 @@ func (embeddedGateway) Route(backend, modelVisibleName string) (string, string, 
 }
 
 // ListTools lists the vMCP's tools routed to server.
-func (g embeddedGateway) ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
-	if server == "" || credential == nil {
+func (g embeddedGateway) ListTools(ctx context.Context, server string, token identitybroker.Token) ([]GatewayTool, error) {
+	if server == "" || token.IsZero() {
 		return nil, mcpadapter.ErrGatewayList
 	}
-	token, err := credential.Token()
-	if err != nil || !validBearerToken(token) {
-		return nil, mcpadapter.ErrGatewayList
-	}
-	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, identitybroker.NewToken(token.AccessToken), g.listLimits)
+	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, token, g.listLimits)
 	if err != nil {
 		return nil, err
 	}
