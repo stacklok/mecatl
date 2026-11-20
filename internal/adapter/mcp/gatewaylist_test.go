@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -188,6 +191,93 @@ func TestListGatewayToolsReturnsTheCallersContextError(t *testing.T) {
 	}}
 	if _, err := listPagedGateway(ctx, t, gateway, GatewayListLimits{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ListGatewayTools = %v, want context.Canceled", err)
+	}
+}
+
+// TestListGatewayToolsSendsTheBearerOnEveryRequest sends the bearer in the
+// Authorization header of every request of the listing: the session's
+// setup, every page, and its close.
+func TestListGatewayToolsSendsTheBearerOnEveryRequest(t *testing.T) {
+	gateway := &pagedGateway{page: func(_ *http.Request, cursor string) ([]map[string]any, string) {
+		if cursor == "" {
+			return []map[string]any{pagedTool("a")}, "p2"
+		}
+		return []map[string]any{pagedTool("b")}, ""
+	}}
+	var mu sync.Mutex
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		var msg struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &msg)
+		mu.Lock()
+		seen = append(seen, r.Method+" "+msg.Method+" "+r.Header.Get("Authorization"))
+		mu.Unlock()
+		gateway.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	if _, err := ListGatewayTools(t.Context(), server.URL, server.Client(), identitybroker.NewToken("listing-token"), GatewayListLimits{}); err != nil {
+		t.Fatalf("ListGatewayTools: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{
+		"POST initialize Bearer listing-token",
+		"POST notifications/initialized Bearer listing-token",
+		"POST tools/list Bearer listing-token",
+		"POST tools/list Bearer listing-token",
+		"DELETE  Bearer listing-token",
+	}
+	if !slices.Equal(seen, want) {
+		t.Fatalf("requests = %q, want %q", seen, want)
+	}
+}
+
+// TestListGatewayToolsFollowsNoRedirect fails on a redirect rather than
+// sending the listing, and its bearer, to the redirect's target.
+func TestListGatewayToolsFollowsNoRedirect(t *testing.T) {
+	var mu sync.Mutex
+	var redirected []string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		redirected = append(redirected, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	t.Cleanup(target.Close)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/mcp", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(gateway.Close)
+	tools, err := ListGatewayTools(t.Context(), gateway.URL, gateway.Client(), identitybroker.NewToken("listing-token"), GatewayListLimits{})
+	if !errors.Is(err, ErrGatewayList) || len(tools) != 0 {
+		t.Fatalf("ListGatewayTools = %v, %v, want no tools and ErrGatewayList", tools, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(redirected) != 0 {
+		t.Fatalf("the redirect's target received %d requests, want none", len(redirected))
+	}
+}
+
+// TestListGatewayToolsRefusesMissingArguments refuses, before any request,
+// a listing without an endpoint, a client, or a token.
+func TestListGatewayToolsRefusesMissingArguments(t *testing.T) {
+	for name, tc := range map[string]struct {
+		endpoint string
+		client   *http.Client
+		token    identitybroker.Token
+	}{
+		"no endpoint": {"", http.DefaultClient, identitybroker.NewToken("listing-token")},
+		"no client":   {"https://gateway.example/mcp", nil, identitybroker.NewToken("listing-token")},
+		"no token":    {"https://gateway.example/mcp", http.DefaultClient, identitybroker.Token{}},
+	} {
+		if tools, err := ListGatewayTools(t.Context(), tc.endpoint, tc.client, tc.token, GatewayListLimits{}); !errors.Is(err, ErrGatewayList) || tools != nil {
+			t.Errorf("%s: ListGatewayTools = %v, %v, want nil and ErrGatewayList", name, tools, err)
+		}
 	}
 }
 
