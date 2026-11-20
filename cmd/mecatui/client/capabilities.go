@@ -53,6 +53,10 @@ type Capabilities struct {
 	// applies its auto/yolo posture process-wide whatever the session mode, so the
 	// ui must not present a session mode as the effective permission mode there.
 	SessionPermissionModes bool
+	// ModelEffortLevels reports the model_effort_levels feature: ListModels
+	// carries each model's effort levels and resolved_model the requested level.
+	// Without it an empty level list says nothing, so /effort offers every tier.
+	ModelEffortLevels bool
 	// ProjectTrust is "trusted" or "untrusted" for the server's launch
 	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
 	ProjectTrust string
@@ -122,11 +126,16 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 // session-scoped permission modes.
 const SessionPermissionModesFeature = "session_permission_modes"
 
+// ModelEffortLevelsFeature is the compatibility feature identifier for
+// per-model effort levels and the requested effort.
+const ModelEffortLevelsFeature = "model_effort_levels"
+
 // compatibilityCapabilitiesFrom maps a compatibility response: the capability
 // message plus the feature bits the ui consumes.
 func compatibilityCapabilitiesFrom(resp *mecatlv1.GetCompatibilityInfoResponse) Capabilities {
 	caps := capabilitiesFrom(resp.GetCapabilities())
 	caps.SessionPermissionModes = slices.Contains(resp.GetFeatures(), SessionPermissionModesFeature)
+	caps.ModelEffortLevels = slices.Contains(resp.GetFeatures(), ModelEffortLevelsFeature)
 	return caps
 }
 
@@ -223,6 +232,10 @@ type ResolvedModel struct {
 	// footer segment (only when non-empty). Server-owned + echoed verbatim — never
 	// recomputed by the client.
 	ReasoningEffort string
+	// RequestedReasoningEffort is the level the session asked for, "" for Auto. It
+	// differs from ReasoningEffort when the model doesn't accept the level. Empty
+	// on a server without the model_effort_levels feature.
+	RequestedReasoningEffort string
 }
 
 // resolvedModelFrom maps a proto ResolvedModel (nil-safe) to the plain struct. A
@@ -233,9 +246,10 @@ func resolvedModelFrom(m *mecatlv1.ResolvedModel) ResolvedModel {
 		return ResolvedModel{}
 	}
 	return ResolvedModel{
-		ProviderID:      m.GetProviderId(),
-		ModelID:         m.GetModelId(),
-		ContextWindow:   m.GetContextWindow(),
-		ReasoningEffort: m.GetReasoningEffort(),
+		ProviderID:               m.GetProviderId(),
+		ModelID:                  m.GetModelId(),
+		ContextWindow:            m.GetContextWindow(),
+		ReasoningEffort:          m.GetReasoningEffort(),
+		RequestedReasoningEffort: m.GetRequestedReasoningEffort(),
 	}
 }
