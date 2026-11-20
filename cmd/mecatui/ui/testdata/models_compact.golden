@@ -1,10 +1,10 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ──────────────────────────────────────────────────────────────────────────────────────
-                                   ┏━━━━━━━━━━━━━┓
-                                   ┃             ┃
-                                   ┃  esc close  ┃
-                                   ┃             ┃
-                                   ┗━━━━━━━━━━━━━┛
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+          ┃                                                               ┃
+          ┃  esc close                                                    ┃
+          ┃                                                               ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

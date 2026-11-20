@@ -1773,24 +1773,28 @@ func TestModelsPickerGolden(t *testing.T) {
 	compareGolden(t, "models.golden", got)
 }
 
-// TestModelsPickerRetainsNaturalCardWidth prevents list-row bounding from narrowing
-// Models chrome before the surrounding card measures its natural width.
-func TestModelsPickerRetainsNaturalCardWidth(t *testing.T) {
+func TestModelsPickerMeasuresChromeWithinOffer(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(),
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 	mm, cmd := m.runModels()
 	m = feedCmd(t, mm.(Model), cmd)
 	const provenance = "current: a deliberately long server-resolved model identity whose provenance must retain its natural chrome width"
-	modelsSurface(t, m).provenance = provenance
-	out := stripANSIstr(m.View().Content)
-
-	const help = "type to filter · ↑/↓/pgup move · ctrl+g set global default"
-	if !strings.Contains(out, help) || !strings.Contains(out, provenance) {
-		t.Errorf("Models help action was truncated:\n%s", out)
+	s := modelsSurface(t, m)
+	s.provenance = provenance
+	if s.modalMaxOuterWidth() <= 100 {
+		t.Fatal("preferred width did not account for provenance chrome")
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "┏") && strings.Count(line, "━") <= 100 {
-			t.Errorf("Models card width regressed to bounded content width: %q", line)
+	for _, width := range []int{200, 100, 32} {
+		m = effortOffer(m, width, 30)
+		out := stripANSIstr(m.View().Content)
+		if bounds := m.metrics.outerBounds; bounds.x0 < 0 || bounds.x1 > m.width || bounds.x1-bounds.x0 > 128 {
+			t.Fatalf("card outside capped offer: %+v", bounds)
+		}
+		if width == 200 && !strings.Contains(out, provenance) {
+			t.Fatalf("roomy card truncated provenance:\n%s", out)
+		}
+		if !strings.Contains(out, "[enter Use model]") {
+			t.Fatalf("bounded card lost primary action:\n%s", out)
 		}
 	}
 }

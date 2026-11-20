@@ -1,23 +1,23 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                             ┃
-┃  Models                                                                                                     ┃
-┃  current: gpt-5 (server default)                                                                            ┃
-┃  > filter models…                                                                                           ┃
-┃                                                                                                             ┃
-┃  Switching models is expensive as it clears caches.                                                         ┃
-┃                                                                                                             ┃
-┃  ✗ list models: catalog unavailable                                                                         ┃
-┃  the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/mecatui.log)  ┃
-┃                                                                                                             ┃
-┃  [esc Close]                                                                                                ┃
-┃  type to filter · ↑/↓/pgup move                                                                             ┃
-┃  ● current  ★ global default                                                                                ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                                ┃
-┃                                                                                                             ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Models                                                                                          ┃
+┃  current: gpt-5 (server default)                                                                 ┃
+┃  > filter models…                                                                                ┃
+┃                                                                                                  ┃
+┃  Switching models is expensive as it clears caches.                                              ┃
+┃                                                                                                  ┃
+┃  ✗ list models: catalog unavailable                                                              ┃
+┃  the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/m  ┃
+┃                                                                                                  ┃
+┃  [esc Close]                                                                                     ┃
+┃  type to filter · ↑/↓/pgup move                                                                  ┃
+┃  ● current  ★ global default                                                                     ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

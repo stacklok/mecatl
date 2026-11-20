@@ -26,8 +26,8 @@ const (
 	modelsNone modelsView = iota
 	modelsPanel
 
-	// modelsNormalChromeWidth distinguishes the compact fallback, where all
-	// chrome must fit, from ordinary card rendering, which measures natural text.
+	// modelsNormalChromeWidth distinguishes wrapped help in narrow offers from
+	// ordinary card rendering, which keeps each help line together.
 	modelsNormalChromeWidth = 80
 )
 
@@ -121,6 +121,22 @@ func (s *modelsState) footerControls(width int) ([]string, []modelsControl) {
 	return lines, controls
 }
 
+func (s *modelsState) modalMaxOuterWidth() int {
+	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
+	prefix, suffix := modelsFixedLines(*s)
+	width := 0
+	for _, line := range append(prefix, suffix...) {
+		width = max(width, ansi.StringWidth(terminaltext.ExpandTabs(line, terminaltext.DefaultTabWidth)))
+	}
+	for _, model := range s.catalog.models {
+		text := modelRowText(s.catalog.active, s.catalog.globalDefault, s.catalog.configProvenanceProviderIDs, model)
+		for _, line := range strings.Split(text, "\n") {
+			width = max(width, 4+ansi.StringWidth(line))
+		}
+	}
+	return min(128, width+frame)
+}
+
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	s.hitControls = nil
 	list := s.listControl()
@@ -140,22 +156,20 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 		return renderSkillsCompact(s.deps.theme, s.deps.marks, width), nil
 	}
 	s.syncList(width, s.rowBudget)
-	view := list.ViewWithIndicators(s.rowBudget, list.RevealPending())
+	// Measure without moving the live browsing anchor; short lists stay content-sized.
+	measurement := *list
+	bodyRows := len(measurement.View().Rows)
+	view := list.ViewWithIndicators(bodyRows, list.RevealPending())
 	s.hitItems = make(map[HitID]string)
 
-	return s.renderRows(width, height, prefix, suffix, controls, view)
+	return s.renderRows(width, len(prefix)+bodyRows+len(suffix), prefix, suffix, controls, view)
 }
 
 func (s *modelsState) renderRows(width, height int, prefix, suffix []string, controls []modelsControl, view bounded.ListView) (string, []ClickableRegion) {
 	lines := make([]string, 0, height)
 	appendChrome := func(line string) {
 		if len(lines) < max(0, height) {
-			// Keep normal Models chrome intact so the surrounding card can retain its
-			// natural width. Compact geometry still needs a hard bound.
-			if width < modelsNormalChromeWidth {
-				line = boundedDisplayLine(line, width)
-			}
-			lines = append(lines, line)
+			lines = append(lines, boundedDisplayLine(line, width))
 		}
 	}
 	appendRow := func(line string) {
@@ -185,6 +199,9 @@ func (s *modelsState) renderRows(width, height int, prefix, suffix []string, con
 	}
 	if view.Below > 0 {
 		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	for len(lines) < height-len(suffix) {
+		lines = append(lines, "")
 	}
 	s.hitControls = make(map[HitID]modelsControlHit)
 	for _, control := range controls {
@@ -574,7 +591,7 @@ func modelRowText(_ client.ModelSelection, _ client.ModelSelection, configProven
 	if len(segs) > 0 {
 		line += "  " + strings.Join(segs, " ")
 	}
-	return line
+	return terminaltext.ExpandTabs(line, terminaltext.DefaultTabWidth)
 }
 func modelLabel(mi client.ModelInfo) string {
 	if mi.DisplayName != "" {
