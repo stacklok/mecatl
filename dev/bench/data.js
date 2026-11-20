@@ -439684,6 +439684,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795178224835,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b04d0144021d58ddd662115866a3f16bec95cba0",
+          "message": "feat(executioncontroller): run executor Pods with the server as PID 1 (#2898)\n\nExecutor Pods now run `/mecatl-executor serve` on port 7443 with only\nthe admitted services, restart it in place (`RestartPolicyAlways`, since\na workload `kill 1` exits the server 0), and become ready once the port\naccepts connections. `validatePod` rejects Pods with the old command or\na different server spec; the lifecycle guide covers replacing them.\n\nThe chart admits the port from provider Pods only. Kind qualification\nchecks provider reachability, an unrelated Pod's denial, and in-place\nrestart with the same PVC. Readiness becomes gRPC health and file and\ncommand operations leave Pod exec with #2718.\n\nCloses: #2702",
+          "timestamp": "2026-11-20T14:24:19+01:00",
+          "tree_id": "0c70bf683c742de3de5fcaf09af1c46886f3a753",
+          "url": "https://github.com/stacklok/mecatl/commit/b04d0144021d58ddd662115866a3f16bec95cba0"
+        },
+        "date": 1795181872915,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13420.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -572532,6 +572571,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795181868689,
+  "lastUpdate": 1795181873908,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
