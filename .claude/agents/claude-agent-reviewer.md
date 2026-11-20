@@ -426,7 +426,7 @@ patterns, not individual findings.
 - **`skill-write` skill** — for *writing* a skill (this agent is
   for review only).
 - **The agent's domain-specific sibling** (e.g.
-  `go-architect`, `secure-code-reviewer`) — for review of the
+  `secure-code-reviewer`) — for review of the
   agent's *expertise claims*, not its design.
 
 ## References

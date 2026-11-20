@@ -72,9 +72,10 @@ task mecak8s:kind-connect   # adds /etc/hosts aliases, refreshes fixture CA, run
 ```
 
 Both require `./bin/mecatui` to already exist (Step 2) and
-`task mecak8s:kind-keycloak-setup` to have been run at least once. See the
-`keycloak-kind-setup` skill if the Keycloak layer itself needs
-(re-)provisioning or debugging.
+`task mecak8s:kind-keycloak-setup` to have been run at least once. See
+`deploy/mecak8s-kind/README.md` if the Keycloak layer itself needs
+(re-)provisioning or debugging (`task mecak8s:kind-keycloak-setup` or
+`task mecak8s:kind-keycloak-apply`).
 
 Without the Keycloak layer, connect directly:
 
@@ -108,5 +109,3 @@ task mecak8s:kind-destroy
   `kind-login`, `kind-connect`, `kind-destroy` task definitions.
 - `deploy/mecak8s-kind/README.md` — full fixture lifecycle, provider modes
   (mock vs. real via `OPENROUTER_API_KEY`), and the optional Keycloak layer.
-- `keycloak-kind-setup` skill — for provisioning/recovering the Keycloak layer
-  itself, if this fixture uses it.

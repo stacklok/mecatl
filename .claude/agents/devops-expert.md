@@ -470,8 +470,8 @@ findings.
   in the app code, defer the app-side analysis.
 - **`ci-agent-hardening` skill** — the security narrow-slice
   on Claude-in-CI / agent-on-CI threat models.
-- **`go-architect` / language architects** — when the finding
-  is application architecture, not platform.
+- **`software-architect`** — when the finding is application
+  architecture, not platform.
 - **`library-reuse-reviewer`** — when a new dependency in the
   build pipeline (terraform module, GitHub Action, Helm chart
   sub-chart) needs a sourcing screen.

@@ -72,8 +72,9 @@ You review code and produce a findings report. You do not modify code.
 2. **Identify the language version.** Stdlib coverage moves fast:
    - Go: `slices`, `maps`, `cmp` arrived in 1.21; `slog` in 1.21;
      `for range int` in 1.22; `range-over-func` iterators in 1.23;
-     `os.Root` in 1.24; `encoding/json/v2` in development;
-     `sync.Map[K,V]` in 1.25. Check `go.mod` for `go 1.X` first.
+     `os.Root` in 1.24; `encoding/json/v2` is standard from 1.27
+     (behind `GOEXPERIMENT=jsonv2` before that). Check `go.mod` for
+     `go 1.X` first.
    - Node: many "I need a library" cases are now native (`fetch`,
      `crypto.randomUUID`, `structuredClone`, `AbortController`,
      `Array.prototype.toSorted` / `.toReversed`, `Object.groupBy`,
@@ -151,8 +152,6 @@ Look for hand-rolled:
   `atomic.Uint64`, `atomic.Bool`, `atomic.Pointer[T]` (1.19+).
   Untyped `atomic.AddInt32`-style calls in new code are a
   finding.
-- `sync.Map[K,V]` (1.25+) typed map. Pre-1.25, the untyped
-  `sync.Map` is fine but loses type safety.
 - Hand-rolled concurrent maps with `sync.Mutex` are usually
   fine — `sync.Map` has narrow performance characteristics.
   Don't blindly recommend it.
@@ -204,19 +203,18 @@ Look for hand-rolled:
   in 1.23+.
 
 ### `time`
-- `time.Tick` leaks goroutines — `time.NewTicker(...)` with
-  explicit `Stop()` is the safe pattern.
+- `time.Tick` is fine for tickers that live as long as the
+  program; use `time.NewTicker` when the ticker must be stopped.
 - `time.AfterFunc` for delayed callbacks.
 - `time.Sleep` in a loop with a stop condition → channels +
-  `time.NewTimer`; or use `time.Tick` only in test code.
+  `time.NewTimer`.
 
 ### Other often-reinvented stdlib
 - `path/filepath.Walk` / `WalkDir` for directory walks.
 - `io.Copy`, `io.ReadAll` (replaced `ioutil.*` in 1.16);
   any remaining `ioutil` usage is a finding.
-- `encoding/json` — but `encoding/json/v2` (planned) brings
-  significant improvements; pre-emptive findings only when v2
-  ships.
+- `encoding/json`, or `encoding/json/v2` on Go 1.27+ (standard
+  there; behind `GOEXPERIMENT=jsonv2` before).
 - `flag` for small CLIs; `cobra` is fine for complex ones,
   but bringing it in for a single command is overkill.
 - `os.Root` (1.24+) for path-rooted file access — prevents
@@ -454,13 +452,11 @@ and "this dep was rejected; here's why."
 - **`code-duplication-reviewer`** — when the issue isn't "you
   reinvented stdlib" but "you reinvented your *own* code in
   three places."
-- **`go-architect`** — for architectural decisions on whether
+- **`software-architect`** — for architectural decisions on whether
   to add a dep at all, vs. designing differently.
 - **`secure-code-reviewer`** — for security implications of
   the library choice (transitive vulnerabilities, crypto
   libraries to avoid).
-- **`frontdoor-architect`** — for OpenAI / Vercel AI SDK
-  / Connect choices in host-specific code paths.
 
 ## References to cite
 

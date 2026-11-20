@@ -15,9 +15,9 @@ description: >-
 ## Prerequisites
 
 - The operator has a mecatl deployment and an API key for at least one provider
-  (OpenRouter, Anthropic, or OpenAI). The config targets ONE provider — provider
-  is fixed per session, so every alias must resolve to a model id on the same
-  provider.
+  (OpenRouter, Anthropic, or OpenAI). Scalar aliases use
+  `models.default_provider`; an object alias `{provider, model}` pins its own
+  provider for a new session's default or a routed delegation.
 - Web search is available for live benchmark/pricing lookup.
 
 ## Workflow
@@ -68,7 +68,9 @@ one, or say there is no specific target.”
 
 **Q6 — Existing config (auto-discovered, not asked blank)**
 
-Do NOT ask. Silently run `cat ~/.config/mecatl/settings.yaml`.
+Don't ask. Resolve the operator settings file (`$XDG_CONFIG_HOME/mecatl/settings.yaml`,
+else `~/.config/mecatl/settings.yaml`, or the `--permission-config` file the
+operator names) and read it with the Read tool. Show only its `models:` block.
 
 - **Found with `models:` block** — show it fenced, then ask: “I found an existing
   `models:` config. Should I use it as a base (recommended) or start fresh?”
@@ -107,7 +109,8 @@ schema and rules. Then build the config:
 
 1. **Aliases** — the spine. Define `heavy`/`coder`/`quick` (minimum) pointing at
    concrete provider model ids. Add `image` (or another specialty alias) only if
-   the operator needs multimodal. Every alias must be on the chosen provider.
+   the operator needs multimodal. Use scalar aliases on the chosen provider unless the operator wants
+   cross-provider routing; then use `{provider, model}` aliases.
 2. **`default`** — the session model. Usually the `heavy` alias (the strongest
    reasoning model), unless the operator wants a cheaper default.
 3. **Slots** — route the four housekeeping calls (`compaction`/`ask-reviewer`/
@@ -141,9 +144,9 @@ After the config, include:
 
 ## Guidelines
 
-- **Provider-fixed invariant**: never mix providers across aliases. If the
-  operator wants Anthropic models, ALL aliases are `anthropic/*` ids. OpenRouter
-  is the common choice because it aggregates many vendors behind one provider.
+- **One provider by default**: prefer one provider unless the operator wants
+  cross-provider routing. OpenRouter is the common choice because it aggregates
+  many vendors behind one provider. Plan mode stays on the session's provider.
 - **Cost-tiered default**: when the operator says "cost-tiered" or doesn't
   specify, prefer open/cheap models (DeepSeek V4-Flash/Pro, GLM-5.2, Gemini Flash)
   and put the expensive frontier model only where it's load-bearing (`heavy`/
@@ -199,7 +202,7 @@ Ask normally, one question at a time. For example:
    territory**
 
 The operator can correct an answer naturally, such as “Actually, use Anthropic
-instead,” before the search begins. Then silently inspect
-`~/.config/mecatl/settings.yaml`; if it has a `models:` block, ask whether to use
+instead,” before the search begins. Then read the resolved
+operator settings file with the Read tool; if it has a `models:` block, ask whether to use
 it as a base or start fresh. Otherwise, begin Step 2 and search for models that
 fit the recorded preferences.

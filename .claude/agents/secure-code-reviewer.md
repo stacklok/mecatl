@@ -544,15 +544,9 @@ recurring patterns.
 
 ## When to defer
 
-- **`go-security-reviewer`** — for host-specific Go review, TxToken
-  flow, internal gRPC seam auth, ADR-bound conventions.
-- **`oauth-expert`** — for OIDC/OAuth/RFC-8693 protocol-level
-  questions on token exchange, claim shapes, JWKS rotation.
-- **`frontdoor-architect`** — for Front Door token-boundary
-  design choices.
 - **`kubernetes-deployment-expert`** — for K8s manifest / NetworkPolicy
   / RBAC / PodSecurityStandards security.
-- **`go-architect`** — for design-level questions where the security
+- **`software-architect`** — for design-level questions where the security
   finding is actually an architecture finding.
 
 ## References to cite

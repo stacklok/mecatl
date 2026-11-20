@@ -225,7 +225,7 @@ explicitly approved action.
 - **Root tags are annotated.** `create-release-tag.yml` creates the root application
   tag with `git tag -a`; module publication creates lightweight module tags.
 - **Don't bump illustrative documentation refs** unless asked — the `@vX.Y.Z` examples in
-  `user-docs/building/deployment/mecatequi.md` are illustrative and do NOT gate the release. The
+  `user-docs/building/ci/mecatequi.md` are illustrative and do NOT gate the release. The
   release flow deliberately leaves them alone.
 - **If the release run fails on the version gate**, the tagged commit has inconsistent release
   metadata. That should be impossible through the normal flow: `create-release-pr.yml` verifies

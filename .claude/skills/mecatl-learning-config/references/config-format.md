@@ -20,6 +20,7 @@ values shown below.
 ```yaml
 learning:
   mode: off # off | review | auto
+  admission_interval: 1 # 0 or 1 admits every eligible reflection; operator-only
   sensitivity: balanced # conservative | balanced | eager
   skills:
     activation: validated # validated | evaluated
@@ -35,20 +36,22 @@ learning:
 | Key | Valid values and rules | Default |
 |---|---|---|
 | `mode` | `off`, `review`, or `auto` | `off` |
+| `admission_interval` | integer; admits every Nth eligible automatic reflection; `0` and `1` admit all; project values ignored | `1` |
 | `sensitivity` | `conservative`, `balanced`, or `eager` | `balanced` |
 | `skills.activation` | `validated` or `evaluated` | `validated` in standard app Auto configuration; specify it explicitly |
 | `automatic.cooldown` | nonnegative Go duration string; `0s` disables cooldown | `10m` |
 | `automatic.window` | Go duration string from `1m` through `24h`, inclusive | `1h` |
-| `automatic.max_reflections` | integer `0..1000000000`, process-wide per window | `8` |
-| `automatic.max_tokens` | integer `0..1000000000`, process-wide reserved tokens per window | `100000` |
+| `automatic.max_reflections` | integer `0..1000000000`, deployment-wide per window | `8` |
+| `automatic.max_tokens` | integer `0..1000000000`, deployment-wide reserved tokens per window | `100000` |
 | `automatic.max_reflections_per_principal` | integer `0..1000000000`, per principal per window | `4` |
 | `automatic.max_tokens_per_principal` | integer `0..1000000000`, reserved tokens per principal per window | `50000` |
 
 Zero for **any maximum** disables automatic reflection under that bound; it is
-not “unlimited.” Cooldown zero disables only cooldown. Limits and cooldown state
-are process-local and reset on restart. In a deployment with N replicas, the
-aggregate envelope may approach N times the configured process-wide values.
-These controls do not change provider-side quotas and are not cluster-global.
+not “unlimited.” Cooldown zero disables only cooldown. Standard `review`/`auto`
+configurations enforce limits, cooldowns, and deduplication through a durable
+admission ledger shared by cooperating processes. Embeddings without a healthy
+durable ledger enforce them per process: windows reset on restart and each
+replica has its own budget. These controls do not change provider-side quotas.
 Reserved budget remains consumed after a reflection failure, timeout, or
 abstention; queue-full does not consume it.
 
@@ -306,7 +309,7 @@ patch immediately afterward. The patch must contain exactly one top-level
 | `activation: evaluated` without an evaluator | No PASS is available; ABSTAIN/no-evaluator skill proposals stay staged. |
 | Project tries `off`→`auto`, conservative→eager, or evaluated→validated | Tighten-only fold refuses the attempted autonomy increase. Change the operator ceiling instead. |
 | Project sets `automatic:` | Warning-ignored; place budgets in operator settings. |
-| Budget sized as if shared by replicas | Every replica has its own window/cooldown. Multiply the possible envelope by replica count or lower each process limit. |
-| Expecting these limits to cap provider or account spend globally | They only bound this process's automatic reflection reservations. Provider and cluster controls are separate. |
+| Budget sized per replica | Standard configurations share one durable ledger, so size limits for the whole deployment. Only embeddings without a healthy ledger give each replica its own window and cooldown. |
+| Expecting these limits to cap provider or account spend globally | They only bound automatic reflection reservations. Provider and cluster controls are separate. |
 
 [← back to the skill](../SKILL.md)

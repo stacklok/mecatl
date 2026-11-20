@@ -59,10 +59,10 @@ One entry per curated metric. `kind` ∈ `"histogram" | "scalar" | "absent"`.
   }
 ]
 ```
-`role` values form a CLOSED family: `main | subagent | member | parallel | fork
-| usermodel | child` — `main` is the operator-facing engine; the rest are
-delegation children (Subagent, team member, Parallel branch, fork, user-model
-reviewer, unrecognised fallback). Never a session id or agent-def name.
+`role` values form a CLOSED family: `main | subagent | member | parallel | usermodel
+| child` — `main` is the operator-facing engine; the rest are delegation
+children (Subagent, team member, Parallel branch, user-model reviewer,
+unrecognised fallback). Never a session id or agent-def name.
 `by_role` rows carry `count` for histograms and `value` for counters.
 
 ### `perf://pprof/{profile}`  ({profile} ∈ heap|goroutine|allocs|mutex|block)
