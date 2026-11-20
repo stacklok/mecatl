@@ -8,8 +8,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/openai/openai-go/v3 v3.98.0 h1:HHmNpTQykkgARTvPobfQqSItV57os4AJ+fB4megoH6E=
 github.com/openai/openai-go/v3 v3.98.0/go.mod h1:uMht5xIbHFTRAD05AiQXzNT9hJGklZHsCnyzeWiteGo=
-github.com/stacklok/mecatl/engine v0.18.1 h1:dGKlKAoyiNdKBakwx1BUY7aCy58LviRy4tao2cMwGs8=
-github.com/stacklok/mecatl/engine v0.18.1/go.mod h1:q94lElMGyPgwvp9h8bHjyWn7N88jup+SXiL/nEAp04M=
+github.com/stacklok/mecatl/engine v0.19.0 h1:QAKkKP95oLqLxkBy6Mbz+yJIm2L0McuEFokFe3k86C0=
+github.com/stacklok/mecatl/engine v0.19.0/go.mod h1:ep1aCY8sWLXJlXeYS7ll0rDR//HSt0brSSHizA6NC6w=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0 h1:At26rvktMkZNGL2kyZYJkBh/n6PAXAg7DwlneCt8r94=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0/go.mod h1:sWfLZ3cpUKkeNHTh2cv18y+w8aCVa4qdwhrvrr2oeaI=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
