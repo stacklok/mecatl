@@ -135,7 +135,7 @@ From a checkout with the Taskfile's Kind prerequisites, run
 ceiling), followed by mandatory `TestKindExecutionInFlightAutomaticRenewal`
 (8-minute test ceiling, 7-minute context, 10-minute outer process deadline).
 This test requests controlled renewal with the supported `cmctl renew` command
-only after observing both the active operation and its started marker. The
+only after observing the command's started marker. The
 production fixture installs cmctl v2.6.1 into its private, owned tools directory;
 HTTPS downloads are checked against repository-pinned SHA-256 hashes before
 making the binary executable. Each certificate has a separate renewal request.
@@ -147,8 +147,8 @@ and server certificate revisions, changed client and server serials, and a
 verified handshake against the provider's renewed projected identity. The test
 atomically publishes the issued host client pair and calls `ReloadTLS` on the
 same client during the active RPC. Fixture-admin exec releases the barrier on
-the captured executor Pod, with its name, UID, environment, and active operation
-verified before release. The original RPC must return a successful terminal
+the captured executor Pod, with its name, UID, and environment verified before
+release. The original RPC must return a successful terminal
 receipt, output, and workspace mutation with unchanged Pod/PVC, epoch, and grant.
 
 The active-renewal budget is 180 seconds; the command's self-barrier expires

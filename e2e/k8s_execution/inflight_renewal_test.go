@@ -341,18 +341,11 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 	renewCtx, stopRenewal := context.WithTimeout(ctx, 180*time.Second)
 	defer stopRenewal()
 	ioCtx = renewCtx
-	var active executionStatus
-	if err := inflightWait(renewCtx, done, func() (bool, error) {
-		active = statusAt(renewCtx)
-		return active.ActiveOperationID != "", nil
-	}); err != nil {
-		t.Fatalf("active operation publication: %v", err)
-	}
 	pods, err := k8s.CoreV1().Pods(namespace).List(renewCtx, metav1.ListOptions{LabelSelector: "execution.mecatl.dev/environment=" + attached.Environment.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pod, err := inflightExecutorPod(pods.Items, attached.Environment.ID, active.PodUID)
+	pod, err := inflightExecutorPod(pods.Items, attached.Environment.ID, before.PodUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,13 +354,15 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 			return err
 		}
 		status := statusAt(renewCtx)
-		if status.ActiveOperationID != active.ActiveOperationID || status.PodUID != before.PodUID || status.PVCUID != before.PVCUID || status.Epoch != claim.Epoch || status.ActiveGrantGeneration != claim.GrantGeneration || status.FenceState == "FenceUnknown" {
-			return fmt.Errorf("controlled renewal changed active operation, Pod, PVC, epoch, or grant")
+		if status.PodUID != before.PodUID || status.PVCUID != before.PVCUID ||
+			status.Epoch != claim.Epoch || status.ActiveGrantGeneration != claim.GrantGeneration ||
+			status.FenceState == "FenceUnknown" {
+			return fmt.Errorf("controlled renewal changed Pod, PVC, epoch, grant, or fence")
 		}
 		return inflightRunning(renewCtx, done)
 	}
-	// Fixture-admin exec only checks/releases the barrier; client.File cannot run
-	// concurrently with StartCommand. Never select a replacement Pod by label.
+	// Fixture-admin exec only checks/releases the barrier. Never select a
+	// replacement Pod by label.
 	executorExec := func(script string) ([]byte, error) {
 		if err := assertActive(); err != nil {
 			return nil, err
@@ -397,7 +392,8 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("command started marker: %v", err)
 	}
-	t.Logf("controlled_renewal_active operation=%s pod=%s pod_uid=%s epoch=%d grant=%d", active.ActiveOperationID, pod.Name, pod.UID, claim.Epoch, claim.GrantGeneration)
+	t.Logf("controlled_renewal_active pod=%s pod_uid=%s epoch=%d grant=%d",
+		pod.Name, pod.UID, claim.Epoch, claim.GrantGeneration)
 	for _, cert := range []struct {
 		name     string
 		revision int
@@ -506,8 +502,11 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		t.Fatalf("file mutation across renewal: value=%q err=%v", written.Data, err)
 	}
 	status := statusAt(ctx)
-	if status.FenceState == "FenceUnknown" || status.ActiveOperationID != "" || status.PVCUID != before.PVCUID || status.PodUID != before.PodUID || status.Epoch != claim.Epoch || status.ActiveGrantGeneration != claim.GrantGeneration {
-		t.Fatalf("renewal changed durable operation/workspace: fence=%q active=%t pvc_preserved=%t", status.FenceState, status.ActiveOperationID != "", status.PVCUID == before.PVCUID)
+	if status.FenceState == "FenceUnknown" || status.PVCUID != before.PVCUID ||
+		status.PodUID != before.PodUID || status.Epoch != claim.Epoch ||
+		status.ActiveGrantGeneration != claim.GrantGeneration {
+		t.Fatalf("renewal changed durable workspace: fence=%q pvc_preserved=%t",
+			status.FenceState, status.PVCUID == before.PVCUID)
 	}
 	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "after-renewal", Data: []byte("new-call\n")}); err != nil {
 		t.Fatalf("post-renewal file mutation: %v", err)

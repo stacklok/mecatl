@@ -89,6 +89,19 @@ func TestProfileEnvironmentAdmissionLimit(t *testing.T) {
 }
 
 func runFixtureEnvironment(epoch, generation uint64) *unstructured.Unstructured {
+	env := unpinnedRunFixture(epoch, generation)
+	_ = unstructured.SetNestedField(env.Object, "pod-uid", "status", "pod", "uid")
+	writeServerCertificatePin(env, serverCertificatePin{
+		SecretName:  "executor-env-tls",
+		Fingerprint: fixtureFingerprint,
+		PodUID:      "pod-uid",
+	})
+	return env
+}
+
+var fixtureFingerprint = certificateFingerprint([]byte("executor"))
+
+func unpinnedRunFixture(epoch, generation uint64) *unstructured.Unstructured {
 	now := time.Now().UTC()
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(epoch), "grantGeneration": int64(generation), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(epoch), "grantGeneration": int64(generation), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 }

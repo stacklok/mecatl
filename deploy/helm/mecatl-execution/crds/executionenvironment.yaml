@@ -166,19 +166,6 @@ spec:
                     operationID: {type: string, minLength: 1, maxLength: 1024}
                     fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
                     expiresAt: {type: string, format: date-time}
-              activeOperation:
-                type: object
-                required: [id, operation, startedAt, claimID, runID, epoch, holderID, renewedAt, expiresAt]
-                properties:
-                  id: {type: string, minLength: 1, maxLength: 1024}
-                  operation: {type: string, minLength: 1, maxLength: 128}
-                  startedAt: {type: string, format: date-time}
-                  claimID: {type: string, maxLength: 1024}
-                  runID: {type: string, maxLength: 1024}
-                  epoch: {type: integer, format: int64, minimum: 1}
-                  holderID: {type: string, minLength: 1, maxLength: 1024}
-                  renewedAt: {type: string, format: date-time}
-                  expiresAt: {type: string, format: date-time}
               lifecycleOperation:
                 type: object
                 required: [id, type, phase, createdAt]

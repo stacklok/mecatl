@@ -40,7 +40,6 @@ func TestControlledRenewalLiveOrdering(t *testing.T) {
 		t.Fatal("live renewal test missing")
 	}
 	for _, step := range []string{
-		"active = statusAt(renewCtx)",
 		"inflightExecutorPod(pods.Items",
 		"executorExec(`set -eu; if [ -f /workspace/renewal-started ]",
 		"inflightRenewRequest(renewCtx",

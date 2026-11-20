@@ -24,7 +24,6 @@
 # equal sums, since every shard also pays ~10 minutes of provisioning.
 
 1 TestKindExecutionBorrowedSchedule 340
-1 TestKindExecutionProductionHolderLossFencesActiveOperation 53
 1 TestKindExecutionProductionNetworkPolicyEnforced 46
 1 TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete 45
 1 TestKindExecutionServiceExplicitIDRetriesReuseOneAllocation 16
@@ -35,7 +34,6 @@
 2 TestKindExecutionTUIClientMockJourney 135
 2 TestKindExecutionProductionQuotaSaturation 43
 2 TestKindExecutionDerivativeUtility 40
-2 TestKindExecutionRevocationStopsActiveWriterAndRetainsFenceUncertainty 32
 2 TestKindExecutionProductionPendingDeleteOutageRecovery 28
 
 3 TestKindExecutionProductionHelmLifetime 186

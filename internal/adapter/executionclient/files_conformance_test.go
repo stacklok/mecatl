@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
@@ -17,9 +20,10 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
+	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/executionenv"
-	"github.com/stacklok/mecatl/internal/executionexecutor"
 	"github.com/stacklok/mecatl/internal/executorrpc/commandserver"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileserver"
 	"github.com/stacklok/mecatl/internal/executorrpc/memexecutor"
@@ -27,22 +31,75 @@ import (
 
 type executorBackend struct {
 	integrationBackend
-	executor *executionexecutor.Executor
+	executor executioncontroller.ExecutorTransport
 }
 
-func (b *executorBackend) File(ctx context.Context, _, _ string, q executionenv.FileRequest) (executionenv.FileResponse, error) {
-	r, err := b.executor.Execute(ctx, executionenv.ExecutorRequest{Operation: q.Operation, Path: q.Path, Destination: q.Destination, Pattern: q.Pattern, Data: q.Data, Version: q.Version, Limit: q.Limit})
+func (b *executorBackend) File(
+	ctx context.Context,
+	_ string,
+	_ string,
+	q executionenv.FileRequest,
+) (executionenv.FileResponse, error) {
+	route := executioncontroller.ExecutorRoute{
+		MaxFileBytes:    executionenv.MaxFileBytes,
+		MaxCommandBytes: executionenv.MaxCommandBytes,
+	}
+	r, err := b.executor.Execute(ctx, route, executionenv.ExecutorRequest{
+		Operation:   q.Operation,
+		Path:        q.Path,
+		Destination: q.Destination,
+		Pattern:     q.Pattern,
+		Data:        q.Data,
+		Version:     q.Version,
+		Limit:       q.Limit,
+	})
 	return r.FileResponse, err
+}
+
+// osfsExecutorTransport serves the executor Files service over osfs at root.
+func osfsExecutorTransport(t *testing.T, root string) executioncontroller.ExecutorTransport {
+	t.Helper()
+	ws, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := fileserver.New(
+		ws,
+		fileserver.WithMaxFileBytes(executionenv.MaxFileBytes),
+		fileserver.WithMaxResults(executionenv.MaxListEntries),
+		fileserver.WithMaxPathBytes(executionenv.MaxPathBytes),
+		fileserver.WithPathEscapeErrors(osfs.ErrPathEscape),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gs := grpc.NewServer()
+	executorv1.RegisterFileServiceServer(gs, srv)
+	lis := bufconn.Listen(1 << 20)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	conn, err := grpc.NewClient(
+		"passthrough:///executor",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return executioncontroller.NewServerTransport(
+		func(executioncontroller.ExecutorPin) (grpc.ClientConnInterface, func(), error) {
+			return conn, func() {}, nil
+		},
+	)
 }
 
 func remoteExecutorEnvironment(t *testing.T) tool.Environment {
 	t.Helper()
-	x, err := executionexecutor.New(t.TempDir(), executionexecutor.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = x.Close() })
-	fx := startFixture(t, &executorBackend{executor: x}, nil)
+	executor := osfsExecutorTransport(t, t.TempDir())
+	fx := startFixture(t, &executorBackend{executor: executor}, nil)
 	t.Cleanup(fx.stop)
 	return acquireRemoteRun(t, fx)
 }
