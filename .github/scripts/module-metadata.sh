@@ -35,12 +35,10 @@ fi
 if [ "$failed" -ne 0 ]; then
   cat >&2 <<'EOF'
 Review the files above and include legitimate metadata changes in the commit.
-If candidate requirements need repair, run `task tidy:module-candidate` (or select
-one module, for example `task tidy:module-candidate MODULE=engine`). Review
-`git diff -- '**/go.mod' '**/go.sum'` and its staged counterpart, then rerun
-`task test:module-candidate`. Metadata changes alone do not imply a repair is needed.
-After committing the intended metadata, rerun verification and
-`task test:module-metadata`.
+For workspace version drift, run `task deps:sync` and review
+`git diff -- go.work '**/go.mod' '**/go.sum'` and its staged counterpart.
+After committing intended metadata, rerun `task test:workspace-sync`.
+Metadata changes alone do not imply synchronization is needed.
 EOF
   exit 1
 fi

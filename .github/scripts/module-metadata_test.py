@@ -77,10 +77,8 @@ class ModuleMetadataTests(unittest.TestCase):
         for path in ("go.work", "go.mod", "go.sum", "nested/go.mod", "nested/go.sum"):
             self.assertIn(path, result.stderr)
         self.assertIn("Unstaged Go module metadata changes", result.stderr)
-        self.assertIn("task tidy:module-candidate", result.stderr)
-        self.assertIn("task test:module-candidate", result.stderr)
-        self.assertIn("git diff -- '**/go.mod' '**/go.sum'", result.stderr)
-        self.assertIn("task test:module-metadata", result.stderr)
+        self.assertIn("task deps:sync", result.stderr)
+        self.assertIn("task test:workspace-sync", result.stderr)
 
     def test_untracked_metadata_fails_but_unrelated_and_ignored_files_do_not(self):
         self.write(".scratch/dependency/go.mod", "module ignored\n")

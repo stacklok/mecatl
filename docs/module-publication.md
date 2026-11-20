@@ -35,9 +35,13 @@ gh workflow run publish-modules.yml --ref main \
   -f preflight_only=true
 ```
 
-Wait for preflight to validate the source, versions, and module inventory and pass
-workspace integration. This does not prove that every selected module can publish:
-standalone dependencies are checked immediately before each module's release.
+Wait for preflight to validate the source, versions, and module inventory, require
+workspace-sync-clean metadata, and pass workspace integration. If sync changes the
+reviewed metadata, preflight stops before testing or publishing. Run
+`task deps:sync`, review and commit the changes through the normal PR process,
+and select the resulting reviewed `main` commit as the new source. Preflight
+never commits repairs. Standalone dependencies are checked immediately before
+each module's release.
 
 After reviewing preflight, dispatch the same inputs with `preflight_only=false` to
 publish. Monitor the run through the adoption PR:
@@ -52,11 +56,17 @@ publish. Monitor the run through the adoption PR:
 - Public proof downloads each exact tagged version through the public proxy and
   checksum database and compiles a minimal import before the next module proceeds.
 - After every public proof passes, reconciliation updates selected version pins
-  in the remaining modules, preserves development replacements, and opens one
-  metadata-only adoption PR. Those remaining modules receive no release tags.
+  in the remaining modules, preserves development replacements, then synchronizes
+  dependency versions across the workspace and opens one metadata-only adoption
+  PR. Sync can update modules with no direct dependency on the selected releases;
+  it preserves explicit sibling-pin policy. No additional modules receive tags.
 
 Preparation and reconciliation can add indirect requirements, remove obsolete
 requirements, and update Go/toolchain directives. Review those changes in adoption.
+Each tagged module passes standalone qualification; the final adoption tree must
+be workspace-sync stable. Reconciliation does not run standalone tidy after its
+final workspace synchronization. Changes to `go.work` or conflicting sibling pins
+stop reconciliation for review.
 
 ## Review and adopt the releases
 

@@ -343,6 +343,46 @@ elif name == "cosign":
                                         if fail == "tag" else call["module"] == fail
                                         for call in calls), calls)
 
+    def test_workspace_sync_repairs_version_drift_and_requires_committed_metadata(self):
+        dependency = self.base / "dependency"
+        dependency.mkdir()
+        (dependency / "go.mod").write_text("module fixture.invalid/dependency\n\ngo 1.27\n")
+        (dependency / "value.go").write_text("package dependency\nconst Value = 1\n")
+        for index, module in enumerate(self.modules):
+            version = "v1.1.0" if index == 1 else "v1.0.0"
+            directory = self.root / module
+            (directory / "go.mod").write_text(
+                f"module fixture.invalid/module{index}\n\ngo 1.27\n\n"
+                f"require fixture.invalid/dependency {version}\n"
+                f'replace fixture.invalid/dependency => "{dependency}"\n')
+            (directory / "fixture.go").write_text(
+                'package fixture\nimport _ "fixture.invalid/dependency"\n')
+        self.run_command([GO, "work", "edit", "-fmt", "go.work"])
+        (self.root / ".gitignore").write_text("/go.work.sum\n")
+        guard = self.root / ".github/scripts/module-metadata.sh"
+        guard.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / ".github/scripts/module-metadata.sh", guard)
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        self.run_command(["git", "init", "-q"])
+        self.run_command(["git", "config", "user.email", "fixture@example.invalid"])
+        self.run_command(["git", "config", "user.name", "Fixture"])
+        self.run_command(["git", "add", "."])
+        self.run_command(["git", "commit", "-qm", "fixture"])
+
+        # Explicit synchronization ignores another ambient workspace, even from a subdirectory.
+        result = self.run_command([TASK, "test:workspace-sync"], succeeds=False,
+                                  env=dict(self.env, GOWORK=str(self.unrelated)),
+                                  cwd=self.root / self.modules[1])
+        self.assertIn("Unstaged Go module metadata", result.stderr)
+        manifest = self.root / "go.mod"
+        self.assertIn("fixture.invalid/dependency v1.1.0", manifest.read_text())
+        before = manifest.read_bytes()
+        self.run_command([TASK, "tidy"])
+        self.assertEqual(manifest.read_bytes(), before)
+        self.run_command(["git", "add", "--", "**/go.mod", "go.mod"])
+        self.run_command(["git", "commit", "-qm", "synchronize"])
+        self.run_command([TASK, "test:workspace-sync"])
+
     def test_real_dependency_resolution_and_supplemental_sums(self):
         dependency = "fixture.invalid/dependency"
         candidate = next(module for module in self.modules if module != ".")

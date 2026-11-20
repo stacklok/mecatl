@@ -32,9 +32,9 @@ Use `task --list` for focused, specialized, and maintenance tasks.
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
 - Cross-module or dependency-metadata changes: follow
-  [module development](docs/module-development.md) for workspace, candidate, and
-  standalone checks. Ordinary source changes use workspace dependencies by default;
-  pinned-dependency qualification is separate.
+  [module development](docs/module-development.md) for workspace synchronization
+  and integration checks. Qualify standalone published dependencies separately
+  through [module publication](docs/module-publication.md).
 
 ## Module layout
 

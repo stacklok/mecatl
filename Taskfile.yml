@@ -612,27 +612,17 @@ tasks:
     cmds:
       - sh .github/scripts/module-metadata.sh
 
-  test:module-candidate:
-    # Candidate checking controls its temporary module graph independently of GOWORK.
-    desc: Test each module with current sibling sources and check its own dependency metadata
-    vars:
-      MODULE: '{{.MODULE | default ""}}'
+  test:workspace-sync:
+    desc: Synchronize this checkout's workspace dependencies and require committed metadata (may modify files)
     cmds:
-      - python3 .github/scripts/module-candidate.py{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
-
-  tidy:module-candidate:
-    desc: Repair candidate metadata while preserving declared sibling versions and original replacements
-    vars:
-      MODULE: '{{.MODULE | default ""}}'
-    cmds:
-      - python3 .github/scripts/module-candidate.py --fix{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
+      - task: deps:sync
+      - task: test:module-metadata
 
   test:workspace-infrastructure:
     desc: Run offline workspace and module-metadata task regression tests
     cmds:
       - python3 .github/scripts/module-metadata_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
-      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-candidate_test.py
 
   test:module-publication-tools:
     desc: Run offline bounded-publication helper and workflow regression tests
@@ -1327,30 +1317,15 @@ tasks:
     cmds:
       - cd {{.MODULE | shellQuote}} && GOWORK=off go mod tidy
 
-  tidy:
-    # Nested modules deliberately tidy against their published dependency closures.
-    desc: Tidy root and every nested module, including standalone adapters
+  deps:sync:
+    desc: Synchronize member dependency versions with this checkout's workspace
     cmds:
-      - go mod tidy
-      - go work sync
-      - cd engine && GOWORK=off go mod tidy
-      - cd internal/adaptersupport && GOWORK=off go mod tidy
-      - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
-      - cd adapters && GOWORK=off go mod tidy
-      - cd agentdef && GOWORK=off go mod tidy
-      # OIDC resolves its published engine baseline independently of the workspace.
-      - cd authn/oidc && GOWORK=off go mod tidy
-      # The microVM runtime is isolated in its own module; its tools-tag anchor
-      # retains the future runtime dependency without linking it by default.
-      - cd environment/microvm && GOWORK=off go mod tidy
-      - cd integration/microvm && GOWORK=off go mod tidy
-      # All provider modules now use resolvable standalone dependencies. The
-      # OpenAI-family modules pin the ssefilter module to an immutable revision
-      # until the provider module release tags are cut.
-      - cd provider/ssefilter && GOWORK=off go mod tidy
-      - cd provider/anthropic && GOWORK=off go mod tidy
-      - cd provider/openai && GOWORK=off go mod tidy
-      - cd provider/openaichat && GOWORK=off go mod tidy
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go work sync
+
+  tidy:
+    desc: Alias for deps:sync (workspace synchronization, not standalone tidy)
+    cmds:
+      - task: deps:sync
 
   generate:timezones:
     # Isolate the generator from the workspace so generated data follows only its module.
@@ -1477,9 +1452,9 @@ tasks:
       - task: docs:check
 
   ci:
-    desc: Full local CI gate (candidate metadata, fmt, lint, race test, build)
+    desc: Full local CI gate (workspace sync, fmt, lint, race test, build)
     cmds:
-      - task: test:module-candidate
+      - task: test:workspace-sync
       - task: fmt
       - task: lint
       - task: test:race
@@ -1492,8 +1467,7 @@ tasks:
     cmds:
       - sh scripts/vet-build-tags.sh
       - task: lint:cgo
-      - task: test:module-candidate
-      - task: test:module-metadata
+      - task: test:workspace-sync
       - bash .github/scripts/macos-closure-guard.sh
       - task: test:workspace:module
         vars: {MODULE: engine}

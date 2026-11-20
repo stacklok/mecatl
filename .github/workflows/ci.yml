@@ -1040,10 +1040,8 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
-      - name: Verify candidate module metadata
-        run: |
-          task test:module-candidate
-          task test:module-metadata
+      - name: Verify workspace dependency synchronization
+        run: task test:workspace-sync
 
       - name: Verify nested module publication
         if: needs.changes.outputs.module_publication_relevant == 'true'

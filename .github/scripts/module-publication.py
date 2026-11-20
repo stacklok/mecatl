@@ -8,11 +8,11 @@ metadata as data and never check out or execute candidate code.
 import argparse
 import base64
 from contextlib import nullcontext
-import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -22,11 +22,6 @@ import urllib.request
 
 
 sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location(
-    "module_candidate", Path(__file__).resolve().with_name("module-candidate.py"))
-candidate = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(candidate)
-CheckError = candidate.CheckError
 ORDER = (
     "agentdef", "engine", "contracts/gen/go/mecatl/driver", "provider/ssefilter",
     "internal/adaptersupport", "authn/oidc", "provider/anthropic",
@@ -49,7 +44,41 @@ IMPORTS = {
 }
 
 
-run = candidate.run
+class CheckError(Exception):
+    pass
+
+
+def run(command, directory, env=None, timeout=1800, capture=True):
+    try:
+        result = subprocess.run(command, cwd=directory, env=env,
+                                capture_output=capture, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise CheckError(f"command timed out: {command[0]}") from error
+    if result.returncode:
+        detail = f"{result.stdout}{result.stderr}" if capture else f"exit {result.returncode}"
+        raise CheckError(f"{' '.join(map(str, command))}:\n{detail}".rstrip())
+    return result.stdout
+
+
+def go(directory, env, *args):
+    return run(["go", *args], directory, env, timeout=None, capture="-json" in args)
+
+
+def parse_mod(directory, env, path):
+    return json.loads(go(directory, env, "mod", "edit", "-json", str(path)))
+
+
+def read_optional(path):
+    return path.read_bytes() if path.exists() else None
+
+
+def requirements(mod):
+    return {entry["Path"]: (entry["Version"], entry.get("Indirect", False))
+            for entry in mod.get("Require") or []}
+
+
+def sync(root, env):
+    go(root, dict(env, GOWORK=str(root / "go.work")), "work", "sync")
 
 
 def git(root, *args):
@@ -118,7 +147,24 @@ def environment(temporary):
 
 
 def inventory(root, env):
-    modules, _ = candidate.inventory(root, env)
+    work = root / "go.work"
+    if work.is_symlink():
+        raise CheckError("symlink workspace is unsupported: go.work")
+    parsed = json.loads(go(root, env, "work", "edit", "-json", str(work)))
+    modules = {}
+    directories = set()
+    for use in parsed.get("Use") or []:
+        directory = (root / use["DiskPath"]).resolve()
+        if not directory.is_relative_to(root):
+            raise CheckError(f"workspace module outside checkout: {directory}")
+        mod = parse_mod(directory, env, directory / "go.mod")
+        name = mod["Module"]["Path"]
+        if name in modules or directory in directories:
+            raise CheckError(f"duplicate workspace module identity/path: {name} ({directory})")
+        directories.add(directory)
+        modules[name] = (directory, mod)
+    if not modules:
+        raise CheckError("go.work has no modules")
     paths = {str(directory.relative_to(root)): (name, directory, mod)
              for name, (directory, mod) in modules.items()}
     if set(paths) != set(ORDER + CONSUMERS):
@@ -133,7 +179,7 @@ def inventory(root, env):
             continue
         if mod.get("Replace"):
             raise CheckError(f"publishable module has replacements: {path}")
-        for dependency in candidate.requirements(mod):
+        for dependency in requirements(mod):
             if dependency != PREFIX and not dependency.startswith(PREFIX + "/"):
                 continue
             sibling = next((p for p in paths if identity(p) == dependency), None)
@@ -179,7 +225,7 @@ def check_metadata(original, desired, modules, pins):
     for key in ("Module", "Replace"):
         if original.get(key) != desired.get(key):
             raise CheckError(f"tidy changed reviewed {key} directive(s)")
-    before, after = candidate.requirements(original), candidate.requirements(desired)
+    before, after = requirements(original), requirements(desired)
     siblings = {identity(path): path for path in modules}
     owner = original["Module"]["Path"]
     for name, (exact, _) in before.items():
@@ -199,11 +245,11 @@ def check_metadata(original, desired, modules, pins):
             raise CheckError(f"requested exact pin did not survive tidy: {name}@{exact}")
 
 
-def check_versions(directory, versions, env):
+def check_versions(directory, versions, env, readonly=True):
     selected = {identity(path): exact for path, exact in versions.items()}
     if not selected:
         return
-    resolved = run(["go", "list", "-m", "-mod=readonly", "-f",
+    resolved = run(["go", "list", "-m", "-mod=readonly" if readonly else "-mod=mod", "-f",
                     "{{if not .Main}}{{.Path}}@{{.Version}}{{end}}", "all"], directory, env, timeout=None)
     for line in resolved.splitlines():
         name, _, exact = line.partition("@")
@@ -214,25 +260,25 @@ def check_versions(directory, versions, env):
 
 def tidy(root, entry, modules, versions, env, standalone):
     name, directory, original = entry
-    requirements = candidate.requirements(original)
+    before = requirements(original)
     pins = {identity(path): exact for path, exact in versions.items()
-            if identity(path) in requirements and identity(path) != name}
+            if identity(path) in before and identity(path) != name}
     if pins:
-        candidate.go(directory, env, "mod", "edit",
-                     *[f"-require={module}@{exact}" for module, exact in pins.items()])
-    candidate.go(directory, env, "mod", "tidy")
-    desired = candidate.parse_mod(directory, env, directory / "go.mod")
+        go(directory, env, "mod", "edit",
+           *[f"-require={module}@{exact}" for module, exact in pins.items()])
+    go(directory, env, "mod", "tidy")
+    desired = parse_mod(directory, env, directory / "go.mod")
     pins.update({identity(path): exact for path, exact in versions.items()
-                 if identity(path) in candidate.requirements(desired) and identity(path) != name})
+                 if identity(path) in requirements(desired) and identity(path) != name})
     check_metadata(original, desired, modules, pins)
     check_versions(directory, versions, env)
-    captured = {str((directory / filename).relative_to(root)): candidate.read_optional(directory / filename)
+    captured = {str((directory / filename).relative_to(root)): read_optional(directory / filename)
                 for filename in ("go.mod", "go.sum")}
-    candidate.go(directory, env, "mod", "tidy", "-diff")
+    go(directory, env, "mod", "tidy", "-diff")
     if standalone:
-        candidate.go(directory, env, "build", "-mod=readonly", "./...")
-        candidate.go(directory, env, "test", "-mod=readonly", "-count=1", "-timeout=20m", "./...")
-    if any(candidate.read_optional(root / path) != data for path, data in captured.items()):
+        go(directory, env, "build", "-mod=readonly", "./...")
+        go(directory, env, "test", "-mod=readonly", "-count=1", "-timeout=20m", "./...")
+    if any(read_optional(root / path) != data for path, data in captured.items()):
         raise CheckError("candidate execution modified files after metadata was tested")
     return captured
 
@@ -248,7 +294,7 @@ def artifact(root, parent, captured, destination):
             raise CheckError(f"metadata must be a nonexecutable regular file: {path}")
         if path.endswith("go.mod") and not target.is_file():
             raise CheckError(f"module metadata was deleted: {path}")
-        if candidate.read_optional(target) != data:
+        if read_optional(target) != data:
             raise CheckError(f"tested metadata bytes changed before artifact capture: {path}")
         if path in changed:
             files[path] = None if data is None else data.decode("utf-8")
@@ -275,7 +321,16 @@ def preflight(args, versions, env):
     if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
         raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
     # Long commands inherit output and lifecycle from the native 30-minute Actions step.
-    if args.phase == "workspace":
+    if args.phase == "validate":
+        sync(root, env)
+        try:
+            check_changes(root)
+            if git(root, "rev-parse", "HEAD") != args.source:
+                raise CheckError("candidate execution moved HEAD")
+        except CheckError as error:
+            raise CheckError(f"{error}\nReviewed source is not workspace-sync clean; run task deps:sync, "
+                             "review and commit the changes, then choose a new reviewed source.") from error
+    elif args.phase == "workspace":
         run(["task", "test:workspace"], root, env, timeout=None, capture=False)
     elif args.phase == "final":
         check_changes(root)
@@ -306,20 +361,36 @@ def reconcile(args, versions, env):
     allowed = set()
     for path in ORDER + ("environment/microvm", ".", "integration/microvm"):
         entry = modules[path]
-        if candidate.requirements(entry[2]).keys() & {identity(p) for p in versions}:
+        if requirements(entry[2]).keys() & {identity(p) for p in versions}:
             tidy(root, entry, modules, versions, env, standalone=False)
             allowed.update(str(Path(path) / name) for name in ("go.mod", "go.sum"))
-    # Later consumers (with development replacements) can observe earlier changes.
-    # Verify the entire resulting metadata is stable, not just each intermediate tree.
-    captured = {path: candidate.read_optional(root / path) for path in allowed}
+    # Later consumers with development replacements can observe earlier changes.
     for path, (_, directory, original) in modules.items():
         if str(Path(path) / "go.mod") in allowed:
-            candidate.go(directory, env, "mod", "tidy", "-diff")
-            desired = candidate.parse_mod(directory, env, directory / "go.mod")
+            go(directory, env, "mod", "tidy", "-diff")
+            desired = parse_mod(directory, env, directory / "go.mod")
             pins = {identity(p): exact for p, exact in versions.items()
-                    if identity(p) in candidate.requirements(original)}
+                    if identity(p) in requirements(original)}
             check_metadata(original, desired, modules, pins)
             check_versions(directory, versions, env)
+    # Standalone qualification ends here; the adoption tree is workspace-sync stable.
+    sync(root, env)
+    # Sync need not supply sums for each standalone graph. Resolve before checking
+    # and capturing final metadata, without imposing standalone tidy stability.
+    for _, directory, _ in modules.values():
+        check_versions(directory, versions, env, readonly=False)
+    final = inventory(root, env)
+    for path, (name, directory, desired) in final.items():
+        original = modules[path][2]
+        pins = {identity(p): exact for p, exact in versions.items()
+                if identity(p) != name and identity(p) in
+                (requirements(original).keys() | requirements(desired).keys())}
+        check_metadata(original, desired, modules, pins)
+        check_versions(directory, versions, env)
+    captured = {path: read_optional(root / path) for path in metadata_paths()}
+    sync(root, env)
+    if any(read_optional(root / path) != data for path, data in captured.items()):
+        raise CheckError("workspace sync is not stable across inventoried metadata")
     return artifact(root, args.parent, captured, args.metadata)
 
 
@@ -364,14 +435,14 @@ def prove(args, versions, env, temporary):
                 raise
             time.sleep(10)
     tag_identity(module, exact, args.head, downloaded, directory, env)
-    mod = candidate.parse_mod(directory, env, Path(downloaded["GoMod"]))
+    mod = parse_mod(directory, env, Path(downloaded["GoMod"]))
     if mod["Module"]["Path"] != module or mod.get("Replace"):
         raise CheckError("downloaded module identity/replacements are invalid")
-    candidate.go(directory, env, "mod", "tidy")
-    resolved = json.loads(candidate.go(directory, env, "list", "-m", "-json", module))
+    go(directory, env, "mod", "tidy")
+    resolved = json.loads(go(directory, env, "list", "-m", "-json", module))
     if resolved.get("Path") != module or resolved.get("Version") != exact or resolved.get("Replace"):
         raise CheckError("smoke consumer did not retain the exact public pin")
-    candidate.go(directory, env, "build", "-mod=readonly", "./...")
+    go(directory, env, "build", "-mod=readonly", "./...")
     return {"head": args.head}
 
 
