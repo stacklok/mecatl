@@ -73,7 +73,7 @@ func buildAgentDefRootEngine(
 	// resolveAgentMemoryHead's docs.
 	model := providerModel.ModelID
 	cat, pc, hooks, mcpClose, _, resources, _ := resolvedAgentDefCatalog(
-		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr, sessionRoot)
+		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr, sessionRoot, nil)
 
 	deps := engineDepsForProvider(cfg, provider, providerModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 	deps.Catalog = cat

@@ -62,12 +62,13 @@ type delegationServe struct {
 	session string
 }
 
-func serveDelegations(t *testing.T) *delegationServe {
+// serveDelegations serves mecak8s with extraArgs as further flags.
+func serveDelegations(t *testing.T, extraArgs ...string) *delegationServe {
 	t.Helper()
 	d := &delegationServe{diag: &gatewayCallDiagnostics{}, script: filepath.Join(t.TempDir(), "script.json")}
 	model := newLateScript(d.script)
 	d.gatewayServe = serveGatewayIdentityBroker(t, notesRoute(t),
-		[]string{"--enable-parallel", "--enable-teams", "--workspace", t.TempDir()},
+		append([]string{"--enable-parallel", "--enable-teams", "--workspace", t.TempDir()}, extraArgs...),
 		func(cfg *app.Config) {
 			cfg.MockProvider = model
 			cfg.Diagnostics = d.diag
@@ -137,8 +138,8 @@ func TestIdentityBrokerParallelBranchGatewayCall(t *testing.T) {
 
 // TestIdentityBrokerTeamMemberGatewayCall pins that a member of a team the
 // Team tool starts makes gateway calls under its reported delegation. The
-// members are generic: a member running a named definition gets no gateway
-// tools yet (#2842). They share the mock script, so which calls first varies.
+// members are generic, so each gets every gateway tool; they share the mock
+// script, so which calls first varies.
 func TestIdentityBrokerTeamMemberGatewayCall(t *testing.T) {
 	d := serveDelegations(t)
 	d.writeScript(t, gatewayTurn("main-call"),

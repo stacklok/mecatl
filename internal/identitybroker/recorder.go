@@ -86,7 +86,11 @@ type DecisionRecord struct {
 	Server            string
 	Tool              string
 	ArgumentsSHA256   string
-	Outcome           DecisionOutcome
+	// Ceiling is the acting agent's effective ceiling the call was checked
+	// against (check 7), in Ceiling.String's form; empty when the call was
+	// refused before that check.
+	Ceiling string
+	Outcome DecisionOutcome
 	// Code and Reason are the refusal's; empty on success.
 	Code   Code
 	Reason Reason

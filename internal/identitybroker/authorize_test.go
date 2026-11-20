@@ -1212,7 +1212,11 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 		{"method", func(r *identitybroker.AuthorizeCallRequest) {
 			r.Method, r.Tool, r.ArgumentsSHA256 = identitybroker.MethodToolsList, "", ""
 		}},
-		{"server", func(r *identitybroker.AuthorizeCallRequest) { r.Server = "calendar" }},
+		// The tool keeps its server's name, so the call passes check 7 and
+		// reaches the rejected attempt.
+		{"server", func(r *identitybroker.AuthorizeCallRequest) {
+			r.Server, r.Tool = "calendar", "calendar.pull_request_read"
+		}},
 		{"tool", func(r *identitybroker.AuthorizeCallRequest) { r.Tool = "github.issue_write" }},
 		{"arguments hash", func(r *identitybroker.AuthorizeCallRequest) { r.ArgumentsSHA256 = strings.Repeat("cd", 32) }},
 		{"agent", func(r *identitybroker.AuthorizeCallRequest) {
