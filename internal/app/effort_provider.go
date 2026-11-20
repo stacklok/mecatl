@@ -69,18 +69,24 @@ func (p *effortProvider) Capabilities() port.ProviderCapabilities {
 	return p.adapters.at("").Capabilities()
 }
 
-// appliedFor returns the effort a request for model is sent at, and narrates a
-// dropped level once.
-func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
-	if p.requested == "" {
-		return ""
-	}
+// resolve returns the effort a request for model is sent at, with the levels
+// that decided it.
+func (p *effortProvider) resolve(model string) (string, string, effortLevelsResolution) {
 	if strings.TrimSpace(model) == "" {
 		model = p.model
 	}
+	if p.requested == "" {
+		return "", model, effortLevelsResolution{}
+	}
 	resolution := p.levels(model)
-	applied := appliedEffort(p.requested, resolution.effortLevels, p.failOpen)
-	if applied == "" {
+	return appliedEffort(p.requested, resolution.effortLevels, p.failOpen), model, resolution
+}
+
+// appliedFor returns the effort a request for model is sent at, and narrates a
+// dropped level once.
+func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
+	applied, model, resolution := p.resolve(model)
+	if applied == "" && p.requested != "" {
 		if _, seen := p.warned.LoadOrStore(dropKey{model, p.requested}, struct{}{}); !seen && p.diag != nil {
 			p.diag.Log(ctx, port.LevelWarn,
 				"reasoning-effort: the model doesn't accept the requested level; sending no effort",
@@ -89,6 +95,20 @@ func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
 		}
 	}
 	return applied
+}
+
+// appliedEffortReporter returns the engine's AppliedReasoningEffort for a
+// provider: what an effort-wrapped provider sends each model, or nil for a
+// provider that doesn't decide effort per request.
+func appliedEffortReporter(provider port.LLMProvider) func(model string) string {
+	wrapped, ok := provider.(*effortProvider)
+	if !ok {
+		return nil
+	}
+	return func(model string) string {
+		applied, _, _ := wrapped.resolve(model)
+		return applied
+	}
 }
 
 // withRequested returns a wrapper over the same adapters that requests another
