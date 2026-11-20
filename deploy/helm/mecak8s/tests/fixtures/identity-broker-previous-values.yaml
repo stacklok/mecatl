@@ -1,0 +1,26 @@
+# The identityBroker values of a release from before the broker read its
+# configuration file: no trustDomain, audience, or keys. `helm upgrade
+# --reuse-values` keeps these values and drops the newer chart's defaults; the
+# nulls remove those defaults here the same way.
+identityBroker:
+  enabled: false
+  trustDomain: null
+  audience: null
+  keys: null
+  subjectClaim: ""
+  as1:
+    issuer: ""
+    tuiClientID: ""
+    signingKey:
+      secretName: ""
+      key: ""
+    upstream:
+      issuer: ""
+      clientID: ""
+      clientSecret:
+        secretName: ""
+        key: ""
+      caSecret:
+        secretName: ""
+        key: ""
+      allowPrivateAddresses: false

@@ -71,8 +71,14 @@ working directory as the session workspace, which this deployment refuses.
 
 Values: `deploy/helm/mecak8s/values-kind.yaml` plus
 `deploy/helm/mecak8s/values-kind-idbroker.yaml`. Setup generates the
-`as1-signing-key` (EC P-256) and `dex-as1-client` Secrets, keeping existing ones;
-cert-manager issues `fixture-ca`, `mecak8s-tls`, and `dex-tls`.
+`as1-signing-key`, `identity-broker-agent-issuer`, and
+`identity-broker-client` (EC P-256 keys; the last also holds the broker
+client's public key set, which `broker-client-key-set.sh` derives) and
+`dex-as1-client` Secrets, keeping existing ones and repairing an
+`identity-broker-client` Secret that lacks either key; cert-manager issues
+`fixture-ca`, `mecak8s-tls`, and `dex-tls`.
+Sessions are file-less: the identity broker refuses a workspace beside its key
+files.
 
 ## Poke it
 
@@ -96,9 +102,9 @@ task mecak8s-idbroker:status
 `task mecak8s-idbroker:image-refresh` rebuilds the image from the current tree,
 loads it, and restarts `mecak8s` without resetting the cluster. AS-1 keeps its
 users, sign-ins, and refresh tokens in memory, so any restart signs everyone out
-of AS-1: run `login` again. AS-1's signing key is in the `as1-signing-key`
-Secret, so access tokens issued before the restart keep verifying until they
-expire. Sessions persist in Redis.
+of AS-1: run `login` again. The identity broker's keys, AS-1's signing key
+among them, are in Secrets, so access tokens issued before the restart keep
+verifying until they expire. Sessions persist in Redis.
 
 `task mecak8s-idbroker:destroy` deletes only the `mecatl-idbroker` cluster and
 its state. Remove the aliases separately with `hosts-remove`. A failed

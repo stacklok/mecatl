@@ -24,6 +24,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 )
 
 func chartDir(t *testing.T) string {
@@ -695,11 +697,161 @@ func TestMecak8sHelmChart_OwnerIdentity(t *testing.T) {
 	}
 }
 
+// identityBrokerBase is the identity broker's required values: its trust
+// domain, audience, and agent issuer key.
+const identityBrokerBase = "identityBroker.trustDomain=agents.example.com,identityBroker.audience=https://broker.example.com," +
+	"identityBroker.keys.agentIssuer.secretName=ib-agent,identityBroker.keys.agentIssuer.key=key.pem"
+
+// identityBrokerAS1Keys are the keys a hosted AS-1 requires.
+const identityBrokerAS1Keys = "identityBroker.keys.brokerClient.secretName=ib-client,identityBroker.keys.brokerClient.key=key.pem," +
+	"identityBroker.keys.brokerClient.keySet.secretName=ib-client,identityBroker.keys.brokerClient.keySet.key=jwks.json," +
+	"identityBroker.keys.as1Signing.secretName=ib-as1,identityBroker.keys.as1Signing.key=signing.pem"
+
+// identityBrokerConfigFromRender is the identity broker's configuration file
+// in rendered's ConfigMap, as written.
+func identityBrokerConfigFromRender(t *testing.T, rendered string) string {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var cm corev1.ConfigMap
+		if err := yaml.Unmarshal([]byte(document), &cm); err != nil || cm.Kind != "ConfigMap" || !strings.HasSuffix(cm.Name, "-identity-broker") {
+			continue
+		}
+		return cm.Data["identity-broker.json"]
+	}
+	t.Fatal("rendered chart has no identity broker ConfigMap")
+	return ""
+}
+
+// TestMecak8sHelmChart_IdentityBrokerConfigAndKeys pins the identity broker's
+// configuration file and the read-only projection of its key Secrets to the
+// paths the file names; with the broker off, neither renders.
+func TestMecak8sHelmChart_IdentityBrokerConfigAndKeys(t *testing.T) {
+	rendered, err := helm(t, "template", "ib", ".", "-f", "ci/production-identity-broker-values.yaml")
+	if err != nil {
+		t.Fatalf("render: %v\n%s", err, rendered)
+	}
+	const dir = "/var/run/secrets/identity-broker/"
+	want := map[string]any{
+		"trust_domain": "agents.example.com", "audience": "https://mecatl.example.com/identity-broker",
+		"keys": map[string]any{
+			"agent_issuer":  map[string]any{"key_file": dir + "agent-issuer/key.pem"},
+			"broker_client": map[string]any{"key_file": dir + "broker-client/key.pem", "key_set_file": dir + "broker-client-key-set/jwks.json"},
+			"as1_signing":   map[string]any{"key_file": dir + "as1-signing/signing-key.pem"},
+		},
+	}
+	raw := identityBrokerConfigFromRender(t, rendered)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("identity-broker.json: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("identity-broker.json = %v, want %v", got, want)
+	}
+	// mecak8s loads the rendered file: with every path moved under a test
+	// directory holding real keys, the broker's own loader accepts it, so a
+	// field the chart and the loader name differently fails here.
+	keys := t.TempDir()
+	writeKey := func(rel string) string {
+		path := filepath.Join(keys, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	client := brokerconfigtest.NewKey(t)
+	brokerconfigtest.WriteKey(t, writeKey("agent-issuer/key.pem"), brokerconfigtest.NewKey(t))
+	brokerconfigtest.WriteKey(t, writeKey("broker-client/key.pem"), client)
+	brokerconfigtest.WriteKeySet(t, writeKey("broker-client-key-set/jwks.json"), client)
+	brokerconfigtest.WriteKey(t, writeKey("as1-signing/signing-key.pem"), brokerconfigtest.NewKey(t))
+	configFile := filepath.Join(t.TempDir(), "identity-broker.json")
+	if err := os.WriteFile(configFile, []byte(strings.ReplaceAll(raw, dir, keys+"/")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := brokerconfig.Load(configFile, brokerconfig.Host{AS1: true})
+	if err != nil {
+		t.Fatalf("brokerconfig.Load of the rendered file: %v", err)
+	}
+	if loaded.Config.TrustDomain != "agents.example.com" || loaded.Config.Audience != "https://mecatl.example.com/identity-broker" {
+		t.Fatalf("loaded configuration = %+v, want the values'", loaded.Config)
+	}
+	spec := deploymentFromRender(t, rendered).Spec.Template.Spec
+	if !slices.Contains(spec.Containers[0].Args, "--identity-broker-config=/etc/mecatl-identity-broker/identity-broker.json") {
+		t.Fatalf("args %v lack the configuration file", spec.Containers[0].Args)
+	}
+	for name, path := range map[string]string{"identity-broker-config": "/etc/mecatl-identity-broker", "identity-broker-keys": "/var/run/secrets/identity-broker"} {
+		m := slices.IndexFunc(spec.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return m.Name == name })
+		if m < 0 || !spec.Containers[0].VolumeMounts[m].ReadOnly || spec.Containers[0].VolumeMounts[m].MountPath != path {
+			t.Fatalf("volume %s is not mounted read-only at %s: %+v", name, path, spec.Containers[0].VolumeMounts)
+		}
+	}
+	i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == "identity-broker-keys" })
+	if i < 0 || spec.Volumes[i].Projected == nil || spec.Volumes[i].Projected.DefaultMode == nil || *spec.Volumes[i].Projected.DefaultMode != 0o440 {
+		t.Fatalf("identity-broker-keys is not a 0440 projected volume: %+v", spec.Volumes)
+	}
+	projected := map[string]string{}
+	for _, source := range spec.Volumes[i].Projected.Sources {
+		for _, item := range source.Secret.Items {
+			projected[item.Path] = source.Secret.Name + "/" + item.Key
+		}
+	}
+	wantProjected := map[string]string{
+		"agent-issuer/key.pem": "identity-broker-agent-issuer/key.pem", "broker-client/key.pem": "identity-broker-client/key.pem",
+		"broker-client-key-set/jwks.json": "identity-broker-client/jwks.json", "as1-signing/signing-key.pem": "as1-signing-key/signing-key.pem",
+	}
+	if !reflect.DeepEqual(projected, wantProjected) {
+		t.Fatalf("projected keys = %v, want %v", projected, wantProjected)
+	}
+
+	// With the broker off, nothing about it renders and no value is required.
+	off, err := helm(t, "template", "off", ".", "--set", "mockProvider=true,permissionMode=yolo", "--set", "redis.local.enabled=true")
+	if err != nil {
+		t.Fatalf("render with the broker off: %v\n%s", err, off)
+	}
+	if strings.Contains(off, "identity-broker") {
+		t.Fatal("the chart rendered identity broker resources with identityBroker.enabled=false")
+	}
+}
+
+// TestMecak8sHelmChart_IdentityBrokerConfigChecksumDrivesRollout: the broker
+// reads its configuration file only at startup, so a change to it rolls the
+// pods, and a user's podAnnotations entry cannot replace the chart's checksum.
+func TestMecak8sHelmChart_IdentityBrokerConfigChecksumDrivesRollout(t *testing.T) {
+	checksum := func(set ...string) string {
+		t.Helper()
+		args := []string{"template", "ib", ".", "-f", "ci/production-identity-broker-values.yaml"}
+		for _, value := range set {
+			args = append(args, "--set", value)
+		}
+		rendered, err := helm(t, args...)
+		if err != nil {
+			t.Fatalf("render: %v\n%s", err, rendered)
+		}
+		return deploymentFromRender(t, rendered).Spec.Template.Annotations["checksum/identity-broker-config"]
+	}
+	first := checksum()
+	if first == "" {
+		t.Fatal("the chart rendered no checksum/identity-broker-config annotation")
+	}
+	for name, set := range map[string]string{
+		"trust domain":  "identityBroker.trustDomain=agents2.example.com",
+		"key file name": "identityBroker.keys.agentIssuer.key=next.pem",
+	} {
+		if changed := checksum(set); changed == "" || changed == first {
+			t.Errorf("changing the %s left checksum %q; a configuration change must roll the pods", name, changed)
+		}
+	}
+	if overridden := checksum(`podAnnotations.checksum/identity-broker-config=user`); overridden != first {
+		t.Errorf("checksum with a user podAnnotations entry = %q, want the chart's %q", overridden, first)
+	}
+}
+
 func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	base := []string{"template", "as1", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
 		"--set", "extraArgs={--no-shell}",
 		"--set", "oidc.enabled=true,oidc.audience=https://mecatl.example.com/api,oidc.ownerIdentity=sub_id,oidc.resource=https://mecatl.example.com",
 		"--set", "identityBroker.enabled=true,identityBroker.subjectClaim=sub",
+		"--set", identityBrokerBase,
+		"--set", identityBrokerAS1Keys,
 		"--set", "identityBroker.as1.issuer=https://mecatl.example.com/as1,identityBroker.as1.tuiClientID=mecatui",
 		"--set", "identityBroker.as1.upstream.issuer=https://login.example.com/tenant/v2.0,identityBroker.as1.upstream.clientID=as1"}
 	with := func(values ...string) []string {
@@ -720,7 +872,7 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	args := deployment.Spec.Template.Spec.Containers[0].Args
 	for _, want := range []string{
 		"--oidc-issuer=https://mecatl.example.com/as1", "--oidc-client-id=mecatui", "--oidc-accepted-client-ids=mecatui", "--oidc-owner-identity=sub_id",
-		"--enable-identity-broker", "--identity-broker-as1-issuer=https://mecatl.example.com/as1", "--identity-broker-as1-tui-client-id=mecatui",
+		"--enable-identity-broker", "--identity-broker-config=/etc/mecatl-identity-broker/identity-broker.json", "--identity-broker-as1-issuer=https://mecatl.example.com/as1", "--identity-broker-as1-tui-client-id=mecatui",
 		"--identity-broker-as1-upstream-issuer=https://login.example.com/tenant/v2.0", "--identity-broker-as1-upstream-client-id=as1",
 		"--identity-broker-subject-claim=sub",
 	} {
@@ -742,7 +894,6 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	rendered, err = helm(t, with(
 		"oidc.issuer=https://mecatl.example.com/as1", "oidc.clientID=mecatui", "oidc.acceptedClientIDs={studio,mecatui}",
 		"identityBroker.subjectClaim=oid",
-		"identityBroker.as1.signingKey.secretName=as1-signing", "identityBroker.as1.signingKey.key=key.pem",
 		"identityBroker.as1.upstream.clientSecret.secretName=as1-upstream", "identityBroker.as1.upstream.clientSecret.key=client-secret",
 		"identityBroker.as1.upstream.caSecret.secretName=as1-upstream-ca", "identityBroker.as1.upstream.caSecret.key=ca.crt",
 		"identityBroker.as1.upstream.allowPrivateAddresses=true",
@@ -754,7 +905,6 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	args = spec.Containers[0].Args
 	for _, want := range []string{
 		"--oidc-accepted-client-ids=studio,mecatui", "--identity-broker-subject-claim=oid",
-		"--identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/key.pem",
 		"--identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/client-secret",
 		"--identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt",
 		"--identity-broker-as1-upstream-allow-private-addresses",
@@ -766,7 +916,7 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	if n := len(slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg != "--enable-identity-broker" })); n != 1 {
 		t.Fatalf("--enable-identity-broker rendered %d times: %v", n, args)
 	}
-	for volume, secret := range map[string]struct{ name, key string }{"as1-signing-key": {"as1-signing", "key.pem"}, "as1-upstream-client-secret": {"as1-upstream", "client-secret"}, "as1-upstream-ca": {"as1-upstream-ca", "ca.crt"}} {
+	for volume, secret := range map[string]struct{ name, key string }{"as1-upstream-client-secret": {"as1-upstream", "client-secret"}, "as1-upstream-ca": {"as1-upstream-ca", "ca.crt"}} {
 		i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volume })
 		if i < 0 || spec.Volumes[i].Secret == nil || spec.Volumes[i].Secret.SecretName != secret.name || len(spec.Volumes[i].Secret.Items) != 1 || spec.Volumes[i].Secret.Items[0].Key != secret.key {
 			t.Fatalf("volume %s does not project %s/%s: %+v", volume, secret.name, secret.key, spec.Volumes)
@@ -780,7 +930,7 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 	// The identity broker without AS-1 keeps the company IdP as the OIDC issuer,
 	// and, like mecak8s, needs no OIDC at all.
 	brokerOnly := []string{"template", "broker", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
-		"--set", "identityBroker.enabled=true"}
+		"--set", "identityBroker.enabled=true", "--set", identityBrokerBase}
 	for name, extra := range map[string][]string{
 		"with OIDC":                  {"--set", "extraArgs={--no-shell}", "--set", "oidc.enabled=true,oidc.issuer=https://as1.example.com,oidc.audience=mecatl,oidc.ownerIdentity=sub_id", "--set", "oidc.acceptedClientIDs={mecatui}"},
 		"without OIDC":               {"--set", "extraArgs={--no-shell}"},
@@ -794,7 +944,9 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 			t.Fatalf("render broker without AS-1 %s: %v\n%s", name, err, rendered)
 		}
 		args = deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
-		if !slices.Contains(args, "--enable-identity-broker") || slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "--identity-broker-") }) {
+		if !slices.Contains(args, "--enable-identity-broker") || slices.ContainsFunc(args, func(arg string) bool {
+			return strings.HasPrefix(arg, "--identity-broker-as1-") || strings.HasPrefix(arg, "--identity-broker-subject-claim")
+		}) {
 			t.Fatalf("broker without AS-1 %s rendered %v", name, args)
 		}
 	}
@@ -839,7 +991,15 @@ func TestMecak8sHelmChart_IdentityBrokerAS1(t *testing.T) {
 		"different OIDC issuer":            {with("oidc.issuer=https://idp.example.com"), "oidc.issuer must be empty or equal identityBroker.as1.issuer"},
 		"different OIDC client ID":         {with("oidc.clientID=studio"), "oidc.clientID must be empty or equal identityBroker.as1.tuiClientID"},
 		"accepted IDs without TUI":         {with("oidc.acceptedClientIDs={studio}"), "oidc.acceptedClientIDs must include identityBroker.as1.tuiClientID"},
-		"signing key Secret without key":   {with("identityBroker.as1.signingKey.secretName=as1-signing"), "identityBroker.as1.signingKey.key is required"},
+		"config flag in extraArgs":         {with("extraArgs[0]=--identity-broker-config=/x.json"), `extraArgs entry "--identity-broker-config=/x.json" sets an identity broker flag`},
+		"without trust domain":             {with("identityBroker.trustDomain="), "identityBroker.trustDomain is required when identityBroker.enabled is true"},
+		"without broker audience":          {with("identityBroker.audience="), "identityBroker.audience is required when identityBroker.enabled is true"},
+		"without agent issuer key":         {with("identityBroker.keys.agentIssuer.secretName=", "identityBroker.keys.agentIssuer.key="), "identityBroker.keys.agentIssuer is required when identityBroker.enabled is true"},
+		"agent issuer Secret without key":  {with("identityBroker.keys.agentIssuer.key="), "identityBroker.keys.agentIssuer.key is required"},
+		"AS-1 without broker client key":   {with("identityBroker.keys.brokerClient.secretName=", "identityBroker.keys.brokerClient.key=", "identityBroker.keys.brokerClient.keySet.secretName=", "identityBroker.keys.brokerClient.keySet.key="), "identityBroker.keys.brokerClient is required when identityBroker.as1.issuer is set"},
+		"broker client key without set":    {with("identityBroker.keys.brokerClient.keySet.secretName=", "identityBroker.keys.brokerClient.keySet.key="), "identityBroker.keys.brokerClient and identityBroker.keys.brokerClient.keySet are required together"},
+		"AS-1 without its signing key":     {with("identityBroker.keys.as1Signing.secretName=", "identityBroker.keys.as1Signing.key="), "identityBroker.keys.as1Signing is required when identityBroker.as1.issuer is set"},
+		"broker values without the broker": {with("identityBroker.enabled=false", "identityBroker.subjectClaim=", "identityBroker.as1.issuer=", "identityBroker.as1.tuiClientID=", "identityBroker.as1.upstream.issuer=", "identityBroker.as1.upstream.clientID="), "identityBroker.trustDomain, audience, and keys require identityBroker.enabled=true"},
 		"client secret key without name":   {with("identityBroker.as1.upstream.clientSecret.key=client-secret"), "identityBroker.as1.upstream.clientSecret.secretName is required"},
 		"upstream CA Secret without key":   {with("identityBroker.as1.upstream.caSecret.secretName=as1-upstream-ca"), "identityBroker.as1.upstream.caSecret.key is required"},
 		"upstream CA key without name":     {with("identityBroker.as1.upstream.caSecret.key=ca.crt"), "identityBroker.as1.upstream.caSecret.secretName is required"},

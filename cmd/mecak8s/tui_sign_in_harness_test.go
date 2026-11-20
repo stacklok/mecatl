@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -147,6 +148,7 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell",
+		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path,
 		"--permission-mode=yolo", "--guardrails=off",
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", freeLoopbackPort(t),

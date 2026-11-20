@@ -1,0 +1,10 @@
+{{- if .Values.identityBroker.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecak8s.fullname" . }}-identity-broker
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+data:
+  identity-broker.json: |-
+{{ include "mecak8s.identityBrokerConfig" . | indent 4 }}
+{{- end }}

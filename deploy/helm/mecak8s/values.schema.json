@@ -66,17 +66,46 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["enabled", "as1"],
+      "if": {"required": ["enabled"], "properties": {"enabled": {"const": true}}},
+      "then": {
+        "required": ["trustDomain", "audience", "keys"],
+        "properties": {"keys": {"required": ["agentIssuer", "brokerClient", "as1Signing"]}}
+      },
       "properties": {
         "enabled": {"type": "boolean"},
+        "trustDomain": {"type": "string", "maxLength": 255, "pattern": "^[a-z0-9._-]*$"},
+        "audience": {"type": "string", "pattern": "^\\S*$"},
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "agentIssuer": {"$ref": "#/definitions/optionalSecretKey"},
+            "brokerClient": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["secretName", "key", "keySet"],
+              "properties": {
+                "secretName": {"$ref": "#/definitions/optionalSecretKey/properties/secretName"},
+                "key": {"$ref": "#/definitions/optionalSecretKey/properties/key"},
+                "keySet": {"$ref": "#/definitions/optionalSecretKey"}
+              }
+            },
+            "as1Signing": {"$ref": "#/definitions/optionalSecretKey"}
+          }
+        },
         "subjectClaim": {"type": "string", "pattern": "^\\S*$"},
         "as1": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["issuer", "tuiClientID", "signingKey", "upstream"],
+          "required": ["issuer", "tuiClientID", "upstream"],
           "properties": {
             "issuer": {"type": "string"},
             "tuiClientID": {"type": "string"},
-            "signingKey": {"$ref": "#/definitions/optionalSecretKey"},
+            "signingKey": {
+              "description": "Deprecated: moved to identityBroker.keys.as1Signing. Accepted so an upgrade renders the chart's pointer to the new value; a set value fails the render.",
+              "type": "object",
+              "properties": {"secretName": {"type": "string"}, "key": {"type": "string"}}
+            },
             "upstream": {
               "type": "object",
               "additionalProperties": false,

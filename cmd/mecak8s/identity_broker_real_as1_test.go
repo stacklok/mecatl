@@ -35,9 +35,9 @@ func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 		issuer: a.Issuer(), audience: as1servertest.Audience, caFile: h.WriteCACert(t, t.TempDir()),
 		clientIDs: as1servertest.PublicClientID,
 	}, &app.IdentityBrokerAS1{
-		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(),
 		Now: now,
-	}, nil, nil)
+	}, identityBrokerServeOptions{clientKey: a.Key})
 
 	findBrokerSession := func(id string) (identitybroker.Session, bool) {
 		t.Helper()

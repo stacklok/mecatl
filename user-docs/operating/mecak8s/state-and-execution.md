@@ -58,7 +58,9 @@ agent working files. A root shared across the two default replicas needs a
 `ReadWriteMany` volume; a `ReadWriteOnce` PVC binds to a single node, so scale
 to one replica or use a per-pod volume if your storage class cannot do RWX. The
 operator vouches for the mount, so scope it deliberately. Caller identity does
-not isolate one caller's files from another caller using the same mount.
+not isolate one caller's files from another caller using the same mount. The
+experimental identity broker refuses a mounted workspace; see
+[Keep the broker's keys out of sessions](identity-and-client-access.md#keep-the-brokers-keys-out-of-sessions).
 
 ## Redis virtual workspace
 

@@ -631,7 +631,7 @@ func TestOpaqueSignerPublicKeyIsCopied(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	pub = testKey(t, "replacement").PublicKey // the caller changes its key in place
-	if !b.issuer.publicKey.Equal(&want) {
+	if !b.issuer.keys[b.issuer.kid].Equal(&want) {
 		t.Fatal("the broker's verification key changed with the caller's key")
 	}
 }

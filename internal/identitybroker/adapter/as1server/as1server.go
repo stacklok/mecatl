@@ -11,7 +11,8 @@
 //
 // The server keeps its own in-memory storage, so pending sign-ins and refresh
 // tokens do not survive a restart, and caps the sign-ins pending there. Its
-// signing key survives when Config.SigningKeyFile is set.
+// signing key, and so its published key set, survives when
+// Config.SigningKeyFile is set.
 //
 // Only the sign-in surface is served: dynamic client registration and the
 // device flow are not, and the discovery documents do not advertise them.
@@ -57,10 +58,16 @@ type Config struct {
 	// Audience is the Mecatl API identifier, the only audience AS-1 issues
 	// tokens for and the one whose tokens carry sub_id.
 	Audience string
-	// SigningKeyFile is a PEM private key (EC P-256 for ES256, or RSA) that
-	// signs access tokens. Empty generates a key at startup, so tokens stop
-	// verifying when the server restarts.
+	// SigningKeyFile is the absolute path of a PEM private key (EC P-256 for
+	// ES256, or RSA) that signs access tokens. Empty generates a key at
+	// startup, so tokens stop verifying when the server restarts; only tests
+	// leave it empty, as a deployment always names the operator's key.
 	SigningKeyFile string
+	// FallbackKeyFiles are the absolute paths of earlier signing keys, in the
+	// same form. AS-1 publishes them in its key set beside SigningKeyFile's,
+	// so tokens they signed keep verifying during a rotation, and never signs
+	// with them. They require SigningKeyFile.
+	FallbackKeyFiles []string
 	// PublicClients are the sign-in clients AS-1 registers. At least one is
 	// required.
 	PublicClients []PublicClient
@@ -173,23 +180,20 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		Upstreams:        []authserver.UpstreamRunConfig{{Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: cfg.upstreamRunConfig()}},
 	}
 	if cfg.Delegate != nil {
-		jwksFile, removeKeySet, err := writeKeySet("as1-delegate-", cfg.Delegate.KeySet)
-		if err != nil {
-			_ = store.Close()
-			return nil, fmt.Errorf("as1server: delegate key set: %w", err)
-		}
-		defer removeKeySet()
 		// Setting only TokenExchange leaves ToolHive's JWT-bearer inbound grant
 		// disabled.
 		runConfig.InboundGrants = &authserver.InboundGrantsRunConfig{
 			TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
-				DelegateClients: []authserver.DelegateClientRunConfig{delegateRunConfig(*cfg.Delegate, jwksFile, cfg.Audience)},
+				DelegateClients: []authserver.DelegateClientRunConfig{delegateRunConfig(*cfg.Delegate, cfg.Audience)},
 			},
 		}
 	}
 	if cfg.SigningKeyFile != "" {
+		// ToolHive joins each file name to KeyDir; an empty KeyDir leaves the
+		// absolute paths as they are, so the keys may live in different
+		// directories, such as one mounted Secret each.
 		runConfig.SigningKeyConfig = &authserver.SigningKeyRunConfig{
-			KeyDir: filepath.Dir(cfg.SigningKeyFile), SigningKeyFile: filepath.Base(cfg.SigningKeyFile),
+			SigningKeyFile: cfg.SigningKeyFile, FallbackKeyFiles: slices.Clone(cfg.FallbackKeyFiles),
 		}
 	}
 	runOpts := []runner.EmbeddedAuthServerOption{
@@ -286,6 +290,15 @@ func (cfg Config) validate() (*url.URL, error) {
 		return nil, fmt.Errorf("%w: at least one public client is required", ErrInvalidConfig)
 	case cfg.Upstream.ClientID == "":
 		return nil, fmt.Errorf("%w: upstream client ID is required", ErrInvalidConfig)
+	case cfg.SigningKeyFile == "" && len(cfg.FallbackKeyFiles) != 0:
+		return nil, fmt.Errorf("%w: fallback signing keys require a signing key file", ErrInvalidConfig)
+	}
+	if cfg.SigningKeyFile != "" {
+		for _, file := range append([]string{cfg.SigningKeyFile}, cfg.FallbackKeyFiles...) {
+			if !filepath.IsAbs(file) {
+				return nil, fmt.Errorf("%w: signing key file %q is not an absolute path", ErrInvalidConfig, file)
+			}
+		}
 	}
 	seen, err := validatePublicClients(cfg.PublicClients)
 	if err != nil {
