@@ -72,12 +72,14 @@ jobs:
         if: steps.select.outputs.selected == 'true'
         with:
           ref: ${{ inputs.parent }}
+          # Retain ancestry without downloading historical file contents.
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
           path: candidate
       - name: Refresh main and tags without persisted credentials
         if: steps.select.outputs.selected == 'true'
-        run: git -C candidate fetch --force origin main --tags
+        run: git -C candidate fetch --filter=blob:none --force origin main --tags
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         if: steps.select.outputs.selected == 'true'
         with:
