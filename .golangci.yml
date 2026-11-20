@@ -308,6 +308,7 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
+            - github.com/stacklok/mecatl/engine/kernel/session/id$
             - github.com/stacklok/mecatl/engine/kernel/history$
           deny:
             - pkg: os

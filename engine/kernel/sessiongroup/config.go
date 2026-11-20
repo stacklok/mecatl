@@ -29,6 +29,12 @@ type Clock interface {
 }
 
 // Config fixes the dependencies and bounds used by one future group opening.
+// Its layout is provisional: it groups lease/lifecycle policy with the inputs
+// needed to construct passive member Sessions. Revisit that grouping when private
+// runtime construction supplies a concrete consumer; it is not a general runtime
+// capability bundle or a live-update API. Model, tool, and workspace configuration
+// do not belong here merely because a runtime may eventually use them.
+//
 // It is copied during construction. Caller-owned Provider and Clock implementations
 // must remain usable through completion of every outstanding group call, including
 // failed opening, bounded close, and operations that remain uncooperative after a
@@ -73,12 +79,14 @@ type Config struct {
 	// DrainTimeout bounds the graceful interval after close rejects new local
 	// admission and before release is attempted.
 	DrainTimeout time.Duration
-	// CloseTimeout bounds the complete close operation, including draining and
-	// release. It must exceed DrainTimeout to reserve time for release.
+	// CloseTimeout bounds the single group-owned close operation, including
+	// draining and release, from its first invocation. Close caller contexts
+	// bound only observation, not shutdown. It must exceed DrainTimeout to
+	// reserve time for release; uncooperative operations may outlive the report.
 	CloseTimeout time.Duration
-	// MaxLoadedSessions bounds the number of private member Sessions retained
+	// MaxLoadedSessions bounds the number of resident member runtimes retained
 	// at once. Loading another Session is refused at capacity, without changing
-	// permanent membership or authority over unloaded members. A Session with
+	// permanent membership or authority over unloaded members. A runtime with
 	// unresolved obligations cannot be unloaded to make space.
 	MaxLoadedSessions int
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/stacklok/mecatl/engine/kernel/history"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	groupid "github.com/stacklok/mecatl/engine/kernel/sessiongroup/id"
 )
 
@@ -18,16 +19,18 @@ type Hold interface {
 	// GroupID returns the nonzero group identity requested by the Attempt.
 	GroupID() groupid.GroupID
 
-	// CheckMember validates nonzero identity and permanent group assignment.
+	// CheckMember validates a nonzero Session identity and permanent group assignment.
 	// Nil confirms membership; ErrNotMember means definitively not assigned;
 	// invalid IDs match history.ErrInvalid. Infrastructure failure is not
 	// absence. This is not a write fence or a prerequisite callers must repeat
 	// before each backend operation.
-	CheckMember(context.Context, history.HistoryID) error
+	CheckMember(context.Context, sessionid.SessionID) error
 
 	// Backend always returns the same nonnil group/incarnation-bound storage.
-	// Every operation enforces membership, including after retirement. Reads
-	// remain passive and bounded after retirement and confer no admission.
+	// Every operation enforces membership using the member's SessionID.ResourceID()
+	// as its history key. Non-SES resource kinds and zero IDs match history.ErrInvalid;
+	// well-formed nonmembers match ErrNotMember. Retirement does not drop these
+	// checks. Reads remain passive and bounded after retirement and confer no admission.
 	// Appends atomically enforce current incarnation, authoritative unexpired
 	// validity, expected head, and publication: no takeover or expiry may win
 	// between the authoritative acceptance check and publication. Already
@@ -77,7 +80,7 @@ var (
 	// not observed expiry or takeover and must not alone close Hold.Done.
 	// Existing evidence remains usable only until its conservative deadline.
 	ErrValidityUnknown = errors.New("lease validity unknown")
-	// ErrNotMember means a valid history ID is definitively not assigned to
+	// ErrNotMember means a valid Session identity is definitively not assigned to
 	// this group. It does not describe an infrastructure or identity error.
-	ErrNotMember = errors.New("history is not a group member")
+	ErrNotMember = errors.New("session is not a group member")
 )

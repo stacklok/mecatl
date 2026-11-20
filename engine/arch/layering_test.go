@@ -129,9 +129,10 @@ var coreImportRules = []coreImportRule{
 		pkg: modulePrefix + "engine/kernel/lease",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/sessiongroup/id": true,
+			modulePrefix + "engine/kernel/session/id":      true,
 			modulePrefix + "engine/kernel/history":         true,
 		},
-		desc: "lease contracts may import only group identity, history contracts and stdlib, never group composition or execution",
+		desc: "lease contracts may import only group/session identity, history contracts and stdlib, never group composition or execution",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/sessiongroup",

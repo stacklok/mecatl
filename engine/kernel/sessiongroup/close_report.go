@@ -1,7 +1,7 @@
 package sessiongroup
 
 import (
-	"github.com/stacklok/mecatl/engine/kernel/history"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	groupid "github.com/stacklok/mecatl/engine/kernel/sessiongroup/id"
 )
 
@@ -80,15 +80,15 @@ func (c CloseObligationCause) Error() string {
 }
 
 // CloseObligation correlates one unresolved closing responsibility with a
-// group and, where applicable, one member history. Provider obligations have a
+// group and, where applicable, one member Session. Provider obligations have a
 // zero Member because they apply to the group hold; work and member obligations
-// carry the affected nonzero HistoryID. Cause is a fixed safe classification.
+// carry the affected nonzero SessionID. Cause is a fixed safe classification.
 type CloseObligation struct {
 	// Kind identifies the unresolved provider, work, or member responsibility.
 	Kind CloseObligationKind
-	// Member identifies the affected history. It is zero only for a
+	// Member identifies the affected Session. It is zero only for a
 	// group-scoped provider obligation.
-	Member history.HistoryID
+	Member sessionid.SessionID
 	// Cause explains the unresolved state without exposing private error text.
 	Cause CloseObligationCause
 }

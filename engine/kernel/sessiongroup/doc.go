@@ -11,7 +11,9 @@
 //
 // Configuration, bounded close reporting, and the separate lease contracts
 // declare group-scoped authority and fenced storage guarantees without providing
-// an operational host.
+// an operational host. Config is a provisional construction boundary, not a
+// general runtime capability bundle. Close proposes one group-owned bounded
+// shutdown whose callers independently wait for a final CloseReport.
 //
 // These are provisional declarations, not an operational host. Open and every
 // lifecycle/navigation operation return ErrNotImplemented. They perform no I/O,

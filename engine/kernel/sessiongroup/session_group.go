@@ -28,10 +28,15 @@ type SessionGroup struct {
 // Open proposes acquiring hosting residency for an existing group. It must
 // eventually return a fully initialized owner or nil and an error; parsing an ID
 // or loading member history is not authority. Opening is distinct from creating
-// the group or its first Session. Membership/ownership dependencies and opening
-// budgets will be added with their contracts, not inferred from global state.
-// Currently it always returns nil, ErrNotImplemented, even on cancellation.
-func Open(context.Context, id.GroupID) (*SessionGroup, error) {
+// the group or its first Session. Config supplies explicit lease dependencies,
+// lifecycle bounds, and passive member construction inputs; its grouping remains
+// provisional until runtime construction is exercised. The eventual owner keeps
+// the acquired Hold private and gives runtimes only controlled member authority,
+// never an unfenced backend or public access to the Hold. The private construction
+// boundary and authoritative membership enumeration remain subsequent slices.
+// Currently it always returns nil, ErrNotImplemented, even on cancellation or
+// invalid configuration; it does not validate or retain Config or call dependencies.
+func Open(context.Context, id.GroupID, Config) (*SessionGroup, error) {
 	return nil, ErrNotImplemented
 }
 
@@ -67,7 +72,7 @@ func (*SessionGroup) LoadedRuntimes() ([]*sessionruntime.SessionRuntime, error) 
 // It must reject nonmembers, converge concurrent loads, and never publish a
 // partially reconstructed runtime or reopen a closing/retired group. It neither
 // creates a Session nor starts a run. Failure must release any capacity reserved
-// for that attempt; capacity bounds belong to the future construction policy.
+// for that attempt; Config.MaxLoadedSessions bounds retained runtime residency.
 // Currently it always returns nil, ErrNotImplemented.
 func (*SessionGroup) Load(context.Context, sessionid.SessionID) (*sessionruntime.SessionRuntime, error) {
 	return nil, ErrNotImplemented
@@ -83,13 +88,24 @@ func (*SessionGroup) Unload(context.Context, sessionid.SessionID) error {
 	return ErrNotImplemented
 }
 
-// Close proposes terminally closing hosting: reject new loads/execution, signal
+// Close proposes one terminal shutdown: reject new loads/execution, signal
 // cancellation, maintain ownership through bounded existing-work drain, then
-// release. Caller timeout cannot reopen admission or prove that effects stopped.
-// Actual ownership loss retires all members without waiting for blocked I/O.
-// The bounded drain/release report and repeated-close observation contract need
-// refinement before implementation; error alone must not hide unresolved work.
-// Currently it always returns ErrNotImplemented and closes/releases nothing.
-func (*SessionGroup) Close(context.Context) error {
-	return ErrNotImplemented
+// release. Actual ownership loss retires all members without waiting for blocked
+// I/O. Neither caller cancellation nor a report proves external effects stopped.
+//
+// The first call starts group-owned shutdown, even if its context is canceled.
+// Config.CloseTimeout bounds that shutdown, including Config.DrainTimeout; caller
+// contexts bound only their own waits. Concurrent and repeated calls observe the
+// same shutdown and final result, never restart it or extend its budget. Each
+// returned final report owns its Unresolved slice independently of other results.
+//
+// A completed shutdown returns its final report and nil error, including when
+// release is uncertain or work remains: callers must inspect the report. A wait
+// canceled before completion returns zero CloseReport and the context error,
+// not a partial report or evidence of release. Later calls may await completion.
+// This observation contract remains provisional pending lifecycle implementation.
+// Currently it always returns zero CloseReport and ErrNotImplemented, performs
+// no shutdown, and releases nothing, even for a canceled context or nil receiver.
+func (*SessionGroup) Close(context.Context) (CloseReport, error) {
+	return CloseReport{}, ErrNotImplemented
 }
