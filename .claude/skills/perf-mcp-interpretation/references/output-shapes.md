@@ -155,7 +155,7 @@ closed enum, not an identifier. `role` filters to one family (unknown roles →
 `isError` naming the valid set). `limit` 1-20 (default 10). Returns `isError`
 "per-turn history is not enabled" if the slow-turn ring is not wired.
 
-### `capture_flight_recorder{}` — needs `--flight-recorder`
+### `capture_flight_recorder{}` — on by default; off with `--flight-recorder=false`
 ```jsonc
 { "captured_bytes": 0, "window_summary": "execution-trace window of N bytes ..." }
 ```

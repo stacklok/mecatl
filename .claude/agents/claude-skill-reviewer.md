@@ -151,8 +151,8 @@ Flag any miss.
 ### Required / strongly preferred sections
 1. **Prerequisites** when the skill has them (tools installed,
    network access, auth required).
-2. **Instructions** — step-by-step workflow with numbered steps.
-   Imperative form.
+2. **Instructions** — imperative form; numbered steps where order
+   matters, prose guidance for judgement work.
 3. **Error handling** — common failures and how to recover. Skills
    without error handling cause the agent to stall on the first
    error.
@@ -404,21 +404,9 @@ skill activates. Run negative controls ("OCR this image",
 
 ## Spec-version drift
 
-Re-fetch periodically:
-- https://code.claude.com/docs/en/skills
-- https://agentskills.io
-- The local `skill-write` skill (Anthropic's own authoring
-  guide; updates as the spec evolves)
-
-Known evolutions:
-- Custom commands merged into skills — both
-  `.claude/commands/foo.md` and `.claude/skills/foo/SKILL.md`
-  create `/foo`.
-- `disable-model-invocation` formalised.
-- Subagent execution via `context: fork`.
-- Dynamic context injection (Claude Code-specific).
-
-If you spot a feature in the skill that's deprecated, flag it.
+Re-fetch https://code.claude.com/docs/en/skills and
+https://agentskills.io when in doubt. If you spot a feature in the
+skill that's deprecated or removed, flag it.
 
 ## Memory: building skill-design knowledge
 
@@ -439,12 +427,6 @@ individual findings.
 
 - **`claude-agent-reviewer`** — when the file under review is a
   sub-agent definition (`.claude/agents/*.md`), not a skill.
-- **`claude-md` skill** — for CLAUDE.md review.
-- **`skill-write` skill** — for *writing* a skill from scratch.
-- **`write-a-skill` skill** — alternative authoring workflow.
-- **`mcp-server-authoring` skill** — for skills that turn out
-  to be better expressed as MCP servers (auth, transport,
-  longer-lived sessions).
 
 ## References
 
@@ -456,7 +438,5 @@ individual findings.
   https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills
 - Claude Code best practices —
   https://code.claude.com/docs/en/best-practices
-- The local `skill-write` skill (Anthropic's authoring guide)
-  — `~/.claude/skills/skill-write/SKILL.md`
 - Sub-agents reference (for the agent-vs-skill decision) —
   https://code.claude.com/docs/en/sub-agents

@@ -15,6 +15,7 @@ models:
     <alias>: {provider: <provider>, model: <model-id>} # provider-aware alias
 
   default: <provider/model-id>    # the session model
+  subagent: <selector>            # default for unpinned delegated work; --subagent-model wins
 
   slots:                   # route housekeeping + plan-mode to a cheaper/stronger model
     compaction: <selector>        # the compaction tier-4 summary call
@@ -22,6 +23,7 @@ models:
     guardrail: <selector>         # the LLM content checker
     plan: <selector>              # plan-mode turns swap to this model (opusplan pattern)
     router: <selector>            # the semantic subagent model-router classifier
+    title: <selector>             # session title generation; unset/unresolvable disables it
 
   router:                  # pick a subagent's model per task (the taxonomy enables it)
     # disabled: true             # optional kill-switch: keep the taxonomy but turn routing off
@@ -63,6 +65,8 @@ models:
   upper bound.
 
 ## Worked example (OpenRouter, cost-tiered)
+
+Model ids are illustrative; verify current ids in Step 2.
 
 ```yaml
 models:

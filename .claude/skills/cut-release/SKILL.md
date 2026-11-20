@@ -45,13 +45,6 @@ for the release version. The release PR propagates it to the `mecak8s` and
 tag. The workflows verify those values directly rather than maintaining a fixed list of
 files that a release PR may change.
 
-It did not used to be. `mecatequi-reusable.yml` referenced its three sibling composite actions
-by a hardcoded `@vX.Y.Z` literal, so every release had to bump those pins in the same tagged
-commit or ship version skew. That self-reference — a file naming a tag that does not exist yet —
-is why a release needed a commit on `main` at all. The pins are now `$/` self-repository refs,
-which resolve to this repo at the exact ref the workflow is running from, so there is nothing
-left to bump and skew is impossible rather than merely policed.
-
 ## Steps
 
 Run from the repo root.
@@ -197,8 +190,6 @@ releases additional modules.
 
 The workflow must be present on `main`, and the repository needs a configured
 `release` environment with the release App plus merge commits enabled before dispatch.
-Those rollout prerequisites do not establish hosted verification. There is no evidence
-here of a completed hosted module release or public-download proof.
 
 A human alone merge-commits the final adoption PR. Agents never merge it, and squash
 or rebase adoption breaks the required release ancestry. If a write or public proof
@@ -241,7 +232,7 @@ explicitly approved action.
   Environment (`vars.RELEASE_APP_CLIENT_ID`, `secrets.RELEASE_APP_PRIVATE_KEY`), whose
   deployment-branch policy must be restricted to `main`. The App needs exactly two repository
   permissions — Contents: write and Pull requests: write. It does NOT need Workflows: write,
-  because a release no longer edits anything under `.github/workflows/`. Repo-level secrets would let anyone
+  because a release edits nothing under `.github/workflows/`. Repo-level secrets would let anyone
   with push access dispatch a modified workflow from a branch and mint the App credential.
 - **One release at a time.** If any `release/v*` PR is open, the next dispatch refuses and names
   it — merge or close it first. Once none is open, leftover `release/v*` branches from failed

@@ -118,8 +118,7 @@ By far the most common surface. Apply this checklist.
 - **`pull_request_target` runs in the context of the base
   repo's main branch with secrets.** Combining it with checking
   out the PR's code is a critical finding. Cite Clinejection /
-  GitHub's security guidance. Defer to `ci-agent-hardening`
-  skill for the full security narrow-slice.
+  GitHub's security guidance.
 
 ### OIDC for cloud credentials
 - **Cloud auth via OIDC, not static keys.** AWS:
@@ -300,8 +299,8 @@ The same principles map. Highlights:
   driven deploys** for services (separate concerns).
 - **Conventional commits**: useful when paired with
   release-please / semantic-release / git-cliff. **Match the
-  project's stated style** — some projects (e.g. a downstream consumer)
-  explicitly reject conventional commits; respect that.
+  project's stated style** — some projects explicitly reject
+  conventional commits; respect that.
 - **Signed releases**: `gpg --sign` tags, signed commits, plus
   the cosign image signing covered above.
 - **Reproducible builds**: bit-identical artefact from same
@@ -468,8 +467,6 @@ findings.
 - **`secure-code-reviewer`** — application-code security
   surfaces. When the CI finding is *also* an injection / SSRF
   in the app code, defer the app-side analysis.
-- **`ci-agent-hardening` skill** — the security narrow-slice
-  on Claude-in-CI / agent-on-CI threat models.
 - **`software-architect`** — when the finding is application
   architecture, not platform.
 - **`library-reuse-reviewer`** — when a new dependency in the

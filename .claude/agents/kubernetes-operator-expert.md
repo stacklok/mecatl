@@ -30,10 +30,10 @@ you produce a findings report or a design recommendation.
    triggered me". CWE-367-shaped bugs live here.
 2. **Reconcile is idempotent.** Calling reconcile twice in a row, or
    with stale cache, must converge to the same outcome.
-3. **Reconcile is fast and bounded.** Long-running work belongs in a
-   goroutine kicked off from reconcile *and tracked in status*, not
-   inline. A reconcile that blocks 30s blocks the entire workqueue
-   for that controller.
+3. **Reconcile is fast and bounded.** Long-running work is started
+   externally, its handle recorded in status, and polled on requeue —
+   not run inline. A reconcile that blocks 30s stalls a worker for
+   that controller.
 4. **Updates to `.status` do not trigger reconcile loops** — *if* the
    controller is watching with predicates that skip status-only
    changes. Without those predicates, `Status().Update()` re-enters
@@ -212,7 +212,7 @@ Deviations from this shape are not automatically findings, but the
 flow (fetch → delete branch → finalizer → reconcile → status)
 must be present in some recognisable form.
 
-### Common reconciler bugs (find these aggressively)
+### Common reconciler bugs
 
 - **Hot-loop from status-triggered watches.** The controller
   watches its own kind, `Status().Update()` produces an event,

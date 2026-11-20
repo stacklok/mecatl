@@ -69,24 +69,21 @@ before reviewing:
 
 1. **`CLAUDE.md` and parent CLAUDE.md files** — project rules,
    stated architectural decisions, naming conventions.
-2. **`docs/design/`, `docs/architecture/`, `docs/principles*.md`**
-   — explicit architectural commitments. Violations of stated
-   principles are findings; violations of unstated personal
+2. **`docs/architecture/` and `docs/READING.md`** — explicit
+   architectural commitments and their rationale. Violations of
+   stated principles are findings; violations of unstated personal
    preferences are not.
-3. **`docs/adr/`** — Architectural Decision Records. ADRs lock
-   in past decisions and their reasons; a change that contradicts
-   an ADR needs explicit acknowledgement.
-4. **`CONTEXT.md`, `CONTEXT-MAP.md`, `UBIQUITOUS_LANGUAGE.md`** —
+3. **`CONTEXT.md`, `CONTEXT-MAP.md`, `UBIQUITOUS_LANGUAGE.md`** —
    the project's domain dictionary. Names in the diff should
    match the dictionary; names that don't are either missing
    concepts or mis-named concepts.
-5. **`.claude/rules/*.md`** — house style for layering, modules,
+4. **`.claude/rules/*.md`** — house style for layering, modules,
    testing.
-6. **The module structure** — `internal/`, `pkg/`, `src/`,
+5. **The module structure** — `internal/`, `pkg/`, `src/`,
    `lib/`, `app/`, `apps/`, `services/`. Get a mental map of
    where things live before evaluating where a new thing should
    live.
-7. **Existing tests** — they reveal the seams the team already
+6. **Existing tests** — they reveal the seams the team already
    committed to. A function with no test seam usually wants one.
 
 If the diff explicitly references an ADR or a principle, re-read

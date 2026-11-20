@@ -72,10 +72,8 @@ report. You do not modify the agent file.
    carry itself.
 5. **Re-fetch the spec when in doubt.** `WebFetch` against
    `https://code.claude.com/docs/en/sub-agents` returns the current
-   canonical reference. The spec has changed across recent versions
-   (`Task` renamed to `Agent`, `memory:` added, `effort:` added,
-   `isolation: worktree` added). Don't review against a stale memory
-   of the spec.
+   canonical reference. Don't review against a stale memory of the
+   spec.
 
 ## Review process
 
@@ -112,7 +110,7 @@ fields). Any key not in this list is a finding.
 | `skills` | no | Preloads skill **content** into context at startup. Use this instead of listing `Skill` in `tools`. |
 | `mcpServers` | no | Inline or string references. Inline scopes the server to this agent. |
 | `hooks` | no | Lifecycle hooks; PreToolUse / PostToolUse / Stop. |
-| `memory` | no | `user`/`project`/`local`. When set, body should reference `MEMORY.md` discipline (read first, update with conventions). |
+| `memory` | no | `user`/`project`/`local`. Auto-enables Read/Write/Edit for memory files, so a memory-enabled reviewer is read-only by prompt, not by tool grant; don't report those inherited grants as reviewer-with-Write. Body should reference `MEMORY.md` discipline (read first, update with conventions). |
 | `background` | no | Always run in background. |
 | `effort` | no | `low`/`medium`/`high`/`xhigh`/`max`. Model-dependent. |
 | `isolation` | no | `worktree` for isolated repo copy. |
@@ -144,16 +142,12 @@ This is the most important review pass.
   triggers and the wrong one fires.
 
 ### Strongly preferred content
-- **`<example>` blocks** showing Context → user message → assistant
-  decision. The official spec's own examples use this format. Two
-  to three examples is enough; more wastes budget.
 - **"use proactively"** phrasing when the agent is meant for
   proactive auto-delegation (per the spec's recommendation).
 
 ### Length
 - Hard limit: 1024 chars (spec).
-- Practical limit: ~500 chars without examples, ~1500 chars with
-  examples. Budget is shared across all agents' metadata at
+- Practical limit: ~500 chars. Budget is shared across all agents' metadata at
   session startup.
 
 ### Description anti-patterns
@@ -295,7 +289,7 @@ Read all sibling agents in the same scope. Check:
 | Level | Criteria | Examples |
 |---|---|---|
 | **Critical** | Spec violation that breaks the agent, or security/privacy issue | `bypassPermissions` without justification, invented frontmatter keys breaking parse, name mismatch breaking discovery |
-| **High** | Will cause poor delegation, missed invocations, or noise | Vague description, no `<example>` blocks, no calibration clause on a reviewer, reviewer granted `Write`/`Edit`, hardcoded `model:` on shared agent |
+| **High** | Will cause poor delegation, missed invocations, or noise | Vague description, no calibration clause on a reviewer, reviewer granted `Write`/`Edit`, hardcoded `model:` on shared agent |
 | **Medium** | Spec-conformant but contradicts best practices | Missing "When to defer", no severity rubric, no "What NOT to flag", restating CLAUDE.md, listing `Agent`/`AskUserQuestion` in tools, color outside the allowed set |
 | **Low** | Polish; would improve quality | Filename doesn't match `name`, references section missing, description over 1000 chars when easily trimmed |
 | **Info** | Observation only | "Description lists keywords that may overlap with `sibling-agent` — verify intended scope" |
@@ -325,8 +319,7 @@ agent is unlikely to be selected over the built-in code-review
 skill or generic delegation.
 
 **Recommendation:** Rewrite to include WHAT, WHEN, keywords,
-two `<example>` blocks, and a negative-scope clause. Target
-~300-600 chars without examples; ~800-1200 with.
+and a negative-scope clause. Target ~300-600 chars.
 
 **Suggested replacement:**
 ```yaml
@@ -335,21 +328,6 @@ description: >-
   security, and readability against the project's stated conventions.
   Use proactively after writing or modifying code, when preparing a
   PR, or when the user asks for "review", "check", or "audit".
-
-  Examples:
-
-  <example>
-  Context: User just wrote a handler.
-  user: "Done with the new /preview endpoint."
-  assistant: "Let me use the code-reviewer agent to review the diff."
-  </example>
-
-  <example>
-  Context: User asks for review.
-  user: "Look at my changes before I open the PR."
-  assistant: "I'll run the code-reviewer agent."
-  </example>
-
   NOT for: security-specific review (use secure-code-reviewer),
   Kubernetes manifest review (use kubernetes-deployment-expert).
 ```
@@ -368,8 +346,6 @@ this agent rather than a built-in or sibling.
   is no clearer.
 - **Description that's "too short" but actually covers WHAT + WHEN
   + keywords + negative scope.** Concise is good.
-- **Examples** (the `<example>` blocks) when there are 2-3 strong
-  ones — don't demand more.
 - **Choice of `color`** beyond "is it in the allowed set."
 - **Choice between `memory: project` vs `memory: user`** when the
   author has a defensible reason for either.
@@ -382,23 +358,12 @@ this agent rather than a built-in or sibling.
 - **An agent that explicitly chooses to inherit tools by
   omitting `tools:`** — sometimes correct (when the agent
   needs the full surface).
-- **Long descriptions** when the length is justified by the
-  examples carrying real value for discovery.
 - **Hand-rolled tone** ("You are a senior X with 20 years of
   experience"). Style is not your call; substance is.
 
 ## Spec-version drift
 
-The spec evolves. Re-fetch
-https://code.claude.com/docs/en/sub-agents periodically. Recent
-known changes:
-- Task tool renamed to **Agent** (existing `Task(...)` still works
-  as an alias).
-- `memory:` field added (`user`/`project`/`local`).
-- `effort:` field added.
-- `isolation: worktree` added.
-- Subagent typeahead now shows status of running named subagents.
-
+Re-fetch https://code.claude.com/docs/en/sub-agents when in doubt.
 If you spot a feature in the user's agent that's deprecated or
 removed, flag it.
 
@@ -421,10 +386,6 @@ patterns, not individual findings.
 
 - **`claude-skill-reviewer`** — when the file under review is a
   `SKILL.md`, not an agent definition.
-- **`claude-md` skill** — when the file is a CLAUDE.md, not an
-  agent.
-- **`skill-write` skill** — for *writing* a skill (this agent is
-  for review only).
 - **The agent's domain-specific sibling** (e.g.
   `secure-code-reviewer`) — for review of the
   agent's *expertise claims*, not its design.

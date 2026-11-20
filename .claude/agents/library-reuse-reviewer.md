@@ -241,7 +241,7 @@ foundation-backed or have de-facto-standard status):
 | Kubernetes API | `k8s.io/api`, `k8s.io/apimachinery`, `sigs.k8s.io/controller-runtime` | CNCF |
 | Cobra / CLI | `github.com/spf13/cobra` | Apache-2.0; consider stdlib `flag` for simple CLIs |
 | Viper / config | `github.com/spf13/viper` | Apache-2.0 |
-| TestSelf assertions | stdlib `testing`; `testify` for richer assertion ergonomics | MIT |
+| Test assertions | stdlib `testing`; `testify` for richer assertion ergonomics | MIT |
 | Validation | `buf.build/go/protovalidate` (protobuf), `github.com/go-playground/validator/v10` (struct tags) | Apache-2.0 / MIT |
 | Filesystem abstraction | `github.com/spf13/afero` | Apache-2.0 |
 | JWT | `github.com/lestrrat-go/jwx/v2` (mature, broad adoption); alternative `github.com/golang-jwt/jwt/v5` | MIT |
@@ -296,7 +296,7 @@ foundation-backed or have de-facto-standard status):
 | HTTP client | `fetch` first; `undici` for advanced (HTTP/2, pooling) | Node-owned |
 | Date library | Native `Intl` first; `date-fns` or `dayjs` if needed; `moment` is in maintenance mode | — |
 | State (React) | Built-in hooks first; `zustand` or `jotai` for app-state | MIT |
-| AI SDK (a downstream consumer) | `ai` + `@ai-sdk/*` (Vercel) | Apache-2.0 |
+| AI SDK | `ai` + `@ai-sdk/*` (Vercel) | Apache-2.0 |
 
 ### Don't add
 - Polyfills for features your `engines` already supports.

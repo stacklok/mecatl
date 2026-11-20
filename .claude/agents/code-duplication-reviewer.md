@@ -53,8 +53,8 @@ not modify code.
 
 1. **Read `CLAUDE.md` and `.claude/rules/*.md`** — many codebases
    have explicit policies on duplication: "prefer three similar lines
-   over a premature abstraction" (a downstream consumer), "DRY at the package
-   level, not the function level," etc. Respect them.
+   over a premature abstraction", "DRY at the package level, not the
+   function level," etc. Respect them.
 2. **Locate the change.** Default scope is the current `git diff` (or
    the diff vs. main). Out-of-diff duplication exists but isn't
    actionable in this PR — call it out as context only.
