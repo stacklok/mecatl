@@ -106,10 +106,11 @@ type ChildSessionCreator interface {
 // ChildSessionInfo describes a child session the engine publishes, beyond what
 // the session itself records.
 type ChildSessionInfo struct {
-	// DefinitionName is the agent definition the child runs, as the engine
-	// selected it: a subagent call's agent argument, or a team member's agent
-	// type. It is empty for a child that runs no named definition: the default
-	// subagent explorer, a parallel branch, or a generic team member.
+	// DefinitionName is the agent definition the child runs: a subagent call's
+	// agent argument, or the definition the team-member factory built the
+	// member from (agent.MemberBuild.DefinitionName). It is empty for a child
+	// that runs no named definition: the default subagent explorer, a parallel
+	// branch, or a generic team member.
 	DefinitionName string
 }
 

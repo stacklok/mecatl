@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
@@ -166,15 +167,29 @@ func TestChildSessionCreatorPublishesEachChildKind(t *testing.T) {
 		}
 		wantOneChild(t, store, session.SessionKindParallelBranch, "")
 	})
-	t.Run("team member", func(t *testing.T) {
-		store := newChildCreatorStore()
-		providers := map[string]*mockllm.Provider{"lead": mockllm.New(mockllm.TextTurn("member done"))}
-		teamTool := agent.NewTeamTool(teamToolFactory(t, providers), agent.WithTeamToolStore(store))
-		if res := runParentCall(t, teamTool, "Team", `{"goal":"fix it","members":[{"name":"lead","role":"lead","agent":"reviewer"}]}`); res.IsError {
-			t.Fatalf("Team failed: %+v", res)
-		}
-		wantOneChild(t, store, session.SessionKindTeamMember, "reviewer")
-	})
+	// A member's definition is the one its factory built it from, not the
+	// roster's agent type: a factory that falls back from an unknown type
+	// builds a generic member.
+	for name, tc := range map[string]struct{ built, want string }{
+		"team member":                       {built: "reviewer", want: "reviewer"},
+		"team member the factory fell back": {built: "", want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newChildCreatorStore()
+			providers := map[string]*mockllm.Provider{"lead": mockllm.New(mockllm.TextTurn("member done"))}
+			base := teamToolFactory(t, providers)
+			factory := func(tm *team.Team, spec agent.MemberSpec, model string) agent.MemberBuild {
+				build := base(tm, spec, model)
+				build.DefinitionName = tc.built
+				return build
+			}
+			teamTool := agent.NewTeamTool(factory, agent.WithTeamToolStore(store))
+			if res := runParentCall(t, teamTool, "Team", `{"goal":"fix it","members":[{"name":"lead","role":"lead","agent":"reviewer"}]}`); res.IsError {
+				t.Fatalf("Team failed: %+v", res)
+			}
+			wantOneChild(t, store, session.SessionKindTeamMember, tc.want)
+		})
+	}
 }
 
 // TestChildSessionCreatorRefusalStopsTheChild pins that a CreateChild error

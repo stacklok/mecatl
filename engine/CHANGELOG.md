@@ -18,7 +18,9 @@ API snapshots live in [`engine/api/`](./api/).
   publish a subagent, parallel-branch, or team-member session, passing the
   definition the child runs (empty for a def-less child). An error stops the
   child before its first turn, exactly like a failed `Create`. Stores without
-  the capability behave as before. Added (minor).
+  the capability behave as before. Adds `agent.MemberBuild.DefinitionName`, the
+  definition a team-member factory built the member from, which the supervisor
+  passes for members. Added (minor).
 
 - **Generated resource-ID persistence methods**: adds `id.ID.CheckCBOR`,
   `AppendCBOR`, `ReadCBOR`, `Clone`, and `Equal` for compositional persistence

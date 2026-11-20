@@ -243,6 +243,12 @@ type MemberBuild struct {
 	// read-only forker is available; setting it without a wired forker trips
 	// ErrReadOnlyShellNoForker.
 	IsolateReadOnly bool
+	// DefinitionName is the agent definition the factory built the member from:
+	// the spec's AgentType when the factory adopted it, and empty for a generic
+	// member, including one whose AgentType the factory did not find and fell
+	// back from. The supervisor passes it to a port.ChildSessionCreator store
+	// when it publishes the member's session.
+	DefinitionName string
 }
 
 // MemberEngine builds the per-member engine (and its optional permission mode) from
@@ -958,7 +964,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	}
 	sess.ProviderID = provider
 	sess.ModelID = eng.Model()
-	if err := s.publishMemberSession(ctx, spec.Name, spec.AgentType, sess, cleanup); err != nil {
+	if err := s.publishMemberSession(ctx, spec.Name, build.DefinitionName, sess, cleanup); err != nil {
 		return err
 	}
 	_ = s.team.SetMemberSession(spec.Name, sess.ID)
