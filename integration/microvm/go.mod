@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/stacklok/go-microvm v0.0.41
 	github.com/stacklok/mecatl v0.0.50
-	github.com/stacklok/mecatl/engine v0.18.1
+	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/mecatl/environment/microvm v0.0.0
 	go.uber.org/goleak v1.3.0
 )
@@ -216,13 +216,13 @@ require (
 	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
-	github.com/stacklok/mecatl/adapters v0.1.1 // indirect
+	github.com/stacklok/mecatl/adapters v0.2.3 // indirect
 	github.com/stacklok/mecatl/agentdef v0.1.0 // indirect
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1 // indirect
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1 // indirect
-	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000 // indirect
-	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000 // indirect
-	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000 // indirect
+	github.com/stacklok/mecatl/provider/anthropic v0.4.0 // indirect
+	github.com/stacklok/mecatl/provider/openai v0.3.1 // indirect
+	github.com/stacklok/mecatl/provider/openaichat v0.3.1 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
 	github.com/stacklok/toolhive v0.66.0 // indirect
 	github.com/stacklok/toolhive-core v0.0.60 // indirect
