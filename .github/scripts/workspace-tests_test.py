@@ -174,7 +174,7 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
 
     def test_kind_default_and_pinned_selection(self):
         self.fake_go()
-        for tool in ("kind", "helm", "kubectl", "docker"):
+        for tool in ("kind", "ko", "helm", "kubectl", "docker"):
             stub = self.base / "bin" / tool
             stub.write_text("#!/bin/sh\nexit 0\n")
             stub.chmod(0o755)
