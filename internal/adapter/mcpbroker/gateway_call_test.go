@@ -96,13 +96,41 @@ func (f *fakeCredentials) renewFlags() []bool {
 // testGateway is the gateway stand-in as a Gateway.
 type testGateway struct {
 	endpoint string
+	resource string
 	client   *http.Client
 }
 
 func (g testGateway) Endpoint() string         { return g.endpoint }
+func (g testGateway) Resource() string         { return g.resource }
 func (g testGateway) HTTPClient() *http.Client { return g.client }
 func (testGateway) Route(backend, name string) (string, string, error) {
 	return embeddedGateway{}.Route(backend, name)
+}
+
+// TestCheckGatewayRefusesAnIncompleteGateway refuses gateway calls that miss
+// any part they need, the vMCP resource included.
+func TestCheckGatewayRefusesAnIncompleteGateway(t *testing.T) {
+	const gatewayURL = "https://gateway.example/mcp"
+	complete := testGateway{endpoint: gatewayURL, resource: gatewayURL, client: http.DefaultClient}
+	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}}
+	for name, tc := range map[string]struct {
+		gateway Gateway
+		calls   GatewayCalls
+		want    error
+	}{
+		"complete":       {complete, calls, nil},
+		"no endpoint":    {testGateway{resource: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
+		"no resource":    {testGateway{endpoint: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
+		"no HTTP client": {testGateway{endpoint: gatewayURL, resource: gatewayURL}, calls, ErrInvalidCatalogue},
+		"no authorizer":  {complete, GatewayCalls{Credentials: calls.Credentials}, ErrInvalidCatalogue},
+		"no credentials": {complete, GatewayCalls{Authorizer: calls.Authorizer}, ErrInvalidCatalogue},
+	} {
+		r := &Runtime{}
+		r.setGateway(tc.gateway, tc.calls)
+		if err := r.checkGateway(); !errors.Is(err, tc.want) {
+			t.Errorf("%s: checkGateway = %v, want %v", name, err, tc.want)
+		}
+	}
 }
 
 type wireRequest struct {
@@ -233,7 +261,7 @@ func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture
 	harness.runtime.diag = f.diag
 	if !opts.noGateway {
 		WithGatewayCalls(
-			testGateway{endpoint: f.g.URL(), client: &http.Client{Transport: f.wire, Timeout: 10 * time.Second}},
+			testGateway{endpoint: f.g.URL(), resource: f.g.URL(), client: &http.Client{Transport: f.wire, Timeout: 10 * time.Second}},
 			GatewayCalls{Authorizer: f.auth, Credentials: f.creds, Servers: opts.servers},
 		)(harness.runtime)
 	}
@@ -1084,9 +1112,9 @@ func TestToolHiveProcessInstallsTheEmbeddedGateway(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = process.Close() })
 	gw, ok := process.Runtime.gateway.(embeddedGateway)
-	if !ok || gw.Endpoint() != as2Resource(as2TestIssuer) || gotEndpoint != gw.Endpoint() || process.GatewayEndpoint != gw.Endpoint() ||
-		gw.Endpoint() != process.AS2.Resource || gw.HTTPClient() != client {
-		t.Fatalf("gateway = %+v (endpoint passed %q, process endpoint %q), AS-2 resource %q", process.Runtime.gateway, gotEndpoint, process.GatewayEndpoint, process.AS2.Resource)
+	if !ok || gw.Endpoint() != as2Resource(as2TestIssuer) || gotEndpoint != gw.Endpoint() || process.Gateway != gw ||
+		gw.Resource() != as2Resource(as2TestIssuer) || gw.Resource() != process.AS2.Resource || gw.HTTPClient() != client {
+		t.Fatalf("gateway = %+v (endpoint passed %q, process gateway %+v), AS-2 resource %q", process.Runtime.gateway, gotEndpoint, process.Gateway, process.AS2.Resource)
 	}
 	if server, routed, err := gw.Route("private", "mcp__private__echo"); server != "private" || routed != "private.echo" || err != nil {
 		t.Fatalf("Route = %q, %q, %v", server, routed, err)

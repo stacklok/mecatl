@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
@@ -773,4 +774,34 @@ func TestBuildMCPBrokerRefusesAS2OtherThanTheIDJAGTarget(t *testing.T) {
 		t.Fatalf("buildMCPBroker with the matching target: %v", err)
 	}
 	parts.close()
+}
+
+// resourceGateway is a Gateway with a given endpoint and resource.
+type resourceGateway struct{ endpoint, resource string }
+
+func (g resourceGateway) Endpoint() string                        { return g.endpoint }
+func (g resourceGateway) Resource() string                        { return g.resource }
+func (resourceGateway) HTTPClient() *http.Client                  { return http.DefaultClient }
+func (resourceGateway) Route(b, n string) (string, string, error) { return b, n, nil }
+
+// TestCheckGatewayResource refuses a gateway whose resource, not endpoint, is
+// other than AS-2's resource.
+func TestCheckGatewayResource(t *testing.T) {
+	const resource = as2TestIssuer + "/mcp"
+	as2 := &mcpbroker.AS2{Issuer: as2TestIssuer, Resource: resource}
+	for name, tc := range map[string]struct {
+		gateway mcpbroker.Gateway
+		as2     *mcpbroker.AS2
+		want    error
+	}{
+		"no gateway":             {nil, nil, nil},
+		"resource is AS-2's":     {resourceGateway{resource, resource}, as2, nil},
+		"endpoint other than it": {resourceGateway{"https://vmcp.internal:8443/mcp", resource}, as2, nil},
+		"another resource":       {resourceGateway{resource, "https://other.example/mcp"}, as2, errGatewayIsNotAS2Resource},
+		"no AS-2":                {resourceGateway{resource, resource}, nil, errGatewayIsNotAS2Resource},
+	} {
+		if err := checkGatewayResource(tc.gateway, tc.as2); !errors.Is(err, tc.want) {
+			t.Errorf("%s: checkGatewayResource = %v, want %v", name, err, tc.want)
+		}
+	}
 }

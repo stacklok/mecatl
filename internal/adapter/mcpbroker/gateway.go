@@ -17,10 +17,13 @@ const defaultSendOnceLimit = 4096
 // Gateway is an MCP gateway reached only over HTTP. A tools/call on a route it
 // serves is authorized by the identity broker and sent with a per-call token.
 // Shortcut: tool listing for gateway routes still uses the MCP broker's OAuth login (workspace enrollment), a second sign-in after #2533; removed by #2729 (listing with a broker-issued token through Gateway).
-// Shortcut: Gateway carries no vMCP resource; the embedded endpoint is built from the issuer and checked once at build to be AS-2's resource; removed by #2728 (Gateway carries its vMCP resource).
 type Gateway interface {
-	// Endpoint is the gateway's MCP endpoint URL.
+	// Endpoint is the gateway's MCP endpoint URL, where requests are sent.
 	Endpoint() string
+	// Resource is the vMCP's OAuth protected-resource identifier, the
+	// audience AS-2 issues the gateway token for. It is not Endpoint: a
+	// gateway may be dialled at an address other than its resource.
+	Resource() string
 	// HTTPClient carries every request of a call.
 	HTTPClient() *http.Client
 	// Route returns the gateway backend and the tool name the gateway routes
@@ -32,10 +35,12 @@ type Gateway interface {
 // Shortcut: only the embedded gateway implements Gateway; removed by #2812 (external gateway implementation of the Gateway interface).
 type embeddedGateway struct {
 	endpoint string
+	resource string
 	client   *http.Client
 }
 
 func (g embeddedGateway) Endpoint() string         { return g.endpoint }
+func (g embeddedGateway) Resource() string         { return g.resource }
 func (g embeddedGateway) HTTPClient() *http.Client { return g.client }
 
 // Route returns backend and the name the vMCP advertises the tool under.
@@ -91,8 +96,8 @@ func (r *Runtime) checkGateway() error {
 	if r.gateway == nil {
 		return nil
 	}
-	if r.gatewayCalls.Authorizer == nil || r.gatewayCalls.Credentials == nil || r.gateway.Endpoint() == "" || r.gateway.HTTPClient() == nil {
-		return fmt.Errorf("%w: gateway calls need an authorizer, agent credentials, an endpoint, and an HTTP client", ErrInvalidCatalogue)
+	if r.gatewayCalls.Authorizer == nil || r.gatewayCalls.Credentials == nil || r.gateway.Endpoint() == "" || r.gateway.Resource() == "" || r.gateway.HTTPClient() == nil {
+		return fmt.Errorf("%w: gateway calls need an authorizer, agent credentials, an endpoint, a resource, and an HTTP client", ErrInvalidCatalogue)
 	}
 	return nil
 }

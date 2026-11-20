@@ -140,9 +140,9 @@ var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-
 // gateway's ID-JAGs for.
 var errAS2IsNotIDJAGTarget = errors.New("the MCP gateway's authorization server (AS-2) is not the one AS-1 issues ID-JAGs for")
 
-// errGatewayIsNotAS2Resource refuses gateway calls sent to an endpoint other
-// than the resource AS-2 issues their tokens for.
-var errGatewayIsNotAS2Resource = errors.New("the MCP gateway's endpoint is not the resource its authorization server (AS-2) issues tokens for")
+// errGatewayIsNotAS2Resource refuses gateway calls sent to a gateway whose
+// resource is not the one AS-2 issues their tokens for.
+var errGatewayIsNotAS2Resource = errors.New("the MCP gateway's resource is not the one its authorization server (AS-2) issues tokens for")
 
 // sameIssuer reports whether two issuer URLs name the same server: scheme and
 // host compare case-insensitively, a default port equals none, and a trailing

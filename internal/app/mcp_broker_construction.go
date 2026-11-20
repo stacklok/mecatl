@@ -131,6 +131,15 @@ func gatewayInProcessClient(vmcp http.Handler, endpoint string) (*http.Client, e
 	}), nil
 }
 
+// checkGatewayResource refuses a gateway, when there is one, whose resource is
+// not the one AS-2 issues the identity broker's gateway tokens for.
+func checkGatewayResource(gateway mcpbroker.Gateway, as2 *mcpbroker.AS2) error {
+	if gateway != nil && (as2 == nil || as2.Resource != gateway.Resource()) {
+		return errGatewayIsNotAS2Resource
+	}
+	return nil
+}
+
 // as2InProcessClient reaches AS-2's token endpoint straight from the embedded
 // authorization server, without a network listener, and refuses every other
 // URL, each call bounded by as2RequestTimeout.
@@ -189,16 +198,13 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		authStorageClose()
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
-	gatewayEndpoint := process.GatewayEndpoint
-	if gatewayEndpoint != "" && (process.AS2 == nil || process.AS2.Resource != gatewayEndpoint) {
-		// The identity broker's gateway tokens are issued for AS-2's resource,
-		// so the gateway the calls go to must be that resource.
+	if err := checkGatewayResource(process.Gateway, process.AS2); err != nil {
 		_ = process.Close()
 		authStorageClose()
-		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errGatewayIsNotAS2Resource)
+		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
 	var gatewayServers []string
-	if gatewayEndpoint != "" {
+	if process.Gateway != nil {
 		gatewayServers = config.GatewayCalls.Servers
 	}
 	var as2 *identityBrokerAS2
