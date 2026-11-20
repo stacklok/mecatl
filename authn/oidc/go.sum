@@ -27,8 +27,8 @@ github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 h1:XA01Vk/wv
 github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
 github.com/shirou/gopsutil/v4 v4.26.10 h1:MJN6euesJx53MVEjscYeyRSRcrdIcy3sz5k9nosjldg=
 github.com/shirou/gopsutil/v4 v4.26.10/go.mod h1:XpkIrcUMQhwte/dGxu57KtnMMFsbKelI7PP23zweKBk=
-github.com/stacklok/mecatl/engine v0.14.0 h1:cGUygB7auxWNmvQ2gRKgY/IBRHMNe+kB1KO7YDYxoYM=
-github.com/stacklok/mecatl/engine v0.14.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
+github.com/stacklok/mecatl/engine v0.19.0 h1:QAKkKP95oLqLxkBy6Mbz+yJIm2L0McuEFokFe3k86C0=
+github.com/stacklok/mecatl/engine v0.19.0/go.mod h1:ep1aCY8sWLXJlXeYS7ll0rDR//HSt0brSSHizA6NC6w=
 github.com/stacklok/toolhive-core v0.0.60 h1:7N20L/dpDKban0P8JnT6pl9mLXeE+IZu7EmXryYztok=
 github.com/stacklok/toolhive-core v0.0.60/go.mod h1:UOs2SYvICRtGR4EVXYTrI4Gcci8zEyHXVQI97FeklVo=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

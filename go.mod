@@ -38,15 +38,15 @@ require (
 	github.com/prometheus/procfs v0.23.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/stacklok/mecatl/adapters v0.1.1
+	github.com/stacklok/mecatl/adapters v0.2.3
 	github.com/stacklok/mecatl/agentdef v0.1.0
-	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
+	github.com/stacklok/mecatl/authn/oidc v0.4.0
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
-	github.com/stacklok/mecatl/engine v0.18.1
+	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1
-	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000
+	github.com/stacklok/mecatl/provider/anthropic v0.4.0
+	github.com/stacklok/mecatl/provider/openai v0.3.1
+	github.com/stacklok/mecatl/provider/openaichat v0.3.1
 	github.com/stacklok/toolhive v0.66.0
 	github.com/stacklok/toolhive-core v0.0.60
 	github.com/stacklok/typesafe-go v0.1.0

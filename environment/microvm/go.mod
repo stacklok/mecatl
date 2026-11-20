@@ -9,7 +9,7 @@ require (
 	github.com/gofrs/flock v0.13.2
 	github.com/google/go-containerregistry v0.22.1
 	github.com/stacklok/go-microvm v0.0.41
-	github.com/stacklok/mecatl/engine v0.10.0
+	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/toolhive-core v0.0.60
 	golang.org/x/sys v0.50.0
 )
