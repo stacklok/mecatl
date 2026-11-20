@@ -443257,6 +443257,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795207078822,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "701b9c462649d97ab2cb1313e0807d89aa6da894",
+          "message": "feat(mecatui): add explicit mouse actions to three pickers (#2882)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T20:32:31Z",
+          "tree_id": "50fc771c37bae158a0eb12fc3ddc4ddf698ba68d",
+          "url": "https://github.com/stacklok/mecatl/commit/701b9c462649d97ab2cb1313e0807d89aa6da894"
+        },
+        "date": 1795207864614,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13409,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12904,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -577131,6 +577170,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795207860966,
+  "lastUpdate": 1795207865402,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
