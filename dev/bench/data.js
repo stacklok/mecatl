@@ -442860,6 +442860,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795204464976,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aab9a4f9d28995dddac2de4e19bd08a3faa74dad",
+          "message": "build: make ordinary validation workspace-first (#2911)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T20:24:36Z",
+          "tree_id": "88bb762432d87787484bab56276516c69cfd1f1d",
+          "url": "https://github.com/stacklok/mecatl/commit/aab9a4f9d28995dddac2de4e19bd08a3faa74dad"
+        },
+        "date": 1795207078822,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13423,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12918,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -576620,6 +576659,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795207074581,
+  "lastUpdate": 1795207079823,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
