@@ -22,8 +22,8 @@ func mustRegisterAt(t *testing.T, svc identitybroker.Service, req identitybroker
 	if err != nil {
 		t.Fatalf("RegisterAgent(%s): %v", req.Incarnation, err)
 	}
-	if !strings.HasPrefix(reg.Agent.Subject, "spiffe://") || !strings.HasSuffix(reg.Agent.Subject, "/inst/"+req.Incarnation) {
-		t.Fatalf("RegisterAgent returned agent %+v, want a SPIFFE ID ending in /inst/%s", reg.Agent, req.Incarnation)
+	if err := identitybroker.CheckRegistration(reg); err != nil {
+		t.Fatalf("RegisterAgent(%s) returned agent %+v: %v", req.Incarnation, reg.Agent, err)
 	}
 	if reg.Credential.IsZero() {
 		t.Fatal("RegisterAgent returned no credential")
@@ -42,11 +42,44 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		mustRegister(t, svc, registerRequest(mustOpen(t, svc, openRequest("hostS42", alice))))
 	})
 
-	t.Run("a definition named only by name registers", func(t *testing.T) {
+	t.Run("a main agent registers with a loaded global definition", func(t *testing.T) {
 		svc := factory(t)
 		req := registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))
-		req.Definition = identitybroker.DefinitionRef{Name: "main"}
+		req.Definition = ReviewerDefinition
 		mustRegister(t, svc, req)
+	})
+
+	t.Run("a definition the broker did not load is refused", func(t *testing.T) {
+		for name, def := range map[string]identitybroker.DefinitionRef{
+			"named only by name":   {Name: MainDefinition.Name},
+			"an unknown name":      {Source: identitybroker.SourceGlobal, Name: "planner", Revision: "r1"},
+			"another revision":     {Source: ReviewerDefinition.Source, Name: ReviewerDefinition.Name, Revision: "r2"},
+			"another source":       {Source: identitybroker.SourceGlobal, Name: MainDefinition.Name, Revision: MainDefinition.Revision},
+			"a missing revision":   {Source: MainDefinition.Source, Name: MainDefinition.Name},
+			"a built-in elsewhere": {Source: identitybroker.SourceSystem, Name: ReviewerDefinition.Name, Revision: ReviewerDefinition.Revision},
+		} {
+			t.Run(name, func(t *testing.T) {
+				svc := factory(t)
+				s := mustOpen(t, svc, openRequest("hostS42", alice))
+				req := registerRequest(s)
+				req.Definition = def
+				_, err := svc.RegisterAgent(ctx, req)
+				wantError(t, "RegisterAgent with a definition the broker did not load", err, identitybroker.CodePermissionDenied, "")
+				// Nothing was recorded: the agent registers with a loaded one.
+				mustRegister(t, svc, registerRequest(s))
+			})
+		}
+	})
+
+	t.Run("an agent's SPIFFE ID carries no definition, session, or incarnation", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		reg := mustRegister(t, svc, registerRequest(s))
+		for _, part := range []string{s.Incarnation, s.HostSessionID, s.ID, MainDefinition.Name, MainDefinition.Source, alice.Subject} {
+			if strings.Contains(reg.Agent.Subject, part) {
+				t.Fatalf("agent SPIFFE ID %q contains %q", reg.Agent.Subject, part)
+			}
+		}
 	})
 
 	t.Run("a legacy incarnation registers", func(t *testing.T) {
@@ -54,6 +87,24 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		open := openRequest("hostS42", alice)
 		open.Incarnation = "legacy_" + strings.Repeat("0f", 32)
 		mustRegister(t, svc, registerRequest(mustOpen(t, svc, open)))
+	})
+
+	t.Run("registering again with another definition is refused", func(t *testing.T) {
+		svc := factory(t)
+		req := registerRequest(mustOpen(t, svc, openRequest("hostS42", alice)))
+		first := mustRegister(t, svc, req)
+		for name, def := range map[string]identitybroker.DefinitionRef{
+			"another loaded definition": ReviewerDefinition,
+			"another revision":          {Source: MainDefinition.Source, Name: MainDefinition.Name, Revision: "v2"},
+		} {
+			changed := req
+			changed.Definition = def
+			_, err := svc.RegisterAgent(ctx, changed)
+			wantError(t, "RegisterAgent again with "+name, err, identitybroker.CodeAlreadyExists, "")
+		}
+		if again := mustRegister(t, svc, req); again.Agent != first.Agent {
+			t.Fatalf("after refused changes, the agent is %+v, want %+v", again.Agent, first.Agent)
+		}
 	})
 
 	t.Run("registering again returns the same agent with a credential", func(t *testing.T) {
@@ -121,12 +172,50 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		parent := mustRegister(t, svc, registerRequest(s))
-		child := registerRequest(s)
-		child.HostSessionID = "hostS42-child"
-		child.Incarnation = incarnation("child")
-		child.Parent = parent.Agent
-		if got := mustRegister(t, svc, child); got.Agent == parent.Agent {
+		if got := mustRegister(t, svc, childRequest(s, parent.Agent, "child")); got.Agent == parent.Agent {
 			t.Fatalf("the child shares its parent's agent %+v", got.Agent)
+		}
+	})
+
+	t.Run("a child must report its parent's host session", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		parent := mustRegister(t, svc, registerRequest(s))
+		sibling := mustRegister(t, svc, childRequest(s, parent.Agent, "sibling"))
+		for name, host := range map[string]string{
+			"another host session": "hostS43",
+			"the child's own":      "hostS42-child",
+			"a sibling's":          "hostS42-sibling",
+		} {
+			child := childRequest(s, parent.Agent, "child")
+			child.ParentHostSessionID = host
+			_, err := svc.RegisterAgent(ctx, child)
+			wantError(t, "RegisterAgent of a child reporting "+name+" as its parent's host session", err, identitybroker.CodePermissionDenied, "")
+		}
+		// A grandchild reports its own parent's host session, not the root's.
+		grandchild := childRequest(s, sibling.Agent, "grandchild")
+		_, err := svc.RegisterAgent(ctx, grandchild)
+		wantError(t, "RegisterAgent of a grandchild reporting the root host session", err, identitybroker.CodePermissionDenied, "")
+		grandchild.ParentHostSessionID = "hostS42-sibling"
+		mustRegister(t, svc, grandchild)
+		// Positive control: the child registers with its parent's host session.
+		mustRegister(t, svc, childRequest(s, parent.Agent, "child"))
+	})
+
+	t.Run("a child moves to a reopened session after its parent, keeping its identity", func(t *testing.T) {
+		svc := factory(t)
+		first := mustOpen(t, svc, openRequest("hostS42", alice))
+		parent := mustRegister(t, svc, registerRequest(first))
+		child := mustRegister(t, svc, childRequest(first, parent.Agent, "child"))
+		mustClose(t, svc, first.ID)
+		second := mustOpen(t, svc, openRequest("hostS42", alice))
+		_, err := svc.RegisterAgent(ctx, childRequest(second, parent.Agent, "child"))
+		wantError(t, "RegisterAgent of a child before its parent moved", err, identitybroker.CodePermissionDenied, "")
+		if again := mustRegister(t, svc, registerRequest(second)); again.Agent != parent.Agent {
+			t.Fatalf("the parent moved as %+v, want %+v", again.Agent, parent.Agent)
+		}
+		if again := mustRegister(t, svc, childRequest(second, parent.Agent, "child")); again.Agent != child.Agent {
+			t.Fatalf("the child moved as %+v, want %+v", again.Agent, child.Agent)
 		}
 	})
 
@@ -136,15 +225,11 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		parentElsewhere := mustRegister(t, svc, registerRequest(other))
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		for name, parent := range map[string]identitybroker.AgentRef{
-			"unregistered":           {Subject: strings.Replace(parentElsewhere.Agent.Subject, other.Incarnation, incarnation("unknown"), 1)},
+			"unregistered":           {Subject: parentElsewhere.Agent.Subject[:strings.LastIndex(parentElsewhere.Agent.Subject, "/")+1] + "ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
 			"in another session":     parentElsewhere.Agent,
 			"not a registered agent": {Subject: "spiffe://agents.example.com/other"},
 		} {
-			child := registerRequest(s)
-			child.HostSessionID = "hostS42-child"
-			child.Incarnation = incarnation("child")
-			child.Parent = parent
-			_, err := svc.RegisterAgent(ctx, child)
+			_, err := svc.RegisterAgent(ctx, childRequest(s, parent, "child"))
 			wantError(t, "RegisterAgent under a parent "+name, err, identitybroker.CodePermissionDenied, "")
 		}
 	})
@@ -187,20 +272,22 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		parent := mustRegister(t, svc, registerRequest(s))
-		childReq := registerRequest(s)
-		childReq.HostSessionID = "hostS42-child"
-		childReq.Incarnation = incarnation("child")
-		childReq.Parent = parent.Agent
+		childReq := childRequest(s, parent.Agent, "child")
 		child := mustRegister(t, svc, childReq)
-		sibling := childReq
-		sibling.Incarnation = incarnation("sibling")
-		siblingReg := mustRegister(t, svc, sibling)
-		for name, newParent := range map[string]identitybroker.AgentRef{
-			"itself":    child.Agent,
-			"a sibling": siblingReg.Agent,
+		siblingReq := childRequest(s, parent.Agent, "sibling")
+		sibling := mustRegister(t, svc, siblingReq)
+		for name, newParent := range map[string]struct {
+			agent identitybroker.AgentRef
+			host  string
+		}{
+			"itself":    {child.Agent, childReq.HostSessionID},
+			"a sibling": {sibling.Agent, siblingReq.HostSessionID},
 		} {
+			// The reported parent host session matches the new parent, so
+			// only the earlier registration can refuse the change.
 			req := childReq
-			req.Parent = newParent
+			req.Parent = newParent.agent
+			req.ParentHostSessionID = newParent.host
 			_, err := svc.RegisterAgent(ctx, req)
 			wantError(t, "RegisterAgent of a child with "+name+" as parent", err, identitybroker.CodeAlreadyExists, "")
 		}

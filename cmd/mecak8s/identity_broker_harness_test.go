@@ -29,9 +29,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/adapter/mockscript"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -383,7 +385,7 @@ func TestIdentityBrokerGatewayCallAgainstRealAS1(t *testing.T) {
 		t.Helper()
 		reg, err := built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 			SessionID: opened.ID, HostSessionID: created.ID, Owner: opened.Owner, Incarnation: opened.Incarnation,
-			Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+			Definition: builtinMainDefinition(),
 		})
 		if err != nil {
 			t.Fatalf("register the session's main agent: %v", err)
@@ -1127,4 +1129,10 @@ func listSessionOwners(t *testing.T, api, token string) map[string]identitybroke
 		owners[s.ID] = s.Owner
 	}
 	return owners
+}
+
+// builtinMainDefinition is the reference of the built-in main definition the
+// identity broker loads in this build.
+func builtinMainDefinition() identitybroker.DefinitionRef {
+	return identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: definitionloader.BuiltinRevision(buildinfo.BuildID)}
 }

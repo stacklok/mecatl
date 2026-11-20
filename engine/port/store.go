@@ -86,6 +86,51 @@ type SessionCreator interface {
 	Create(ctx context.Context, s *session.Session) error
 }
 
+// ChildSessionCreator is the OPTIONAL child-publication capability of a
+// SessionStore. When the engine first publishes a child session (a subagent, a
+// parallel branch, or a team member), it calls CreateChild instead of Create,
+// before the child runs. A resumed child is not published again; see
+// ChildSessionResumer.
+//
+// CreateChild has Create's contract for publishing s. A host may also use it to
+// admit the child: an error stops the child before its first turn, exactly like
+// a failed Create, and the parent sees the same creation failure. The engine
+// calls CreateChild even when the store negotiated no Create support; the
+// implementation then decides whether to publish.
+//
+// On the stores it publishes children to (the subagent, parallel-branch, and
+// team-member stores), the engine uses only Save, Load, Create,
+// SupportsSessionCreate, CreateChild, and ResumeChild. A decorator of such a
+// store that adds CreateChild must forward those faithfully. It may leave out
+// other optional operations, but must then not advertise them; see
+// SessionCapabilitySupport.
+type ChildSessionCreator interface {
+	CreateChild(ctx context.Context, s *session.Session, child ChildSessionInfo) error
+}
+
+// ChildSessionResumer is the OPTIONAL child-resume capability of a
+// SessionStore. When the engine resumes a child session it published before (a
+// subagent continued by its agent ID), it calls ResumeChild before the child
+// runs again, with the definition the resumed child runs. ResumeChild publishes
+// nothing, since the child's snapshot already exists. A host may use it to admit
+// the resumed child as CreateChild admits a new one: an error stops the resume
+// before the child's turn, and the parent sees it as the tool's error.
+type ChildSessionResumer interface {
+	ResumeChild(ctx context.Context, s *session.Session, child ChildSessionInfo) error
+}
+
+// ChildSessionInfo describes a child session the engine publishes or resumes,
+// beyond what the session itself records.
+type ChildSessionInfo struct {
+	// DefinitionName is the agent definition the child runs: a subagent call's
+	// agent argument, or the definition the team-member factory built the
+	// member from (agent.MemberBuild.DefinitionName). It is empty for a child
+	// that runs no named definition: the default subagent explorer, a parallel
+	// branch, or a generic team member. A resumed subagent continues on the
+	// default explorer, so its DefinitionName is empty.
+	DefinitionName string
+}
+
 // SessionCapabilitySupport is the authoritative optional-operation signal for
 // adapters that retain optional interfaces even when their negotiated backend
 // does not provide every operation. Stores without this signal advertise

@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -17,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 )
 
 func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
@@ -26,7 +29,7 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 	}
 	core, err := identitybroker.New(identitybroker.Config{
 		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
-	}, nil, key)
+	}, conformance.Definitions(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +39,7 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    broker,
+		IdentityBroker:    broker, IdentityDefinitions: conformance.DefinitionRefs(),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -88,13 +91,59 @@ func TestIdentityBrokerOpensOnlyForRootSessions(t *testing.T) {
 
 func TestIdentityAgentDefinition(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
-	sess := session.New("s", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
-	if got := identityAgentDefinition(sess); got != (identitybroker.DefinitionRef{Source: "system", Name: "main"}) {
-		t.Fatalf("definition of an ordinary session = %+v, want system/main", got)
+	main := identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1.2.3"}
+	reviewer := identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "reviewer", Revision: "r7"}
+	loaded := []identitybroker.DefinitionRef{
+		{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinExplorer, Revision: "v1.2.3"},
+		main,
+		reviewer,
 	}
-	sess.AgentDefinitionName = "reviewer"
-	if got := identityAgentDefinition(sess); got != (identitybroker.DefinitionRef{Name: "reviewer"}) {
-		t.Fatalf("definition of a named session = %+v, want reviewer with no source", got)
+	cases := []struct {
+		name       string
+		def        string
+		loaded     []identitybroker.DefinitionRef
+		want       identitybroker.DefinitionRef
+		wantLoaded bool
+	}{
+		{name: "an ordinary session runs the loaded built-in main", loaded: loaded, want: main, wantLoaded: true},
+		{name: "a named session runs the loaded global definition", def: "reviewer", loaded: loaded, want: reviewer, wantLoaded: true},
+		{name: "a name the broker did not load is sent by name only", def: "planner", loaded: loaded, want: identitybroker.DefinitionRef{Name: "planner"}},
+		{name: "a name is never matched to a built-in", def: identitybroker.BuiltinExplorer, loaded: loaded, want: identitybroker.DefinitionRef{Name: identitybroker.BuiltinExplorer}},
+		{name: "with nothing loaded the built-in main has no revision", want: identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sess := session.New("s", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+			sess.AgentDefinitionName = tc.def
+			if got, ok := identityAgentDefinition(tc.loaded, sess); got != tc.want || ok != tc.wantLoaded {
+				t.Fatalf("definition = %+v, %v; want %+v, %v", got, ok, tc.want, tc.wantLoaded)
+			}
+		})
+	}
+}
+
+func TestAnUnloadedDefinitionIsLoggedAndRefused(t *testing.T) {
+	const logged = "identity broker loaded no definition the session's agent runs; the broker refuses its registration"
+	diag := &attemptRecordingDiagnostics{}
+	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Diagnostics = diag })
+	// Positive control: the built-in main is loaded, registers, and logs nothing.
+	if err := svc.openIdentityBrokerSession(t.Context(), sess); err != nil {
+		t.Fatalf("registration of the built-in main: %v", err)
+	}
+	if slices.Contains(diag.entries, logged) {
+		t.Fatalf("a loaded definition was logged as unloaded: %q", diag.entries)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	named := session.New("named", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	named.AgentDefinitionName = "planner"
+	if err := named.RestoreLabels(&session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.openIdentityBrokerSession(t.Context(), named); err == nil {
+		t.Fatal("a session running a definition the broker did not load registered its agent")
+	}
+	if !slices.Contains(diag.entries, logged) {
+		t.Fatalf("the unloaded definition was not logged: %q", diag.entries)
 	}
 }
 
@@ -109,7 +158,7 @@ func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, 
 	}
 	core, err := identitybroker.New(identitybroker.Config{
 		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
-	}, nil, key)
+	}, conformance.Definitions(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +167,7 @@ func newRegisteringService(t *testing.T, configure ...func(*Config)) (*Service, 
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
+		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core), IdentityDefinitions: conformance.DefinitionRefs(),
 	}
 	for _, c := range configure {
 		c(&cfg)
@@ -143,8 +192,8 @@ func TestACredentialHeldForAnotherIncarnationIsReplaced(t *testing.T) {
 	// recreated elsewhere would leave it.
 	staleIncarnation := string(session.NewIncarnationID())
 	stale := identitybroker.Registration{
-		Agent:      identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/" + staleIncarnation},
-		Credential: identitybroker.NewToken("stale-credential"),
+		Agent:      identitybroker.AgentRef{Subject: "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Credential: unsignedTestCredential("spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		ExpiresAt:  time.Now().Add(time.Hour),
 	}
 	broker.register = func(identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) { return stale, nil }
@@ -159,7 +208,7 @@ func TestACredentialHeldForAnotherIncarnationIsReplaced(t *testing.T) {
 		t.Fatalf("openIdentityBrokerSession with a stale credential held: %v", err)
 	}
 	got, _ := heldIdentityAgent(svc, sess.ID)
-	if !strings.HasSuffix(got.Agent.Subject, "/inst/"+string(sess.Incarnation())) || got.Agent == stale.Agent {
+	if identitybroker.CheckRegistration(identitybroker.Registration{Agent: got.Agent, Credential: got.Token}) != nil || got.Agent == stale.Agent {
 		t.Fatalf("held credential's agent = %q, want the current incarnation's agent", got.Agent.Subject)
 	}
 }
@@ -486,4 +535,43 @@ func TestADeletedSessionGetsNoBrokerSession(t *testing.T) {
 	if _, found, err := svc.cfg.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: string(sess.ID)}); err != nil || !found {
 		t.Fatalf("a saved session got no broker session (found=%v, err=%v)", found, err)
 	}
+}
+
+// unsignedTestCredential returns an unsigned JWT naming subject: a
+// credential the holder accepts as naming that agent, which no broker issued.
+func unsignedTestCredential(subject string) identitybroker.Token {
+	enc := base64.RawURLEncoding
+	claims, _ := json.Marshal(map[string]string{"sub": subject})
+	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
+}
+
+// TestNewServiceRequiresIdentityDefinitionsWithABroker pins that a service
+// with an identity broker and no definitions is refused at construction:
+// otherwise every agent would register by name only and every run fail.
+func TestNewServiceRequiresIdentityDefinitionsWithABroker(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := identitybroker.New(identitybroker.Config{
+		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
+	}, conformance.Definitions(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Engine: brokerEngineResult().Engine, Store: memstore.New(),
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		IdentityBroker: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
+	}
+	if _, err := NewService(cfg); !errors.Is(err, ErrConfig) {
+		t.Fatalf("NewService with a broker and no definitions = %v, want ErrConfig", err)
+	}
+	// Positive control: the same config with the broker's definitions builds.
+	cfg.IdentityDefinitions = conformance.DefinitionRefs()
+	svc, err := NewService(cfg)
+	if err != nil {
+		t.Fatalf("NewService with definitions: %v", err)
+	}
+	svc.Close()
 }

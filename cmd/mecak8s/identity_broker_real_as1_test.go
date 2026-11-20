@@ -89,7 +89,7 @@ func TestIdentityBrokerAgainstRealAS1(t *testing.T) {
 	register := func(host string, s identitybroker.Session, brokerSession string) (identitybroker.Registration, error) {
 		return built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 			SessionID: brokerSession, HostSessionID: host, Owner: aliceCompany, Incarnation: s.Incarnation,
-			Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+			Definition: builtinMainDefinition(),
 		})
 	}
 	registerMain := func(brokerSession string) (identitybroker.Registration, error) {

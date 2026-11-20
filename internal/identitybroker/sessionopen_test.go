@@ -24,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -655,7 +656,7 @@ func TestSessionWithoutARefreshTokenDoesNotExpire(t *testing.T) {
 func mainAgent(s identitybroker.Session) identitybroker.RegisterAgentRequest {
 	return identitybroker.RegisterAgentRequest{
 		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
-		Definition: identitybroker.DefinitionRef{Name: "main"},
+		Definition: conformance.MainDefinition,
 	}
 }
 
@@ -734,7 +735,7 @@ func TestSessionOpenEchoMismatchClosesTheSession(t *testing.T) {
 			}
 			_, err = f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
 				SessionID: s.ID, HostSessionID: openHost, Owner: alice, Incarnation: openIncarnation,
-				Definition: identitybroker.DefinitionRef{Name: "main"},
+				Definition: conformance.MainDefinition,
 			})
 			wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		})
@@ -1215,7 +1216,7 @@ func TestSessionOpenExchangeDoesNotBlockOtherCalls(t *testing.T) {
 	}
 	reg, err := b.RegisterAgent(ctx, testWorkload, identitybroker.RegisterAgentRequest{
 		SessionID: s.ID, HostSessionID: openHost, Owner: testOwner, Incarnation: openIncarnation,
-		Definition: identitybroker.DefinitionRef{Name: "main"},
+		Definition: conformance.MainDefinition,
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent during the exchange: %v", err)

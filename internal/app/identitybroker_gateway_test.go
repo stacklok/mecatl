@@ -117,7 +117,7 @@ func (g *gatewayBuild) open(t *testing.T) (identitybroker.Session, identitybroke
 	}
 	reg, err := g.built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
-		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		Definition: builtinMainRef(),
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)

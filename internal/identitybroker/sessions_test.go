@@ -30,7 +30,7 @@ func newBroker(t *testing.T, opts ...identitybroker.Option) *identitybroker.Brok
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
-	}, nil, key, opts...)
+	}, conformance.Definitions(), key, opts...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -71,15 +71,15 @@ func TestBrokerSessionIDsDoNotRepeatAcrossRestarts(t *testing.T) {
 	}
 }
 
-func TestBrokerAgentIDIsRandomPerProcess(t *testing.T) {
-	// A fresh Broker stands in for another process: a constant ag_ identifier
-	// would repeat here.
+func TestAgentIDIsNotDerivedFromTheIncarnation(t *testing.T) {
+	// A fresh Broker stands in for another process: an ag_ identifier derived
+	// from the incarnation, or constant, would repeat here.
 	agentID := func() string {
 		b := newBroker(t)
 		s := openSession(t, b)
 		reg, err := b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
 			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
-			Definition: identitybroker.DefinitionRef{Name: "main"},
+			Definition: conformance.MainDefinition,
 		})
 		if err != nil {
 			t.Fatalf("RegisterAgent: %v", err)
@@ -88,8 +88,8 @@ func TestBrokerAgentIDIsRandomPerProcess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("VerifyCredential: %v", err)
 		}
-		if want := "spiffe://agents.example.com/agent/" + got.AgentID; got.ActorID != want {
-			t.Fatalf("actor ID %q, want %q in the configured trust domain", got.ActorID, want)
+		if want := "spiffe://agents.example.com/agent/" + got.AgentID; got.ActorID != want || got.Agent != reg.Agent || reg.Agent.Subject != want {
+			t.Fatalf("actor ID %q and agent %+v, want both %q in the configured trust domain", got.ActorID, reg.Agent, want)
 		}
 		return got.AgentID
 	}

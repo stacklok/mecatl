@@ -8,7 +8,7 @@ import (
 )
 
 func TestClosedSessionRecordKeepsIDOwnerAndClosingTime(t *testing.T) {
-	b, err := New(testConfig(), nil, testKey(t, "closed record"))
+	b, err := New(testConfig(), testDefinitions(), testKey(t, "closed record"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -257,7 +257,7 @@ func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture
 		creds: &fakeCredentials{held: map[agentcredential.Key]agentcredential.Credential{
 			{RootSessionID: gatewayTestSession, AgentSessionID: gatewayTestSession}: {
 				BrokerSessionID: "bs_test",
-				Agent:           identitybroker.AgentRef{Subject: "spiffe://example.org/agent/shared/inst/inc_test"},
+				Agent:           identitybroker.AgentRef{Subject: "spiffe://example.org/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
 				Owner:           identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice"},
 				Token:           identitybroker.NewToken(opts.agentToken),
 				ExpiresAt:       time.Now().Add(time.Hour),

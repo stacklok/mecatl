@@ -693,6 +693,13 @@ type Config struct {
 	// operatorProfileSource is composition-only wiring inherited by user-facing
 	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
 	operatorProfileSource prompt.OperatorProfileSource
+	// helperTools are the identity broker gateway tools of the session whose
+	// catalog is being assembled, which its def-less helper agents (the
+	// default and writable explorers, parallel branches, and generic team
+	// members) also get (#2555). Empty outside such a per-session catalog.
+	//
+	// Shortcut: helpers that run a named definition get no gateway tools, since their definition decides their tools; removed by #2842.
+	helperTools []tool.Tool
 	// enableDurableEvidence is derived from the actual EventLog selected by Build.
 	// Every user-facing engine inherits it; Sink is deliberately not a proxy.
 	enableDurableEvidence bool
@@ -3033,6 +3040,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The session code gets the same boundary Built.IdentityBroker exposes; nil
 	// when the flag is off.
 	svcCfg.IdentityBroker = ib.service
+	svcCfg.IdentityDefinitions = identityDefinitionRefs(cfg, ib.definitions)
 	svcCfg.IdentityAgents = agentCredentials
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
 	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
@@ -3052,6 +3060,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
+	assets.helpers.bind(svc)
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;
@@ -6092,6 +6101,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 
 	assets := catalogAssets{
 		globalMgr:            mainMgr,
+		helpers:              newHelperRegistrar(cfg),
 		mcpRuntimes:          mcpRuntimes,
 		mcpReconciler:        mcpReconciler,
 		sharedEngineRevision: sharedEngineRevision,
@@ -7295,7 +7305,7 @@ func buildChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMPr
 func childExplorerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
 	childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	return childEngineDepsForProvider(cfg, "task", childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn,
-		readOnlyExplorerCatalog(runner), explorerPromptConfig(modelCfgFor(cfg, model)), nil)
+		readOnlyExplorerCatalog(runner, cfg.helperTools), explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 }
 
 // readOnlyExplorerCatalog builds the canonical read-only explorer tool surface a Subagent
@@ -7308,7 +7318,7 @@ func childExplorerDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 // (which then layers Edit/Write on top). The team-member catalog is DELIBERATELY NOT
 // built from here: its Shell gating differs (spec.Mutating || roIsolationAvailable, with
 // the isolateReadOnly side-effect), so it keeps its own tiering.
-func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
+func readOnlyExplorerCatalog(runner tool.CommandRunner, helperTools []tool.Tool) *tool.Catalog {
 	classified := newClassifiedCatalog()
 	cat := classified.catalog
 	workspace := classification(server.KindExempt,
@@ -7325,11 +7335,12 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 		classified.mustRegister(agent.NewShellTool(), workspace)
 		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 	}
+	registerHelperTools(classified, helperTools, nil)
 	mustValidateClassifiedCatalog(classified, "read-only explorer tool catalog")
 	return cat
 }
 
-func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Catalog {
+func writableExplorerCatalog(runner tool.CommandRunner, surface string, helperTools []tool.Tool) *tool.Catalog {
 	classified := newClassifiedCatalog()
 	workspace := classification(server.KindExempt,
 		"bound to the authorized child workspace and constrained by its isolation and tool permissions")
@@ -7345,6 +7356,7 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	classified.mustRegister(fstools.CopyTool{}, workspace)
 	classified.mustRegister(fstools.MoveTool{}, workspace)
 	classified.mustRegister(fstools.RemoveTool{}, workspace)
+	registerHelperTools(classified, helperTools, nil)
 	mustValidateClassifiedCatalog(classified, surface)
 	return classified.catalog
 }
@@ -7416,7 +7428,7 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 	// the branch's fork workspace at construction — no per-call workdir passed), so a
 	// branch's Shell runs in its OWN fork. (Subagent/Parallel/ToolSearch stay
 	// excluded — readOnlyExplorerCatalog never adds them — so a branch can't recurse.)
-	childCat := writableExplorerCatalog(runner, "parallel child tool catalog")
+	childCat := writableExplorerCatalog(runner, "parallel child tool catalog", cfg.helperTools)
 
 	return childEngineDepsForProvider(cfg, "parallel", childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
@@ -7456,7 +7468,7 @@ func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, pro
 // with childWindowFor for the factory — the buildParallelEngineFactory discipline).
 func writableExplorerDeps(cfg Config, provider port.LLMProvider, providerModel session.ProviderModelID, role string, windowFn func() int, runner tool.CommandRunner) agent.Deps {
 	model := providerModel.ModelID
-	childCat := writableExplorerCatalog(runner, "writable subagent tool catalog")
+	childCat := writableExplorerCatalog(runner, "writable subagent tool catalog", cfg.helperTools)
 	return childEngineDepsForProvider(cfg, role, provider, providerModel, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
@@ -7507,7 +7519,7 @@ func buildParallelTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 			}
 			provider = entry.provider
 		}
-		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog")
+		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog", cfg.helperTools)
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
 		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn,
 			childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
@@ -8130,7 +8142,7 @@ func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, par
 			}
 			provider = entry.provider
 		}
-		childCat := readOnlyExplorerCatalog(runner)
+		childCat := readOnlyExplorerCatalog(runner, cfg.helperTools)
 		windowFn := childWindowFor(cfg, provReg, providerID, model)
 		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn,
 			childCat, explorerPromptConfig(modelCfgFor(cfg, model)), nil)
@@ -8369,17 +8381,27 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
 	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
-	if a.mcpRuntimes != nil {
-		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
-			runtimeAssets := mcpCatalogAssets(ctx, a)
+	// memberEngine builds the RunTeam member factory from the operation-pinned
+	// MCP runtime, if any, giving generic members helperTools: the gateway
+	// tools of a team's root session.
+	memberEngine := func(ctx context.Context, helperTools []tool.Tool) server.MemberEngineFactory {
+		withTools := cfg
+		withTools.helperTools = helperTools
+		assets, manager := a, mainMgr
+		if a.mcpRuntimes != nil {
 			candidate := mcpRuntimeCandidate(ctx)
 			if candidate == nil {
 				return nil
 			}
-			operationFactory, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
-			return operationFactory
+			assets, manager = mcpCatalogAssets(ctx, a), candidate.manager
 		}
+		factory, _, _, _, _ := buildTeamWiring(ctx, withTools, reg, provider, reg.Default(), withTools.Model, manager, agentReg, skillIdx, assets, false)
+		return factory
 	}
+	if a.mcpRuntimes != nil {
+		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory { return memberEngine(ctx, nil) }
+	}
+	svcCfg.MemberEngineWithHelperTools = memberEngine
 	svcCfg.Forker = fk
 	svcCfg.ReadOnlyForker = roFk
 	svcCfg.SharedBaseWorkspace = sharedBaseWorkspace
@@ -8669,6 +8691,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			// not the shared parent base. (Shell can still escape its cwd via absolute
 			// paths / `cd`, the inherent Shell trust model; isolation is the boundary.)
 			isolateReadOnly = registerDefaultMemberTools(classified, spec, runner, mutatingRunner, roIsolationAvailable)
+			// Gateway tools touch only the remote server, never the workspace, so
+			// the supervisor exempts them from the read-only-member backstop.
+			mcpNames = append(mcpNames, registerHelperTools(classified, cfg.helperTools, cfg.diag())...)
 			// OPT-IN model router: the supervisor classified this UNDEFINED
 			// member, so run it on the ALREADY-RESOLVED routed model in place of the
 			// def-less default (a DEFINED member never reaches here — its def pinned the
@@ -8720,7 +8745,13 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			}
 			return errors.Join(mcpErr, generationErr)
 		})
-		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
+		// The definition the member runs: its def's when adopted, none for a
+		// generic member, including one whose agent type was not found.
+		var definitionName string
+		if defined {
+			definitionName = def.Name
+		}
+		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly, DefinitionName: definitionName}
 	}
 }
 

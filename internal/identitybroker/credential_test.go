@@ -40,7 +40,7 @@ type credentialFixture struct {
 func newCredentialFixture(t *testing.T) *credentialFixture {
 	t.Helper()
 	f := &credentialFixture{key: testKey(t, "credential test key"), now: time.Unix(1_800_000_000, 0)}
-	b, err := New(testConfig(), nil, f.key)
+	b, err := New(testConfig(), testDefinitions(), f.key)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -69,7 +69,7 @@ func (f *credentialFixture) register(t *testing.T, s Session, incarnation string
 	t.Helper()
 	reg, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
 		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner,
-		Incarnation: incarnation, Definition: DefinitionRef{Name: "main"},
+		Incarnation: incarnation, Definition: testMainRef,
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
@@ -144,7 +144,11 @@ func TestCredentialHasExactlyTheDesignedHeaderAndClaims(t *testing.T) {
 		t.Fatalf("header = %v, want exactly alg ES256 and kid %s", header, f.broker.issuer.kid)
 	}
 	claims := segment(t, token, "claims")
-	wantSub := "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain
+	rec := f.broker.sessions.agents[f.broker.sessions.incarnations[incMain]]
+	wantSub := "spiffe://agents.example.com/agent/" + rec.agentID
+	if !isAgentID(rec.agentID) {
+		t.Fatalf("agent ID %q is not ag_ and 26 lowercase base32 characters", rec.agentID)
+	}
 	wantExp := float64(f.now.Add(testConfig().CredentialLifetime).Unix())
 	aud, _ := claims["aud"].([]any)
 	if len(claims) != 3 || claims["sub"] != wantSub || len(aud) != 1 || aud[0] != "https://broker.example.com" || claims["exp"] != wantExp {
@@ -191,12 +195,12 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		"malformed": {func(*testing.T, *credentialFixture) Token { return NewToken("not.a.jwt") }, denied},
 		"subject in another trust domain": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://other.example.com/mecatl/agent/shared/inst/inc_main"
+			c["sub"] = "spiffe://other.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"subject not a SPIFFE ID": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "agents.example.com/mecatl/agent/shared/inst/inc_main"
+			c["sub"] = "agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"no kid": {func(t *testing.T, f *credentialFixture) Token {
@@ -242,7 +246,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"unregistered subject": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://agents.example.com/mecatl/agent/shared/inst/inc_unknown"
+			c["sub"] = "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"registered to another session": {func(t *testing.T, f *credentialFixture) Token {
@@ -258,7 +262,7 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"expired and unregistered": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["sub"] = "spiffe://agents.example.com/mecatl/agent/shared/inst/inc_unknown"
+			c["sub"] = "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			c["exp"] = f.now.Add(-time.Hour).Unix()
 			return f.forge(t, f.validHeader(), c, nil)
 		}, expired},
@@ -277,12 +281,12 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"expired with a subject in another trust domain": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.expiredClaims()
-			c["sub"] = "spiffe://other.example.com/mecatl/agent/shared/inst/" + incMain
+			c["sub"] = "spiffe://other.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"expired with a subject that is not a SPIFFE ID": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.expiredClaims()
-			c["sub"] = "agents.example.com/mecatl/agent/shared/inst/" + incMain
+			c["sub"] = "agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 	}
@@ -339,7 +343,7 @@ func (s keySigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]b
 
 func TestCredentialFromAnOpaqueSignerVerifies(t *testing.T) {
 	key := testKey(t, "opaque signer key")
-	b, err := New(testConfig(), nil, keySigner{key: key})
+	b, err := New(testConfig(), testDefinitions(), keySigner{key: key})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -350,7 +354,7 @@ func TestCredentialFromAnOpaqueSignerVerifies(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 	reg, err := b.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
-		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: testMainRef,
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
@@ -375,7 +379,7 @@ func (s failingSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) 
 
 func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	fail := new(atomic.Bool)
-	b, err := New(testConfig(), nil, failingSigner{keySigner{testKey(t, "failing signer key")}, fail})
+	b, err := New(testConfig(), testDefinitions(), failingSigner{keySigner{testKey(t, "failing signer key")}, fail})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -390,7 +394,7 @@ func TestFailedSigningLeavesTheAgentWhereItWas(t *testing.T) {
 	}
 	register := func(s Session) (Registration, error) {
 		return b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
-			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+			SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: testMainRef,
 		})
 	}
 	old := open()
@@ -460,7 +464,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 	bob := Owner{Issuer: "https://login.example.com", Subject: "bob-117"}
 	setup := func(t *testing.T) (*Broker, blockingSigner, Session) {
 		signer := newBlockingSigner(t)
-		b, err := New(testConfig(), nil, signer)
+		b, err := New(testConfig(), testDefinitions(), signer)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -474,7 +478,7 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			_, err := b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
-				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: incMain, Definition: testMainRef,
 			})
 			done <- err
 		}()
@@ -512,8 +516,8 @@ func TestRegistrationChecksAgainAfterSigning(t *testing.T) {
 		if err := <-done; !errors.Is(err, NewError(CodeAlreadyExists, "", "")) {
 			t.Fatalf("RegisterAgent = %v, want ALREADY_EXISTS", err)
 		}
-		subject := b.issuer.subject(incMain)
-		if rec := b.sessions.agents[subject]; rec.owner != bob || rec.sessionID != bobs.ID {
+		subject := b.sessions.incarnations[incMain]
+		if rec := b.sessions.agents[subject]; rec == nil || rec.owner != bob || rec.sessionID != bobs.ID {
 			t.Fatalf("agent record = %+v, want bob's in %s", rec, bobs.ID)
 		}
 	})
@@ -538,7 +542,7 @@ func TestRegistrationsRacingAMoveBothGetUsableCredentials(t *testing.T) {
 	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 	signer := newBlockingSigner(t)
 	signer.calls.Store(-1) // the first registration signs at once; the next one blocks
-	b, err := New(testConfig(), nil, signer)
+	b, err := New(testConfig(), testDefinitions(), signer)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -559,7 +563,7 @@ func TestRegistrationsRacingAMoveBothGetUsableCredentials(t *testing.T) {
 		done := make(chan result, 1)
 		go func() {
 			reg, err := b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
-				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: DefinitionRef{Name: "main"},
+				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: testMainRef,
 			})
 			done <- result{reg, err}
 		}()
@@ -626,7 +630,7 @@ func TestVerifyTreatsAMissingSessionRecordAsClosed(t *testing.T) {
 func TestOpaqueSignerPublicKeyIsCopied(t *testing.T) {
 	pub := testKey(t, "opaque public key").PublicKey
 	want := pub
-	b, err := New(testConfig(), nil, opaqueSigner{pub: &pub})
+	b, err := New(testConfig(), testDefinitions(), opaqueSigner{pub: &pub})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -636,17 +640,82 @@ func TestOpaqueSignerPublicKeyIsCopied(t *testing.T) {
 	}
 }
 
-func TestReregistrationKeepsTheFirstDefinition(t *testing.T) {
+// TestReregistrationKeepsItsDefinitionAfterTheBrokerStopsLoadingIt checks
+// design registration check 7 replaces check 3 for an incarnation registered
+// before: it registers again with the definition it registered with, while a
+// new instance needs a loaded one.
+func TestReregistrationKeepsItsDefinitionAfterTheBrokerStopsLoadingIt(t *testing.T) {
 	f := newCredentialFixture(t)
-	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, RegisterAgentRequest{
-		SessionID: f.session.ID, HostSessionID: f.session.HostSessionID, Owner: f.session.Owner,
-		Incarnation: incMain, Definition: DefinitionRef{Name: "deployer"},
-	})
-	if err != nil {
-		t.Fatalf("RegisterAgent again: %v", err)
+	delete(f.broker.definitions, testMainRef) // as a restart loading another revision would
+	if again := f.register(t, f.session, incMain); again.Agent != f.reg.Agent {
+		t.Fatalf("registering again returned agent %+v, want %+v", again.Agent, f.reg.Agent)
 	}
-	if got := f.broker.sessions.agents[f.reg.Agent.Subject].definition; got != (DefinitionRef{Name: "main"}) {
-		t.Fatalf("stored definition = %+v, want the first one reported", got)
+	child := RegisterAgentRequest{
+		SessionID: f.session.ID, HostSessionID: "hostS42-child", Owner: f.session.Owner,
+		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: testMainRef, Parent: f.reg.Agent,
+		ParentHostSessionID: f.session.HostSessionID,
+	}
+	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, child)
+	if !errors.Is(err, NewError(CodePermissionDenied, "", "")) {
+		t.Fatalf("a new instance of a definition no longer loaded = %v, want PERMISSION_DENIED", err)
+	}
+	// Positive control: the same child registers with a definition still loaded.
+	child.Definition = testDeployerRef
+	if _, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, child); err != nil {
+		t.Fatalf("a new instance of a loaded definition: %v", err)
+	}
+}
+
+// TestFirstRegistrationsRacingGetOneIdentity races two first registrations of
+// one incarnation: the one that signed first finds the other recorded the
+// incarnation's identity meanwhile, and signs again for that identity.
+func TestFirstRegistrationsRacingGetOneIdentity(t *testing.T) {
+	ctx := context.Background()
+	signer := newBlockingSigner(t)
+	b, err := New(testConfig(), testDefinitions(), signer)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	owner := Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	s, err := b.OpenSession(ctx, credentialTestWorkload, OpenSessionRequest{HostSessionID: "hostS42", Incarnation: incMain, Owner: owner})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	type result struct {
+		reg Registration
+		err error
+	}
+	register := func() <-chan result {
+		done := make(chan result, 1)
+		go func() {
+			reg, err := b.RegisterAgent(ctx, credentialTestWorkload, RegisterAgentRequest{
+				SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: owner, Incarnation: incMain, Definition: testMainRef,
+			})
+			done <- result{reg, err}
+		}()
+		return done
+	}
+	first := register()
+	waitSigning(t, signer, first)
+	second := <-register()
+	if second.err != nil {
+		t.Fatalf("second RegisterAgent: %v", second.err)
+	}
+	close(signer.release)
+	got := <-first
+	if got.err != nil {
+		t.Fatalf("first RegisterAgent: %v", got.err)
+	}
+	if got.reg.Agent != second.reg.Agent {
+		t.Fatalf("racing registrations of one incarnation got agents %+v and %+v", got.reg.Agent, second.reg.Agent)
+	}
+	if n := len(b.sessions.agents); n != 1 {
+		t.Fatalf("the broker recorded %d agents, want 1", n)
+	}
+	for name, reg := range map[string]Registration{"first": got.reg, "second": second.reg} {
+		if _, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: s.ID, Credential: reg.Credential}); err != nil {
+			t.Errorf("the %s registration's credential does not verify: %v", name, err)
+		}
 	}
 }
 
@@ -684,4 +753,53 @@ func mustASN1(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return der
+}
+
+func TestCheckRegistration(t *testing.T) {
+	f := newCredentialFixture(t)
+	if err := CheckRegistration(f.reg); err != nil {
+		t.Fatalf("CheckRegistration of a registration = %v, want nil", err)
+	}
+	issue := func(subject string) Token {
+		t.Helper()
+		credential, _, err := f.broker.issuer.issue(subject, f.now)
+		if err != nil {
+			t.Fatalf("issue: %v", err)
+		}
+		return credential
+	}
+	agentID := f.reg.Agent.Subject[len(f.reg.Agent.Subject)-26:]
+	// Each malformed subject comes with a credential naming it, so only the
+	// subject's form can fail the check.
+	for name, subject := range map[string]string{
+		"an ID derived from the incarnation": "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incMain,
+		"no spiffe scheme":                   "agents.example.com/agent/ag_" + agentID,
+		"no trust domain":                    "spiffe:///agent/ag_" + agentID,
+		"an uppercase trust domain":          "spiffe://AGENTS.example.com/agent/ag_" + agentID,
+		"a trust domain with a port":         "spiffe://agents.example.com:443/agent/ag_" + agentID,
+		"a nested path":                      "spiffe://agents.example.com/x/agent/ag_" + agentID,
+		"a short agent ID":                   "spiffe://agents.example.com/agent/ag_" + agentID[1:],
+		"an uppercase agent ID":              "spiffe://agents.example.com/agent/ag_" + strings.ToUpper(agentID),
+		"an agent ID outside base32":         "spiffe://agents.example.com/agent/ag_01890189018901890189018901",
+		"no ag_ prefix":                      "spiffe://agents.example.com/agent/" + agentID,
+	} {
+		reg := Registration{Agent: AgentRef{Subject: subject}, Credential: issue(subject), ExpiresAt: f.reg.ExpiresAt}
+		if err := CheckRegistration(reg); err == nil {
+			t.Errorf("CheckRegistration with %s = nil, want an error", name)
+		}
+	}
+	for name, credential := range map[string]Token{
+		"no credential":                  {},
+		"a credential not a JWT":         NewToken("credential"),
+		"a credential for another agent": issue(f.broker.issuer.subject("ag_aaaaaaaaaaaaaaaaaaaaaaaaaa")),
+	} {
+		reg := f.reg
+		reg.Credential = credential
+		if err := CheckRegistration(reg); err == nil {
+			t.Errorf("CheckRegistration with %s = nil, want an error", name)
+		}
+	}
+	if err := CheckRegistration(Registration{Credential: f.reg.Credential}); err == nil {
+		t.Error("CheckRegistration with no agent = nil, want an error")
+	}
 }

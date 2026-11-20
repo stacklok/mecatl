@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -30,8 +31,49 @@ type Implementation interface {
 }
 
 // Factory returns a fresh, empty implementation for one test, which reads
-// the time from now. Each implementation it returns has its own signing key.
+// the time from now and has loaded exactly the records Definitions returns.
+// Each implementation it returns has its own signing key.
 type Factory func(t *testing.T, now func() time.Time) Implementation
+
+// The definitions the contract registers agents with, all in Definitions. An
+// implementation's own tests may register with them too; nothing modifies
+// them.
+var (
+	MainDefinition     = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"}
+	ReviewerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "code-reviewer", Revision: "r1"}
+	// The built-ins of helper agents that run no named definition.
+	ExplorerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinExplorer, Revision: "v1"}
+	BranchDefinition   = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinBranch, Revision: "v1"}
+	MemberDefinition   = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMember, Revision: "v1"}
+)
+
+// DefinitionRefs returns the references of the records Definitions returns,
+// in the same order: what an implementation under test has loaded. Each call
+// returns a new slice.
+func DefinitionRefs() []identitybroker.DefinitionRef {
+	return []identitybroker.DefinitionRef{MainDefinition, ReviewerDefinition, ExplorerDefinition, BranchDefinition, MemberDefinition}
+}
+
+// Definitions returns the definition records an implementation under test
+// loads: one for each of DefinitionRefs, the built-ins a release ships and a
+// global code reviewer. Each call returns new records.
+func Definitions() []identitybroker.DefinitionRecord {
+	record := func(ref identitybroker.DefinitionRef) identitybroker.DefinitionRecord {
+		source := sha256.Sum256([]byte("source " + ref.Name))
+		accepted := sha256.Sum256([]byte("definition " + ref.Name))
+		return identitybroker.DefinitionRecord{Ref: ref, Provenance: identitybroker.Provenance{
+			Profile:          "conformance/v1",
+			SourceDigest:     identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(source[:])},
+			DefinitionDigest: identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(accepted[:])},
+		}}
+	}
+	refs := DefinitionRefs()
+	records := make([]identitybroker.DefinitionRecord, len(refs))
+	for i, ref := range refs {
+		records[i] = record(ref)
+	}
+	return records
+}
 
 // coreFactory returns an implementation on the real clock.
 type coreFactory func(t *testing.T) identitybroker.Core
@@ -93,8 +135,19 @@ func registerRequest(s identitybroker.Session) identitybroker.RegisterAgentReque
 		HostSessionID: s.HostSessionID,
 		Owner:         s.Owner,
 		Incarnation:   s.Incarnation,
-		Definition:    identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"},
+		Definition:    MainDefinition,
 	}
+}
+
+// childRequest registers a child of parent, which runs in s's root host
+// session, with its own host session and an incarnation derived from label.
+func childRequest(s identitybroker.Session, parent identitybroker.AgentRef, label string) identitybroker.RegisterAgentRequest {
+	req := registerRequest(s)
+	req.HostSessionID = s.HostSessionID + "-" + label
+	req.Incarnation = incarnation(label)
+	req.Parent = parent
+	req.ParentHostSessionID = s.HostSessionID
+	return req
 }
 
 func authorizeRequest(sessionID string) identitybroker.AuthorizeCallRequest {

@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/agentcredential"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 // TrackedClientKeysForTest returns the post-validation rate-limiter's per-client
@@ -51,6 +52,16 @@ func (s *Service) HeldIdentityCredentialForTest(id session.SessionID) (string, b
 	}
 	held, ok := s.cfg.IdentityAgents.Held(agentcredential.Key{RootSessionID: string(id), AgentSessionID: string(id)})
 	return held.Token.Value(), ok
+}
+
+// HeldIdentityAgentForTest returns the agent whose credential is held for
+// the agent of session agentSession in root's tree.
+func (s *Service) HeldIdentityAgentForTest(root, agentSession session.SessionID) (identitybroker.AgentRef, bool) {
+	if s.cfg.IdentityAgents == nil {
+		return identitybroker.AgentRef{}, false
+	}
+	held, ok := s.cfg.IdentityAgents.Held(agentcredential.Key{RootSessionID: string(root), AgentSessionID: string(agentSession)})
+	return held.Agent, ok
 }
 
 // SessionEngineContextWindowForTest exposes the per-session engine's compaction
@@ -153,3 +164,7 @@ func ClassifyErrorCodeForTest(err error) string {
 func WatchTerminalForTest(gapped bool, recorded error) error {
 	return watchTerminal(gapped, recorded)
 }
+
+// UnsignedCredentialForTest returns an unsigned JWT naming subject: a
+// credential the holder accepts as naming that agent, which no broker issued.
+var UnsignedCredentialForTest = unsignedTestCredential

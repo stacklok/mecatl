@@ -119,7 +119,7 @@ sequenceDiagram
     rect rgb(245, 245, 245)
         Note over H,I: Reviewer bootstrap, after the list succeeds
         H->>H: Delegate review: D42 / R42
-        H->>I: registerInstance(reviewer, definition reference global/code-reviewer,<br/>parentRef = mainRef, A42), workload credential
+        H->>I: registerInstance(reviewer, definition reference global/code-reviewer,<br/>parentRef = mainRef, parent host session hostS42, A42), workload credential
         I-->>H: reviewerRef
         H->>B: ReportDelegation D42: A42, R41 to R42, run owner Alice
         Note over H,B: Delegation report
@@ -341,14 +341,14 @@ Broker checks 1 and 2 exist because only mecak8s checks that Alice owns `hostS42
 
 ### (4) Agent-instance JWT-SVID
 
-**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, and the registered main-instance reference, not the main's token. Both calls also report the instance's host session and owner, and carry the workload credential.
+**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, the registered main-instance reference, not the main's token, and the main's host session, `hostS42`, as the parent host session. Both calls also report the instance's host session and owner, and carry the workload credential.
 
 **Registration checks, at the agent-instance issuer:**
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
 2. Session `A42` is open, bound to that workload, and owned by the reported owner: one session tree has one owner.
 3. The definition reference names a definition the loader recorded, or, for a definition the broker did not load, is accepted as a mecak8s report and marked as such; see [definition provenance](agent-definitions.md#definition-provenance). For an incarnation registered before, check 7 applies instead: the instance keeps the definition revision it registered with, whatever the loader records now.
-4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`.
+4. With no parent, including after a fork or clear, the definition is root-eligible, the host session is `A42`'s root host session, and the incarnation is the one `A42` was opened with. With a parent, the parent is registered to `A42`, and the reported parent host session is the parent's recorded host session.
 5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..`; another name is rejected, not rewritten. The incarnation is exactly `inc_` and 26 lowercase base32 characters, or `legacy_` and 64 hex characters.
 6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, and up to 8 child levels below the root.
 7. If the incarnation was registered before, in any session, that registration had the same host session, owner, definition reference and revision, and parent; only the broker session may differ.
@@ -855,7 +855,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Access token issued before a user-wide revocation | AS-1 | `invalid_request` with that revocation's reason | Alice signs in again | Nothing more |
 | Echoed entry differs | Broker | Open fails | Session open fails | The new `RT-A42`, closing `A42` |
 | Registration into a closed or foreign session | Agent-instance issuer | The closing reason's status, or `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
-| Re-registration with a different owner, host session, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
+| Re-registration with a different owner, host session, definition reference or revision, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
 | Definition name or depth beyond the caps | Agent-instance issuer | `INVALID_ARGUMENT` | Child agent cannot start | Nothing |
 | SVID expired | Broker, AS-1 | `UNAUTHENTICATED` with `svid_expired`; AS-1: `invalid_request` with `actor_token_expired`, reported as `svid_expired` | None: renewed and retried once | Nothing |

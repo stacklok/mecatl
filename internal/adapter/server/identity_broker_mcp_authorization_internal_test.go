@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -82,7 +83,7 @@ func convertingBroker(t *testing.T, as1 identitybroker.AuthServer) *presentingBr
 	}
 	core, err := identitybroker.New(identitybroker.Config{
 		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
-	}, nil, key, identitybroker.WithAuthServer(as1))
+	}, conformance.Definitions(), key, identitybroker.WithAuthServer(as1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +127,7 @@ func newMCPAuthorizationBrokerFixture(t *testing.T, status session.Authorization
 	broker := convertingBroker(t, as1)
 	events := memstore.NewEventLog()
 	f.svc.cfg.IdentityBroker = broker
+	f.svc.cfg.IdentityDefinitions = conformance.DefinitionRefs()
 	// NewService made no holder, as the fixture had no identity broker then.
 	f.svc.cfg.IdentityAgents = identityAgentsFor(f.svc.cfg)
 	f.svc.cfg.EventLog = events

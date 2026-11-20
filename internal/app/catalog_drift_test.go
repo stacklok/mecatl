@@ -367,7 +367,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if runner == nil {
 		t.Fatal("precondition: fully-loaded config yields a sandboxed runner")
 	}
-	explorer := readOnlyExplorerCatalog(runner)
+	explorer := readOnlyExplorerCatalog(runner, nil)
 	childShell, ok := explorer.Lookup(tool.ShellToolName)
 	if !ok {
 		t.Fatal("read-only explorer catalog lost Shell")

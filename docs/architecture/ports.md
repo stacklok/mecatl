@@ -23,7 +23,10 @@ assertion, for example `HookApprovalLearner`, `RunAwareToolCallRecorder`,
 `PrunableStore`, `SessionCreator`, and `CursorEventLog`. When a capability is missing,
 the feature is either skipped or reported as unsupported. A decorator must forward the
 optional interfaces and capability signals of what it wraps; an `LLMProvider`
-decorator, for example, must forward `Capabilities`. See
+decorator, for example, must forward `Capabilities`. Where a port names the only
+operations its consumer uses, such as a child store (`ChildSessionCreator`), a
+decorator may forward just those, as long as it advertises nothing it does not
+forward. See
 [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) for the stability rules.
 
 ## The main ports

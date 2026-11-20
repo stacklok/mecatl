@@ -2,8 +2,13 @@ package agentcredential_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base32"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,12 +74,37 @@ func (b *fakeBroker) requests() []identitybroker.RegisterAgentRequest {
 	return append([]identitybroker.RegisterAgentRequest(nil), b.reqs...)
 }
 
-func registration(inc, credential string, expiresAt time.Time) identitybroker.Registration {
+// registration is the fake broker's answer for incarnation inc: an agent ID
+// the fake derives from inc, standing in for the one a broker gives it, and a
+// credential naming that agent, labelled label (see label).
+func registration(inc, label string, expiresAt time.Time) identitybroker.Registration {
+	sum := sha256.Sum256([]byte(inc))
+	subject := "spiffe://agents.example.com/agent/ag_" + strings.ToLower(base32.StdEncoding.EncodeToString(sum[:]))[:26]
 	return identitybroker.Registration{
-		Agent:      identitybroker.AgentRef{Subject: "spiffe://agents.example.com/mecatl/agent/shared/inst/" + inc},
-		Credential: identitybroker.NewToken(credential),
+		Agent:      identitybroker.AgentRef{Subject: subject},
+		Credential: credential(subject, label),
 		ExpiresAt:  expiresAt,
 	}
+}
+
+// credential returns an unsigned JWT naming subject, labelled label. The
+// holder reads a credential's sub without verifying it.
+func credential(subject, label string) identitybroker.Token {
+	enc := base64.RawURLEncoding
+	claims, _ := json.Marshal(map[string]string{"sub": subject, "jti": label})
+	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
+}
+
+// label returns the label credential gave tok.
+func label(tok identitybroker.Token) string {
+	parts := strings.Split(tok.Value(), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims map[string]string
+	_ = json.Unmarshal(raw, &claims)
+	return claims["jti"]
 }
 
 func request(brokerSession string) identitybroker.RegisterAgentRequest {
@@ -121,8 +151,8 @@ func TestHolderRenewsPastHalfLifetime(t *testing.T) {
 
 	c.Advance(4 * time.Minute)
 	got, err := h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-1" || got.BrokerSessionID != "bs_1" {
-		t.Fatalf("Credential before half its lifetime = %q in %q, %v; want credential-1 in bs_1", got.Token.Value(), got.BrokerSessionID, err)
+	if err != nil || label(got.Token) != "credential-1" || got.BrokerSessionID != "bs_1" {
+		t.Fatalf("Credential before half its lifetime = %q in %q, %v; want credential-1 in bs_1", label(got.Token), got.BrokerSessionID, err)
 	}
 	// Run entry before renewAt in the same broker session does not register.
 	mustEnsure(t, h, "bs_1")
@@ -132,8 +162,8 @@ func TestHolderRenewsPastHalfLifetime(t *testing.T) {
 
 	c.Advance(2 * time.Minute)
 	got, err = h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential past half its lifetime = %q, %v; want the renewed credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential past half its lifetime = %q, %v; want the renewed credential-2", label(got.Token), err)
 	}
 	reqs := b.requests()
 	if len(reqs) != 2 || reqs[1] != request("bs_1") {
@@ -148,8 +178,8 @@ func TestHolderRenewsOnSVIDExpired(t *testing.T) {
 	h, b, c := newHolder(t)
 	mustEnsure(t, h, "bs_1")
 	got, err := h.Credential(t.Context(), key, true)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential with renew = %q, %v; want the renewed credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential with renew = %q, %v; want the renewed credential-2", label(got.Token), err)
 	}
 
 	// A failed renewal after the broker refused the held credential returns
@@ -165,8 +195,8 @@ func TestHolderRenewsOnSVIDExpired(t *testing.T) {
 	// it has not expired...
 	c.Advance(6 * time.Minute)
 	got, err = h.Credential(t.Context(), key, false)
-	if err != nil || got.Token.Value() != "credential-2" {
-		t.Fatalf("Credential with a failed renewal = %q, %v; want the held credential-2", got.Token.Value(), err)
+	if err != nil || label(got.Token) != "credential-2" {
+		t.Fatalf("Credential with a failed renewal = %q, %v; want the held credential-2", label(got.Token), err)
 	}
 	// ...and the broker's error once it has.
 	c.Advance(10 * time.Minute)
@@ -220,8 +250,8 @@ func TestHolderRenewalIsSingleFlight(t *testing.T) {
 	close(release)
 	for range callers {
 		r := <-results
-		if r.err != nil || r.cred.Token.Value() != "credential-blocked" {
-			t.Fatalf("Credential = %q, %v; want the one renewal's credential", r.cred.Token.Value(), r.err)
+		if r.err != nil || label(r.cred.Token) != "credential-blocked" {
+			t.Fatalf("Credential = %q, %v; want the one renewal's credential", label(r.cred.Token), r.err)
 		}
 	}
 	if n := len(b.requests()); n != 2 {
@@ -270,8 +300,8 @@ func TestHolderRenewalOutlivesTheFirstLookupsCancellation(t *testing.T) {
 		t.Fatal("the shared renewal was cancelled with the first lookup")
 	}
 	close(release)
-	if got := <-second; got.Token.Value() != "credential-renewed" {
-		t.Fatalf("waiting lookup = %q, want the renewed credential", got.Token.Value())
+	if got := <-second; label(got.Token) != "credential-renewed" {
+		t.Fatalf("waiting lookup = %q, want the renewed credential", label(got.Token))
 	}
 }
 
@@ -298,7 +328,7 @@ func TestHolderChecksARegistrationAgainstTheTimeItReturns(t *testing.T) {
 	if _, err := h.Credential(t.Context(), key, true); !errors.Is(err, agentcredential.ErrExpired) {
 		t.Fatalf("renewal with a credential that expired during registration = %v, want ErrExpired", err)
 	}
-	if held, _ := h.Held(key); held.Token.Value() == "late" {
+	if held, _ := h.Held(key); label(held.Token) == "late" {
 		t.Fatal("an expired renewal replaced the held credential")
 	}
 }
@@ -375,9 +405,18 @@ func TestHolderRefusesOtherAgentAndExpired(t *testing.T) {
 			return reg, nil
 		})
 	}
-	answer(registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "other", c.Now().Add(10*time.Minute)))
+	malformed := registration(incarnation, "malformed", c.Now().Add(10*time.Minute))
+	malformed.Agent.Subject = "spiffe://agents.example.com/mecatl/agent/shared/inst/" + incarnation
+	malformed.Credential = credential(malformed.Agent.Subject, "malformed")
+	answer(malformed)
 	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
-		t.Fatalf("Ensure returning another incarnation's agent = %v, want ErrOtherAgent", err)
+		t.Fatalf("Ensure returning an agent ID of another form = %v, want ErrOtherAgent", err)
+	}
+	misnamed := registration(incarnation, "misnamed", c.Now().Add(10*time.Minute))
+	misnamed.Credential = registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "misnamed", c.Now().Add(10*time.Minute)).Credential
+	answer(misnamed)
+	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
+		t.Fatalf("Ensure returning a credential for another agent = %v, want ErrOtherAgent", err)
 	}
 	answer(registration(incarnation, "expired", c.Now()))
 	if err := h.Ensure(t.Context(), key, request("bs_1"), admitAll); !errors.Is(err, agentcredential.ErrExpired) {
@@ -390,9 +429,8 @@ func TestHolderRefusesOtherAgentAndExpired(t *testing.T) {
 	b.setRegister(nil)
 	mustEnsure(t, h, "bs_1")
 	held, _ := h.Held(key)
-	// Same suffix, another agent: the held agent is kept.
-	other := registration(incarnation, "other", c.Now().Add(10*time.Minute))
-	other.Agent.Subject = "spiffe://elsewhere.example.com/mecatl/agent/shared/inst/" + incarnation
+	// A well-formed registration of another agent: the held agent is kept.
+	other := registration("inc_zzzzzzzzzzzzzzzzzzzzzzzzzz", "other", c.Now().Add(10*time.Minute))
 	answer(other)
 	if err := h.Ensure(t.Context(), key, request("bs_2"), admitAll); !errors.Is(err, agentcredential.ErrOtherAgent) {
 		t.Fatalf("Ensure returning another agent than the held one = %v, want ErrOtherAgent", err)
@@ -452,4 +490,167 @@ func TestNilHolderDropAndCloseAreNoOps(*testing.T) {
 	var h *agentcredential.Holder
 	h.Drop(key.RootSessionID)
 	h.Close()
+}
+
+// helperRequest registers the helper running in host session agent, created
+// under parentHost, with an incarnation derived from agent.
+func helperRequest(brokerSession, agent, parentHost string, parent identitybroker.AgentRef) identitybroker.RegisterAgentRequest {
+	sum := sha256.Sum256([]byte(agent))
+	req := request(brokerSession)
+	req.HostSessionID = agent
+	req.Incarnation = "inc_" + strings.ToLower(base32.StdEncoding.EncodeToString(sum[:]))[:26]
+	req.Definition = identitybroker.DefinitionRef{Source: "system", Name: "explorer"}
+	req.Parent = parent
+	req.ParentHostSessionID = parentHost
+	return req
+}
+
+// TestHolderMovesHelpersAfterTheirRoot pins that a helper's credential follows
+// its root's main agent into a new broker session, parents first, keeping its
+// identity, and that a helper that cannot move gets no stale credential.
+func TestHolderMovesHelpersAfterTheirRoot(t *testing.T) {
+	h, b, _ := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
+	grandKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "grandchild"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+		t.Fatalf("Ensure child: %v", err)
+	}
+	child, _ := h.Held(childKey)
+	if err := h.Ensure(t.Context(), grandKey, helperRequest("bs_1", "grandchild", "child", child.Agent), admitAll); err != nil {
+		t.Fatalf("Ensure grandchild: %v", err)
+	}
+	grand, _ := h.Held(grandKey)
+
+	// Before the root moves, a helper's lookup does not register.
+	before := len(b.requests())
+	if got, err := h.Credential(t.Context(), grandKey, false); err != nil || got.BrokerSessionID != "bs_1" {
+		t.Fatalf("Credential before the root moved = %+v, %v; want the held one in bs_1", got, err)
+	}
+	if n := len(b.requests()); n != before {
+		t.Fatalf("a helper's lookup before its root moved registered %d times", n-before)
+	}
+
+	// The main agent moves at run entry; the grandchild's lookup moves its
+	// parent first, then itself.
+	mustEnsure(t, h, "bs_2")
+	before = len(b.requests())
+	got, err := h.Credential(t.Context(), grandKey, false)
+	if err != nil || got.BrokerSessionID != "bs_2" || got.Agent != grand.Agent {
+		t.Fatalf("Credential after the root moved = %+v, %v; want %+v in bs_2", got, err, grand.Agent)
+	}
+	reqs := b.requests()[before:]
+	if len(reqs) != 2 || reqs[0].HostSessionID != "child" || reqs[1].HostSessionID != "grandchild" {
+		t.Fatalf("registrations after the root moved = %+v, want the child then the grandchild", reqs)
+	}
+	for _, req := range reqs {
+		if req.SessionID != "bs_2" {
+			t.Fatalf("a helper registered into %q, want bs_2", req.SessionID)
+		}
+	}
+	if moved, _ := h.Held(childKey); moved.BrokerSessionID != "bs_2" || moved.Agent != child.Agent {
+		t.Fatalf("the child is held as %+v, want %+v in bs_2", moved, child.Agent)
+	}
+
+	// A helper that cannot move gets the error, not its credential for the
+	// closed broker session.
+	mustEnsure(t, h, "bs_3")
+	refused := errors.New("refused")
+	b.setRegister(func(context.Context, identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		return identitybroker.Registration{}, refused
+	})
+	if got, err := h.Credential(t.Context(), childKey, false); !errors.Is(err, refused) {
+		t.Fatalf("Credential of a helper that cannot move = %+v, %v; want the refusal", got, err)
+	}
+}
+
+// TestHolderHelperLookupAfterTheRootMovedDoesNotJoinAStaleRenewal pins that a
+// lookup made after the root moved, while an in-place renewal from before
+// the move is in flight, still moves the helper.
+func TestHolderHelperLookupAfterTheRootMovedDoesNotJoinAStaleRenewal(t *testing.T) {
+	h, b, c := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+		t.Fatalf("Ensure child: %v", err)
+	}
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	b.setRegister(func(_ context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		if req.HostSessionID == "child" && req.SessionID == "bs_1" {
+			entered <- struct{}{}
+			<-release
+		}
+		return registration(req.Incarnation, "credential-"+req.SessionID, b.clock.Now().Add(10*time.Minute)), nil
+	})
+	// Past half its lifetime, the child renews in place, in bs_1.
+	c.Advance(6 * time.Minute)
+	stale := make(chan error, 1)
+	go func() {
+		_, err := h.Credential(context.Background(), childKey, false)
+		stale <- err
+	}()
+	<-entered
+	// The main agent moves; a lookup now must move the child.
+	mustEnsure(t, h, "bs_2")
+	moved := make(chan agentcredential.Credential, 1)
+	go func() {
+		got, err := h.Credential(context.Background(), childKey, false)
+		if err != nil {
+			t.Errorf("Credential after the root moved: %v", err)
+		}
+		moved <- got
+	}()
+	time.Sleep(50 * time.Millisecond) // let the second lookup join the renewal in flight
+	close(release)
+	if err := <-stale; err != nil {
+		t.Fatalf("the in-place renewal: %v", err)
+	}
+	if got := <-moved; got.BrokerSessionID != "bs_2" {
+		t.Fatalf("a lookup after the root moved got a credential in %q, want bs_2", got.BrokerSessionID)
+	}
+}
+
+// TestHolderMoveHelpersMovesEveryHelperParentsFirst pins the eager move a
+// reopened broker session gets once its main agent registered again: every
+// held helper moves, parents before children, keeping its identity, without
+// waiting for a lookup.
+func TestHolderMoveHelpersMovesEveryHelperParentsFirst(t *testing.T) {
+	h, b, _ := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "b-child"}
+	grandKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "a-grandchild"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "b-child", "root", main.Agent), admitAll); err != nil {
+		t.Fatal(err)
+	}
+	child, _ := h.Held(childKey)
+	if err := h.Ensure(t.Context(), grandKey, helperRequest("bs_1", "a-grandchild", "b-child", child.Agent), admitAll); err != nil {
+		t.Fatal(err)
+	}
+	grand, _ := h.Held(grandKey)
+
+	// Nothing to move while the main agent is where the helpers are.
+	before := len(b.requests())
+	if err := h.MoveHelpers(t.Context(), "root"); err != nil || len(b.requests()) != before {
+		t.Fatalf("MoveHelpers with nothing to move = %v after %d registrations, want none", err, len(b.requests())-before)
+	}
+
+	mustEnsure(t, h, "bs_2")
+	before = len(b.requests())
+	if err := h.MoveHelpers(t.Context(), "root"); err != nil {
+		t.Fatalf("MoveHelpers: %v", err)
+	}
+	reqs := b.requests()[before:]
+	// MoveHelpers visits the grandchild first (its name sorts first), so only
+	// the parent-first move puts the child before it.
+	if len(reqs) != 2 || reqs[0].HostSessionID != "b-child" || reqs[1].HostSessionID != "a-grandchild" {
+		t.Fatalf("MoveHelpers registered %+v, want the child then the grandchild", reqs)
+	}
+	for k, want := range map[agentcredential.Key]identitybroker.AgentRef{childKey: child.Agent, grandKey: grand.Agent} {
+		if got, _ := h.Held(k); got.BrokerSessionID != "bs_2" || got.Agent != want {
+			t.Fatalf("%s is held as %+v, want %+v in bs_2", k.AgentSessionID, got, want)
+		}
+	}
 }
