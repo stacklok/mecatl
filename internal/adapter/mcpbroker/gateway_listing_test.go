@@ -39,12 +39,13 @@ func anonymousMCPProfile(t *testing.T, name string, tools map[string]bool) ToolH
 }
 
 // embeddedGatewayProcess is a ToolHive process with the embedded gateway in
-// front of its real vMCP, reached in process, and two anonymous backends.
-func embeddedGatewayProcess(t *testing.T) *Process {
+// front of its real vMCP, reached in process, and two anonymous backends. Its
+// gateway lists within limits.
+func embeddedGatewayProcess(t *testing.T, limits mcpadapter.GatewayListLimits) *Process {
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	t.Setenv("TMPDIR", t.TempDir())
-	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"notes", "other"}}
+	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"notes", "other"}, ListLimits: limits}
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, BrokerClient: newAS2BrokerClient(t).config, GatewayCalls: &calls,
 		Profiles: []ToolHiveProfile{
@@ -94,7 +95,7 @@ func vmcpToken(t *testing.T, process *Process) string {
 }
 
 func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
-	process := embeddedGatewayProcess(t)
+	process := embeddedGatewayProcess(t, mcpadapter.GatewayListLimits{})
 	credential := staticTokenSource(vmcpToken(t, process))
 	for server, want := range map[string][]GatewayTool{
 		"notes": {
@@ -122,6 +123,15 @@ func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 	}
 	if _, err := process.Gateway.ListTools(t.Context(), "notes", staticTokenSource("not-a-vmcp-token")); !errors.Is(err, mcpadapter.ErrGatewayList) {
 		t.Fatalf("ListTools with a token the vMCP refuses = %v, want ErrGatewayList", err)
+	}
+}
+
+// TestEmbeddedGatewayListsWithinGatewayCallsLimits lists within the limits
+// GatewayCalls sets: the vMCP lists three tools, over a one-tool limit.
+func TestEmbeddedGatewayListsWithinGatewayCallsLimits(t *testing.T) {
+	process := embeddedGatewayProcess(t, mcpadapter.GatewayListLimits{MaxTools: 1})
+	if listed, err := process.Gateway.ListTools(t.Context(), "other", staticTokenSource(vmcpToken(t, process))); !errors.Is(err, mcpadapter.ErrGatewayList) || listed != nil {
+		t.Fatalf("ListTools over the tool limit = %+v, %v; want nil and ErrGatewayList", listed, err)
 	}
 }
 
