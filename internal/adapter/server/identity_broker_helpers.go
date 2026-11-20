@@ -14,7 +14,8 @@ import (
 // Helper agents (subagents, parallel branches, and team members) belong to
 // their root session's tree and its broker session. Each is registered when
 // the engine first publishes its session, before it runs, with the agent that
-// created it as its parent: see RegisterHelper and package childstore.
+// created it as its parent, and admitted again when it is resumed: see
+// RegisterHelper, RegisterResumedHelper, and package childstore.
 
 // RegisterHelper registers the helper agent of sess, a child session the
 // engine is publishing, in its root session's broker session, with its
@@ -95,23 +96,76 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 	}
 }
 
+// RegisterResumedHelper admits the helper of sess, a child session the engine
+// is resuming. A helper whose credential is still held keeps it, moved into
+// its root's current broker session if the root moved. One with none, as after
+// its root's credentials were dropped or a refused registration, registers as
+// RegisterHelper registers a new one, so a helper that cannot register is not
+// resumed. A resumed subagent runs the default explorer, so it registers as
+// system/explorer; the broker refuses that for an agent it recorded with
+// another definition.
+func (s *Service) RegisterResumedHelper(ctx context.Context, sess *session.Session, child port.ChildSessionInfo) error {
+	if s.cfg.IdentityBroker == nil || s.cfg.IdentityAgents == nil {
+		return nil
+	}
+	rootID, _ := port.RootSessionIDFromContext(ctx)
+	root := string(rootID)
+	if root == "" || root == string(sess.ID) {
+		return nil
+	}
+	key := agentcredential.Key{RootSessionID: root, AgentSessionID: string(sess.ID)}
+	if _, held := s.cfg.IdentityAgents.Held(key); !held {
+		return s.RegisterHelper(ctx, sess, child)
+	}
+	if _, err := s.cfg.IdentityAgents.Credential(ctx, key, false); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker resumed helper has no usable credential",
+			"session", string(sess.ID), "err", err.Error())
+		if errors.Is(err, agentcredential.ErrNoCredential) {
+			// Dropped between the two lookups: the root's next run entry
+			// opens its broker session again.
+			return ErrIdentityBrokerUnavailable
+		}
+		return s.credentialLookupFailure(ctx, string(sess.ID), err)
+	}
+	return nil
+}
+
 // helperParentFailure maps a failed lookup of a helper's parent credential.
-// A parent with no credential, or one the broker answered unusably, is an
-// internal fault; a credential dropped meanwhile, like an unavailable broker,
-// is retryable; any other broker error maps as a registration's does.
+// A parent with no credential is an internal fault; other failures map as
+// credentialLookupFailure maps them.
 func (s *Service) helperParentFailure(ctx context.Context, host, parentHost string, err error) error {
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker helper's parent has no usable credential",
 		"session", host, "parent_session", parentHost, "err", err.Error())
-	switch {
-	case errors.Is(err, agentcredential.ErrNoCredential):
+	if errors.Is(err, agentcredential.ErrNoCredential) {
 		return fmt.Errorf("%w: the helper's parent agent is not registered", ErrInternal)
+	}
+	return s.credentialLookupFailure(ctx, host, err)
+}
+
+// credentialLookupFailure maps a held credential's failed renewal or move: a
+// credential dropped meanwhile, like an unavailable broker, is retryable; one
+// the broker answered unusably is an internal fault; any other broker error
+// maps as a registration's does.
+func (s *Service) credentialLookupFailure(ctx context.Context, host string, err error) error {
+	switch {
 	case errors.Is(err, agentcredential.ErrDropped):
 		return ErrIdentityBrokerUnavailable
 	case errors.Is(err, agentcredential.ErrExpired), errors.Is(err, agentcredential.ErrOtherAgent):
 		return fmt.Errorf("%w: identity broker returned an unusable registration", ErrInternal)
 	default:
-		return s.identityBrokerFailure(ctx, "register helper parent", host, "", err)
+		return s.identityBrokerFailure(ctx, "register helper", host, "", err)
 	}
+}
+
+// helperAdmitter admits the helpers of a service's child stores.
+type helperAdmitter struct{ s *Service }
+
+func (a helperAdmitter) AdmitChild(ctx context.Context, sess *session.Session, child port.ChildSessionInfo) error {
+	return a.s.RegisterHelper(ctx, sess, child)
+}
+
+func (a helperAdmitter) AdmitResumedChild(ctx context.Context, sess *session.Session, child port.ChildSessionInfo) error {
+	return a.s.RegisterResumedHelper(ctx, sess, child)
 }
 
 // helperDefinition is the reference of the definition sess's helper runs (see

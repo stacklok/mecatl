@@ -345,6 +345,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"SessionCapabilities":          {KindDerived, "reads the per-session engine registry keyed on an id the caller only holds from an authorized CreateSession*/GetSession* echo; carries no ctx to re-check"},
 	"ResolvedModel":                {KindDerived, "mirrors SessionCapabilities: identity read off the per-session engine registry for an id the caller already authorized to obtain"},
 	"LookupRun":                    {KindDerived, "in-memory run registry read; every caller-facing entry point (Cancel, Persist, Approve*, MaybeAutoApprovePlan) authorizes the session FIRST and only then consults this"},
+	"RegisterResumedHelper":        {KindDerived, "admits the helper of a child session the engine resumes inside a run of its root, which run entry already authorized; called by the child store, never by a client"},
 	"RegisterHelper":               {KindDerived, "registers the helper of a child session the engine publishes inside a run of its root, which run entry already authorized; called by the child store, never by a client"},
 	"IsLive":                       {KindDerived, "combined Service-run and engine-child process-local registry; consumed by destructive maintenance, not a caller-facing verb"},
 	"MaintenanceMutationAvailable": {KindDerived, "read-only capability truth consumed by composition before scheduling automatic retention"},

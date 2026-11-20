@@ -620,13 +620,13 @@ func TestHolderMoveHelpersMovesEveryHelperParentsFirst(t *testing.T) {
 	h, b, _ := newHolder(t)
 	mustEnsure(t, h, "bs_1")
 	main, _ := h.Held(key)
-	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
-	grandKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "grandchild"}
-	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "b-child"}
+	grandKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "a-grandchild"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "b-child", "root", main.Agent), admitAll); err != nil {
 		t.Fatal(err)
 	}
 	child, _ := h.Held(childKey)
-	if err := h.Ensure(t.Context(), grandKey, helperRequest("bs_1", "grandchild", "child", child.Agent), admitAll); err != nil {
+	if err := h.Ensure(t.Context(), grandKey, helperRequest("bs_1", "a-grandchild", "b-child", child.Agent), admitAll); err != nil {
 		t.Fatal(err)
 	}
 	grand, _ := h.Held(grandKey)
@@ -643,7 +643,9 @@ func TestHolderMoveHelpersMovesEveryHelperParentsFirst(t *testing.T) {
 		t.Fatalf("MoveHelpers: %v", err)
 	}
 	reqs := b.requests()[before:]
-	if len(reqs) != 2 || reqs[0].HostSessionID != "child" || reqs[1].HostSessionID != "grandchild" {
+	// MoveHelpers visits the grandchild first (its name sorts first), so only
+	// the parent-first move puts the child before it.
+	if len(reqs) != 2 || reqs[0].HostSessionID != "b-child" || reqs[1].HostSessionID != "a-grandchild" {
 		t.Fatalf("MoveHelpers registered %+v, want the child then the grandchild", reqs)
 	}
 	for k, want := range map[agentcredential.Key]identitybroker.AgentRef{childKey: child.Agent, grandKey: grand.Agent} {

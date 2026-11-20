@@ -272,3 +272,45 @@ func TestHelpersRegisterAgainInAReopenedBrokerSession(t *testing.T) {
 		t.Fatalf("the helper moved as %+v, want %+v", again, helper)
 	}
 }
+
+// TestRegisterResumedHelper pins what admits a resumed helper: a held
+// credential is kept with no new registration; a helper with none registers
+// as a new one does; and a refusal stops the resume.
+func TestRegisterResumedHelper(t *testing.T) {
+	t.Run("a held credential is kept", func(t *testing.T) {
+		f := newHelperFixture(t)
+		child := newSubagentSession(t, "child-1", f.root.ID)
+		if err := f.svc.RegisterHelper(f.rootContext(t), child, port.ChildSessionInfo{DefinitionName: "code-reviewer"}); err != nil {
+			t.Fatalf("RegisterHelper: %v", err)
+		}
+		before := len(f.broker.registerRequests())
+		if err := f.svc.RegisterResumedHelper(f.rootContext(t), child, port.ChildSessionInfo{}); err != nil {
+			t.Fatalf("RegisterResumedHelper: %v", err)
+		}
+		if n := len(f.broker.registerRequests()); n != before {
+			t.Fatalf("a resumed helper with a held credential registered %d times", n-before)
+		}
+	})
+	t.Run("a helper with no credential registers", func(t *testing.T) {
+		f := newHelperFixture(t)
+		child := newSubagentSession(t, "child-1", f.root.ID)
+		if err := f.svc.RegisterResumedHelper(f.rootContext(t), child, port.ChildSessionInfo{}); err != nil {
+			t.Fatalf("RegisterResumedHelper: %v", err)
+		}
+		got := lastRegistration(t, f.broker)
+		if got.HostSessionID != "child-1" || got.Definition != conformance.ExplorerDefinition || got.Parent != f.mainAgent {
+			t.Fatalf("resumed helper registration = %+v, want system/explorer under the main agent", got)
+		}
+		if _, ok := f.svc.HeldIdentityAgentForTest(f.root.ID, "child-1"); !ok {
+			t.Fatal("the resumed helper's credential is not held")
+		}
+	})
+	t.Run("a refusal stops the resume", func(t *testing.T) {
+		f := newHelperFixture(t)
+		f.broker.set(func(b *recordingBroker) { b.helperUnavailable = true })
+		err := f.svc.RegisterResumedHelper(f.rootContext(t), newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{})
+		if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+			t.Fatalf("RegisterResumedHelper with the broker down = %v, want ErrIdentityBrokerUnavailable", err)
+		}
+	})
+}

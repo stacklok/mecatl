@@ -12,6 +12,25 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/childstore"
 )
 
+// admitter admits through child and resumed; a nil func admits.
+type admitter struct {
+	child, resumed func(context.Context, *session.Session, port.ChildSessionInfo) error
+}
+
+func (a admitter) AdmitChild(ctx context.Context, s *session.Session, c port.ChildSessionInfo) error {
+	if a.child == nil {
+		return nil
+	}
+	return a.child(ctx, s, c)
+}
+
+func (a admitter) AdmitResumedChild(ctx context.Context, s *session.Session, c port.ChildSessionInfo) error {
+	if a.resumed == nil {
+		return nil
+	}
+	return a.resumed(ctx, s, c)
+}
+
 func newSession(t *testing.T) *session.Session {
 	t.Helper()
 	return session.New("child-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
@@ -25,12 +44,12 @@ func TestCreateChildPersistsThenAdmits(t *testing.T) {
 	refused := errors.New("refused")
 	var persistedFirst bool
 	var got port.ChildSessionInfo
-	store := childstore.New(inner, func(ctx context.Context, s *session.Session, child port.ChildSessionInfo) error {
+	store := childstore.New(inner, admitter{child: func(ctx context.Context, s *session.Session, child port.ChildSessionInfo) error {
 		_, err := inner.Load(ctx, s.ID)
 		persistedFirst = err == nil
 		got = child
 		return refused
-	})
+	}})
 	creator, ok := store.(port.ChildSessionCreator)
 	if !ok {
 		t.Fatal("the wrapped store is not a ChildSessionCreator")
@@ -55,7 +74,7 @@ func (noCreateStore) SupportsSessionLineage() bool        { return false }
 // wrapped store's create support, and that without it a child is admitted
 // without being created.
 func TestCreateSupportFollowsTheWrappedStore(t *testing.T) {
-	admit := func(context.Context, *session.Session, port.ChildSessionInfo) error { return nil }
+	admit := admitter{}
 	if !port.SupportsSessionCreate(childstore.New(memstore.New(), admit)) {
 		t.Fatal("a wrapped creating store reports no create support")
 	}
@@ -69,5 +88,30 @@ func TestCreateSupportFollowsTheWrappedStore(t *testing.T) {
 	}
 	if _, err := inner.Load(t.Context(), "child-1"); !errors.Is(err, port.ErrSessionNotFound) {
 		t.Fatalf("a store without create support was created into: %v", err)
+	}
+}
+
+// TestResumeChildAdmitsWithoutPublishing pins that a resumed child is admitted
+// through AdmitResumedChild, with its refusal returned, and is not published.
+func TestResumeChildAdmitsWithoutPublishing(t *testing.T) {
+	inner := memstore.New()
+	refused := errors.New("refused")
+	var resumed session.SessionID
+	store := childstore.New(inner, admitter{
+		child: func(context.Context, *session.Session, port.ChildSessionInfo) error {
+			t.Fatal("a resume admitted the child as a new one")
+			return nil
+		},
+		resumed: func(_ context.Context, s *session.Session, _ port.ChildSessionInfo) error {
+			resumed = s.ID
+			return refused
+		},
+	})
+	err := store.(port.ChildSessionResumer).ResumeChild(t.Context(), newSession(t), port.ChildSessionInfo{})
+	if !errors.Is(err, refused) || resumed != "child-1" {
+		t.Fatalf("ResumeChild = %v for %q, want the refusal for child-1", err, resumed)
+	}
+	if _, err := inner.Load(t.Context(), "child-1"); !errors.Is(err, port.ErrSessionNotFound) {
+		t.Fatalf("a resume published the child: %v", err)
 	}
 }

@@ -142,3 +142,67 @@ func TestIdentityBrokerRegistersHelperAgents(t *testing.T) {
 		})
 	}
 }
+
+// TestIdentityBrokerRegistersBranchesAndTeamMembers extends the slice test
+// through the real wiring to the other helper kinds: a parallel branch and a
+// Team-tool member each register under the main agent, as system/branch and
+// system/member.
+func TestIdentityBrokerRegistersBranchesAndTeamMembers(t *testing.T) {
+	filler := make([]mockllm.Turn, 0, 20)
+	for range 20 {
+		filler = append(filler, mockllm.TextTurn("ok"))
+	}
+	cases := []struct {
+		name, tool, args, child, definition string
+		configure                           func(*Config)
+	}{
+		{
+			name: "a parallel branch", tool: "Parallel", args: `{"tasks":["look"]}`,
+			child: "parallel-%s-delegate-0", definition: "system/branch",
+			configure: func(c *Config) { c.EnableParallel = true },
+		},
+		{
+			name: "a Team-tool member", tool: "Team", args: `{"goal":"look","members":[{"name":"lead","role":"lead"}]}`,
+			child: "team-%s-delegate-lead", definition: "system/member",
+			configure: func(c *Config) { c.EnableTeams = true },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := mockllm.New(append([]mockllm.Turn{mockllm.ToolCallTurn(session.NewToolCall("delegate", tc.tool, []byte(tc.args)))}, filler...)...)
+			diag := &lockedDiag{}
+			cfg := Config{
+				Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true,
+				AllowAllTools: true, GuardrailsDisabled: true, Diagnostics: diag,
+			}
+			tc.configure(&cfg)
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(built.Close)
+			ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser})
+			parent, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := built.Service.StartRun(ctx, parent.ID, "delegate")
+			if err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+			drainRun(run)
+			built.Service.FinishRun(parent.ID, run)
+
+			want := fmt.Sprintf(tc.child, parent.ID)
+			for _, args := range diag.find("registered helper agent") {
+				if diagArg(args, "session") == want {
+					if diagArg(args, "parent_session") != string(parent.ID) || diagArg(args, "definition") != tc.definition {
+						t.Fatalf("helper registration logged %v, want %s under %s running %s", args, want, parent.ID, tc.definition)
+					}
+					return
+				}
+			}
+			t.Fatalf("no helper registration for %s; logged %v", want, diag.find("registered helper agent"))
+		})
+	}
+}

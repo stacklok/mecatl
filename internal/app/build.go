@@ -3053,7 +3053,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
-	assets.helpers.bind(svc.RegisterHelper)
+	assets.helpers.bind(svc)
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;

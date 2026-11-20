@@ -693,5 +693,5 @@ func (s *Service) memberStore() port.SessionStore {
 	if s.cfg.IdentityBroker == nil {
 		return s.cfg.Store
 	}
-	return childstore.New(s.cfg.Store, s.RegisterHelper)
+	return childstore.New(s.cfg.Store, helperAdmitter{s: s})
 }

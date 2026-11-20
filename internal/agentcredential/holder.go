@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -330,7 +332,8 @@ func (h *Holder) MoveHelpers(ctx context.Context, root string) error {
 	}
 	h.mu.Unlock()
 	// Credential moves each helper's parent before the helper, so the order
-	// here does not matter.
+	// here does not matter; it is sorted only to be deterministic.
+	slices.SortFunc(keys, func(a, b Key) int { return strings.Compare(a.AgentSessionID, b.AgentSessionID) })
 	var errs []error
 	for _, key := range keys {
 		if _, err := h.Credential(ctx, key, false); err != nil {
