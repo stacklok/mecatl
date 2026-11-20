@@ -442463,6 +442463,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795197062105,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "731e328c0c784f5e052271bcc8b47aec84c4bba5",
+          "message": "refactor(kernel): unify Session and history resource identity (#2934)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T19:42:37Z",
+          "tree_id": "ff3553cc6dd3317554382a4455ef3f074b7731ad",
+          "url": "https://github.com/stacklok/mecatl/commit/731e328c0c784f5e052271bcc8b47aec84c4bba5"
+        },
+        "date": 1795204464976,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -576109,6 +576148,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795204461214,
+  "lastUpdate": 1795204466142,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
