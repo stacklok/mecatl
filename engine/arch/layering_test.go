@@ -126,13 +126,24 @@ var coreImportRules = []coreImportRule{
 		desc: "session runtime may import passive Session and identity leaves, never the hosting group, adapters, or legacy aggregate",
 	},
 	{
+		pkg: modulePrefix + "engine/kernel/lease",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/sessiongroup/id": true,
+			modulePrefix + "engine/kernel/history":         true,
+		},
+		desc: "lease contracts may import only group identity, history contracts and stdlib, never group composition or execution",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/sessiongroup",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/session/id":      true,
 			modulePrefix + "engine/kernel/sessiongroup/id": true,
 			modulePrefix + "engine/kernel/sessionruntime":  true,
+			modulePrefix + "engine/kernel/history":         true,
+			modulePrefix + "engine/kernel/lease":           true,
+			modulePrefix + "engine/kernel/session":         true,
 		},
-		desc: "session group may import member runtimes and identity leaves, never adapters or the legacy aggregate",
+		desc: "session group may import member runtimes, identity leaves, lease and history/session composition, never adapters or the legacy aggregate",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history/format",

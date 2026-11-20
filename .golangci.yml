@@ -282,6 +282,9 @@ linters:
             - github.com/stacklok/mecatl/engine/kernel/session/id$
             - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
             - github.com/stacklok/mecatl/engine/kernel/sessionruntime$
+            - github.com/stacklok/mecatl/engine/kernel/history$
+            - github.com/stacklok/mecatl/engine/kernel/lease$
+            - github.com/stacklok/mecatl/engine/kernel/session$
           deny:
             - pkg: os
               desc: 'session hosting must not access host state'
@@ -297,6 +300,18 @@ linters:
           deny:
             - pkg: os
               desc: 'group identity values must not access host state'
+        core-kernel-lease:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/lease/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
+            - github.com/stacklok/mecatl/engine/kernel/history$
+          deny:
+            - pkg: os
+              desc: 'lease contracts must not access host state'
         core-kernel-sessionruntime:
           list-mode: strict
           files:
