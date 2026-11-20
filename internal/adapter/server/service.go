@@ -820,6 +820,7 @@ type Config struct {
 	// loaded. A session's main agent registers with the reference of the one
 	// it runs: the global definition of its name, or the built-in main. With
 	// none for it, the agent registers by name only, which the broker refuses.
+	// It is required with IdentityBroker: NewService refuses an empty one.
 	//
 	// Shortcut: sessions know their definition by name only, so the server looks up the reference the broker loaded; removed by #2548 (sessions record their exact reference).
 	IdentityDefinitions []identitybroker.DefinitionRef
@@ -1716,13 +1717,26 @@ func normalizeServerImplementation(value string) string {
 	return value
 }
 
+// checkRequiredConfig refuses a cfg missing a required dependency. An
+// identity broker requires the references of its definitions: every agent
+// would otherwise register by name only, which the broker refuses, so every
+// run would fail at run entry.
+func checkRequiredConfig(cfg Config) error {
+	switch {
+	case cfg.Engine == nil:
+		return fmt.Errorf("%w: Engine is required", ErrConfig)
+	case cfg.Store == nil:
+		return fmt.Errorf("%w: Store is required", ErrConfig)
+	case cfg.IdentityBroker != nil && len(cfg.IdentityDefinitions) == 0:
+		return fmt.Errorf("%w: IdentityDefinitions is required with IdentityBroker", ErrConfig)
+	}
+	return nil
+}
+
 // NewService validates cfg and constructs a Service.
 func NewService(cfg Config) (*Service, error) {
-	if cfg.Engine == nil {
-		return nil, fmt.Errorf("%w: Engine is required", ErrConfig)
-	}
-	if cfg.Store == nil {
-		return nil, fmt.Errorf("%w: Store is required", ErrConfig)
+	if err := checkRequiredConfig(cfg); err != nil {
+		return nil, err
 	}
 	placementBinder, err := configuredPlacementBinder(cfg)
 	if err != nil {

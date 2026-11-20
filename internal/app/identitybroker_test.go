@@ -709,3 +709,19 @@ func TestIdentityDefinitionRefsUnderAHarnessPolicy(t *testing.T) {
 		t.Fatalf("references under a harness policy = %+v, want only the built-in main", got)
 	}
 }
+
+// TestIdentityBrokerWithAnInjectedCoreSendsTheConfiguredDefinitions pins that
+// the server gets the references of the definitions this configuration loads
+// even when a test injects the broker core, so it never starts without them
+// (the server refuses an identity broker with none).
+func TestIdentityBrokerWithAnInjectedCoreSendsTheConfiguredDefinitions(t *testing.T) {
+	parts, err := buildIdentityBroker(t.Context(), Config{Workspace: t.TempDir(), IdentityBroker: true, NoShell: true, identityBrokerCore: newClosableCore(t)}, nil)
+	if err != nil {
+		t.Fatalf("buildIdentityBroker: %v", err)
+	}
+	t.Cleanup(parts.release)
+	refs := definitionRefs(parts.definitions)
+	if !slices.Contains(refs, builtinMainRef()) {
+		t.Fatalf("an injected core's definitions = %+v, want the built-in main among them", refs)
+	}
+}

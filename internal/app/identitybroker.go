@@ -199,8 +199,8 @@ type identityBrokerParts struct {
 	client *identitybroker.ClientAssertionSigner
 	// core is the real broker; nil for an injected test core.
 	core *identitybroker.Broker
-	// definitions are the definition records core loaded; nil for an
-	// injected core.
+	// definitions are the definition records core loaded, or, for an
+	// injected core, the records this configuration loads.
 	definitions []identitybroker.DefinitionRecord
 	// recorder holds the core's decision and ID-JAG records; nil for an
 	// injected core.
@@ -272,6 +272,15 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 		}
 		core = broker.core
 		parts = broker.parts()
+	} else {
+		// An injected core is a test's; the server still sends the references
+		// of the definitions this configuration loads, as it does for the
+		// real broker.
+		definitions, err := loadIdentityBrokerDefinitions(ctx, cfg)
+		if err != nil {
+			return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
+		}
+		parts.definitions = definitions
 	}
 	parts.release = func() {}
 	if closer, ok := core.(io.Closer); ok {

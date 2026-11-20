@@ -544,3 +544,34 @@ func unsignedTestCredential(subject string) identitybroker.Token {
 	claims, _ := json.Marshal(map[string]string{"sub": subject})
 	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"ES256"}`)) + "." + enc.EncodeToString(claims) + ".sig")
 }
+
+// TestNewServiceRequiresIdentityDefinitionsWithABroker pins that a service
+// with an identity broker and no definitions is refused at construction:
+// otherwise every agent would register by name only and every run fail.
+func TestNewServiceRequiresIdentityDefinitionsWithABroker(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := identitybroker.New(identitybroker.Config{
+		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
+	}, conformance.Definitions(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Engine: brokerEngineResult().Engine, Store: memstore.New(),
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		IdentityBroker: identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
+	}
+	if _, err := NewService(cfg); !errors.Is(err, ErrConfig) {
+		t.Fatalf("NewService with a broker and no definitions = %v, want ErrConfig", err)
+	}
+	// Positive control: the same config with the broker's definitions builds.
+	cfg.IdentityDefinitions = conformance.DefinitionRefs()
+	svc, err := NewService(cfg)
+	if err != nil {
+		t.Fatalf("NewService with definitions: %v", err)
+	}
+	svc.Close()
+}
