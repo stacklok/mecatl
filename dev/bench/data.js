@@ -395984,6 +395984,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795137712816,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac29020918c37967faac9f154ef6b9ed6bad03c2",
+          "message": "Merge pull request #2906 from stacklok/module-publication/44637421400-1\n\nAdopt published Go module metadata",
+          "timestamp": "2026-11-19T17:33:33-08:00",
+          "tree_id": "df6d5916d0d3809e2946d3adec19e73a0c35d2af",
+          "url": "https://github.com/stacklok/mecatl/commit/ac29020918c37967faac9f154ef6b9ed6bad03c2"
+        },
+        "date": 1795139163161,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -571476,6 +571510,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795139159513,
+  "lastUpdate": 1795139164413,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
