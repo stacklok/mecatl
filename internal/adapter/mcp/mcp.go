@@ -1099,31 +1099,47 @@ func listTools(ctx context.Context, serverName string, srv *Server, sess *mcpsdk
 
 func listToolsBounded(ctx context.Context, serverName string, srv *Server, sess *mcpsdk.ClientSession, budget *CandidateListBudget) ([]tool.Tool, error) {
 	var out []tool.Tool
+	err := walkToolPages(ctx, sess, budget, func(remote *mcpsdk.Tool) error {
+		wrapped, err := newRemoteTool(serverName, srv, remote)
+		if err != nil {
+			return err
+		}
+		out = append(out, wrapped)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// walkToolPages follows sess's tools/list cursor to the last page, charging
+// each page to budget before visiting its tools. It refuses a nil page and a
+// cursor seen before, so a server cannot keep it listing forever.
+func walkToolPages(ctx context.Context, sess *mcpsdk.ClientSession, budget *CandidateListBudget, visit func(*mcpsdk.Tool) error) error {
 	cursor := ""
 	seen := make(map[string]struct{})
 	for {
 		page, err := sess.ListTools(ctx, &mcpsdk.ListToolsParams{Cursor: cursor})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if page == nil {
-			return nil, errors.New("mcp: nil tools list page")
+			return errors.New("mcp: nil tools list page")
 		}
 		if err := budget.consumePage(len(page.Tools)); err != nil {
-			return nil, err
+			return err
 		}
 		for _, remote := range page.Tools {
-			wrapped, err := newRemoteTool(serverName, srv, remote)
-			if err != nil {
-				return nil, err
+			if err := visit(remote); err != nil {
+				return err
 			}
-			out = append(out, wrapped)
 		}
 		if page.NextCursor == "" {
-			return out, nil
+			return nil
 		}
 		if _, duplicate := seen[page.NextCursor]; duplicate {
-			return nil, errors.New("mcp: tools list cursor cycle")
+			return errors.New("mcp: tools list cursor cycle")
 		}
 		seen[page.NextCursor] = struct{}{}
 		cursor = page.NextCursor
