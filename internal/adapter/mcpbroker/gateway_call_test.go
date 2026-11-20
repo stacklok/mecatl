@@ -107,6 +107,32 @@ func (testGateway) Route(backend, name string) (string, string, error) {
 	return embeddedGateway{}.Route(backend, name)
 }
 
+// TestCheckGatewayRefusesAnIncompleteGateway refuses gateway calls that miss
+// any part they need, the vMCP resource included.
+func TestCheckGatewayRefusesAnIncompleteGateway(t *testing.T) {
+	const gatewayURL = "https://gateway.example/mcp"
+	complete := testGateway{endpoint: gatewayURL, resource: gatewayURL, client: http.DefaultClient}
+	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}}
+	for name, tc := range map[string]struct {
+		gateway Gateway
+		calls   GatewayCalls
+		want    error
+	}{
+		"complete":       {complete, calls, nil},
+		"no endpoint":    {testGateway{resource: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
+		"no resource":    {testGateway{endpoint: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
+		"no HTTP client": {testGateway{endpoint: gatewayURL, resource: gatewayURL}, calls, ErrInvalidCatalogue},
+		"no authorizer":  {complete, GatewayCalls{Credentials: calls.Credentials}, ErrInvalidCatalogue},
+		"no credentials": {complete, GatewayCalls{Authorizer: calls.Authorizer}, ErrInvalidCatalogue},
+	} {
+		r := &Runtime{}
+		r.setGateway(tc.gateway, tc.calls)
+		if err := r.checkGateway(); !errors.Is(err, tc.want) {
+			t.Errorf("%s: checkGateway = %v, want %v", name, err, tc.want)
+		}
+	}
+}
+
 type wireRequest struct {
 	header http.Header
 	body   []byte
