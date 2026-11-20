@@ -22,6 +22,7 @@ export const ServerFeature = {
   ExecutionTemplates: "execution_templates",
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
+  ModelEffortLevels: "model_effort_levels",
   PromptFreeControls: "prompt_free_controls",
   RefusedModeRecovery: "refused_mode_recovery",
   ServerInfo: "server_info",

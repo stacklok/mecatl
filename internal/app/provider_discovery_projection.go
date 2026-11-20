@@ -14,10 +14,26 @@ func projectModelEntry(reg *providerRegistry, cfg Config, view *discoverySnapsho
 		name = m.ID
 	}
 	cached := reg.promptCached != nil && reg.promptCached(pid, m.ID)
+	effort := publishedEffortLevels(reg, cfg, view, pid, m.ID)
 	return &mecatlv1.ModelInfo{Id: m.ID, ProviderId: pid, DisplayName: name,
 		ContextLimit: int64(resolveModelWindow(cfg, view, pid, m.ID).tokens),
 		Image:        modelCapabilityCandidate(reg, view, pid, m.ID).Image,
-		Reasoning:    m.Reasoning, PromptCached: cached}
+		Reasoning:    m.Reasoning, PromptCached: cached,
+		EffortLevels: effort.levels, EffortLevelsKnown: effort.known}
+}
+
+// publishedEffortLevels is what ListModels reports for a model: the levels a
+// session on it sends. Chat Completions sends effort only for models the
+// operator configured, so there a model of unknown levels is reported as taking
+// none.
+func publishedEffortLevels(reg *providerRegistry, cfg Config, view *discoverySnapshot, pid, model string) effortLevels {
+	resolution := resolveModelEffortLevels(cfg, view, pid, model)
+	if !resolution.known {
+		if entry, ok := reg.Lookup(pid); ok && entry.protocol == protocolOpenAIChatCompletions {
+			return knownEffortLevels(nil)
+		}
+	}
+	return resolution.effortLevels
 }
 
 func modelCapabilityCandidate(reg *providerRegistry, view *discoverySnapshot, pid, model string) port.ProviderCapabilities {
