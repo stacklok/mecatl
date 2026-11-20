@@ -444051,6 +444051,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795209900361,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "01bbed031c0f9e83721e25ce304516f8fa258c4b",
+          "message": "feat(history): add durable SQLite kernel backend (#2766)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T14:28:54-08:00",
+          "tree_id": "74cfdb9c9497ce7ccafd30a3e19bcba185d0a537",
+          "url": "https://github.com/stacklok/mecatl/commit/01bbed031c0f9e83721e25ce304516f8fa258c4b"
+        },
+        "date": 1795214535697,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13407,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12902,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -578153,6 +578192,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795214531799,
+  "lastUpdate": 1795214536530,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
