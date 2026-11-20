@@ -76,14 +76,11 @@ type Config struct {
 	// CloseTimeout bounds the complete close operation, including draining and
 	// release. It must exceed DrainTimeout to reserve time for release.
 	CloseTimeout time.Duration
-	// MaxMemberSlots bounds private retained member/session slots. Lazy member
-	// activation refuses a new slot at capacity, without changing permanent
-	// membership or authority over unloaded members. A slot with unresolved
-	// obligations cannot be discarded to make space.
-	MaxMemberSlots int
-	// MaxUnresolvedCloseObligations bounds retained per-obligation shutdown
-	// detail. Additional obligations are counted, not retained, in CloseReport.
-	MaxUnresolvedCloseObligations int
+	// MaxLoadedSessions bounds the number of private member Sessions retained
+	// at once. Loading another Session is refused at capacity, without changing
+	// permanent membership or authority over unloaded members. A Session with
+	// unresolved obligations cannot be unloaded to make space.
+	MaxLoadedSessions int
 }
 
 // Validate reports whether Config contains all required dependencies and
@@ -96,7 +93,7 @@ func (c Config) Validate() error {
 		c.OpeningTimeout <= 0 || c.AttemptTimeout <= 0 ||
 		c.RetryInterval <= 0 || c.RenewInterval <= 0 ||
 		c.DrainTimeout <= 0 || c.CloseTimeout <= c.DrainTimeout ||
-		c.MaxMemberSlots <= 0 || c.MaxUnresolvedCloseObligations <= 0 {
+		c.MaxLoadedSessions <= 0 {
 		return ErrInvalidConfig
 	}
 	return nil

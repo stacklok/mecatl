@@ -95,12 +95,12 @@ type CloseObligation struct {
 
 // CloseReport is the compact, typed result of one bounded group close. GroupID
 // preserves group correlation; it is nonzero in a report returned for an opened
-// group. Unresolved is an independently owned slice ordered by the closing
-// implementation's deterministic member order. It contains at most the
-// configured MaxUnresolvedCloseObligations entries. OmittedUnresolved counts
-// further obligations that were not retained, so truncation never claims a
-// clean shutdown. Reports are immutable by convention after return and safe for
-// concurrent readers when callers do not mutate Unresolved.
+// group. Unresolved is an independently owned slice containing all known unresolved
+// obligations, ordered by the closing implementation's deterministic member order.
+// Its size is bounded by admitted member/work state, not a separate reporting cap;
+// reporting never truncates unresolved obligations. Reports are immutable by
+// convention after return and safe for concurrent readers when callers do not
+// mutate Unresolved.
 type CloseReport struct {
 	// GroupID identifies the group whose close was observed. Its zero value
 	// denotes an incomplete or manually constructed report.
@@ -110,7 +110,4 @@ type CloseReport struct {
 	Release CloseRelease
 	// Unresolved holds bounded detail for provider, work, or member obligations.
 	Unresolved []CloseObligation
-	// OmittedUnresolved counts further unresolved obligations excluded by the
-	// configured retention bound. Zero means all known obligations are listed.
-	OmittedUnresolved int
 }

@@ -73,15 +73,14 @@ func validConfig(provider lease.Provider, clock sessiongroup.Clock) sessiongroup
 			MaxPayloadBytes:        1,
 			MaxDecodedWork:         1,
 		},
-		InstanceID:                    1,
-		OpeningTimeout:                time.Second,
-		AttemptTimeout:                time.Nanosecond,
-		RetryInterval:                 time.Nanosecond,
-		RenewInterval:                 time.Nanosecond,
-		DrainTimeout:                  time.Nanosecond,
-		CloseTimeout:                  2 * time.Nanosecond,
-		MaxMemberSlots:                1,
-		MaxUnresolvedCloseObligations: 1,
+		InstanceID:        1,
+		OpeningTimeout:    time.Second,
+		AttemptTimeout:    time.Nanosecond,
+		RetryInterval:     time.Nanosecond,
+		RenewInterval:     time.Nanosecond,
+		DrainTimeout:      time.Nanosecond,
+		CloseTimeout:      2 * time.Nanosecond,
+		MaxLoadedSessions: 1,
 	}
 }
 
@@ -110,8 +109,8 @@ func TestConfigValidate(t *testing.T) {
 		"zero drain timeout":            func(c *sessiongroup.Config) { c.DrainTimeout = 0 },
 		"equal close and drain timeout": func(c *sessiongroup.Config) { c.CloseTimeout = c.DrainTimeout },
 		"shorter close timeout":         func(c *sessiongroup.Config) { c.CloseTimeout = c.DrainTimeout - time.Nanosecond },
-		"zero member slots":             func(c *sessiongroup.Config) { c.MaxMemberSlots = 0 },
-		"negative unresolved retention": func(c *sessiongroup.Config) { c.MaxUnresolvedCloseObligations = -1 },
+		"zero loaded sessions":          func(c *sessiongroup.Config) { c.MaxLoadedSessions = 0 },
+		"negative loaded sessions":      func(c *sessiongroup.Config) { c.MaxLoadedSessions = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			provider := &testProvider{}
@@ -138,8 +137,7 @@ func TestConfigValidateBoundaries(t *testing.T) {
 	config.RenewInterval = time.Hour
 	config.DrainTimeout = time.Nanosecond
 	config.CloseTimeout = 2 * time.Nanosecond
-	config.MaxMemberSlots = 1
-	config.MaxUnresolvedCloseObligations = 1
+	config.MaxLoadedSessions = 1
 	if err := config.Validate(); err != nil {
 		t.Fatalf("independent positive bounds must remain valid: %v", err)
 	}
