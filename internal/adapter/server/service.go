@@ -863,6 +863,10 @@ type Config struct {
 	// MemberEngineForOperation resolves the direct RunTeam member factory from the
 	// operation-pinned context acquired at RunTeam. Nil uses MemberEngine.
 	MemberEngineForOperation func(context.Context) MemberEngineFactory
+	// MemberEngineWithHelperTools resolves the member factory of a team rooted
+	// in a session whose identity broker gateway tools (see HelperGatewayTools)
+	// its generic members get. Nil, or a nil result, uses the factories above.
+	MemberEngineWithHelperTools func(ctx context.Context, helperTools []tool.Tool) MemberEngineFactory
 	// TeamGoalUntrusted, when true, re-fences the gRPC/HTTP CreateTeam goal as
 	// UNTRUSTED data in member and synthesis prompts (threaded to
 	// agent.WithUntrustedGoal). DEFAULT false: the goal is the team's TRUSTED

@@ -641,6 +641,20 @@ type sessionTool struct {
 	queryFilter string
 }
 
+// HelperGatewayTool returns the tool a helper agent gets for t, and true, when
+// t's calls are sent through the identity broker's gateway, which presents the
+// acting agent's own credential; any other route acts as the session, so a
+// helper gets none. The helper's tool is the bare route, without the protected
+// wrapper's authorization methods: a gateway call never requires the MCP
+// broker's authorization (see protectedSessionTool.RequestAuthorization), and
+// a helper's run cannot present one.
+func (t *sessionTool) HelperGatewayTool() (tool.Tool, bool) {
+	if !t.gatewayRoute() {
+		return nil, false
+	}
+	return t, true
+}
+
 func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }
 func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
 

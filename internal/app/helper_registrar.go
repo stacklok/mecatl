@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/childstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -79,4 +80,18 @@ func (h *helperRegistrar) AdmitResumedChild(ctx context.Context, sess *session.S
 		return err
 	}
 	return r.RegisterResumedHelper(ctx, sess, child)
+}
+
+// registerHelperTools registers helperTools, a session's gateway tools, in a
+// def-less helper's catalog and returns their names. A helper's bound
+// authority, derived from its parent's, still decides which it may call.
+func registerHelperTools(classified *classifiedCatalog, helperTools []tool.Tool) []string {
+	names := make([]string, 0, len(helperTools))
+	gateway := classification(server.KindDerived,
+		"session-bound gateway wrapper supplied by the root's host attachment; calls present the helper agent's own credential")
+	for _, t := range helperTools {
+		classified.mustRegister(t, gateway)
+		names = append(names, t.Spec().Name)
+	}
+	return names
 }

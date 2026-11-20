@@ -69,8 +69,9 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 	case errors.Is(err, errSendOnceFull):
 		return outcomeSendOnceFull
 	case errors.Is(err, agentcredential.ErrNoCredential), errors.Is(err, agentcredential.ErrDropped):
-		// Helper agents have no broker MCP tools until #2555 and #2556, so
-		// only a main agent's missing or dropped credential reaches this.
+		// The acting agent holds no credential: a helper that runs
+		// unregistered, or a credential dropped while the call was in flight.
+		// The call never falls back to another agent's credential.
 		return outcomeIdentityUnavailable
 	case errors.Is(err, context.DeadlineExceeded):
 		return outcomeUnavailable
