@@ -697,6 +697,8 @@ type Config struct {
 	// catalog is being assembled, which its def-less helper agents (the
 	// default and writable explorers, parallel branches, and generic team
 	// members) also get (#2555). Empty outside such a per-session catalog.
+	//
+	// Shortcut: helpers that run a named definition get no gateway tools, since their definition decides their tools; removed by #2842.
 	helperTools []tool.Tool
 	// enableDurableEvidence is derived from the actual EventLog selected by Build.
 	// Every user-facing engine inherits it; Sink is deliberately not a proxy.
