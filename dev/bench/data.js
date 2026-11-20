@@ -400280,6 +400280,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795207860304,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "60bf072c10ed0d3d22cfadfeb65cb24227e24349",
+          "message": "feat(kernel): sketch SessionGroup residency and SessionRuntime contracts (#2936)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T13:12:17-08:00",
+          "tree_id": "87f55e6acbbd7a6903dc061dd13d6319d2792f6d",
+          "url": "https://github.com/stacklok/mecatl/commit/60bf072c10ed0d3d22cfadfeb65cb24227e24349"
+        },
+        "date": 1795209896058,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -577608,6 +577642,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795209892733,
+  "lastUpdate": 1795209896925,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
