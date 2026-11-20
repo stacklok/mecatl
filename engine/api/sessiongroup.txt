@@ -1,0 +1,9 @@
+    method func (*SessionGroup).Close(context.Context) error
+    method func (*SessionGroup).GroupID() id.GroupID
+    method func (*SessionGroup).Load(context.Context, id.SessionID) (*sessionruntime.SessionRuntime, error)
+    method func (*SessionGroup).LoadedRuntimes() ([]*sessionruntime.SessionRuntime, error)
+    method func (*SessionGroup).Members(context.Context) ([]id.SessionID, error)
+    method func (*SessionGroup).Unload(context.Context, id.SessionID) error
+func Open(context.Context, id.GroupID) (*SessionGroup, error)
+type SessionGroup struct{}
+var ErrNotImplemented error

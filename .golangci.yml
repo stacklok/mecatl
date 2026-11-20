@@ -271,6 +271,45 @@ linters:
           deny:
             - pkg: os
               desc: 'session identity values must not access host state'
+        core-kernel-sessiongroup:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/sessiongroup/**.go'
+            - '!**/engine/kernel/sessiongroup/id/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/session/id$
+            - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
+            - github.com/stacklok/mecatl/engine/kernel/sessionruntime$
+          deny:
+            - pkg: os
+              desc: 'session hosting must not access host state'
+        core-kernel-sessiongroup-id:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/sessiongroup/id/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/id$
+            - github.com/stacklok/mecatl/engine/kernel/codec$
+          deny:
+            - pkg: os
+              desc: 'group identity values must not access host state'
+        core-kernel-sessionruntime:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/sessionruntime/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/kernel/session$
+            - github.com/stacklok/mecatl/engine/kernel/session/id$
+            - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
+          deny:
+            - pkg: os
+              desc: 'session runtime must not access host state'
         core-domain-leaf:
           list-mode: strict
           files:
