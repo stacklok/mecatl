@@ -10,8 +10,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func toolAdmissionFixture(t testing.TB) (*Session, []RequestedCallID) {
@@ -65,8 +65,8 @@ func TestToolAdmissionCopiedCandidates(t *testing.T) {
 	invocation := interactionRecord(t)(newToolInvocationRecord(ToolInvocation{Name: "A"}, calls[0], s.policy.PayloadLimits))
 	disposition := interactionRecord(t)(newToolDispositionRecord(toolOutcome("not invoked"), calls[0], s.policy.PayloadLimits))
 	left, right := a, a
-	interactionCheck(t, left.admit(s.Snapshot().HistoryID(), invocation))
-	interactionCheck(t, right.admit(s.Snapshot().HistoryID(), disposition))
+	interactionCheck(t, left.admit(s.Snapshot().SessionID(), invocation))
+	interactionCheck(t, right.admit(s.Snapshot().SessionID(), disposition))
 	if !reflect.DeepEqual(a, before) || !reflect.DeepEqual(left.source, before.source) || !reflect.DeepEqual(right.source, before.source) {
 		t.Fatal("independent candidate mutated shared source/original")
 	}
@@ -77,7 +77,7 @@ func TestToolAdmissionCopiedCandidates(t *testing.T) {
 	// after a successful earlier mutation must preserve even the copied candidate.
 	prior := detachedToolAdmission(right)
 	returned := interactionRecord(t)(newToolDispositionRecord(toolOutcome("returned"), calls[1], s.policy.PayloadLimits))
-	if err := right.admit(s.Snapshot().HistoryID(), returned); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(right, prior) {
+	if err := right.admit(s.Snapshot().SessionID(), returned); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(right, prior) {
 		t.Fatalf("failed prerequisite admission mutated candidate: %v", err)
 	}
 	if pinned.lifecycle.tools.calls[1].invocation != nil || s.Snapshot().lifecycle.tools.calls[0].settled {
@@ -357,13 +357,13 @@ func TestToolAdmissionRejectedReplayAndPreflight(t *testing.T) {
 				case "apply":
 					err = s.apply(commit)
 				case "load":
-					result, e := s.history.Append(context.Background(), s.Snapshot().HistoryID(), commit.Commit)
+					result, e := s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), commit.Commit)
 					interactionCheck(t, e)
 					if result.Status != history.StatusAccepted {
 						t.Fatal("History rejected opaque facts")
 					}
 					var loaded *Session
-					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed load published partial session")
 					}
@@ -389,12 +389,12 @@ func TestToolDispositionMalformedStorageLoadIsAtomic(t *testing.T) {
 		Payload:     []byte{0xff},
 	}}
 	commit := interactionCommit(t, s, []*materializedRecord{malformed})
-	result, err := s.history.Append(context.Background(), s.Snapshot().HistoryID(), commit.Commit)
+	result, err := s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), commit.Commit)
 	interactionCheck(t, err)
 	if result.Status != history.StatusAccepted {
 		t.Fatal("history rejected opaque malformed tool record")
 	}
-	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+	loaded, err := Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 	if loaded != nil || !errors.Is(err, codec.ErrInvalidData) {
 		t.Fatalf("malformed tool disposition Load = %v, %v", loaded, err)
 	}
@@ -441,7 +441,7 @@ func TestToolAdmissionDestinationMembership(t *testing.T) {
 				case "wrong run":
 					call.requestID.runID.ordinal++
 				case "foreign history":
-					call.requestID.runID.historyID = historyid.NewHistoryID()
+					call.requestID.runID.sessionID = sessionid.NewSessionID()
 					want = ErrIdentity
 				case "ended run", "old response":
 					interactionSubmit(t, s, func(b *SessionCommit) {

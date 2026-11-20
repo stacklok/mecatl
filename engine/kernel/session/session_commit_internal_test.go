@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // afterAcceptBackend injects a local invariant violation precisely after real
@@ -19,7 +20,7 @@ type afterAcceptBackend struct {
 	after func()
 }
 
-func (b afterAcceptBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (b afterAcceptBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	o, err := b.Backend.Append(ctx, id, expected, c)
 	if err == nil {
 		b.after()
@@ -30,7 +31,7 @@ func (b afterAcceptBackend) Append(ctx context.Context, id history.HistoryID, ex
 func TestSessionCommitAcceptedLocalApplyFailure(t *testing.T) {
 	limits := codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024,
 		MaxArrayElements: 16, MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestSessionCommitAcceptedLocalApplyFailure(t *testing.T) {
 	if ref == (history.CommitRef{}) || !errors.Is(err, ErrAcceptedApply) {
 		t.Fatalf("acceptance lost: %v, %v", ref, err)
 	}
-	head, err := h.Head(context.Background(), id)
+	head, err := h.Head(context.Background(), id.ResourceID())
 	if err != nil || head != ref || !reflect.DeepEqual(before, s.Snapshot()) {
 		t.Fatal("accepted reference or atomic local failure is wrong")
 	}

@@ -7,10 +7,10 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func ExampleConstruct_andReconstruct() {
@@ -23,13 +23,13 @@ func ExampleConstruct_andReconstruct() {
 		fmt.Println(err)
 		return
 	}
-	historyID, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	sessionID, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	config := session.Config{Policy: policy, InstanceID: 1}
-	s, err := session.New(h, historyID, config)
+	s, err := session.New(h, sessionID, config)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -50,11 +50,11 @@ func ExampleConstruct_andReconstruct() {
 		fmt.Println(err)
 		return
 	}
-	if err := commit.ReplaceModelBinding(historyID, session.ModelBinding{Route: "example", API: "example-api", Model: "example-model"}); err != nil {
+	if err := commit.ReplaceModelBinding(sessionID, session.ModelBinding{Route: "example", API: "example-api", Model: "example-model"}); err != nil {
 		fmt.Println(err)
 		return
 	}
-	if err := commit.ReplaceUserInstructions(historyID, session.UserInstructions{Blocks: []session.InstructionBlock{
+	if err := commit.ReplaceUserInstructions(sessionID, session.UserInstructions{Blocks: []session.InstructionBlock{
 		{Key: "operator/persona", Parts: []session.ContentPart{{Text: new("original persona")}}, Source: session.ContentSource{Description: "prepared persona", WorkspaceFile: &session.WorkspaceFileSource{Path: "SOUL.md"}}},
 		{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("retained project guidance")}}, Source: session.ContentSource{Description: "adopted project guidance", WorkspaceFile: &session.WorkspaceFileSource{Path: "AGENTS.md"}}},
 	}}); err != nil {
@@ -126,7 +126,7 @@ func ExampleConstruct_andReconstruct() {
 	}
 
 	// Load restores retained facts. It does not reopen SOUL.md or AGENTS.md.
-	resumed, err := session.Load(ctx, h, historyID, config)
+	resumed, err := session.Load(ctx, h, sessionID, config)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -161,7 +161,7 @@ func ExampleConstruct_andReconstruct() {
 		return
 	}
 	defer refresh.Discard()
-	if err := refresh.ReplaceUserInstructions(historyID, updated); err != nil {
+	if err := refresh.ReplaceUserInstructions(sessionID, updated); err != nil {
 		fmt.Println(err)
 		return
 	}

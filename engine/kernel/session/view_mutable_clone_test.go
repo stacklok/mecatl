@@ -36,7 +36,7 @@ func TestViewMutableCloneAcrossSubmitAndLoad(t *testing.T) {
 				t.Fatal("reference lost enclosing scope")
 			}
 			// The exported DTO preserves its run-relative component, not the
-			// view's full enclosing history/run identity.
+			// view's full enclosing Session/run identity.
 			ref := reference.MutableClone()
 			if ref.UserInputID == nil || *ref.UserInputID != id.RunRelative() {
 				t.Fatal("reference payload changed")

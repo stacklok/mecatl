@@ -128,7 +128,7 @@ func TestSnapshotRecordsBetweenBorrowedTraversalAllocations(t *testing.T) {
 				visited := 0
 				visit := func(record RecordView) bool {
 					input, ok := record.UserInput()
-					if !ok || input.Parts().Len() != 1 || input.ID().RunID().HistoryID() != snapshot.HistoryID() {
+					if !ok || input.Parts().Len() != 1 || input.ID().RunID().SessionID() != snapshot.SessionID() {
 						t.Fatal("borrowed traversal lost typed data or scope")
 					}
 					media, _ := input.Parts().At(0).Media()

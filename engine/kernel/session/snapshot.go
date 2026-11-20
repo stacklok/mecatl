@@ -6,8 +6,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // Snapshot is an immutable accepted-state handle, not a restore token. Capture
@@ -15,7 +15,7 @@ import (
 // appends. Zero is unscoped and empty. Handles may retain extra backing capacity;
 // GC owns their lifetime. Indexed methods panic outside [0, count).
 type Snapshot struct {
-	historyID historyid.HistoryID
+	sessionID sessionid.SessionID
 	head      history.CommitRef
 	lifecycle lifecycleState
 	records   []*materializedRecord
@@ -32,8 +32,8 @@ type Snapshot struct {
 	binding          *materializedRecord
 }
 
-// HistoryID returns the scope, including before creation.
-func (v Snapshot) HistoryID() historyid.HistoryID { return v.historyID }
+// SessionID returns the scope, including before creation.
+func (v Snapshot) SessionID() sessionid.SessionID { return v.sessionID }
 
 // Head returns the accepted head, or zero before creation.
 func (v Snapshot) Head() history.CommitRef { return v.head }
@@ -73,7 +73,7 @@ func (v Snapshot) Records() iter.Seq[RecordView] {
 //
 // Setup costs O(1) time and space using the captured commit index. Traversal costs
 // O(records yielded), with no decoding, payload copying or backend I/O. The
-// repeatable, early-stoppable sequence and its borrowed, history-scoped views stay
+// repeatable, early-stoppable sequence and its borrowed, Session-scoped views stay
 // pinned across later appends; they may retain backing beyond the selected range.
 // RecordView.MutableClone explicitly detaches data; these views confer no append authority.
 func (v Snapshot) RecordsBetween(after, through history.CommitRef) (iter.Seq[RecordView], error) {
@@ -102,7 +102,7 @@ func (v Snapshot) RecordsBetween(after, through history.CommitRef) (iter.Seq[Rec
 		return nil, ErrIdentity
 	}
 	records := v.records[start : entry.recordStart+entry.recordCount]
-	scope := v.historyID
+	scope := v.sessionID
 	return func(yield func(RecordView) bool) {
 		for _, record := range records {
 			if !yield(RecordView{scope: scope, record: record}) {
@@ -126,7 +126,7 @@ func (v Snapshot) Runs() iter.Seq[RunView] {
 
 // RecordAt returns a chronological record; out-of-range indices panic.
 func (v Snapshot) RecordAt(i int) RecordView {
-	return RecordView{scope: v.historyID, record: v.records[i]}
+	return RecordView{scope: v.sessionID, record: v.records[i]}
 }
 
 // Usages constructs a caller-retained first-definition/latest-report join over
@@ -137,7 +137,7 @@ func (v Snapshot) RecordAt(i int) RecordView {
 // another invocation rebuilds them. There is no hidden cache. The join and its
 // entries retain backing for their lifetime and never change after later appends.
 func (v Snapshot) Usages() UsageEntriesView {
-	result := UsageEntriesView{scope: v.historyID}
+	result := UsageEntriesView{scope: v.sessionID}
 	if v.lifecycle.usages == 0 {
 		return result
 	}
@@ -165,14 +165,14 @@ func (v Snapshot) RunAt(i int) RunView {
 	if i+1 < len(v.runs) {
 		recordEnd = v.runs[i+1].recordStart
 	}
-	return RunView{id: r.id, scope: v.historyID, records: v.records[r.recordStart:recordEnd:recordEnd]}
+	return RunView{id: r.id, scope: v.sessionID, records: v.records[r.recordStart:recordEnd:recordEnd]}
 }
 
 // UserInputByID returns an accepted submission in O(1), with bounds pinned to this
 // snapshot. Invalid, foreign or absent identities return zero, false. An accepted
 // empty submission is present, including after its run is interrupted.
 func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
-	if id.runID.historyID != v.historyID || id.runID.ordinal == 0 || id.runID.ordinal > uint64(len(v.runs)) || id.ordinal == 0 {
+	if id.runID.sessionID != v.sessionID || id.runID.ordinal == 0 || id.runID.ordinal > uint64(len(v.runs)) || id.ordinal == 0 {
 		return UserInputView{}, false
 	}
 	i := int(id.runID.ordinal - 1) //nolint:gosec // Positive ordinal is bounded by len(v.runs) above.
@@ -191,7 +191,7 @@ func (v Snapshot) UserInputByID(id UserInputID) (UserInputView, bool) {
 	if record.input.RunID != id.runID.ordinal || record.input.ID != id.ordinal {
 		return UserInputView{}, false
 	}
-	return UserInputView{scope: v.historyID, value: &record.input}, true
+	return UserInputView{scope: v.sessionID, value: &record.input}, true
 }
 
 // UserInstructions returns the latest accepted prepared user-guidance replacement
@@ -201,7 +201,7 @@ func (v Snapshot) UserInstructions() (UserInstructionsView, bool) {
 	if v.userInstructions == nil {
 		return UserInstructionsView{}, false
 	}
-	return UserInstructionsView{scope: v.historyID, value: &v.userInstructions.userInstructions}, true
+	return UserInstructionsView{scope: v.sessionID, value: &v.userInstructions.userInstructions}, true
 }
 
 // RootInstructions returns the latest accepted harness root-contract replacement
@@ -211,7 +211,7 @@ func (v Snapshot) RootInstructions() (RootInstructionsView, bool) {
 	if v.rootInstructions == nil {
 		return RootInstructionsView{}, false
 	}
-	return RootInstructionsView{scope: v.historyID, value: &v.rootInstructions.rootInstructions}, true
+	return RootInstructionsView{scope: v.sessionID, value: &v.rootInstructions.rootInstructions}, true
 }
 
 // ToolCatalog returns the latest accepted replacement at this head in O(1).
@@ -220,7 +220,7 @@ func (v Snapshot) ToolCatalog() (ToolCatalogView, bool) {
 	if v.catalog == nil {
 		return ToolCatalogView{}, false
 	}
-	return ToolCatalogView{scope: v.historyID, value: &v.catalog.catalog}, true
+	return ToolCatalogView{scope: v.sessionID, value: &v.catalog.catalog}, true
 }
 
 // ModelBinding returns the latest accepted replacement at this head in O(1), or
@@ -229,7 +229,7 @@ func (v Snapshot) ModelBinding() (ModelBindingView, bool) {
 	if v.binding == nil {
 		return ModelBindingView{}, false
 	}
-	return ModelBindingView{scope: v.historyID, value: &v.binding.binding}, true
+	return ModelBindingView{scope: v.sessionID, value: &v.binding.binding}, true
 }
 
 // runEntry is immutable. Endpoints derive from the next entry or captured lengths,
@@ -248,7 +248,7 @@ type commitEntry struct {
 	ref           history.CommitRef
 	metadata      *CommitMetadata
 	formatVersion int64
-	historyID     historyid.HistoryID // Nonzero only for genesis.
+	sessionID     sessionid.SessionID // Nonzero only for genesis.
 	parent        contentid.CID       // Nonzero only for successors.
 	recordStart   int
 	recordCount   int

@@ -101,34 +101,34 @@ var coreImportRules = []coreImportRule{
 		desc:            "content identity values may import only the codec runtime and stdlib, never history or host code",
 	},
 	{
-		pkg: modulePrefix + "engine/kernel/history/id",
+		pkg: modulePrefix + "engine/kernel/session/id",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/id":           true,
 			modulePrefix + "engine/kernel/codec": true,
 		},
-		desc: "history identity values may import only resource ID values, the codec runtime, and stdlib, never history or formats",
+		desc: "session identity values may import only resource ID values, the codec runtime, and stdlib, never history or formats",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history/format",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/contentid":  true,
-			modulePrefix + "engine/kernel/history/id": true,
-			modulePrefix + "engine/kernel/codec":      true,
+			modulePrefix + "engine/kernel/contentid": true,
+			modulePrefix + "engine/id":               true,
+			modulePrefix + "engine/kernel/codec":     true,
 		},
 		allowedExternal: map[string]bool{
 			"github.com/jcalabro/atmos/cbor": true,
 		},
-		desc: "history format values may import only content identity, history identity values, the codec runtime, generated Atmos CBOR primitives, and stdlib, never higher-level history contracts",
+		desc: "history format values may import only content identity, generic resource identity values, the codec runtime, generated Atmos CBOR primitives, and stdlib, never higher-level history contracts",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/history/id":     true,
+			modulePrefix + "engine/id":                    true,
 			modulePrefix + "engine/kernel/history/format": true,
 			modulePrefix + "engine/kernel/codec":          true,
 			modulePrefix + "engine/kernel/contentid":      true,
 		},
-		desc: "kernel history may import only history identity, format values, codec runtime, content identity and stdlib, never the legacy aggregate",
+		desc: "kernel history may import only generic resource identity, format values, codec runtime, content identity and stdlib, never the legacy aggregate",
 	},
 	{
 		pkg:             modulePrefix + "engine/kernel/views",
@@ -152,14 +152,14 @@ var coreImportRules = []coreImportRule{
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/codec":               true,
 			modulePrefix + "engine/kernel/contentid":           true,
-			modulePrefix + "engine/kernel/history/id":          true,
+			modulePrefix + "engine/kernel/session/id":          true,
 			modulePrefix + "engine/kernel/modelrequest/format": true,
 			modulePrefix + "engine/kernel/session":             true,
 			modulePrefix + "engine/kernel/session/format":      true,
 			modulePrefix + "engine/kernel/views":               true,
 		},
 		allowedExternal: map[string]bool{},
-		desc:            "logical model requests may import only their format, session inspection and format, history identity, codec, content identity, borrowed views and stdlib, never execution or host code",
+		desc:            "logical model requests may import only their format, session inspection and format, session identity, codec, content identity, borrowed views and stdlib, never execution or host code",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/modelrequest/format",
@@ -175,9 +175,9 @@ var coreImportRules = []coreImportRule{
 	{
 		pkg: modulePrefix + "engine/kernel/session",
 		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/session/id":     true,
 			modulePrefix + "engine/kernel/history":        true,
 			modulePrefix + "engine/kernel/contentid":      true,
-			modulePrefix + "engine/kernel/history/id":     true,
 			modulePrefix + "engine/kernel/history/format": true,
 			modulePrefix + "engine/kernel/codec":          true,
 			modulePrefix + "engine/kernel/session/format": true,

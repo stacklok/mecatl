@@ -36,7 +36,7 @@ func copiedRepository(t *testing.T) string {
 		copyFile(path)
 	}
 	copyTaskfiles(t, source, root)
-	for _, dir := range []string{"internal/dtogen", "engine/id", "engine/kernel/codec", "engine/kernel/contentid", "engine/kernel/history/id", "engine/kernel/history/format"} {
+	for _, dir := range []string{"internal/dtogen", "engine/id", "engine/kernel/codec", "engine/kernel/contentid", "engine/kernel/session/id", "engine/kernel/history/format"} {
 		err := filepath.WalkDir(filepath.Join(source, dir), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err

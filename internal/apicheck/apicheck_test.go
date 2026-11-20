@@ -56,8 +56,8 @@ var guardedPackages = arch.CorePackages
 // existing names and disambiguating kernel packages from legacy names.
 func shortName(importPath string) string {
 	switch importPath {
-	case "github.com/stacklok/mecatl/engine/kernel/history/id":
-		return "history_id"
+	case "github.com/stacklok/mecatl/engine/kernel/session/id":
+		return "kernel_session_id"
 	case "github.com/stacklok/mecatl/engine/kernel/modelrequest":
 		return "kernel_modelrequest"
 	case "github.com/stacklok/mecatl/engine/kernel/modelrequest/format":
@@ -74,7 +74,7 @@ func TestShortName(t *testing.T) {
 	for importPath, want := range map[string]string{
 		"github.com/stacklok/mecatl/engine/id":                         "id",
 		"github.com/stacklok/mecatl/engine/kernel/history":             "history",
-		"github.com/stacklok/mecatl/engine/kernel/history/id":          "history_id",
+		"github.com/stacklok/mecatl/engine/kernel/session/id":          "kernel_session_id",
 		"github.com/stacklok/mecatl/engine/kernel/modelrequest":        "kernel_modelrequest",
 		"github.com/stacklok/mecatl/engine/kernel/modelrequest/format": "kernel_modelrequest_format",
 		"github.com/stacklok/mecatl/engine/kernel/session":             "kernel_session",

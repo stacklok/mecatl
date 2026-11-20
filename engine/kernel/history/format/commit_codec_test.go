@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 func testLimits() codec.Limits {
@@ -51,6 +51,33 @@ func successorOf(c format.Commit, parent contentid.CID, sequence int64) format.C
 	c = c.Clone()
 	c.HistoryID, c.Parent, c.Sequence = nil, &parent, sequence
 	return c
+}
+
+func TestRootCodecGenericResourceIdentity(t *testing.T) {
+	rootWire, _ := wireFixtures(t)
+	for _, kind := range []string{"FOO", "SES", "IOO"} {
+		t.Run(kind, func(t *testing.T) {
+			text := kind + "1111111111111111111111"
+			id, err := resourceid.Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := validRoot(t)
+			root.HistoryID = &id
+			if err := root.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			wire := replaceWire(t, rootWire, "HST1111111111111111111111", text)
+			encoded, err := codec.Encode(root, testLimits())
+			if err != nil || !bytes.Equal(encoded, wire) {
+				t.Fatalf("generic root encoding: %x, %v", encoded, err)
+			}
+			decoded, err := codec.Decode[format.Commit](wire, testLimits())
+			if err != nil || !decoded.Equal(root) || decoded.HistoryID == nil || *decoded.HistoryID != id {
+				t.Fatalf("generic root decoding: %+v, %v", decoded, err)
+			}
+		})
+	}
 }
 
 func TestCodecGoldens(t *testing.T) {
@@ -103,7 +130,7 @@ func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 		"instance":         func(c *format.Commit) { c.InstanceID++ },
 		"record timestamp": func(c *format.Commit) { c.Records[0].Timestamp++ },
 		"history": func(c *format.Commit) {
-			h, _ := historyid.ParseHistoryID("HST2222222222222222222222")
+			h, _ := resourceid.Parse("HST2222222222222222222222")
 			c.HistoryID = &h
 		},
 		"parent":   func(c *format.Commit) { *c = successorOf(*c, contentid.Sum(nil), 2) },
@@ -181,7 +208,7 @@ func TestCodecOwnership(t *testing.T) {
 	}
 	wireBefore := bytes.Clone(data)
 	c.Records[0].Payload[0], c.Records[0].Kind = 5, "changed"
-	*c.HistoryID = historyid.HistoryID{}
+	*c.HistoryID = resourceid.ID{}
 	sourceAfterMutation := c.Clone()
 	if !bytes.Equal(data, wireBefore) {
 		t.Fatal("encoder borrowed DTO storage")
@@ -200,7 +227,7 @@ func TestCodecOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoded.Records[0].Payload[0], decoded.Records[0].Kind = 10, "other"
-	*decoded.HistoryID = historyid.HistoryID{}
+	*decoded.HistoryID = resourceid.ID{}
 	if !bytes.Equal(input, wireBefore) || !c.Equal(sourceAfterMutation) {
 		t.Fatal("mutation crossed operation ownership")
 	}
@@ -229,7 +256,7 @@ func TestCodecRejectsInvalidDTO(t *testing.T) {
 		func(c *format.Commit) { c.Sequence = 2 },
 		func(c *format.Commit) { c.Records = nil },
 		func(c *format.Commit) { c.HistoryID = nil },
-		func(c *format.Commit) { c.HistoryID = new(historyid.HistoryID) },
+		func(c *format.Commit) { c.HistoryID = new(resourceid.ID) },
 		func(c *format.Commit) { c.Parent = new(contentid.Sum(nil)) },
 		func(c *format.Commit) { c.HistoryID = nil; c.Parent = new(contentid.CID); c.Sequence = 2 },
 		func(c *format.Commit) { c.Records[0].Kind = "" },

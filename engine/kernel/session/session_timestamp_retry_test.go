@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 )
@@ -19,7 +20,7 @@ type timestampBackend struct {
 	loseAck  bool
 }
 
-func (b *timestampBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (b *timestampBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	b.attempts = append(b.attempts, history.ByteCommit{Ref: c.Ref, Bytes: bytes.Clone(c.Bytes)})
 	result, err := b.Backend.Append(ctx, id, expected, c)
 	if err == nil && b.loseAck {
@@ -44,7 +45,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 					nanos--
 					return time.Unix(0, nanos)
 				}}
-				s, err := New(h, testHistoryID(t), config)
+				s, err := New(h, testSessionID(t), config)
 				interactionCheck(t, err)
 				b, err := s.BeginCommit()
 				interactionCheck(t, err)
@@ -54,7 +55,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 					interactionCheck(t, err)
 					b, err = s.BeginCommit()
 					interactionCheck(t, err)
-					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
+					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().SessionID(), RootInstructions{}))
 				}
 				before := calls
 				captured := captureCommit(t, b)
@@ -100,7 +101,7 @@ func TestSessionTimestampFrozenRetries(t *testing.T) {
 						t.Fatal("retry changed exact frozen wire proposal")
 					}
 				}
-				loaded, err := Load(t.Context(), h, testHistoryID(t), config)
+				loaded, err := Load(t.Context(), h, testSessionID(t), config)
 				interactionCheck(t, err)
 				if loaded.Snapshot().Head() != ref || captured.RecordAt(captured.RecordCount()-1).MutableClone().Timestamp != proposal.commit.Records[0].Timestamp {
 					t.Fatal("load or accepted publication changed record metadata")

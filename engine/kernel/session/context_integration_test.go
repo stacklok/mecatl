@@ -9,9 +9,9 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
@@ -27,7 +27,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	h, err := history.New(backend, history.Policy{CommitLimits: p.CommitLimits, RetryWindow: 16, MaxPageBytes: p.CommitLimits.MaxBytes, MaxPageCommits: 2})
 	mustBatch(t, err)
 	s := boundSession(t, h, p)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	if _, ok := s.Snapshot().RootInstructions(); ok {
 		t.Fatal("absent instructions present")
 	}
@@ -69,7 +69,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	}}
 	wantE := effective.Clone()
 	storedEffective := effective
-	storedEffective.RunID = run.HistoryRelative()
+	storedEffective.RunID = run.SessionRelative()
 	if storedEffective.Validate() != nil || !effective.Clone().Equal(effective) {
 		t.Fatal("effective value")
 	}
@@ -96,15 +96,15 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 	submitBatch(t, s, b)
 	old := s.Snapshot()
 	iv, ok := old.RootInstructions()
-	if !ok || iv.HistoryID() != scope || !instructionsMatch(iv, wantI) {
+	if !ok || iv.SessionID() != scope || !instructionsMatch(iv, wantI) {
 		t.Fatal("instructions view")
 	}
 	tv, ok := old.ToolCatalog()
-	if !ok || tv.HistoryID() != scope || !catalogMatches(tv, wantT) {
+	if !ok || tv.SessionID() != scope || !catalogMatches(tv, wantT) {
 		t.Fatal("catalog view")
 	}
 	mv, ok := old.ModelBinding()
-	if !ok || mv.HistoryID() != scope || !bindingMatches(mv, wantM) {
+	if !ok || mv.SessionID() != scope || !bindingMatches(mv, wantM) {
 		t.Fatal("binding view")
 	}
 	ev, ok := old.RecordAt(7).EffectiveInput()
@@ -166,7 +166,7 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 		}
 	}
 	assertExactContent(old)
-	page, err := h.Read(context.Background(), scope, history.ReadRequest{Through: old.Head(), MaxCommits: 1})
+	page, err := h.Read(context.Background(), scope.ResourceID(), history.ReadRequest{Through: old.Head(), MaxCommits: 1})
 	mustBatch(t, err)
 	if len(page.Commits) != 1 {
 		t.Fatal("missing accepted fixture commit")
@@ -245,11 +245,11 @@ func TestContextValuesIntegrationAndPinnedViews(t *testing.T) {
 func TestContextAdmissionSourceBoundsAndScopes(t *testing.T) {
 	h := newLifecycleHistory(t, mem.New())
 	s := boundSession(t, h, sessionPolicy())
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
 	if err := b.ReplaceRootInstructions(foreign, session.RootInstructions{}); !errors.Is(err, session.ErrIdentity) {
 		t.Fatalf("foreign context: %v", err)
@@ -355,7 +355,7 @@ func TestContextMixedReferenceBoundsBeforeAppend(t *testing.T) {
 				if !effectiveMatches(got, valid) {
 					t.Fatal("prior contribution changed")
 				}
-				loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
+				loaded, err := session.Load(context.Background(), h, run.SessionID(), testConfigFor(sessionPolicy()))
 				mustBatch(t, err)
 				if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 					t.Fatal("replay rejects submitted contribution")
@@ -412,13 +412,13 @@ func TestContextMixedReferenceBoundsExternalLoad(t *testing.T) {
 				if !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) || len(backend.attempts) != attempts {
 					t.Fatal("independent Load changed the source session or storage")
 				}
-				result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
+				result, err := h.Append(context.Background(), run.SessionID().ResourceID(), c.Commit)
 				mustBatch(t, err)
 				if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), testConfigFor(sessionPolicy()))
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.SessionID(), testConfigFor(sessionPolicy()))
 				if valid {
 					mustBatch(t, err)
 					if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {
@@ -444,7 +444,7 @@ func TestContextForwardReferenceExternalLoad(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceRootInstructions(run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
+			mustBatch(t, b.ReplaceRootInstructions(run.SessionID(), session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "workspace/root-guidance", Parts: []session.ContentPart{{Text: new("accepted root")}}, Source: session.ContentSource{Description: "accepted"}}}}))
 			submitBatch(t, s, b)
 			old := s.Snapshot()
 			before := captureRejectedSnapshot(old)
@@ -478,13 +478,13 @@ func TestContextForwardReferenceExternalLoad(t *testing.T) {
 			} else {
 				// History accepts the complete external commit opaquely. Load must
 				// reject its ordering even though the source exists by commit end.
-				result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
+				result, err := h.Append(context.Background(), run.SessionID().ResourceID(), c.Commit)
 				mustBatch(t, err)
 				if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 					t.Fatal("external append")
 				}
 				reader := &loadBackend{Backend: readOnlyHistoryBackend{Backend: backend, t: t}}
-				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.HistoryID(), testConfigFor(sessionPolicy()))
+				loaded, err := session.Load(context.Background(), newLifecycleHistory(t, reader), run.SessionID(), testConfigFor(sessionPolicy()))
 				if loaded != nil || !errors.Is(err, session.ErrTransition) {
 					t.Fatalf("forward reference Load = %v, %v; want nil, ErrTransition", loaded, err)
 				}
@@ -522,13 +522,13 @@ func TestNewRecordExactVersionsAndZeroViews(t *testing.T) {
 		assertRejected(t, h, s, proposedCommit(t, s, fixtureRecord{dto}), session.ErrUnsupportedRecord)
 	}
 	var r session.RecordView
-	if v, ok := r.RootInstructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
+	if v, ok := r.RootInstructions(); ok || v.SessionID() != (sessionid.SessionID{}) || v.Blocks().Len() != 0 {
 		t.Fatal("zero instructions")
 	}
-	if v, ok := r.ToolCatalog(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Tools().Len() != 0 {
+	if v, ok := r.ToolCatalog(); ok || v.SessionID() != (sessionid.SessionID{}) || v.Tools().Len() != 0 {
 		t.Fatal("zero catalog")
 	}
-	if v, ok := r.ModelBinding(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Route() != "" || v.API() != "" || v.Model() != "" || v.Settings() != (session.ModelSettingsView{}) {
+	if v, ok := r.ModelBinding(); ok || v.SessionID() != (sessionid.SessionID{}) || v.Route() != "" || v.API() != "" || v.Model() != "" || v.Settings() != (session.ModelSettingsView{}) {
 		t.Fatal("zero binding")
 	}
 	if v, ok := r.EffectiveInput(); ok || v.RunID() != (session.RunID{}) || v.Inputs().Len() != 0 {

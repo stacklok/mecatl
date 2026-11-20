@@ -7,9 +7,9 @@ import "errors"
 //dtogen:validate Validate
 //dtogen:include
 type RunStarted struct {
-	// ID is the required one-based run ordinal within the enclosing history.
-	// Conversion restores the history identity from the envelope. Local validation
-	// checks positivity; the aggregate checks contiguous allocation and admission.
+	// ID is the required one-based Session-relative run ordinal. Conversion restores
+	// Session identity from the root history envelope. Local validation checks
+	// positivity; the aggregate checks contiguous allocation and admission.
 	ID uint64 `cbor:"r" view:"manual"`
 }
 

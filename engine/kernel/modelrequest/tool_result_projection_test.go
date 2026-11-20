@@ -137,7 +137,7 @@ func TestConstructToolResourcesAndTypedMedia(t *testing.T) {
 		t.Fatalf("resource projection mismatch: %#v", result)
 	}
 	f.submit()
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+	loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 	requireConstruction(t, err)
 	again, err := Construct(loaded.Snapshot(), format.ParametersV1{}, testLimits())
 	requireConstruction(t, err)
@@ -171,7 +171,7 @@ func TestConstructBulkCloseoutExplicitDispositionWins(t *testing.T) {
 		}
 	}
 	f.submit()
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+	loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 	requireConstruction(t, err)
 	if _, err := Construct(loaded.Snapshot(), format.ParametersV1{}, testLimits()); err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestConstructRejectsOversizedProjection(t *testing.T) {
 
 func TestConstructLimitsAgreeWithFinalCodecValidation(t *testing.T) {
 	f := newConstructionFixture(t)
-	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.SessionID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptInstructions, "selected")}}))
 	response := f.response([]session.ResponseItem{{Call: &session.RequestedCall{ProviderCallID: "original", Arguments: []byte{0xff, 0, '{'}}}}, &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 1, Data: []byte{1, 2}})
 	requireConstruction(t, f.b.AddToolInvocation(response.CallAt(0).ID(), session.ToolInvocation{Name: "effective"}))

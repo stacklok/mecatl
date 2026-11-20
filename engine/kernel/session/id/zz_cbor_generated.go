@@ -13,7 +13,7 @@ import (
 type dtogen struct{}
 
 // CheckCBOR checks one value using shared operation accounting; fieldMax caps only its immediate representation.
-func (v HistoryID) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
+func (v SessionID) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 	if b == nil {
 		return dtogenCodec.ErrInvalidLimits
 	}
@@ -24,10 +24,10 @@ func (v HistoryID) CheckCBOR(b *dtogenCodec.Budget, depth, fieldMax int) error {
 }
 
 // AppendCBOR appends a stable value already admitted by CheckCBOR; it does not validate or account again.
-func (v HistoryID) AppendCBOR(dst []byte) []byte { return (dtogen{}).append0(dst, v) }
+func (v SessionID) AppendCBOR(dst []byte) []byte { return (dtogen{}).append0(dst, v) }
 
 // ReadCBOR reads one value transactionally. Discard the reader after an error; receiver storage remains unchanged.
-func (v *HistoryID) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
+func (v *SessionID) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
@@ -43,24 +43,24 @@ func (v *HistoryID) ReadCBOR(r *dtogenCodec.Reader, depth, fieldMax int) error {
 }
 
 // Clone detaches mutable state, including excluded fields, without validation; nil collections remain nil.
-func (v HistoryID) Clone() HistoryID { return (dtogen{}).clone0(v) }
+func (v SessionID) Clone() SessionID { return (dtogen{}).clone0(v) }
 
 // Equal compares all state without validation; nil and empty collections are equal, absent and present pointers differ.
-func (v HistoryID) Equal(other HistoryID) bool { return (dtogen{}).equal0(v, other) }
+func (v SessionID) Equal(other SessionID) bool { return (dtogen{}).equal0(v, other) }
 
-// Helpers 0: HistoryID.
-func (h dtogen) clone0(v HistoryID) HistoryID {
+// Helpers 0: SessionID.
+func (h dtogen) clone0(v SessionID) SessionID {
 	out := v
 	out.value = h.clone1(v.value)
 	return out
 }
-func (h dtogen) equal0(v, w HistoryID) bool {
+func (h dtogen) equal0(v, w SessionID) bool {
 	if !h.equal1(v.value, w.value) {
 		return false
 	}
 	return true
 }
-func (h dtogen) check0(v HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check0(v SessionID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	defer func() {
 		if err == nil && v.validateCBOR() != nil {
 			err = dtogenCodec.ErrInvalidData
@@ -68,10 +68,10 @@ func (h dtogen) check0(v HistoryID, b *dtogenCodec.Budget, d, cap int) (err erro
 	}()
 	return h.check1(v.value, b, d, int(min(uint64(cap), uint64(int(^uint(0)>>1)))))
 }
-func (h dtogen) append0(out []byte, v HistoryID) []byte {
+func (h dtogen) append0(out []byte, v SessionID) []byte {
 	return h.append1(out, v.value)
 }
-func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v HistoryID, err error) {
+func (h dtogen) read0(r *dtogenCodec.Reader, d, cap int) (v SessionID, err error) {
 	defer func() {
 		if err == nil && v.validateCBOR() != nil {
 			err = dtogenCodec.ErrInvalidData

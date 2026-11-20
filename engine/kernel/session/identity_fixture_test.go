@@ -3,12 +3,12 @@ package session_test
 import (
 	"testing"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // allocatedRun builds a real provisional prefix rather than constructing an ID.
-func allocatedRun(t testing.TB, scope historyid.HistoryID, count uint64) session.RunID {
+func allocatedRun(t testing.TB, scope sessionid.SessionID, count uint64) session.RunID {
 	t.Helper()
 	s, err := session.New(newSessionHistory(t), scope, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
@@ -29,7 +29,7 @@ func allocatedRun(t testing.TB, scope historyid.HistoryID, count uint64) session
 func allocationBatch(t testing.TB, run session.RunID) (*session.Session, *session.SessionCommit) {
 	t.Helper()
 	mustBatch(t, run.Validate())
-	s, err := session.New(newSessionHistory(t), run.HistoryID(), testConfigFor(sessionPolicy()))
+	s, err := session.New(newSessionHistory(t), run.SessionID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
@@ -57,7 +57,7 @@ func allocatedInput(t testing.TB, run session.RunID, count uint64) session.UserI
 func allocatedRequest(t testing.TB, run session.RunID, count uint64) session.ModelRequestID {
 	t.Helper()
 	s, b := allocationBatch(t, run)
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+	mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	var id session.ModelRequestID
 	for range count {

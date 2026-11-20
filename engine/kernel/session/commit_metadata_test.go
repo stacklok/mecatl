@@ -41,7 +41,7 @@ func TestMetadataTimestampConversion(t *testing.T) {
 
 func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 	h := newSessionHistory(t)
-	scope := testHistoryID(t)
+	scope := testSessionID(t)
 	now := int64(0)
 	forbidden := false
 	config := Config{Policy: sessionPolicy(), InstanceID: 7, Now: func() time.Time {
@@ -249,7 +249,7 @@ func TestAcceptedRecordMetadataTraversalAndLifetime(t *testing.T) {
 func TestRecordMetadataUncertainSubmission(t *testing.T) {
 	backend := &timestampBackend{Backend: mem.New(), loseAck: true}
 	h := newLifecycleHistory(t, backend)
-	s, err := New(h, testHistoryID(t), testConfigFor(sessionPolicy()))
+	s, err := New(h, testSessionID(t), testConfigFor(sessionPolicy()))
 	interactionCheck(t, err)
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)

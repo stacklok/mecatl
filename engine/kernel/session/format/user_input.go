@@ -10,9 +10,9 @@ import "errors"
 //dtogen:validate validateLocal
 //dtogen:include
 type UserInput struct {
-	// RunID is the required one-based owning run ordinal within the enclosing
-	// history. Conversion restores history scope from the envelope; the aggregate
-	// checks active-run membership, not this payload's local validator.
+	// RunID is the required one-based Session-relative owning run ordinal.
+	// Conversion restores Session scope from the root history envelope; the
+	// aggregate checks active-run membership, not this payload's local validator.
 	RunID uint64 `cbor:"r" view:"-"`
 	// ID is the required one-based user-submission ordinal within RunID. Local
 	// validation checks positivity; the aggregate checks contiguous allocation.

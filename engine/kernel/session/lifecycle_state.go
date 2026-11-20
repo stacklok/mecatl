@@ -5,8 +5,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // lifecycleState is the compact reconstructed lifecycle state, not history: immutable
@@ -27,11 +27,11 @@ type lifecycleState struct {
 	// correlation until a successor start resets it.
 	activeRun RunID
 
-	// runs is the history-wide number of admitted RunStarted facts. A successful
+	// runs is the Session-wide number of admitted RunStarted facts. A successful
 	// start allocates exactly its next ordinal by incrementing this count.
 	runs uint64
 
-	// usages is the history-wide number of first-defined Usage identities. Adding a
+	// usages is the Session-wide number of first-defined Usage identities. Adding a
 	// definition increments it once; replacing a report neither allocates nor changes it.
 	usages uint64
 
@@ -114,16 +114,16 @@ func newAdmission(v Snapshot) admissionContext {
 	return admissionContext{head: v.head, source: v.lifecycle, candidate: v.lifecycle, acceptedRequests: v.finalRequests}
 }
 
-// admit validates a complete locally valid fact in explicit history scope against
+// admit validates a complete locally valid fact in explicit Session scope against
 // the pinned source and ordered candidate. On success it mutates only the
 // receiver's candidate and staged counts; on error the entire context is unchanged.
 // Staged request counts never share accepted backing; successful successor starts
 // append only beyond the preceding staged length. It establishes neither
 // persistence, storage acceptance, nor publication. Outcomes account only their
 // captured frontier.
-func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecord) error {
+func (a *admissionContext) admit(scope sessionid.SessionID, r *materializedRecord) error {
 	s := &a.candidate
-	if scope != s.activeRun.historyID && s.activeRun != (RunID{}) {
+	if scope != s.activeRun.sessionID && s.activeRun != (RunID{}) {
 		return ErrIdentity
 	}
 	switch r.value.Kind {
@@ -135,7 +135,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 	case sessionformat.KindRunStarted:
 		return a.startRun(scope, r.started)
 	case sessionformat.KindUserInput:
-		return s.admitUserInput(UserInputID{runID: RunID{historyID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
+		return s.admitUserInput(UserInputID{runID: RunID{sessionID: scope, ordinal: r.input.RunID}, ordinal: r.input.ID})
 	case sessionformat.KindRootInstructions, sessionformat.KindUserInstructions, sessionformat.KindToolCatalog, sessionformat.KindModelBinding:
 		if !s.created {
 			return ErrTransition
@@ -173,7 +173,7 @@ func (a *admissionContext) admit(scope historyid.HistoryID, r *materializedRecor
 
 // startRun proves the next run identity, retains the preceding run's final request
 // count if any, and resets only run-local state. Failure changes neither state nor counts.
-func (a *admissionContext) startRun(scope historyid.HistoryID, v sessionformat.RunStarted) error {
+func (a *admissionContext) startRun(scope sessionid.SessionID, v sessionformat.RunStarted) error {
 	s := &a.candidate
 	if !s.created || s.activeRun != (RunID{}) || s.runs == math.MaxUint64 || v.ID != s.runs+1 {
 		return ErrTransition
@@ -182,7 +182,7 @@ func (a *admissionContext) startRun(scope historyid.HistoryID, v sessionformat.R
 		a.stagedRequests = append(a.stagedRequests, s.requests)
 	}
 	s.runs++
-	s.activeRun = RunID{historyID: scope, ordinal: v.ID}
+	s.activeRun = RunID{sessionID: scope, ordinal: v.ID}
 	s.inputs, s.requests, s.frontier, s.accounted, s.captured, s.calls = 0, 0, 0, 0, 0, 0
 	s.pending = ModelRequestID{}
 	s.tools = nil
@@ -226,7 +226,7 @@ func (s *lifecycleState) admitEffectiveInput(v sessionformat.EffectiveInput) err
 // admitRequest uses the valid preceding candidate for preparation and coverage.
 // Only the source anchor and RetryOf membership require earlier accepted history.
 // Failure consumes no request ordinal.
-func (a *admissionContext) admitRequest(scope historyid.HistoryID, v sessionformat.ModelRequest) error {
+func (a *admissionContext) admitRequest(scope sessionid.SessionID, v sessionformat.ModelRequest) error {
 	s := &a.candidate
 	src := a.source
 	id := requestID(scope, v.RunID, v.ID)
@@ -269,9 +269,9 @@ func (a *admissionContext) admitOutcome(id ModelRequestID, calls uint64) error {
 // endRun checks individual tool settlement, clean completion coverage and model
 // capture membership before ending ownership. Bulk closeout is represented only
 // by the terminal fact; it neither rewrites calls nor resolves a pending model.
-func (a *admissionContext) endRun(scope historyid.HistoryID, v sessionformat.RunEnded) error {
+func (a *admissionContext) endRun(scope sessionid.SessionID, v sessionformat.RunEnded) error {
 	s := &a.candidate
-	if !s.created || s.activeRun == (RunID{}) || (RunID{historyID: scope, ordinal: v.RunID}) != s.activeRun {
+	if !s.created || s.activeRun == (RunID{}) || (RunID{sessionID: scope, ordinal: v.RunID}) != s.activeRun {
 		return ErrTransition
 	}
 	if !v.BulkToolCloseout && s.calls != 0 {
@@ -302,7 +302,7 @@ func (s *Session) preflight(records []*materializedRecord, ref history.CommitRef
 		if err := r.checkPayload(s.policy.PayloadLimits); err != nil {
 			return err
 		}
-		if err := a.admit(s.state.view.historyID, r); err != nil {
+		if err := a.admit(s.state.view.sessionID, r); err != nil {
 			return err
 		}
 	}
@@ -319,7 +319,7 @@ func (s *Session) reserveEnding(ref history.CommitRef, state lifecycleState, rec
 		return nil
 	}
 	next := Session{history: s.history, policy: s.policy, state: sessionState{
-		view: Snapshot{historyID: s.state.view.historyID, head: ref, lifecycle: state}, records: records, payloadBytes: payloadBytes,
+		view: Snapshot{sessionID: s.state.view.sessionID, head: ref, lifecycle: state}, records: records, payloadBytes: payloadBytes,
 	}}
 	for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {
 		if _, err := next.prepareEnding(reason); err != nil {

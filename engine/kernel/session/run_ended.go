@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // RunEndedReason is a closed owner-selected terminal run category, encoded as a
@@ -79,7 +79,7 @@ func (r *materializedRecord) minimalEnding() bool {
 }
 
 // CaptureFailureEvidenceView is immutable bounded evidence for a failed capture.
-// RequestID reconstructs the full history and run scope retained by its enclosing
+// RequestID reconstructs the full Session and run scope retained by its enclosing
 // ending. Zero has a zero request and no optional children; child access is O(1).
 //
 //dtogen:include
@@ -93,7 +93,7 @@ func (v CaptureFailureEvidenceView) RequestID() ModelRequestID {
 	if v.value == nil {
 		return ModelRequestID{}
 	}
-	return requestID(v.runID.historyID, v.runID.ordinal, v.value.RequestID)
+	return requestID(v.runID.sessionID, v.runID.ordinal, v.value.RequestID)
 }
 
 // RunEndedView is an immutable terminal fact. Zero has zero run, empty reason and
@@ -102,7 +102,7 @@ func (v CaptureFailureEvidenceView) RequestID() ModelRequestID {
 //
 //dtogen:include
 type RunEndedView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.RunEnded
 }
 
@@ -111,7 +111,7 @@ func (v RunEndedView) RunID() RunID {
 	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{historyID: v.scope, ordinal: v.value.RunID}
+	return RunID{sessionID: v.scope, ordinal: v.value.RunID}
 }
 
 // Capture returns a pinned capture-failure evidence view when present. It does not

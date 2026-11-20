@@ -140,7 +140,7 @@ func (v ToolIndeterminate) validateLocal() error {
 
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -151,7 +151,7 @@ func (v ToolIndeterminate) validateLocal() error {
 //dtogen:include
 //dtogen:validate validateLocal
 type ToolDisposition struct {
-	// RunID is the required positive run component within the enclosing history.
+	// RunID is the required positive Session-relative run component.
 	RunID uint64 `cbor:"r" view:"-"`
 	// RequestID is the required positive request component within RunID.
 	RequestID uint64 `cbor:"q" view:"-"`

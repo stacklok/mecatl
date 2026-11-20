@@ -7,8 +7,8 @@ package format
 // Dynamically triggered guidance enters chronological EffectiveInput with
 // attribution rather than retroactively replacing this standing value. Latest
 // replacement wins across runs; nil and empty Blocks explicitly clear it.
-// Assignment shares Blocks and children; Clone detaches them. History scope
-// comes from the envelope.
+// Assignment shares Blocks and children; Clone detaches them. Session scope
+// comes from the root history envelope.
 //
 //dtogen:validate validateLocal
 //dtogen:include

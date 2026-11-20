@@ -45,7 +45,7 @@ func TestModelRequestCaptureFreshness(t *testing.T) {
 				destination = &copied
 				want = ErrBatch
 			case "stale empty context":
-				interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
+				interactionCheck(t, b.ReplaceRootInstructions(run.sessionID, RootInstructions{}))
 			case "stale input":
 				_, err := b.AddUserInput(run, UserInput{})
 				interactionCheck(t, err)
@@ -90,9 +90,9 @@ func TestModelRequestGenesisCaptureSubmitLoad(t *testing.T) {
 	interactionCheck(t, b.Create())
 	run, err := b.StartRun()
 	interactionCheck(t, err)
-	interactionCheck(t, b.ReplaceModelBinding(run.historyID, ModelBinding{Route: "r", API: "a", Model: "m"}))
-	interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
-	interactionCheck(t, b.ReplaceUserInstructions(run.historyID, UserInstructions{}))
+	interactionCheck(t, b.ReplaceModelBinding(run.sessionID, ModelBinding{Route: "r", API: "a", Model: "m"}))
+	interactionCheck(t, b.ReplaceRootInstructions(run.sessionID, RootInstructions{}))
+	interactionCheck(t, b.ReplaceUserInstructions(run.sessionID, UserInstructions{}))
 	input, err := b.AddUserInput(run, UserInput{Parts: []ContentPart{{Text: new("hello")}}})
 	interactionCheck(t, err)
 	interactionCheck(t, b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.ordinal)}}}))
@@ -114,7 +114,7 @@ func TestModelRequestGenesisCaptureSubmitLoad(t *testing.T) {
 	_, err = s.SubmitCommit(t.Context(), b)
 	interactionCheck(t, err)
 	interactionReplay(t, s)
-	loaded, err := Load(t.Context(), s.history, run.historyID, testConfigFor(s.policy))
+	loaded, err := Load(t.Context(), s.history, run.sessionID, testConfigFor(s.policy))
 	interactionCheck(t, err)
 	for _, snapshot := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		request, ok := snapshot.RecordAt(7).ModelRequest()
@@ -233,13 +233,13 @@ func TestModelRequestNilAnchorOutsideGenesisAllPaths(t *testing.T) {
 				err = s.apply(interactionCommit(t, s, []*materializedRecord{r}))
 			case "load":
 				c := interactionCommit(t, s, []*materializedRecord{r})
-				result, e := s.history.Append(t.Context(), s.Snapshot().HistoryID(), c.Commit)
+				result, e := s.history.Append(t.Context(), s.Snapshot().SessionID().ResourceID(), c.Commit)
 				interactionCheck(t, e)
 				if result.Status != history.StatusAccepted {
 					t.Fatal("history rejected opaque record")
 				}
 				var loaded *Session
-				loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+				loaded, err = Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 				if loaded != nil {
 					t.Fatal("invalid load returned session")
 				}

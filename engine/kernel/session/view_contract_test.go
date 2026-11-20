@@ -70,7 +70,7 @@ func TestRecursiveViewsPresenceBytesAndBounds(t *testing.T) {
 	p.PayloadLimits.MaxCollectionElements = 512
 	p.PayloadLimits.MaxNodes = 2048
 	s := newSession(t, p)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)

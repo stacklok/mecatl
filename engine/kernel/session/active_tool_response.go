@@ -3,8 +3,8 @@ package session
 import (
 	"slices"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // activeToolResponse tracks only the latest response's call membership and pairing,
@@ -51,7 +51,7 @@ func (s *lifecycleState) replaceToolCall(id RequestedCallID, call activeToolCall
 // admitToolInvocation requires accepted response membership but not prior
 // prerequisite invocation. Payload validation already proved distinct backward
 // same-response components, so every prerequisite is also a response member.
-func (a *admissionContext) admitToolInvocation(scope historyid.HistoryID, v *sessionformat.ToolInvocation) error {
+func (a *admissionContext) admitToolInvocation(scope sessionid.SessionID, v *sessionformat.ToolInvocation) error {
 	id := RequestedCallID{requestID: requestID(scope, v.RunID, v.RequestID), ordinal: v.CallID}
 	call, ok := a.candidate.toolCall(id)
 	if _, accepted := a.source.toolCall(id); !ok || !accepted || call.invocation != nil || call.settled {
@@ -64,7 +64,7 @@ func (a *admissionContext) admitToolInvocation(scope historyid.HistoryID, v *ses
 
 // admitToolDisposition distinguishes accepted prerequisites from candidate
 // pairing. All categories settle; only Returned requires settled prerequisites.
-func (a *admissionContext) admitToolDisposition(scope historyid.HistoryID, v sessionformat.ToolDisposition) error {
+func (a *admissionContext) admitToolDisposition(scope sessionid.SessionID, v sessionformat.ToolDisposition) error {
 	id := RequestedCallID{requestID: requestID(scope, v.RunID, v.RequestID), ordinal: v.CallID}
 	call, ok := a.candidate.toolCall(id)
 	source, accepted := a.source.toolCall(id)

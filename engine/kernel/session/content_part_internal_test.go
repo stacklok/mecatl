@@ -13,8 +13,8 @@ func TestContentTextRecordOwnership(t *testing.T) {
 	for _, text := range []string{"", " exact e\u0301\r\n尾 "} {
 		t.Run(text, func(t *testing.T) {
 			s, limits := internalFixture(t)
-			scope := s.Snapshot().HistoryID()
-			run := RunID{historyID: scope, ordinal: 1}
+			scope := s.Snapshot().SessionID()
+			run := RunID{sessionID: scope, ordinal: 1}
 			input := UserInputID{runID: run, ordinal: 1}
 			callerText := text
 			parts := []ContentPart{{Text: &callerText}}
@@ -72,7 +72,7 @@ func TestContentTextRecordOwnership(t *testing.T) {
 
 func TestContentTextBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := UserInputID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, ordinal: 1}
+	id := UserInputID{runID: RunID{sessionID: s.Snapshot().SessionID(), ordinal: 1}, ordinal: 1}
 	input := UserInput{ID: id.ordinal, Parts: make([]ContentPart, 8)}
 	for i := range input.Parts {
 		input.Parts[i].Text = new("")
@@ -128,7 +128,7 @@ func TestContentBranchAdmissionIsAtomic(t *testing.T) {
 		if id, err := b.AddUserInput(run, UserInput{Parts: parts}); !errors.Is(err, codec.ErrInvalidData) || id != (UserInputID{}) {
 			t.Fatalf("invalid user content: %v, %v", id, err)
 		}
-		if err := b.ReplaceRootInstructions(run.historyID, RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := b.ReplaceRootInstructions(run.sessionID, RootInstructions{Blocks: []InstructionBlock{{Key: "harness/core", Parts: parts, Source: ContentSource{Description: "source"}}}}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("invalid instructions: %v", err)
 		}
 		if err := b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{Inline: &AttributedInput{Actor: "harness", Purpose: PromptContext, Parts: parts, Source: ContentSource{Description: "source"}}}}}); !errors.Is(err, codec.ErrInvalidData) {

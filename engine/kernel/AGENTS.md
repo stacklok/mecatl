@@ -6,8 +6,9 @@ production entry points unchanged unless Joe explicitly approves integration.
 ## Boundaries
 
 - `history` owns public history values and persistence vocabulary, not execution
-  or a storage backend. Its `history/id` values depend on the shared `engine/id`
-  utility and the identity-free `codec` runtime. Resource and content identity
+  or a storage backend. It keys histories by generic `engine/id.ID` values;
+  `session/id` owns typed Session identities and depends on the shared `engine/id`
+  utility and identity-free `codec` runtime. Resource and content identity
   owners may import `codec`, never the reverse.
 - Do not wrap, embed, alias, or import the legacy `session.Session` aggregate.
 - Review new public contracts in coherent, useful slices before adding consumers.

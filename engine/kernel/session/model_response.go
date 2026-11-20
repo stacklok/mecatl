@@ -5,8 +5,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ResponseContentKind selects one canonical content meaning. Empty and unknown
@@ -110,7 +110,7 @@ func newModelResponseRecord(v ModelResponse, request ModelRequestID, limits code
 //
 //dtogen:include
 type ModelResponseView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ModelResponse
 }
 

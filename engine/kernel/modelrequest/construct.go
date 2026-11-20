@@ -5,21 +5,21 @@ import (
 	"iter"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
 // Source is the constructor's finite, immutable, internally consistent record
-// source. All records and the active run belong to HistoryID. Records is repeatable
+// source. All records and the active run belong to SessionID. Records is repeatable
 // and agrees with RecordCount/RecordAt; indexing is O(1). Borrowed backing must stay
 // stable throughout Construct. Implementations are trusted in-process readers, not
 // hostile executable inputs. Session Snapshot and CommitView implement Source;
 // neither an implementation nor construction grants acceptance or execution authority.
 type Source interface {
-	HistoryID() historyid.HistoryID
+	SessionID() sessionid.SessionID
 	ActiveRun() session.RunID
 	RecordCount() int
 	RecordAt(int) session.RecordView
@@ -40,7 +40,7 @@ func Construct(source Source, parameters format.ParametersV1, limits codec.Limit
 	if err := codec.Check(parameters, limits); err != nil {
 		return ConstructionResult{}, err
 	}
-	if source == nil || source.HistoryID() == (historyid.HistoryID{}) || source.ActiveRun() == (session.RunID{}) || source.ActiveRun().HistoryID() != source.HistoryID() {
+	if source == nil || source.SessionID() == (sessionid.SessionID{}) || source.ActiveRun() == (session.RunID{}) || source.ActiveRun().SessionID() != source.SessionID() {
 		return ConstructionResult{}, errors.New("model request requires a scoped active source")
 	}
 	selection, err := selectChronological(source, parameters)

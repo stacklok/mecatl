@@ -3,8 +3,8 @@ package session
 import (
 	"iter"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // UsageEntriesView owns immutable first/latest locators built by Snapshot.Usages.
@@ -12,12 +12,12 @@ import (
 // backing. Copying, Len, At and ByID cost O(1); All costs O(entries visited).
 // Zero is empty. Withdrawn identities remain present. No method copies payloads.
 type UsageEntriesView struct {
-	scope   historyid.HistoryID
+	scope   sessionid.SessionID
 	entries []usageEntryLocator
 }
 
 // usageEntryLocator joins accepted first metadata with the last complete report.
-// Contiguous history-wide allocation makes its index the private ordinal minus
+// Contiguous Session-wide allocation makes its index the private ordinal minus
 // one, also the first-definition occurrence order. It is frozen before exposure.
 type usageEntryLocator struct {
 	first  *sessionformat.Usage
@@ -48,7 +48,7 @@ func (v UsageEntriesView) All() iter.Seq2[int, UsageEntryView] {
 // ByID looks up a full scoped usage identity in O(1). Zero, malformed, foreign
 // and absent identities return zero, false; reconstruction proves no membership.
 func (v UsageEntriesView) ByID(id UsageID) (UsageEntryView, bool) {
-	if id.historyID != v.scope || id.usageOrdinal == 0 || id.usageOrdinal > uint64(len(v.entries)) {
+	if id.sessionID != v.scope || id.usageOrdinal == 0 || id.usageOrdinal > uint64(len(v.entries)) {
 		return UsageEntryView{}, false
 	}
 	return v.At(int(id.usageOrdinal - 1)), true //nolint:gosec // Bounded by the int-sized locator count above.
@@ -59,7 +59,7 @@ func (v UsageEntriesView) ByID(id UsageID) (UsageEntryView, bool) {
 // its lifetime; all navigation is O(1) without sibling clones. Zero has no
 // identity, empty definition and invalid zero report. Later appends cannot change it.
 type UsageEntryView struct {
-	scope    historyid.HistoryID
+	scope    sessionid.SessionID
 	location *usageEntryLocator
 }
 
@@ -68,7 +68,7 @@ func (v UsageEntryView) ID() UsageID {
 	if v.location == nil {
 		return UsageID{}
 	}
-	return UsageID{historyID: v.scope, usageOrdinal: v.location.first.ID}
+	return UsageID{sessionID: v.scope, usageOrdinal: v.location.first.ID}
 }
 
 // Definition returns the fixed first-record metadata with fully scoped

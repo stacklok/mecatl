@@ -7,7 +7,7 @@ import (
 )
 
 func TestUserInputID(t *testing.T) {
-	run := allocatedRun(t, testHistoryID(t), 1)
+	run := allocatedRun(t, testSessionID(t), 1)
 	first, second := allocatedInput(t, run, 1), allocatedInput(t, run, 2)
 	copied := first
 	if first.Validate() != nil || first.RunID() != run || !first.Equal(copied) || first == second {

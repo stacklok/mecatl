@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
@@ -40,7 +40,7 @@ func newEffectiveInputRecord(v EffectiveInput, run RunID, limits codec.Limits) (
 //
 //dtogen:include
 type EffectiveInputView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.EffectiveInput
 }
 
@@ -49,7 +49,7 @@ func (v EffectiveInputView) RunID() RunID {
 	if v.value == nil {
 		return RunID{}
 	}
-	return RunID{historyID: v.scope, ordinal: v.value.RunID}
+	return RunID{sessionID: v.scope, ordinal: v.value.RunID}
 }
 
 // Inputs returns ordered immutable items, preserving duplicates; zero is empty.

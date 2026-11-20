@@ -9,28 +9,28 @@ import (
 
 	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
-func historyIDCodecLimits() codec.Limits {
+func sessionIDCodecLimits() codec.Limits {
 	return codec.Limits{MaxBytes: 100, MaxStringBytes: 25, MaxByteStringBytes: 1, MaxArrayElements: 2, MaxMapPairs: 1, MaxDepth: 1, MaxNodes: 3, MaxCollectionElements: 2}
 }
 
-func TestHistoryIDCBOROwnerComposition(t *testing.T) {
-	text := "HST" + strings.Repeat("1", 22)
-	v, err := historyid.ParseHistoryID(text)
+func TestSessionIDCBOROwnerComposition(t *testing.T) {
+	text := "SES" + strings.Repeat("1", 22)
+	v, err := sessionid.ParseSessionID(text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resource, _ := resourceid.Parse(text)
 	wire := append([]byte{0x78, 25}, text...)
-	l := historyIDCodecLimits()
+	l := sessionIDCodecLimits()
 	encoded, err := codec.Encode(v, l)
 	if err != nil || !bytes.Equal(encoded, wire) || !bytes.Equal(encoded, resource.AppendCBOR(nil)) {
 		t.Fatalf("transparent text = %x, %v", encoded, err)
 	}
 	input := bytes.Clone(wire)
-	decoded, err := codec.Decode[historyid.HistoryID](input, l)
+	decoded, err := codec.Decode[sessionid.SessionID](input, l)
 	if err != nil || !v.Equal(decoded) || !v.Equal(v.Clone()) {
 		t.Fatal("owner round trip", err)
 	}
@@ -48,7 +48,7 @@ func TestHistoryIDCBOROwnerComposition(t *testing.T) {
 	if err := decoded.ReadCBOR(&r, l.MaxDepth, math.MaxInt); err != nil || r.Done() != nil {
 		t.Fatal("wrapper added read depth", err)
 	}
-	var zero historyid.HistoryID
+	var zero sessionid.SessionID
 	if err := codec.Check(zero, l); !errors.Is(err, codec.ErrInvalidData) || !zero.Equal(zero.Clone()) {
 		t.Fatal("zero identity validity/value operations", err)
 	}
@@ -57,8 +57,8 @@ func TestHistoryIDCBOROwnerComposition(t *testing.T) {
 	}
 }
 
-func TestHistoryIDCBORSharedBudgetAndCaps(t *testing.T) {
-	v, _ := historyid.ParseHistoryID("HST" + strings.Repeat("1", 22))
+func TestSessionIDCBORSharedBudgetAndCaps(t *testing.T) {
+	v, _ := sessionid.ParseSessionID("SES" + strings.Repeat("1", 22))
 	wire := v.AppendCBOR(nil)
 	for _, tt := range []struct {
 		name string
@@ -70,7 +70,7 @@ func TestHistoryIDCBORSharedBudgetAndCaps(t *testing.T) {
 		{"global text", func(l *codec.Limits) { l.MaxStringBytes-- }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			l := historyIDCodecLimits()
+			l := sessionIDCodecLimits()
 			tt.edit(&l)
 			b, _ := codec.NewBudget(l)
 			err := b.CheckArray(2, 0, 2)
@@ -84,7 +84,7 @@ func TestHistoryIDCBORSharedBudgetAndCaps(t *testing.T) {
 			_, readErr := r.Array(0, 2)
 			for range 2 {
 				if readErr == nil {
-					var child historyid.HistoryID
+					var child sessionid.SessionID
 					readErr = child.ReadCBOR(&r, 1, math.MaxInt)
 				}
 			}
@@ -98,7 +98,7 @@ func TestHistoryIDCBORSharedBudgetAndCaps(t *testing.T) {
 		})
 	}
 	for _, cap := range []int{24, math.MaxInt} {
-		l := historyIDCodecLimits()
+		l := sessionIDCodecLimits()
 		if cap == math.MaxInt {
 			l.MaxStringBytes = 24
 		}
@@ -111,25 +111,32 @@ func TestHistoryIDCBORSharedBudgetAndCaps(t *testing.T) {
 	}
 }
 
-func TestHistoryIDCBORReadFailurePreservesReceiver(t *testing.T) {
-	text := "HST" + strings.Repeat("1", 22)
-	v, _ := historyid.ParseHistoryID(text)
+func TestSessionIDCBORReadFailurePreservesReceiver(t *testing.T) {
+	text := "SES" + strings.Repeat("1", 22)
+	v, _ := sessionid.ParseSessionID(text)
 	wire := v.AppendCBOR(nil)
-	cases := [][]byte{{0xf6}, {0x60}, append([]byte{0x78, 25}, "RUN"+text[3:]...), append([]byte{0x78, 25}, text[:24]+"0"...)}
+	cases := [][]byte{{0xf6}, {0x60}, append([]byte{0x78, 25}, text[:24]+"0"...)}
+	for _, kind := range []string{"RUN", "HST", "FOO"} {
+		generic, err := resourceid.Parse(kind + text[3:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, generic.AppendCBOR(nil))
+	}
 	for end := range len(wire) {
 		cases = append(cases, wire[:end])
 	}
 	for _, data := range cases {
-		r, _ := codec.NewReader(data, historyIDCodecLimits())
+		r, _ := codec.NewReader(data, sessionIDCodecLimits())
 		receiver := v
 		if err := receiver.ReadCBOR(&r, 0, math.MaxInt); !errors.Is(err, codec.ErrInvalidData) || receiver != v {
 			t.Fatalf("failure changed receiver: %x, %v", data, err)
 		}
-		if got, err := codec.Decode[historyid.HistoryID](data, historyIDCodecLimits()); !errors.Is(err, codec.ErrInvalidData) || got != (historyid.HistoryID{}) {
+		if got, err := codec.Decode[sessionid.SessionID](data, sessionIDCodecLimits()); !errors.Is(err, codec.ErrInvalidData) || got != (sessionid.SessionID{}) {
 			t.Fatal("failure did not return zero", err)
 		}
 	}
-	if got, err := codec.Decode[historyid.HistoryID](append(bytes.Clone(wire), 0), historyIDCodecLimits()); !errors.Is(err, codec.ErrInvalidData) || got != (historyid.HistoryID{}) {
+	if got, err := codec.Decode[sessionid.SessionID](append(bytes.Clone(wire), 0), sessionIDCodecLimits()); !errors.Is(err, codec.ErrInvalidData) || got != (sessionid.SessionID{}) {
 		t.Fatal("root trailing bytes accepted", err)
 	}
 }

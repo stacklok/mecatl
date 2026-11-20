@@ -4,8 +4,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // SourceHead identifies an exact accepted history commit, not membership proof.
@@ -48,8 +48,8 @@ func newModelRequestRecord(v ModelRequest, id ModelRequestID, limits codec.Limit
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindModelRequest, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-func requestID(scope historyid.HistoryID, run, ordinal uint64) ModelRequestID {
-	return ModelRequestID{runID: RunID{historyID: scope, ordinal: run}, requestOrdinal: ordinal}
+func requestID(scope sessionid.SessionID, run, ordinal uint64) ModelRequestID {
+	return ModelRequestID{runID: RunID{sessionID: scope, ordinal: run}, requestOrdinal: ordinal}
 }
 
 // ConstructionRecipeView retains immutable construction backing for its lifetime.
@@ -83,7 +83,7 @@ func (v SourceHeadView) CID() contentid.CID {
 //
 //dtogen:include
 type ModelRequestView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ModelRequest
 }
 

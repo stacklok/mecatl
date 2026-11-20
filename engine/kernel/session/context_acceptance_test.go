@@ -21,7 +21,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 	p.PayloadLimits.MaxCollectionElements = 512
 	p.PayloadLimits.MaxNodes = 2048
 	s := boundSession(t, h, p)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	dir := t.TempDir()
 	paths := []string{"skill.md", "AGENTS.md", "settings.json"}
 	prepared := []string{"expanded skill\n", "adopted root\n", " {\"z\":1.00, \"a\":false} "}
@@ -157,7 +157,7 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	mustBatch(t, b.Create())
 	batchRun(t, b)
 	submitBatch(t, s, b)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	other, err := session.Load(context.Background(), h, scope, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	before := captureRejectedSnapshot(other.Snapshot())

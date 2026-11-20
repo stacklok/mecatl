@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestSnapshotUserInputByID(t *testing.T) {
@@ -41,12 +41,12 @@ func TestSnapshotUserInputByID(t *testing.T) {
 	if latest.RecordCount() != pinned.RecordCount()+4 || latest.ActiveRun() != secondRun || !userInputsMatch(latest, first.RunID(), 2) || !userInputsMatch(latest, secondRun, 1) {
 		t.Fatal("same-owner appends did not publish expected inputs and successor")
 	}
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
 	for name, id := range map[string]session.UserInputID{
 		"zero":        {},
 		"foreign":     allocatedInput(t, allocatedRun(t, foreign, 1), 1),
-		"absent run":  allocatedInput(t, allocatedRun(t, first.RunID().HistoryID(), 3), 1),
+		"absent run":  allocatedInput(t, allocatedRun(t, first.RunID().SessionID(), 3), 1),
 		"old run end": allocatedInput(t, first.RunID(), 3),
 		"new run end": allocatedInput(t, newInput.RunID(), 2),
 	} {
@@ -86,7 +86,7 @@ func TestSnapshotUserInputByIDConcurrentPinned(t *testing.T) {
 	s = loadRecords(t, h, s, createdRecord(t), startRecord(t, 1), inputRecord(t, 1))
 	pinned := s.Snapshot()
 	first := allocatedInput(t, pinned.ActiveRun(), 1)
-	absent := []session.UserInputID{allocatedInput(t, first.RunID(), 2), allocatedInput(t, allocatedRun(t, first.RunID().HistoryID(), 2), 1)}
+	absent := []session.UserInputID{allocatedInput(t, first.RunID(), 2), allocatedInput(t, allocatedRun(t, first.RunID().SessionID(), 2), 1)}
 	checkPinned := func() {
 		got, ok := pinned.UserInputByID(first)
 		if !ok || got.ID() != first || !reflect.DeepEqual(inputBytes(got), []byte{0xff, 0, 'x'}) {

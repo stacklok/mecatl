@@ -20,7 +20,7 @@ func TestLegacyArtifactMigrationIsNarrow(t *testing.T) {
 		{"kernel/codec/internal/fixture/zz_cbor_generated.go", true},
 		{"kernel/codec/internal/fixture/value/zz_cbor_generated.go", true},
 		{"kernel/contentid/zz_cbor_generated.go", true},
-		{"kernel/history/id/zz_cbor_generated.go", true},
+		{"kernel/session/id/zz_cbor_generated.go", false},
 		{"kernel/history/format/zz_cbor_generated.go", true},
 		{"kernel/session/format/zz_cbor_generated.go", true},
 		{"owner/zz_cbor_generated.go", false},

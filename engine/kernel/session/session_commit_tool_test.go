@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestSessionCommitToolFactAuthoringPrecedence(t *testing.T) {
 	for _, kind := range []string{"invocation", "disposition"} {
 		t.Run(kind, func(t *testing.T) {
 			s := interactionFixture(t, "active")
-			call := RequestedCallID{requestID: requestID(s.Snapshot().HistoryID(), 1, 1), ordinal: 1}
-			foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+			call := RequestedCallID{requestID: requestID(s.Snapshot().SessionID(), 1, 1), ordinal: 1}
+			foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 			interactionCheck(t, err)
 			b, err := s.BeginCommit()
 			interactionCheck(t, err)
 			defer b.Discard() //nolint:errcheck // Deliberately unsubmitted batch.
-			interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
+			interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().SessionID(), RootInstructions{}))
 			before, records := b.admission, append([]*materializedRecord(nil), b.records...)
 			oversized := strings.Repeat("x", s.policy.PayloadLimits.MaxStringBytes+1)
 			add := func(b *SessionCommit, call RequestedCallID, ids [3]uint64) error {
@@ -36,12 +36,12 @@ func TestSessionCommitToolFactAuthoringPrecedence(t *testing.T) {
 				want error
 			}{
 				{"zero call", func(c *RequestedCallID) { *c = RequestedCallID{} }, [3]uint64{}, codec.ErrInvalidData},
-				{"zero history", func(c *RequestedCallID) { c.requestID.runID.historyID = historyid.HistoryID{} }, [3]uint64{}, codec.ErrInvalidData},
+				{"zero history", func(c *RequestedCallID) { c.requestID.runID.sessionID = sessionid.SessionID{} }, [3]uint64{}, codec.ErrInvalidData},
 				{"zero run", func(c *RequestedCallID) { c.requestID.runID.ordinal = 0 }, [3]uint64{}, codec.ErrInvalidData},
 				{"zero request", func(c *RequestedCallID) { c.requestID.requestOrdinal = 0 }, [3]uint64{}, codec.ErrInvalidData},
 				{"zero component", func(c *RequestedCallID) { c.ordinal = 0 }, [3]uint64{}, codec.ErrInvalidData},
-				{"foreign before DTO fields", func(c *RequestedCallID) { c.requestID.runID.historyID = foreign }, [3]uint64{1, 1, 1}, ErrIdentity},
-				{"invalid foreign before scope", func(c *RequestedCallID) { c.requestID.runID.historyID = foreign; c.ordinal = 0 }, [3]uint64{}, codec.ErrInvalidData},
+				{"foreign before DTO fields", func(c *RequestedCallID) { c.requestID.runID.sessionID = foreign }, [3]uint64{1, 1, 1}, ErrIdentity},
+				{"invalid foreign before scope", func(c *RequestedCallID) { c.requestID.runID.sessionID = foreign; c.ordinal = 0 }, [3]uint64{}, codec.ErrInvalidData},
 				{"incoming run", nil, [3]uint64{1, 0, 0}, codec.ErrInvalidData},
 				{"incoming request", nil, [3]uint64{0, 1, 0}, codec.ErrInvalidData},
 				{"incoming call", nil, [3]uint64{0, 0, 1}, codec.ErrInvalidData},

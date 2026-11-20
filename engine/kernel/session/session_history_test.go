@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 )
@@ -26,14 +27,14 @@ type readOnlyHistoryBackend struct {
 	t testing.TB
 }
 
-func (b readOnlyHistoryBackend) Append(context.Context, history.HistoryID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
+func (b readOnlyHistoryBackend) Append(context.Context, resourceid.ID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
 	b.t.Error("reconstruction attempted write")
 	return history.Observation{}, history.ErrInvalid
 }
 
 var errReplayPrefix = errors.New("replay ended before pinned endpoint")
 
-func reconstructHistorySession(t testing.TB, read func(context.Context, history.HistoryID, history.ReadRequest) (history.Page, error), endpoint history.CommitRef) (*session.Session, error) {
+func reconstructHistorySession(t testing.TB, read func(context.Context, resourceid.ID, history.ReadRequest) (history.Page, error), endpoint history.CommitRef) (*session.Session, error) {
 	t.Helper()
 	// Materialize only the intended accepted prefix in isolated test storage;
 	// public Load always pins that storage's actual head.
@@ -41,7 +42,7 @@ func reconstructHistorySession(t testing.TB, read func(context.Context, history.
 	h := newLifecycleHistory(t, backend)
 	request := history.ReadRequest{Through: endpoint, MaxCommits: 1}
 	for {
-		page, err := read(context.Background(), testHistoryID(t), request)
+		page, err := read(context.Background(), testSessionID(t).ResourceID(), request)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +50,7 @@ func reconstructHistorySession(t testing.TB, read func(context.Context, history.
 			break
 		}
 		for _, c := range page.Commits {
-			result, err := h.Append(context.Background(), testHistoryID(t), c.Commit)
+			result, err := h.Append(context.Background(), testSessionID(t).ResourceID(), c.Commit)
 			if err != nil {
 				return nil, err
 			}
@@ -62,11 +63,11 @@ func reconstructHistorySession(t testing.TB, read func(context.Context, history.
 	if request.After != endpoint {
 		return nil, errReplayPrefix
 	}
-	return session.Load(context.Background(), newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t}), testHistoryID(t), testConfigFor(sessionPolicy()))
+	return session.Load(context.Background(), newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t}), testSessionID(t), testConfigFor(sessionPolicy()))
 }
 func assertHistoryHead(t testing.TB, h *history.History, want history.CommitRef) {
 	t.Helper()
-	got, err := h.Head(context.Background(), testHistoryID(t))
+	got, err := h.Head(context.Background(), testSessionID(t).ResourceID())
 	if err != nil || got != want {
 		t.Fatalf("Head = %v, %v; want %v", got, err, want)
 	}
@@ -90,7 +91,7 @@ func TestSessionRealHistoryLifecycleAndReplay(t *testing.T) {
 	}
 	assertHistoryHead(t, h, pinned)
 	// Use the real public bound path to close out and start a successor.
-	recovered, err = session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
+	recovered, err = session.Load(context.Background(), h, testSessionID(t), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	b = beginBatch(t, recovered)
 	mustBatch(t, b.EndRun(session.RunEndedInterrupted))
@@ -114,7 +115,7 @@ func TestSessionRealHistoryLifecycleAndReplay(t *testing.T) {
 		t.Fatal("old endpoint drift")
 	}
 	assertHistoryHead(t, h, final.Head())
-	prefixRead := func(ctx context.Context, id history.HistoryID, r history.ReadRequest) (history.Page, error) {
+	prefixRead := func(ctx context.Context, id resourceid.ID, r history.ReadRequest) (history.Page, error) {
 		r.Through = pinned
 		return readOnly.Read(ctx, id, r)
 	}
@@ -129,7 +130,7 @@ func TestSessionRealHistoryCompetingStarts(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	submitBatch(t, s, b)
-	other, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
+	other, err := session.Load(context.Background(), h, testSessionID(t), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	first := beginBatch(t, s)
 	run := batchRun(t, first)
@@ -161,17 +162,17 @@ func TestSessionNavigationIndependentOfCommitGrouping(t *testing.T) {
 		offset := 0
 		for _, n := range groups {
 			c := proposedCommit(t, s, facts[offset:offset+n]...)
-			result, err := h.Append(context.Background(), testHistoryID(t), c.Commit)
+			result, err := h.Append(context.Background(), testSessionID(t).ResourceID(), c.Commit)
 			mustBatch(t, err)
 			if result.Status != history.StatusAccepted || result.Proposal != c.Ref {
 				t.Fatal("append")
 			}
-			s, err = session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
+			s, err = session.Load(context.Background(), h, testSessionID(t), testConfigFor(sessionPolicy()))
 			mustBatch(t, err)
 			offset += n
 		}
 		v := s.Snapshot()
-		loaded, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
+		loaded, err := session.Load(context.Background(), h, testSessionID(t), testConfigFor(sessionPolicy()))
 		mustBatch(t, err)
 		if !reflect.DeepEqual(v, loaded.Snapshot()) {
 			t.Fatal("same grouping replay differs")

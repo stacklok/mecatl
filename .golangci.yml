@@ -175,7 +175,7 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/contentid$
-            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/session/id$
             - github.com/stacklok/mecatl/engine/kernel/modelrequest/format$
             - github.com/stacklok/mecatl/engine/kernel/session$
             - github.com/stacklok/mecatl/engine/kernel/session/format$
@@ -201,12 +201,13 @@ linters:
           files:
             - '**/engine/kernel/session/**.go'
             - '!**/engine/kernel/session/format/**.go'
+            - '!**/engine/kernel/session/id/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/history$
             - github.com/stacklok/mecatl/engine/kernel/contentid$
-            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/kernel/session/id$
             - github.com/stacklok/mecatl/engine/kernel/history/format$
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/session/format$
@@ -233,12 +234,11 @@ linters:
           list-mode: strict
           files:
             - '**/engine/kernel/history/**.go'
-            - '!**/engine/kernel/history/id/**.go'
             - '!**/engine/kernel/history/format/**.go'
             - '!$test'
           allow:
             - $gostd
-            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/id$
             - github.com/stacklok/mecatl/engine/kernel/history/format$
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/stacklok/mecatl/engine/kernel/contentid$
@@ -253,16 +253,16 @@ linters:
           allow:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/contentid$
-            - github.com/stacklok/mecatl/engine/kernel/history/id$
+            - github.com/stacklok/mecatl/engine/id$
             - github.com/stacklok/mecatl/engine/kernel/codec$
             - github.com/jcalabro/atmos/cbor$
           deny:
             - pkg: os
               desc: 'history formats must not access host state'
-        core-kernel-history-id:
+        core-kernel-session-id:
           list-mode: strict
           files:
-            - '**/engine/kernel/history/id/**.go'
+            - '**/engine/kernel/session/id/**.go'
             - '!$test'
           allow:
             - $gostd
@@ -270,7 +270,7 @@ linters:
             - github.com/stacklok/mecatl/engine/kernel/codec$
           deny:
             - pkg: os
-              desc: 'history identity values must not access host state'
+              desc: 'session identity values must not access host state'
         core-domain-leaf:
           list-mode: strict
           files:
@@ -441,6 +441,7 @@ linters:
             - '**/engine/adapter/history/conformance/**.go'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/id$
             - github.com/stacklok/mecatl/engine/kernel/history$
             - github.com/stacklok/mecatl/engine/kernel/history/format$
             - github.com/stacklok/mecatl/engine/kernel/codec$
@@ -455,6 +456,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/id$
             - github.com/stacklok/mecatl/engine/kernel/history$
           deny:
             - pkg: os
@@ -1477,11 +1479,6 @@ linters:
       - linters:
           - revive
         text: 'type name will be used as (session\.SessionID|tool\.ToolSpec|agent\.AgentMeta)'
-      # HistoryID is the reviewed domain type, distinct from generic id.ID.
-      - linters:
-          - revive
-        path: (^|.*/)engine/kernel/history/id\.go$
-        text: 'type name will be used as history\.HistoryID'
       # Generated proto/grpc code (WP10 will land contracts/gen). Never lint it.
       - linters:
           - errcheck

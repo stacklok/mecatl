@@ -1,6 +1,10 @@
 package history
 
-import "context"
+import (
+	"context"
+
+	resourceid "github.com/stacklok/mecatl/engine/id"
+)
 
 // Backend stores bytes for independent linear histories. Implementations guarantee
 // atomic expected-head appends, durable acceptance according to their storage
@@ -18,7 +22,7 @@ type Backend interface {
 	// Observe returns the head and the accepted reference at sequence from one
 	// observation. An unknown history returns a zero Observation, not ErrNotFound.
 	// Sequence zero requests only the head; a future ordinal has a zero Commit.
-	Observe(context.Context, HistoryID, int64) (Observation, error)
+	Observe(context.Context, resourceid.ID, int64) (Observation, error)
 	// Append atomically accepts commit only if the current head equals expected
 	// (zero means absent). The reference must be the next ordinal after expected;
 	// expected may be speculative and need not have been observed or accepted.
@@ -27,7 +31,7 @@ type Backend interface {
 	// New acceptance returns Head=Commit=commit.Ref. A failed CAS returns the
 	// current head and occupied submitted ordinal, if any, with Head unequal to
 	// expected (not necessarily higher). It never retries the write.
-	Append(context.Context, HistoryID, CommitRef, ByteCommit) (Observation, error)
+	Append(context.Context, resourceid.ID, CommitRef, ByteCommit) (Observation, error)
 	// Read verifies both nonzero indexed boundaries in this history in one
 	// coherent read, even at EOF or when returning only a prefix, and returns
 	// whole commits in contiguous ordinal order, ignoring retry windows.
@@ -35,7 +39,7 @@ type Backend interface {
 	// An oversized first commit returns PageTooSmallError; a commit exceeding
 	// MaxCommitBytes fails without fetching its bytes. Successful empty results
 	// are allowed only at the endpoint.
-	Read(context.Context, HistoryID, ByteReadRequest) ([]ByteCommit, error)
+	Read(context.Context, resourceid.ID, ByteReadRequest) ([]ByteCommit, error)
 }
 
 // Observation is coherent head and ordinal evidence. Head is zero only for an

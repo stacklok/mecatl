@@ -12,8 +12,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func lookupInput(t testing.TB, v Snapshot, run RunID, ordinal uint64) UserInputView {
@@ -63,7 +63,7 @@ func newSessionHistory(t testing.TB) *history.History {
 }
 func newSession(t testing.TB, p Policy) *Session {
 	t.Helper()
-	s, err := New(newSessionHistory(t), testHistoryID(t), testConfigFor(p))
+	s, err := New(newSessionHistory(t), testSessionID(t), testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func inputRecord(t testing.TB, ordinal uint64) *materializedRecord {
 }
 func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, testHistoryID(t), run), ordinal), UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, testLimits())
+	r, err := makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, testSessionID(t), run), ordinal), UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func runInputRecord(t testing.TB, run, ordinal uint64) *materializedRecord {
 }
 func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testHistoryID(t), ordinal).HistoryRelative()}, testLimits())
+	r, err := newRunStartedRecord(RunStarted{ID: allocatedRun(t, testSessionID(t), ordinal).SessionRelative()}, testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func startRecord(t testing.TB, ordinal uint64) *materializedRecord {
 }
 func closeoutRecord(t testing.TB, ordinal uint64) *materializedRecord {
 	t.Helper()
-	r, err := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, testHistoryID(t), ordinal), testLimits())
+	r, err := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, testSessionID(t), ordinal), testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func proposedCommit(t testing.TB, s *Session, records ...*materializedRecord) hi
 	v := s.Snapshot()
 	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: v.Head().Sequence + 1}
 	if v.Head() == (history.CommitRef{}) {
-		dto.HistoryID = new(v.HistoryID())
+		dto.HistoryID = new(v.SessionID().ResourceID())
 	} else {
 		dto.Parent = new(v.Head().CID)
 	}
@@ -143,7 +143,7 @@ func identify(t testing.TB, dto format.Commit) history.Commit {
 // rejectedSnapshotFacts owns every mutable export; unlike Snapshot it cannot
 // share an oracle with the state whose immutability is under test.
 type rejectedSnapshotFacts struct {
-	historyID historyid.HistoryID
+	sessionID sessionid.SessionID
 	head      history.CommitRef
 	created   bool
 	activeRun RunID
@@ -159,7 +159,7 @@ type rejectedRunFacts struct {
 }
 
 func captureRejectedSnapshot(v Snapshot) rejectedSnapshotFacts {
-	facts := rejectedSnapshotFacts{historyID: v.HistoryID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
+	facts := rejectedSnapshotFacts{sessionID: v.SessionID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
 	for i := 0; i < v.RecordCount(); i++ {
 		facts.records = append(facts.records, v.RecordAt(i).MutableClone())
 	}
@@ -193,7 +193,7 @@ func assertRejected(t testing.TB, s *Session, c history.Commit, want error) {
 
 func TestSessionLifecycleAndReplay(t *testing.T) {
 	s := newSession(t, sessionPolicy())
-	if v := s.Snapshot(); v.Created() || v.Head() != (history.CommitRef{}) || v.HistoryID() != testHistoryID(t) {
+	if v := s.Snapshot(); v.Created() || v.Head() != (history.CommitRef{}) || v.SessionID() != testSessionID(t) {
 		t.Fatal("new scope")
 	}
 	commits := []history.Commit{applyRecords(t, s, createdRecord(t)), applyRecords(t, s, startRecord(t, 1)), applyRecords(t, s, inputRecord(t, 1), inputRecord(t, 2))}
@@ -209,7 +209,7 @@ func TestSessionLifecycleAndReplay(t *testing.T) {
 	for _, c := range commits {
 		mustBatch(t, replay.apply(c))
 	}
-	if !reflect.DeepEqual(replay.Snapshot(), s.Snapshot()) || replay.Snapshot().ActiveRun() != allocatedRun(t, testHistoryID(t), 2) {
+	if !reflect.DeepEqual(replay.Snapshot(), s.Snapshot()) || replay.Snapshot().ActiveRun() != allocatedRun(t, testSessionID(t), 2) {
 		t.Fatal("successor replay differs")
 	}
 }
@@ -285,14 +285,14 @@ func TestSessionAtomicRejection(t *testing.T) {
 }
 
 func TestSessionIdentityVerification(t *testing.T) {
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
 	for _, tc := range []struct {
 		name             string
 		root, reidentify bool
 		edit             func(*history.Commit)
 	}{
-		{"root scope", true, true, func(c *history.Commit) { c.Commit.HistoryID = new(foreign) }},
+		{"root scope", true, true, func(c *history.Commit) { c.Commit.HistoryID = new(foreign.ResourceID()) }},
 		{"skipped sequence", false, true, func(c *history.Commit) { c.Commit.Sequence++ }},
 		{"reference sequence", false, false, func(c *history.Commit) { c.Ref.Sequence++ }},
 		{"wrong parent", false, true, func(c *history.Commit) { c.Commit.Parent = new(contentid.Sum(nil)) }},
@@ -329,7 +329,7 @@ func TestSessionApplyOwnership(t *testing.T) {
 	policy.PayloadLimits.MaxBytes = 1
 	c := applyRecords(t, s, createdRecord(t), startRecord(t, 1), inputRecord(t, 1))
 	clear(c.Commit.Records[2].Payload)
-	*c.Commit.HistoryID = historyid.HistoryID{}
+	*c.Commit.HistoryID = (SessionID{}).ResourceID()
 	before := s.Snapshot()
 	old := lookupInput(t, before, before.RunAt(0).ID(), 1)
 	successor := applyRecords(t, s, inputRecord(t, 2))
@@ -349,7 +349,7 @@ func TestSessionPolicyAndZero(t *testing.T) {
 	for i := 0; i < reflect.TypeOf(p).NumField(); i++ {
 		bad := p
 		reflect.ValueOf(&bad).Elem().Field(i).SetZero()
-		if s, err := New(newSessionHistory(t), testHistoryID(t), testConfigFor(bad)); !errors.Is(err, ErrInvalidPolicy) || s != nil {
+		if s, err := New(newSessionHistory(t), testSessionID(t), testConfigFor(bad)); !errors.Is(err, ErrInvalidPolicy) || s != nil {
 			t.Fatalf("zero policy field %d: %v", i, err)
 		}
 	}
@@ -366,10 +366,10 @@ func TestSessionPolicyAndZero(t *testing.T) {
 			}
 		}
 	}
-	if s, err := New(nil, testHistoryID(t), testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(nil, testSessionID(t), testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("nil History: %v", err)
 	}
-	if s, err := New(newSessionHistory(t), historyid.HistoryID{}, testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
+	if s, err := New(newSessionHistory(t), sessionid.SessionID{}, testConfigFor(p)); !errors.Is(err, ErrIdentity) || s != nil {
 		t.Fatalf("zero scope: %v", err)
 	}
 	var zero Session
@@ -446,7 +446,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		all = append(all, startRecord(t, n), runInputRecord(t, n, 1), closeoutRecord(t, n))
 	}
 	// The final active prefix must reserve the largest supported minimal ending.
-	lastEnding, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, allocatedRun(t, testHistoryID(t), 24), testLimits())
+	lastEnding, err := newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, allocatedRun(t, testSessionID(t), 24), testLimits())
 	mustBatch(t, err)
 	all[len(all)-1] = lastEnding
 	var exactBytes uint64
@@ -461,7 +461,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 		for n := uint64(1); n <= 23; n++ {
 			b = beginBatch(t, s)
 			run := batchRun(t, b)
-			if run != allocatedRun(t, testHistoryID(t), n) {
+			if run != allocatedRun(t, testSessionID(t), n) {
 				t.Fatal("prefix run ordinal")
 			}
 			batchInput(t, b, run, []byte{0xff, 0, 'x'})
@@ -478,7 +478,7 @@ func TestSessionRun24CloseoutCapacity(t *testing.T) {
 	b := beginBatch(t, short)
 	run := batchRun(t, b)
 	batchInput(t, b, run, []byte{0xff, 0, 'x'})
-	if run != allocatedRun(t, testHistoryID(t), 24) {
+	if run != allocatedRun(t, testSessionID(t), 24) {
 		t.Fatal("width-boundary provisional run")
 	}
 	if ref, err := short.SubmitCommit(context.Background(), b); ref != (history.CommitRef{}) || !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(before, captureRejectedSnapshot(short.Snapshot())) {

@@ -1,0 +1,10 @@
+    method func (*SessionID).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (SessionID).AppendCBOR(dst []byte) []byte
+    method func (SessionID).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (SessionID).Clone() SessionID
+    method func (SessionID).Equal(other SessionID) bool
+    method func (SessionID).ResourceID() id.ID
+    method func (SessionID).String() string
+func NewSessionID() SessionID
+func ParseSessionID(s string) (SessionID, error)
+type SessionID struct{}

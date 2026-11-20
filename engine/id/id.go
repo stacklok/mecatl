@@ -1,7 +1,7 @@
 //go:generate go -C ../.. run ./internal/dtogen/cmd/dtogen -dir engine/id -emit cbor,clone,equal -out zz_cbor_generated.go
 
 // Package id provides typed, fixed-length Mecatl resource identifiers.
-// IDs contain a three-character kind prefix and 22 independent, uniformly random
+// IDs contain a three-uppercase-ASCII-letter kind prefix and 22 independent, uniformly random
 // characters from the Bitcoin base58 alphabet. They are case-sensitive and have
 // no timestamp or checksum. Commit content addresses are a separate contract.
 package id
@@ -21,11 +21,10 @@ const (
 	kindLen  = 3
 )
 
-// Kind identifies a registered resource type. Unknown kinds are rejected.
+// Kind is a three-uppercase-ASCII-letter resource prefix. Identity packages own
+// their prefixes and enforce their exact kind when parsing typed IDs. This
+// package validates syntax only; it neither registers kinds nor reserves names.
 type Kind string
-
-// History identifies an append-only history.
-const History Kind = "HST"
 
 // ID is a validated resource identifier. Its zero value is unset, not valid.
 // IDs are comparable and may be used as map keys. CBOR is the validated ID text.
@@ -43,7 +42,7 @@ func (v ID) validateCBOR() error {
 }
 
 // New generates an ID of the given kind using secure, unbiased randomness.
-// It panics for an unknown kind or if secure randomness is unavailable.
+// It panics for a malformed kind or if secure randomness is unavailable.
 // The caller must enforce uniqueness with create-only storage operations;
 // generation alone does not reserve an identity.
 func New(kind Kind) ID {
@@ -57,8 +56,8 @@ func New(kind Kind) ID {
 // newID keeps the entropy source private and injectable for deterministic tests.
 // rand.Int performs unbiased rejection sampling; failures discard the partial ID.
 func newID(kind Kind, source io.Reader) (ID, error) {
-	if kind != History {
-		return ID{}, errors.New("unknown ID kind")
+	if !validKind(kind) {
+		return ID{}, errors.New("invalid ID kind")
 	}
 	var body [bodyLen]byte
 	limit := big.NewInt(int64(len(alphabet)))
@@ -77,8 +76,8 @@ func Parse(s string) (ID, error) {
 	if len(s) != kindLen+bodyLen {
 		return ID{}, errors.New("invalid ID length")
 	}
-	if Kind(s[:kindLen]) != History {
-		return ID{}, errors.New("unknown ID kind")
+	if !validKind(Kind(s[:kindLen])) {
+		return ID{}, errors.New("invalid ID kind")
 	}
 	for i := kindLen; i < len(s); i++ {
 		if !strings.ContainsRune(alphabet, rune(s[i])) {
@@ -86,6 +85,19 @@ func Parse(s string) (ID, error) {
 		}
 	}
 	return ID{value: s}, nil
+}
+
+// validKind enforces prefix syntax independently of any domain's vocabulary.
+func validKind(kind Kind) bool {
+	if len(kind) != kindLen {
+		return false
+	}
+	for i := range len(kind) {
+		if kind[i] < 'A' || kind[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // Kind returns the resource kind, or the empty kind for an unset ID.

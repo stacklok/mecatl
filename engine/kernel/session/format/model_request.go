@@ -71,11 +71,11 @@ func (v ConstructionRecipe) Validate() error {
 //dtogen:validate validateLocal
 //dtogen:include
 type ModelRequest struct {
-	// RunID is the required positive numeric run component within the history
-	// supplied by the enclosing envelope.
+	// RunID is the required positive Session-relative run component; the root
+	// history envelope supplies Session scope.
 	RunID uint64 `cbor:"r" view:"-"`
 	// ID is the required positive numeric request component within RunID. The
-	// enclosing history envelope supplies history scope. Admission checks allocation.
+	// root history envelope supplies Session scope. Admission checks allocation.
 	ID uint64 `cbor:"o" view:"manual"`
 	// Source optionally anchors construction to the preceding accepted head. Nil
 	// means pre-genesis, valid only in the initial commit. Present anchors require

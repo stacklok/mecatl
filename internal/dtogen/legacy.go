@@ -24,7 +24,7 @@ func legacyOutput(path string) bool {
 			rel, err := filepath.Rel(dir, filepath.Dir(path))
 			return err == nil && slices.Contains([]string{
 				"id", "kernel/codec/internal/fixture", "kernel/codec/internal/fixture/value",
-				"kernel/contentid", "kernel/history/id", "kernel/history/format", "kernel/session/format",
+				"kernel/contentid", "kernel/history/format", "kernel/session/format",
 			}, filepath.ToSlash(rel))
 		}
 		if !os.IsNotExist(err) || filepath.Dir(dir) == dir {
