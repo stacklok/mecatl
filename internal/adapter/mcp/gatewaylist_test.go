@@ -281,6 +281,58 @@ func TestListGatewayToolsRefusesMissingArguments(t *testing.T) {
 	}
 }
 
+// TestListGatewayToolsNeverResumesADroppedAnswer fails a listing whose
+// tools/list answer ends after an event ID, without the response, rather than
+// resuming it with a GET whose body the byte budget would not count.
+func TestListGatewayToolsNeverResumesADroppedAnswer(t *testing.T) {
+	gateway := &pagedGateway{page: func(*http.Request, string) ([]map[string]any, string) { return nil, "" }}
+	var mu sync.Mutex
+	var listID json.RawMessage
+	gets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// A resumed answer: the tool is bigger than the byte budget.
+			mu.Lock()
+			gets++
+			id := listID
+			mu.Unlock()
+			tool := pagedTool("big")
+			tool["description"] = strings.Repeat("x", 8<<10)
+			reply, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"tools": []any{tool}}})
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "id: 2\ndata: "+string(reply)+"\n\n")
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		_ = json.Unmarshal(body, &msg)
+		if msg.Method != "tools/list" {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			gateway.ServeHTTP(w, r)
+			return
+		}
+		// The answer drops after an event that carries only an ID.
+		mu.Lock()
+		listID = msg.ID
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "id: 1\nretry: 1\ndata: \n\n")
+	}))
+	t.Cleanup(server.Close)
+	tools, err := ListGatewayTools(t.Context(), server.URL, server.Client(), identitybroker.NewToken("listing-token"), GatewayListLimits{MaxBytes: 4 << 10})
+	if !errors.Is(err, ErrGatewayList) || len(tools) != 0 {
+		t.Fatalf("ListGatewayTools = %v, %v, want no tools and ErrGatewayList", tools, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 0 {
+		t.Fatalf("the listing resumed its answer with %d GETs, want none", gets)
+	}
+}
+
 // TestGatewayListLimitsDefaults takes each default for a zero field and keeps
 // a set one.
 func TestGatewayListLimitsDefaults(t *testing.T) {

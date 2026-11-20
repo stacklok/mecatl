@@ -86,6 +86,9 @@ func ListGatewayTools(ctx context.Context, endpoint string, client *http.Client,
 			Timeout:       client.Timeout,
 		},
 		DisableStandaloneSSE: true,
+		// Never resume a dropped answer: the SDK would resume it with a GET,
+		// whose body the byte budget does not count.
+		MaxRetries: -1,
 	}
 	sdkClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, nil)
 	// A listing would work on 2026-07-28 too; it speaks the calls' revision
