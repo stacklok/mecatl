@@ -441272,6 +441272,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795188100953,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "028d4b53db9c2dc1f4ee6c8420fbdf5eb432ccbe",
+          "message": "chore(agents): correct stale and dated agent instruction files (#2924)\n\nFix instruction-file statements the repository contradicts:\nlearning budgets use the durable ledger, `models.allowlist` has no\neffect, provider-aware aliases exist, and `encoding/json/v2` is\nstandard from Go 1.27. Subagents now defer only to installed agents\nand no longer carry another project's invariants. Remove numeric word\ncaps, history narrative, and dangling skill references.",
+          "timestamp": "2026-11-20T16:54:20Z",
+          "tree_id": "e6e23fb45ea035b6087eb263569079e710d9b946",
+          "url": "https://github.com/stacklok/mecatl/commit/028d4b53db9c2dc1f4ee6c8420fbdf5eb432ccbe"
+        },
+        "date": 1795194355486,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13383,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12877,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -574576,6 +574615,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795194352330,
+  "lastUpdate": 1795194356096,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
