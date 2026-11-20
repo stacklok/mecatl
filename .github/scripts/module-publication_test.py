@@ -625,6 +625,39 @@ class LocalTests(unittest.TestCase):
         with self.assertRaisesRegex(p.CheckError, "outside known"):
             p.checkout(self.root, source, self.head)
 
+    def test_blobless_checkout_preserves_prepare_and_source_integrity(self):
+        self.write("obsolete.txt", "historical-only contents\n")
+        self.commit()
+        obsolete = self.command("git", "rev-parse", "HEAD:obsolete.txt")
+        (self.root / "obsolete.txt").unlink()
+        self.commit()
+        source = self.head
+        self.write("engine/go.mod", (self.root / "engine/go.mod").read_text() + "\n// release metadata\n")
+        self.commit()
+        parent = self.head
+        self.command("git", "tag", "engine/v0.2.0")
+        self.command("git", "config", "uploadpack.allowFilter", "true")
+        self.command("git", "config", "uploadpack.allowAnySHA1InWant", "true")
+        clone = self.base / "blobless"
+        self.command("git", "clone", "--filter=blob:none", "--no-checkout", self.root.as_uri(), str(clone))
+        self.root = clone
+        self.command("git", "checkout", "--detach", parent)
+        self.command("git", "fetch", "--filter=blob:none", "--force", "origin", "main", "--tags")
+        self.assertEqual(self.command("git", "rev-parse", "--is-shallow-repository"), "false")
+        self.assertEqual(self.command("git", "rev-parse", "engine/v0.2.0"), parent)
+        self.assertIn("?" + obsolete, self.command("git", "rev-list", "--objects", "--all", "--missing=print"))
+        p.checkout(clone, source, parent)
+        args = self.args(module="engine")
+        args.source, args.parent = source, parent
+        p.prepare(args, {"engine": "v0.3.0"}, self.env)
+        self.assertTrue(args.metadata.exists())
+        self.assertIn("?" + obsolete, self.command("git", "rev-list", "--objects", "--all", "--missing=print"))
+        self.write("engine/fixture.go", "package fixture\nconst Value = 2\n")
+        self.command("git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                     "commit", "-am", "non-metadata change")
+        with self.assertRaisesRegex(p.CheckError, "outside known"):
+            p.checkout(clone, source, self.command("git", "rev-parse", "HEAD"))
+
     def test_prepare_uses_go_tidy_toolchain_output(self):
         original = f"module {p.identity('engine')}\n\ngo 1.27.0\n\ntoolchain default\n"
         manifest = self.write("engine/go.mod", original)

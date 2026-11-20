@@ -61,10 +61,11 @@ jobs:
         with:
           ref: ${{ inputs.source }}
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
           path: candidate
       - name: Refresh main and tags without persisted credentials
-        run: git -C candidate fetch --force origin main --tags
+        run: git -C candidate fetch --filter=blob:none --force origin main --tags
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tooling/go.work
@@ -262,10 +263,11 @@ jobs:
         with:
           ref: ${{ needs.adapters.outputs.head }}
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
           path: candidate
       - name: Refresh main and tags without persisted credentials
-        run: git -C candidate fetch --force origin main --tags
+        run: git -C candidate fetch --filter=blob:none --force origin main --tags
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tooling/go.work
