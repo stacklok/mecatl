@@ -8641,13 +8641,8 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			mcpEntry := classification(server.KindDerived,
 				"member agent-definition MCP tools are scoped to this already authorized team member")
 			var registered []string
+			// defMCPTools already left out the tools the def excludes.
 			for _, mt := range mcpTools {
-				// A member's authority is its parent's, so the catalog is the
-				// only place the definition's exclusion applies; the subagent
-				// path filters the same way.
-				if defDisallowsTool(def, mt.Spec().Name) {
-					continue
-				}
 				if err := classified.register(mt, mcpEntry); err != nil {
 					cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def MCP tool registration failed; skipped",
 						"member", spec.Name, "agent", def.Name, "tool", mt.Spec().Name, "err", err)

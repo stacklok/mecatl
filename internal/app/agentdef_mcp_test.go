@@ -154,6 +154,45 @@ func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
 	}
 }
 
+// TestDefMCPToolsLeavesOutDisallowedTools pins that defMCPTools, the one
+// place both the subagent and team-member paths resolve a definition's MCP
+// tools, leaves out each tool its disallowedTools names, from a referenced
+// server and an inline one alike, and keeps the rest.
+func TestDefMCPToolsLeavesOutDisallowedTools(t *testing.T) {
+	main := connectMainManager(t, "main", newMCPTestServerWithResource(t))
+	def := agents.AgentDef{
+		Name:            "no-echo",
+		Description:     "excludes both servers' echo",
+		DisallowedTools: []string{"mcp__main__echo", "mcp__inline__echo"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "main"}, {Name: "inline", URL: newMCPTestServerPrefixed(t, "inline:")}},
+	}
+	tools, names, resources, closeExcluded := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	if closeExcluded != nil {
+		t.Cleanup(func() { _ = closeExcluded() })
+	}
+	if len(tools) != 0 || len(names) != 0 {
+		t.Fatalf("defMCPTools kept %v, want neither excluded echo", names)
+	}
+	// The resource capability of the referenced server is not a tool, so an
+	// exclusion of its tool leaves it.
+	if len(resources) != 1 || resources[0] != governance.MCPResourceCapability("main") {
+		t.Fatalf("resource capabilities = %v, want the referenced server's", resources)
+	}
+
+	// Positive control: without the exclusions, both echoes are kept.
+	def.DisallowedTools = nil
+	tools, _, _, closeAll := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	if closeAll != nil {
+		t.Cleanup(func() { _ = closeAll() })
+	}
+	got := toolNameSet(tools)
+	for _, want := range []string{"mcp__main__echo", "mcp__inline__echo"} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("without exclusions defMCPTools kept %v, want %s", got, want)
+		}
+	}
+}
+
 // TestDefMCPToolsInlineConnectsAndTearsDown asserts an INLINE entry connects its own
 // server (tool present), and that the returned close actually tears the session down
 // (a captured tool's Execute fails after close — proving no leak).
