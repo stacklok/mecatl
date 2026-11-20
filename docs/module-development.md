@@ -39,13 +39,15 @@ Register a new module in the same PR that introduces it:
    publication fixtures. Run `task test:workspace:module MODULE=<DIRECTORY>` for
    focused same-checkout integration. Use `task test:module MODULE=<DIRECTORY>` for
    the standalone dependency closure and `task test:module-candidate MODULE=<DIRECTORY>`
-   to validate candidate metadata. Complete the normal repository gates before review.
+   to validate candidate metadata. Run local checks appropriate to the affected
+   modules and leave broader coverage to CI.
 
-Workspace replacements let you develop sibling modules together. The ordinary
-checkout tasks use this workspace, so sibling APIs do not need publication before
-ordinary CI is green. Independently published modules must resolve their declared
-requirements with `GOWORK=off`; publish missing sibling versions in dependency order
-using [the publication procedure](#4-publish-selected-go-modules).
+Workspace replacements let you develop sibling modules together. Task supplies this
+checkout's workspace as the default for ordinary commands, while an inherited `GOWORK`
+(such as `off` or another workspace) takes precedence. Use explicit workspace tasks
+when a checkout-pinned result is required. Independently published modules must resolve
+their declared requirements with `GOWORK=off`; publish missing sibling versions in
+dependency order using [the publication procedure](#4-publish-selected-go-modules).
 
 ## 1. Identify the affected modules
 
@@ -83,21 +85,19 @@ against this checkout's workspace:
 
 ```sh
 task test:workspace:module MODULE=provider/openai
-task test:workspace:module:race MODULE=provider/openai
 ```
 
-`MODULE` accepts a module directory from `go.work`; use `MODULE=.` for root.
-To test that module with workspace mode disabled, use `task test:module` or
-`task test:module:race` with the same `MODULE` argument.
+Use `task test:workspace:module:race` instead for concurrency or shared-state
+changes. For a narrower change, run focused package tests rather than the whole
+module. `MODULE` accepts a module directory from `go.work`; use `MODULE=.` for root.
+Standalone checks (`task test:module` and `task test:module:race`) are separate
+qualification for declared dependencies, not an extra ordinary-development step.
 
-Then verify the complete candidate:
+For broad changes that need a complete local suite, choose `task test` or
+`task test:race`, not both by default. CI supplies broad race and platform coverage.
 
-```sh
-task --concurrency 3 test
-task --concurrency 3 test:race
-```
-
-`test:workspace` and `test:workspace:race` remain aliases for these commands. They
+Ordinary `test` and `test:race` use this checkout workspace by default, but honor an
+inherited `GOWORK` override. `test:workspace` and `test:workspace:race` explicitly
 select this checkout's absolute `go.work`, even if the environment has `GOWORK=off`
 or names another workspace. They run root and every nested module's tests plus the
 offline `microvm_dev` tagged proof. They do not tidy requirements.
@@ -114,11 +114,12 @@ the workspace race suite, candidate metadata validation once in Build, and the
 engine's non-race workspace pass. It does not require sibling APIs to be published
 before ordinary changes can pass.
 
-`task e2e:k8s` uses this checkout's workspace for its image builds and Kind
-journey, matching official application releases, which compile sibling source from
-the immutable release checkout. Its pinned counterpart, `task e2e:k8s:pinned`,
-tests declared sibling pins rather than local nested changes when that evidence is
-needed. Module publication does not run the pinned Kind suite.
+`task e2e:k8s` uses this checkout's workspace by default for its image builds and
+Kind journey, matching official application releases, which compile sibling source
+from the immutable release checkout. It honors an inherited `GOWORK` override; its
+pinned counterpart, `task e2e:k8s:pinned`, explicitly tests declared sibling pins
+rather than local nested changes when that evidence is needed. Module publication
+does not run the pinned Kind suite.
 
 ## 3. Reconcile dependency metadata deliberately
 
@@ -286,9 +287,9 @@ standalone, and public-download evidence separately in the PR or release record.
 
 | Command | Dependency/test scope |
 | --- | --- |
-| `task build` | Builds binaries and nested modules against this checkout's workspace |
-| `task test`, `task test:race` | All modules and tagged proof against this checkout's workspace |
-| `task test:workspace`, `task test:workspace:race` | Compatibility aliases for `task test` and `task test:race` |
+| `task build` | Builds binaries and nested modules; checkout workspace by default, inherited `GOWORK` honored |
+| `task test`, `task test:race` | All modules and tagged proof; checkout workspace by default, inherited `GOWORK` honored |
+| `task test:workspace`, `task test:workspace:race` | Complete suite explicitly pinned to this checkout's workspace |
 | `task test:standalone`, `task test:standalone:race` | Complete workspace-disabled suite; published sibling APIs must be available |
 | `task test:module MODULE=provider/openai`, `task test:module:race MODULE=provider/openai` | Selected module with `GOWORK=off`; module-local replacements still apply |
 | `task test:workspace:module MODULE=provider/openai`, `task test:workspace:module:race MODULE=provider/openai` | Selected module against this checkout's workspace |

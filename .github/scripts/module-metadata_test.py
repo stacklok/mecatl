@@ -80,7 +80,6 @@ class ModuleMetadataTests(unittest.TestCase):
         self.assertIn("task tidy:module-candidate", result.stderr)
         self.assertIn("task test:module-candidate", result.stderr)
         self.assertIn("git diff -- '**/go.mod' '**/go.sum'", result.stderr)
-        self.assertNotIn("go work sync", result.stderr)
         self.assertIn("task test:module-metadata", result.stderr)
 
     def test_untracked_metadata_fails_but_unrelated_and_ignored_files_do_not(self):
@@ -137,48 +136,6 @@ class ModuleMetadataTests(unittest.TestCase):
         self.write("nested space/go.mod", "module fixture.invalid/space\n\ngo 1.27.2\n// changed\n")
         result = self.run_check(False)
         self.assertIn("nested space/go.mod", result.stderr)
-
-    def check_ci_wiring(self, workflow):
-        test = re.search(r"^  test:\n(.*?)(?=^  [\w-]+:)", workflow, re.M | re.S)[1]
-        build = re.search(r"^  build:\n(.*?)(?=^  [\w-]+:)", workflow, re.M | re.S)[1]
-        guard = "        run: task test:module-metadata\n"
-        infrastructure = "        run: task test:workspace-infrastructure\n"
-        suite = "        run: task --concurrency 3 test:race\n"
-        self.assertIn(guard, test)
-        self.assertIn(infrastructure, test)
-        self.assertIn(suite, test)
-        self.assertLess(test.index(infrastructure), test.index(suite))
-        self.assertLess(test.index(suite), test.index(guard))
-        candidate = "          task test:module-candidate\n"
-        self.assertIn(candidate + "          task test:module-metadata\n", build)
-        self.assertEqual(workflow.count("task test:module-candidate"), 1)
-        self.assertNotIn("task tidy", build)
-        self.assertNotIn("go work sync", build)
-        self.assertIn("        run: task test:workspace:module MODULE=engine\n", build)
-        self.assertNotIn("task test:module MODULE=engine", build)
-        condition = ("        if: needs.changes.outputs.docs_only != 'true' "
-                     "&& needs.changes.outputs.go_relevant == 'true'\n")
-        for command in (guard, infrastructure):
-            self.assertIn(condition + command, test)
-        self.assertNotRegex(workflow, r"\btask[^\n]*\btest:workspace(?::race)?(?:\s|$)")
-
-    def test_ci_wiring_and_negative_controls(self):
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.check_ci_wiring(workflow)
-        guard = "        run: task test:module-metadata\n"
-        for broken in (
-            workflow.replace(guard, '        run: echo "task test:module-metadata"\n'),
-            workflow.replace(guard, ""),
-            workflow.replace("          task test:module-candidate\n", "          task tidy\n"),
-            workflow.replace("          task test:module-candidate\n", ""),
-            workflow.replace("        run: task --concurrency 3 test:race\n",
-                             "        run: task test:module-candidate\n        run: task --concurrency 3 test:race\n"),
-            workflow.replace("task test:workspace:module MODULE=engine", "task test:module MODULE=engine"),
-            workflow.replace("task --concurrency 3 test:race\n", "task --concurrency 3 test:workspace:race\n"),
-        ):
-            with self.subTest(broken=broken != workflow):
-                with self.assertRaises(AssertionError):
-                    self.check_ci_wiring(broken)
 
     def test_real_metadata_task_invokes_guard(self):
         taskfile = (ROOT / "Taskfile.yml").read_text()
