@@ -257,6 +257,12 @@ type Deps struct {
 	// it to attribute this engine's main usage; nested auxiliary usage retains its
 	// producer's own attribution. The request itself remains provider-neutral.
 	ProviderModel session.ProviderModelID
+	// AppliedReasoningEffort, when non-nil, reports the reasoning-effort token a
+	// request for the given model is sent at, or "" when it carries none. The host
+	// decides effort outside the request (it is never a port.LLMRequest field);
+	// the engine only records the answer in request manifests and never branches
+	// on it.
+	AppliedReasoningEffort func(model string) string
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
 	// frozen at construction — so a post-construction live-catalog refresh self-

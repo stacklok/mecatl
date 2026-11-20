@@ -5032,6 +5032,7 @@ func engineDepsForProvider(
 	}
 	return agent.Deps{
 		LLM:                        provider,
+		AppliedReasoningEffort:     appliedEffortReporter(provider),
 		Policy:                     policy,
 		AuthorityEvaluator:         cfg.authorityEvaluator,
 		Hooks:                      hooks,

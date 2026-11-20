@@ -74,17 +74,23 @@ func (p *effortProvider) Capabilities() port.ProviderCapabilities {
 	return p.adapters.at("").Capabilities()
 }
 
-// appliedFor returns the effort a request for model is sent at, and narrates a
-// changed level once.
-func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
-	if p.requested == "" {
-		return ""
-	}
+// resolve returns the effort a request for model is sent at, with the levels
+// that decided it.
+func (p *effortProvider) resolve(model string) (string, string, effortLevelsResolution) {
 	if strings.TrimSpace(model) == "" {
 		model = p.model
 	}
+	if p.requested == "" {
+		return "", model, effortLevelsResolution{}
+	}
 	resolution := p.levels(model)
-	applied := appliedEffort(p.requested, resolution.effortLevels)
+	return appliedEffort(p.requested, resolution.effortLevels), model, resolution
+}
+
+// appliedFor returns the effort a request for model is sent at, and narrates a
+// changed level once per session and model.
+func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
+	applied, model, resolution := p.resolve(model)
 	if applied != p.requested {
 		p.narrateChange(ctx, model, applied, resolution)
 	}
@@ -118,6 +124,20 @@ func effortChangeMessage(subject, applied string, source effortLevelsSource) str
 		return "reasoning-effort: " + subject + " lists no effort level at or below the requested one; sending no effort"
 	}
 	return "reasoning-effort: " + subject + " doesn't accept the requested level; sending the highest level it lists below it"
+}
+
+// appliedEffortReporter returns the engine's AppliedReasoningEffort for a
+// provider: what an effort-wrapped provider sends each model, or nil for a
+// provider that doesn't decide effort per request.
+func appliedEffortReporter(provider port.LLMProvider) func(model string) string {
+	wrapped, ok := provider.(*effortProvider)
+	if !ok {
+		return nil
+	}
+	return func(model string) string {
+		applied, _, _ := wrapped.resolve(model)
+		return applied
+	}
 }
 
 // requesting returns a wrapper over the same adapters that requests level and
