@@ -30,6 +30,8 @@ func TestReasoningEffortStamped(t *testing.T) {
 		{"low", shared.ReasoningEffortLow},
 		{"medium", shared.ReasoningEffortMedium},
 		{"high", shared.ReasoningEffortHigh},
+		{"xhigh", shared.ReasoningEffortXhigh},
+		{"max", shared.ReasoningEffortMax},
 	}
 	for _, tc := range cases {
 		t.Run(tc.effort, func(t *testing.T) {
@@ -47,9 +49,8 @@ func TestReasoningEffortStamped(t *testing.T) {
 
 // TestReasoningEffortOmittedWhenUnset pins that an empty/"auto"/unrecognised token
 // OMITS reasoning.effort entirely (the byte-stable default + fail-soft contract).
-// Composition does the xhigh/max→high clamp, so the adapter only ever sees
-// low/medium/high in practice — but it must STILL omit on a surprise token rather
-// than send something that could 400.
+// Composition sends only levels the request's model accepts, but the adapter must
+// STILL omit on a surprise token rather than send something that could 400.
 func TestReasoningEffortOmittedWhenUnset(t *testing.T) {
 	for _, effort := range []string{"", "auto", "ultra", "xhigh-but-unexpected"} {
 		t.Run("token="+effort, func(t *testing.T) {
@@ -58,7 +59,6 @@ func TestReasoningEffortOmittedWhenUnset(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildParams: %v", err)
 			}
-			// "xhigh" is a real SDK tier, so it is NOT in the omit set; the others are.
 			if effort == "" || effort == "auto" || effort == "ultra" || effort == "xhigh-but-unexpected" {
 				if params.Reasoning.Effort != "" {
 					t.Errorf("Reasoning.Effort = %q, want empty (omitted) for token %q", params.Reasoning.Effort, effort)

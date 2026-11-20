@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,33 +48,6 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 		got, ok := NormalizeReasoningEffort(tc.in)
 		if got != tc.want || ok != tc.wantOK {
 			t.Errorf("NormalizeReasoningEffort(%q) = (%q,%v), want (%q,%v)", tc.in, got, ok, tc.want, tc.wantOK)
-		}
-	}
-}
-
-// TestClampEffortForProvider pins the per-provider clamp: openai/openrouter
-// clamp xhigh/max DOWN to high (clamped=true); low/medium/high pass through;
-// anthropic identity-maps all five; "" is always a no-op.
-func TestClampEffortForProvider(t *testing.T) {
-	cases := []struct {
-		provider, in, want string
-		clamped            bool
-	}{
-		{providerOpenAI, "xhigh", "high", true},
-		{providerOpenAI, "max", "high", true},
-		{providerOpenAI, "high", "high", false},
-		{providerOpenAI, "low", "low", false},
-		{providerOpenRouter, "max", "high", true},
-		{providerAnthropic, "xhigh", "xhigh", false},
-		{providerAnthropic, "max", "max", false},
-		{providerAnthropic, "high", "high", false},
-		{providerOpenAI, "", "", false},
-		{providerAnthropic, "", "", false},
-	}
-	for _, tc := range cases {
-		got, clamped := clampEffortForProvider(tc.provider, tc.in)
-		if got != tc.want || clamped != tc.clamped {
-			t.Errorf("clampEffortForProvider(%q,%q) = (%q,%v), want (%q,%v)", tc.provider, tc.in, got, clamped, tc.want, tc.clamped)
 		}
 	}
 }
@@ -144,257 +119,172 @@ func TestFoldOperatorReasoningEffortCLIOutRanksYAML(t *testing.T) {
 	}
 }
 
-// TestModelReasoningSupport pins the capability-gate source: the mock
-// provider is known-incapable; an UNKNOWN (uncatalogued) model is known=false (so
-// the caller fails open); a catalogued reasoning model is known+supported.
-func TestModelReasoningSupport(t *testing.T) {
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
-			providerMock: {id: providerMock, provider: mockllm.New(mockllm.TextTurn("x")), available: true},
-		},
-		defaultID: providerMock,
-		meta:      newMetadataFixture(),
-	}
-	// Mock → known-incapable.
-	if sup, known := modelReasoningSupport(reg, providerMock, "anything"); !known || sup {
-		t.Errorf("mock: got (sup=%v,known=%v), want (false,true)", sup, known)
-	}
-	// Uncatalogued real provider model → unknown → fail open.
-	if sup, known := modelReasoningSupport(reg, providerOpenAI, "totally-made-up-model"); known || sup {
-		t.Errorf("uncatalogued: got (sup=%v,known=%v), want (false,false=unknown→fail-open)", sup, known)
-	}
-}
-
-// TestOperatorDefaultEffortForClampsAndWarns pins the STARTUP clamp narration:
-// an operator default of "max" against OpenAI clamps to "high" AND emits a
-// WARN naming both the requested and clamped-to values; against Anthropic it
-// identity-maps with NO warn; an unset default is silent.
-func TestOperatorDefaultEffortForClampsAndWarns(t *testing.T) {
-	rec := &recordingDiag{}
-	got := operatorDefaultEffortFor(Config{ReasoningEffort: "max", Diagnostics: rec}, providerOpenAI)
-	if got != "high" {
-		t.Errorf("openai max → %q, want high (clamped)", got)
-	}
-	if !rec.has("clamped operator default") {
-		t.Errorf("expected a startup clamp WARN; got %v", rec.messages())
-	}
-
-	rec2 := &recordingDiag{}
-	got2 := operatorDefaultEffortFor(Config{ReasoningEffort: "max", Diagnostics: rec2}, providerAnthropic)
-	if got2 != "max" {
-		t.Errorf("anthropic max → %q, want max (identity)", got2)
-	}
-	if rec2.has("clamped") {
-		t.Errorf("anthropic must NOT clamp/warn; got %v", rec2.messages())
-	}
-
-	// Unset default: silent, returns "".
-	rec3 := &recordingDiag{}
-	if got3 := operatorDefaultEffortFor(Config{Diagnostics: rec3}, providerOpenAI); got3 != "" {
-		t.Errorf("unset default → %q, want empty", got3)
-	}
-	if len(rec3.messages()) != 0 {
-		t.Errorf("unset default must be silent; got %v", rec3.messages())
-	}
-}
-
-// recordingMock is a mockllm whose construction effort we capture via a recording
-// remint closure.
+// regWithRemintRecorder builds an OpenAI registry the way buildProviderRegistry
+// does: the entry's shared provider is an effortProvider at the (unset) operator
+// default over the Auto adapter def, and every adapter built for a level is
+// recorded and answers "REMINTED:<level>". The live fixture is empty, so gpt-5's
+// levels come from the catalog (low, medium, high).
 func regWithRemintRecorder(defaultReply string) (*providerRegistry, *mockllm.Provider, *[]string) {
 	def := mockllm.New(mockllm.TextTurn(defaultReply))
 	var reminted []string
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
-			providerOpenAI: {
-				id:        providerOpenAI,
-				provider:  def,
-				available: true,
-				remint: func(effort string, _ port.ProviderCapabilities) port.LLMProvider {
-					reminted = append(reminted, effort)
-					return mockllm.New(mockllm.TextTurn("REMINTED:" + effort))
-				},
-			},
-		},
-		defaultID: providerOpenAI,
-		meta:      newMetadataFixture(),
+	remint := func(effort string, _ port.ProviderCapabilities) port.LLMProvider {
+		reminted = append(reminted, effort)
+		return mockllm.New(mockllm.TextTurn("REMINTED:" + effort))
 	}
+	reg := &providerRegistry{entries: map[string]providerEntry{}, defaultID: providerOpenAI, meta: newMetadataFixture()}
+	entry := providerEntry{id: providerOpenAI, available: true, remint: remint}
+	entry.provider = reg.newEffortProvider(entry, "gpt-5", "", newEffortAdapters(def, func(effort string) port.LLMProvider {
+		return remint(effort, port.ProviderCapabilities{})
+	}))
+	reg.entries[providerOpenAI] = entry
 	return reg, def, &reminted
 }
 
-// TestFactoryRemintsOnEffortDiffersFromDefault is the composition e2e: a session
-// requesting an effort DIFFERENT from the operator default re-mints the adapter
-// (the recording closure captures the clamped token), the turn runs on the re-minted
-// provider, and the result echoes the resolved effort.
-func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
-	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
-	cfg := Config{Model: "gpt-5"} // operator default effort unset
-	factory := sessionEngineFactory(cfg, reg, reg.entries[providerOpenAI].provider,
-		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+func countMessages(rec *recordingDiag, substr string) int {
+	n := 0
+	for _, msg := range rec.messages() {
+		if strings.Contains(msg, substr) {
+			n++
+		}
+	}
+	return n
+}
 
-	res, err := factory(context.Background(),
+func effortFactory(cfg Config, reg *providerRegistry) server.SessionEngineFactory {
+	return sessionEngineFactory(cfg, reg, reg.entries[providerOpenAI].provider,
+		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+}
+
+func runEffortTurn(t *testing.T, res server.SessionEngineResult) string {
+	t.Helper()
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
+	return drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
+}
+
+// TestFactorySendsListedEffort: a session requesting a level its model lists
+// echoes it and sends it; the adapter for the level is built when the first
+// request needs it.
+func TestFactorySendsListedEffort(t *testing.T) {
+	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
+	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "high"},
 		nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
-
-	if len(*reminted) != 1 || (*reminted)[0] != "high" {
-		t.Fatalf("expected one re-mint with effort \"high\", got %v", *reminted)
+	if res.ReasoningEffort != "high" || res.RequestedReasoningEffort != "high" {
+		t.Errorf("effort applied=%q requested=%q, want high/high", res.ReasoningEffort, res.RequestedReasoningEffort)
 	}
-	if res.ReasoningEffort != "high" {
-		t.Errorf("echoed ReasoningEffort = %q, want high", res.ReasoningEffort)
+	if got := runEffortTurn(t, res); got != "REMINTED:high" {
+		t.Errorf("turn ran on %q, want the high adapter (REMINTED:high)", got)
 	}
-	// The turn runs on the re-minted provider.
-	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
-	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
-	if got != "REMINTED:high" {
-		t.Errorf("turn ran on %q, want the re-minted provider (REMINTED:high)", got)
+	if !slices.Equal(*reminted, []string{"high"}) {
+		t.Errorf("adapters built = %q, want only high", *reminted)
 	}
 }
 
-// TestFactoryDegradesOnNoReasoningModel is the capability-gate DEGRADE
-// (adversarial #1): a session on a model the live source says has NO reasoning support
-// drops the effort (no re-mint) and WARNs. A re-mint recorder + a recording diag prove
-// both halves.
-func TestFactoryDegradesOnNoReasoningModel(t *testing.T) {
+// TestFactoryDropsEffortForModelWithoutLevels: the live listing says the model
+// takes no effort, so the session echoes none, runs at Auto, and WARNs once,
+// while keeping the requested level.
+func TestFactoryDropsEffortForModelWithoutLevels(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
 	rec := &recordingDiag{}
-	// The live source describes "no-reason-model" as Reasoning:false (known-incapable).
+	reg.diag = rec
 	reg.meta.setMetadataFixture(map[string][]modelEntry{
-		providerOpenAI: {{ID: "no-reason-model", Reasoning: false}},
+		providerOpenAI: {{ID: "no-effort-model", Effort: knownEffortLevels(nil)}},
 	})
-	cfg := Config{Model: "gpt-5", Diagnostics: rec}
-	factory := sessionEngineFactory(cfg, reg, reg.entries[providerOpenAI].provider,
-		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-
-	res, err := factory(context.Background(),
-		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "no-reason-model", ReasoningEffort: "high"},
+	res, err := effortFactory(Config{Model: "gpt-5", Diagnostics: rec}, reg)(context.Background(),
+		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "no-effort-model", ReasoningEffort: "high"},
 		nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
+	if res.ReasoningEffort != "" || res.RequestedReasoningEffort != "high" {
+		t.Errorf("effort applied=%q requested=%q, want \"\"/high", res.ReasoningEffort, res.RequestedReasoningEffort)
+	}
+	if got := runEffortTurn(t, res); got != "DEFAULT-REPLY" {
+		t.Errorf("turn ran on %q, want the Auto adapter (DEFAULT-REPLY)", got)
+	}
 	if len(*reminted) != 0 {
-		t.Fatalf("a no-reasoning model must NOT receive effort (no re-mint); got %v", *reminted)
+		t.Errorf("adapters built = %q, want none", *reminted)
 	}
-	if res.ReasoningEffort != "" {
-		t.Errorf("echoed ReasoningEffort = %q, want empty (degraded)", res.ReasoningEffort)
-	}
-	if !rec.has("does not support reasoning effort") {
-		t.Errorf("expected a degrade WARN; got %v", rec.messages())
+	if n := countMessages(rec, "doesn't accept the requested level"); n != 1 {
+		t.Errorf("drop WARNs = %d, want exactly 1; got %v", n, rec.messages())
 	}
 }
 
-func TestModelReasoningSupportLiveUnknownIsProviderNeutral(t *testing.T) {
-	reg, _, _ := regWithRemintRecorder("unused")
-	reg.meta.setMetadataFixture(map[string][]modelEntry{
-		providerOpenAI: {
-			{ID: "unknown", reasoningUnknown: true},
-			{ID: "unsupported"},
-			{ID: "supported", Reasoning: true},
-		},
-	})
-	for _, tc := range []struct {
-		model            string
-		supported, known bool
-	}{
-		{model: "unknown"},
-		{model: "unsupported", known: true},
-		{model: "supported", supported: true, known: true},
-	} {
-		supported, known := modelReasoningSupport(reg, providerOpenAI, tc.model)
-		if supported != tc.supported || known != tc.known {
-			t.Errorf("%s: support = (%v, %v), want (%v, %v)", tc.model, supported, known, tc.supported, tc.known)
-		}
-	}
-}
-
-// TestFactoryFailsOpenOnUnknownModel is the capability-gate FAIL-OPEN
-// (adversarial fail-open arm): a session on an UNKNOWN (uncatalogued, no live entry)
-// model SENDS the effort anyway (re-mint happens) — the provider 400s honestly if it
-// really cannot, matching the thinking-path unknown=capable posture.
+// TestFactoryFailsOpenOnUnknownModel: no source knows the model's levels, so the
+// requested level is sent and the provider may refuse it.
 func TestFactoryFailsOpenOnUnknownModel(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
-	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
-		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-
-	res, err := factory(context.Background(),
+	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "totally-unknown-model", ReasoningEffort: "high"},
 		nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
-	if len(*reminted) != 1 || (*reminted)[0] != "high" {
-		t.Fatalf("an unknown model must FAIL OPEN (send effort): got %v", *reminted)
-	}
 	if res.ReasoningEffort != "high" {
 		t.Errorf("echoed ReasoningEffort = %q, want high (fail-open)", res.ReasoningEffort)
 	}
+	if got := runEffortTurn(t, res); got != "REMINTED:high" || !slices.Equal(*reminted, []string{"high"}) {
+		t.Errorf("turn ran on %q with adapters %q, want the high adapter", got, *reminted)
+	}
 }
 
-// TestFactoryClampsForOpenAIAndEchoes: an OpenAI session requesting "max" is clamped
-// to "high" — the re-mint receives "high" and the echo is "high" (the locked
-// xhigh/max→high contract).
-func TestFactoryClampsForOpenAIAndEchoes(t *testing.T) {
+// TestFactoryDropsUnlistedLevel: gpt-5 lists low, medium and high, so max is no
+// longer lowered to high: it is dropped and the request runs at Auto.
+func TestFactoryDropsUnlistedLevel(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
-	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
-		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-
-	res, err := factory(context.Background(),
+	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "max"},
 		nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
-	if len(*reminted) != 1 || (*reminted)[0] != "high" {
-		t.Fatalf("openai \"max\" must clamp to \"high\" at re-mint, got %v", *reminted)
+	if res.ReasoningEffort != "" || res.RequestedReasoningEffort != "max" {
+		t.Errorf("effort applied=%q requested=%q, want \"\"/max", res.ReasoningEffort, res.RequestedReasoningEffort)
 	}
-	if res.ReasoningEffort != "high" {
-		t.Errorf("echoed ReasoningEffort = %q, want high (clamped)", res.ReasoningEffort)
+	if got := runEffortTurn(t, res); got != "DEFAULT-REPLY" || len(*reminted) != 0 {
+		t.Errorf("turn ran on %q with adapters %q, want Auto and no adapter built", got, *reminted)
 	}
 }
 
 // TestFactoryDefaultPathNoRemint: an UNSET session effort (equal to the unset
-// operator default) reuses the shared provider — NO re-mint (the byte-identical
-// default path).
+// operator default) reuses the shared Auto adapter — NO adapter is built.
 func TestFactoryDefaultPathNoRemint(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
-	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
-		memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-
-	// A model-only selector (no effort) must NOT re-mint.
-	res, err := factory(context.Background(),
+	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5"},
 		nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
-	if len(*reminted) != 0 {
-		t.Fatalf("an unset effort must NOT re-mint; got %v", *reminted)
-	}
 	if res.ReasoningEffort != "" {
 		t.Errorf("echoed ReasoningEffort = %q, want empty (unset)", res.ReasoningEffort)
 	}
-	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
-	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
-	if got != "DEFAULT-REPLY" {
+	if got := runEffortTurn(t, res); got != "DEFAULT-REPLY" {
 		t.Errorf("turn ran on %q, want the shared default provider (DEFAULT-REPLY)", got)
+	}
+	if len(*reminted) != 0 {
+		t.Fatalf("an unset effort must NOT build an adapter; got %q", *reminted)
 	}
 }
 
-// TestServiceToRealFactoryRemintsClampedEffort is the TRUE end-to-end (QA): a
-// server.Service wired to the REAL sessionEngineFactory (over a recording-remint
-// registry) — the one Service→real-factory join the other tests stub. A
-// CreateSession with reasoning_effort:"max" on OpenAI must (a) construct the adapter
-// with the CLAMPED "high" (the recorder captures it), (b) echo "high" on
-// ResolvedModel, and (c) route the turn to the re-minted provider.
-func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
+// TestServiceToRealFactorySendsPerModelEffort is the TRUE end-to-end (QA): a
+// server.Service wired to the REAL sessionEngineFactory. A CreateSession at max on
+// a model whose live listing includes max must echo max on ResolvedModel and
+// route the turn to the max adapter.
+func TestServiceToRealFactorySendsPerModelEffort(t *testing.T) {
 	ctx := context.Background()
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
+		providerOpenAI: {{ID: "gpt-max", Effort: knownEffortLevels([]string{"medium", "high", "xhigh", "max"})}},
+	})
 	store := memstore.New()
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
 		store, permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
@@ -417,25 +307,19 @@ func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
 	}
 
 	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
-		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "max"})
+		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-max", ReasoningEffort: "max"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
-	// (a) the REAL factory clamped openai "max"→"high" and constructed the adapter with it.
-	if len(*reminted) != 1 || (*reminted)[0] != "high" {
-		t.Fatalf("real factory must re-mint the OpenAI adapter with the clamped \"high\"; got %v", *reminted)
+	if rm := svc.ResolvedModel(sess.ID); rm.ReasoningEffort != "max" {
+		t.Errorf("ResolvedModel.ReasoningEffort = %q, want max", rm.ReasoningEffort)
 	}
-	// (b) the Service echoes the clamped effort on resolved_model.
-	if rm := svc.ResolvedModel(sess.ID); rm.ReasoningEffort != "high" {
-		t.Errorf("ResolvedModel.ReasoningEffort = %q, want \"high\" (clamped)", rm.ReasoningEffort)
-	}
-	// (c) the turn runs on the re-minted provider through the Service.
 	run, err := svc.StartRun(ctx, sess.ID, "hi")
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if got := drainServerRunApp(run); got != "REMINTED:high" {
-		t.Errorf("turn routed to %q, want the re-minted provider (REMINTED:high)", got)
+	if got := drainServerRunApp(run); got != "REMINTED:max" || !slices.Equal(*reminted, []string{"max"}) {
+		t.Errorf("turn routed to %q with adapters %q, want the max adapter", got, *reminted)
 	}
 }
 

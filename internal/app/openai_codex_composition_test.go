@@ -236,10 +236,12 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 	if result.ProviderID != providerOpenAICodex || result.ModelID != "codex-image" || result.ReasoningEffort != "high" || !result.Capabilities.Image {
 		t.Fatalf("resolved Codex result = provider:%q model:%q effort:%q caps:%+v", result.ProviderID, result.ModelID, result.ReasoningEffort, result.Capabilities)
 	}
+	// The entry's zero defaultCaps match any session, so its provider serves as the
+	// Auto adapter; the high adapter is built when the first request needs it.
 	mu.Lock()
-	if remints != 1 || !reflect.DeepEqual(efforts, []string{"high"}) || len(capsSeen) != 1 || !capsSeen[0].Image {
+	if remints != 0 {
 		mu.Unlock()
-		t.Fatalf("remints = %d efforts=%v caps=%+v, want one combined effort/capability remint", remints, efforts, capsSeen)
+		t.Fatalf("remints = %d efforts=%q before any request, want none", remints, efforts)
 	}
 	mu.Unlock()
 
@@ -252,6 +254,17 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 	mu.Unlock()
 	if len(gotModels) != 3 {
 		t.Fatalf("Codex provider requests = %v, want parent → child → parent", gotModels)
+	}
+	mu.Lock()
+	gotEfforts, gotCaps := append([]string(nil), efforts...), append([]port.ProviderCapabilities(nil), capsSeen...)
+	mu.Unlock()
+	if !reflect.DeepEqual(gotEfforts, []string{"high"}) {
+		t.Fatalf("adapter efforts = %q, want one high adapter shared by parent and child", gotEfforts)
+	}
+	for _, caps := range gotCaps {
+		if !caps.Image {
+			t.Fatalf("an adapter lost the session's capabilities: %+v", gotCaps)
+		}
 	}
 	for _, model := range gotModels {
 		if model != "codex-image" {

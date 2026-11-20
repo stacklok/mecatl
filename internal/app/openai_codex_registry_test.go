@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -168,12 +169,6 @@ func TestOpenAICodexDefaultPrecedence(t *testing.T) {
 				t.Fatalf("Default() = %q, want %q", got, tc.wantDefault)
 			}
 		})
-	}
-
-	for _, effort := range []string{effortXHigh, effortMax} {
-		if got, clamped := clampEffortForProvider(providerOpenAICodex, effort); got != effortHigh || !clamped {
-			t.Errorf("Codex clamp(%q) = (%q, %t), want (%q, true)", effort, got, clamped, effortHigh)
-		}
 	}
 }
 
@@ -642,8 +637,11 @@ func TestOpenAICodexLiveMetadataConverges(t *testing.T) {
 	if caps := modelCapability(reg, providerOpenAICodex, textModelID); caps.Image {
 		t.Fatalf("text-only session capability gained image support: %+v", caps)
 	}
-	if supported, known := modelReasoningSupport(reg, providerOpenAICodex, imageModelID); !known || !supported {
-		t.Fatalf("reasoning support = (%t, %t), want (true, true)", supported, known)
+	if levels := reg.effortLevelsFor(providerOpenAICodex, imageModelID); levels.source != effortLevelsFromLive || !slices.Equal(levels.levels, []string{effortMedium}) {
+		t.Fatalf("effort levels = %+v, want [medium] from the live listing", levels)
+	}
+	if levels := reg.effortLevelsFor(providerOpenAICodex, textModelID); levels.source != effortLevelsFromLive || len(levels.levels) != 0 {
+		t.Fatalf("text effort levels = %+v, want known none from the live listing", levels)
 	}
 	if got := reg.windowResolver(Config{}, providerOpenAICodex, imageModelID)(); got != 196000 {
 		t.Fatalf("context window = %d, want 196000", got)

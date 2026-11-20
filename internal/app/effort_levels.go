@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -67,6 +68,28 @@ func resolveModelEffortLevels(cfg Config, view *discoverySnapshot, pid, model st
 		return effortLevelsResolution{levels, effortLevelsFromCatalog}
 	}
 	return effortLevelsResolution{source: effortLevelsUnknown}
+}
+
+// awaitEffortLevels gives a provider whose live listing hasn't answered yet one
+// bounded chance to, before a request goes out, when nothing else knows the
+// model's effort levels. A gateway that lists models only on demand otherwise
+// decides a session's first requests on "unknown". A failed or slow listing
+// leaves the levels unknown; once the provider has answered, it never waits.
+func awaitEffortLevels(ctx context.Context, reg *providerRegistry, pid, model string) {
+	if reg == nil || reg.discovery == nil || reg.effortLevelsFor(pid, model).known {
+		return
+	}
+	entry, ok := reg.Lookup(pid)
+	view := reg.discovery.snapshot()
+	if !ok || entry.lister == nil || view == nil {
+		return
+	}
+	if state := view.providers[pid]; !state.eligible || !state.completedAt.IsZero() {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, liveModelRefreshTimeout)
+	defer cancel()
+	_, _ = reg.discovery.request(bounded, pid, discoveryAdmission)
 }
 
 // catalogEffortLevels reads a catalogued model's levels. A catalogued model is
