@@ -7,12 +7,12 @@ metadata as data and never check out or execute candidate code.
 
 import argparse
 import base64
+from contextlib import nullcontext
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -49,15 +49,7 @@ IMPORTS = {
 }
 
 
-def run(command, directory, env=None, timeout=1800):
-    try:
-        result = subprocess.run(command, cwd=directory, env=env,
-                                capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        raise CheckError(f"command timed out: {command[0]}") from error
-    if result.returncode:
-        raise CheckError(f"{' '.join(map(str, command))}:\n{result.stdout}{result.stderr}".rstrip())
-    return result.stdout
+run = candidate.run
 
 
 def git(root, *args):
@@ -111,7 +103,7 @@ def request(raw):
 
 
 def environment(temporary):
-    """No ambient Go configuration, private bypasses, credentials, or warmed cache."""
+    """No ambient Go configuration, private bypasses, credentials, or host cache."""
     env = {"PATH": os.environ["PATH"], "GOENV": "off", "GOFLAGS": "",
            "GOWORK": "off", "GOTOOLCHAIN": "local", "GOTELEMETRY": "off",
            "GOPROXY": "https://proxy.golang.org", "GOSUMDB": "sum.golang.org",
@@ -120,7 +112,7 @@ def environment(temporary):
     for key, name in (("HOME", "home"), ("GOPATH", "gopath"), ("GOCACHE", "build"),
                       ("GOMODCACHE", "modules"), ("TMPDIR", "tmp")):
         path = temporary / name
-        path.mkdir()
+        path.mkdir(parents=True, exist_ok=True)
         env[key] = str(path)
     return env
 
@@ -184,22 +176,40 @@ def check_changes(root, allowed=()):
 
 
 def check_metadata(original, desired, modules, pins):
-    for key in ("Module", "Go", "Toolchain", "Replace"):
+    for key in ("Module", "Replace"):
         if original.get(key) != desired.get(key):
             raise CheckError(f"tidy changed reviewed {key} directive(s)")
     before, after = candidate.requirements(original), candidate.requirements(desired)
-    siblings = {identity(path) for path in modules}
-    missing = (after.keys() - before.keys()) & siblings
-    if missing:
-        raise CheckError("missing new sibling require in reviewed metadata: " + ", ".join(sorted(missing)))
-    for name, (exact, _) in after.items():
-        if (name == PREFIX or name.startswith(PREFIX + "/")) and name not in siblings:
-            raise CheckError(f"unexpected repository dependency: {name}")
-        if name in siblings and name in before and name not in pins and exact != before[name][0]:
+    siblings = {identity(path): path for path in modules}
+    owner = original["Module"]["Path"]
+    for name, (exact, _) in before.items():
+        if name in siblings and name not in pins and after.get(name, (None,))[0] != exact:
             raise CheckError(f"tidy changed an unselected sibling pin: {name}")
+    for name, (_, indirect) in after.items():
+        if name != PREFIX and not name.startswith(PREFIX + "/"):
+            continue
+        path = siblings.get(name)
+        if path is None or (siblings.get(owner) in ORDER
+                            and (path not in ORDER or ORDER.index(path) >= ORDER.index(siblings[owner]))):
+            raise CheckError(f"unexpected repository dependency/order: {name}")
+        if name not in before and not indirect:
+            raise CheckError(f"missing new direct sibling require in reviewed metadata: {name}")
     for name, exact in pins.items():
         if after.get(name, (None,))[0] != exact:
             raise CheckError(f"requested exact pin did not survive tidy: {name}@{exact}")
+
+
+def check_versions(directory, versions, env):
+    selected = {identity(path): exact for path, exact in versions.items()}
+    if not selected:
+        return
+    resolved = run(["go", "list", "-m", "-mod=readonly", "-f",
+                    "{{if not .Main}}{{.Path}}@{{.Version}}{{end}}", "all"], directory, env, timeout=None)
+    for line in resolved.splitlines():
+        name, _, exact = line.partition("@")
+        if name in selected and exact != selected[name]:
+            raise CheckError(f"requested exact pin did not survive resolution: {name}@{selected[name]}"
+                             f" (resolved {exact})")
 
 
 def tidy(root, entry, modules, versions, env, standalone):
@@ -212,7 +222,10 @@ def tidy(root, entry, modules, versions, env, standalone):
                      *[f"-require={module}@{exact}" for module, exact in pins.items()])
     candidate.go(directory, env, "mod", "tidy")
     desired = candidate.parse_mod(directory, env, directory / "go.mod")
+    pins.update({identity(path): exact for path, exact in versions.items()
+                 if identity(path) in candidate.requirements(desired) and identity(path) != name})
     check_metadata(original, desired, modules, pins)
+    check_versions(directory, versions, env)
     captured = {str((directory / filename).relative_to(root)): candidate.read_optional(directory / filename)
                 for filename in ("go.mod", "go.sum")}
     candidate.go(directory, env, "mod", "tidy", "-diff")
@@ -248,13 +261,11 @@ def artifact(root, parent, captured, destination):
 
 def preflight(args, versions, env):
     root = args.root
+    # Revalidate each invocation, especially before exposing final publication outputs.
     checkout(root, args.source, args.source)
-    # A stale local origin/main is not authority for main ancestry. Do not fetch or
-    # mutate refs here: the runner must fetch the actual main tip before checking.
-    remote = git(root, "ls-remote", "--exit-code", "origin", "refs/heads/main").split()
-    if len(remote) != 2 or remote[1] != "refs/heads/main":
-        raise CheckError("cannot resolve actual origin/main")
-    git(root, "merge-base", "--is-ancestor", args.source, sha(remote[0]))
+    # Fetch each phase's main snapshot; its tip may have advanced during earlier tests.
+    git(root, "fetch", "--no-tags", "origin", "refs/heads/main")
+    git(root, "merge-base", "--is-ancestor", args.source, sha(git(root, "rev-parse", "FETCH_HEAD")))
     inventory(root, env)
     for path, exact in versions.items():
         tag = f"refs/tags/{path}/{exact}"
@@ -263,16 +274,16 @@ def preflight(args, versions, env):
     runid, attempt = os.environ.get("GITHUB_RUN_ID", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "")
     if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (runid, attempt)):
         raise CheckError("positive GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT are required")
-    run(["task", "test:workspace"], root, env)
-    command = [sys.executable, str(Path(candidate.__file__).resolve()), "--root", str(root)]
-    for path in versions:
-        command += ["--module", path]
-    run(command, root, env)
-    check_changes(root)
-    if git(root, "rev-parse", "HEAD") != args.source:
-        raise CheckError("candidate execution moved HEAD")
-    return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
-            "branch": f"module-publication/{runid}-{attempt}"}
+    # Long commands inherit output and lifecycle from the native 30-minute Actions step.
+    if args.phase == "workspace":
+        run(["task", "test:workspace"], root, env, timeout=None, capture=False)
+    elif args.phase == "final":
+        check_changes(root)
+        if git(root, "rev-parse", "HEAD") != args.source:
+            raise CheckError("candidate execution moved HEAD")
+        return {"source": args.source, "versions": json.dumps(versions, separators=(",", ":")),
+                "branch": f"module-publication/{runid}-{attempt}"}
+    return {}
 
 
 def prepare(args, versions, env):
@@ -281,8 +292,10 @@ def prepare(args, versions, env):
     modules = inventory(root, env)
     earlier = {path: exact for path, exact in versions.items()
                if ORDER.index(path) < ORDER.index(args.module)}
+    print(f"{identity(args.module)}: checking standalone publication", flush=True)
     captured = tidy(root, modules[args.module], modules, earlier, env, standalone=True)
     result = artifact(root, args.parent, captured, args.metadata)
+    print(f"{identity(args.module)}: standalone publication OK", flush=True)
     return dict(result, selected="true")
 
 
@@ -306,6 +319,7 @@ def reconcile(args, versions, env):
             pins = {identity(p): exact for p, exact in versions.items()
                     if identity(p) in candidate.requirements(original)}
             check_metadata(original, desired, modules, pins)
+            check_versions(directory, versions, env)
     return artifact(root, args.parent, captured, args.metadata)
 
 
@@ -545,6 +559,10 @@ def main(argv=None):
             sub.add_argument("--module", choices=ORDER, required=True)
         if command in ("publish", "open-pr"):
             sub.add_argument("--branch", required=True)
+        if command == "preflight":
+            sub.add_argument("--phase", choices=("validate", "workspace", "final"), required=True)
+            sub.add_argument("--environment-dir", type=Path)
+            sub.add_argument("--verbose", choices=("true", "false"), nargs="?", const="true", default="false")
         if command == "prepare":
             sub.add_argument("--selection-only", action="store_true")
         if command == "prove":
@@ -570,9 +588,12 @@ def main(argv=None):
             return 0
         if hasattr(args, "root"):
             args.root = args.root.resolve()
-        with tempfile.TemporaryDirectory(prefix="module-publication-") as temporary:
+        with (nullcontext(args.environment_dir) if getattr(args, "environment_dir", None)
+              else tempfile.TemporaryDirectory(prefix="module-publication-")) as temporary:
             temporary = Path(temporary)
             env = environment(temporary)
+            if args.command == "preflight" and args.verbose == "true":
+                env["GOFLAGS"] = "-v"
             if args.command == "prove":
                 result = prove(args, versions, env, temporary)
             else:

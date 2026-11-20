@@ -88,8 +88,8 @@ func RunAllocationChecks(t *testing.T, backend Factory) {
 
 func encoded(t *testing.T, id history.HistoryID, parent history.CommitRef, payload string) (format.Commit, history.CommitRef) {
 	t.Helper()
-	c := format.Commit{FormatVersion: 1, Sequence: parent.Sequence + 1,
-		Records: []format.Record{{Kind: opaqueKind, KindVersion: 7, Payload: []byte(payload)}},
+	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: parent.Sequence + 1,
+		Records: []format.Record{{Timestamp: 0, Kind: opaqueKind, KindVersion: 7, Payload: []byte(payload)}},
 	}
 	if parent.Sequence == 0 {
 		c.HistoryID = &id

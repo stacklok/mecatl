@@ -77,10 +77,10 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if p, err := s.prepare([]*materializedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+				if p, err := s.prepare([]*materializedRecord{start}, 0, 1); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 					t.Fatalf("stranding preparation: %v", err)
 				}
-				dto := format.Commit{FormatVersion: 1, Sequence: math.MaxInt64, Parent: new(before.Head().CID), Records: []format.Record{start.format()}}
+				dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: math.MaxInt64, Parent: new(before.Head().CID), Records: []format.Record{start.format()}}
 				wire, err := codec.Encode(dto, limits)
 				if err != nil {
 					t.Fatal(err)
@@ -94,7 +94,7 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 				s.state.view.head.Sequence = math.MaxInt64
 			}
 			before = s.Snapshot()
-			if p, err := s.prepare([]*materializedRecord{start}); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
+			if p, err := s.prepare([]*materializedRecord{start}, 0, 1); !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(p, prepared{}) {
 				t.Fatalf("exhausted preparation: %v", err)
 			}
 			if err := s.apply(history.Commit{Commit: format.Commit{Records: []format.Record{start.format()}}}); !errors.Is(err, codec.ErrLimitExceeded) {

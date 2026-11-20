@@ -34,7 +34,7 @@ const (
 // length-prefixed command from control, runs it with output on stdout and
 // stderr, and stops it when control yields another byte or ends. It writes
 // "started" and then "exit <code> <confirmed>" lines to status, or
-// "noshell" when the shell is missing. The command can neither inherit
+// "noshell" or "failed" when the command never started. The command can neither inherit
 // status nor reopen it through /proc.
 func SuperviseCommand(control io.Reader, status, stdout, stderr *os.File) error {
 	syscall.CloseOnExec(int(status.Fd())) //nolint:gosec // File descriptors fit in int.
@@ -69,9 +69,11 @@ func SuperviseCommand(control io.Reader, status, stdout, stderr *os.File) error 
 		_, _ = io.WriteString(status, "started\n")
 	})
 	if !started {
+		reply := "failed\n"
 		if _, statErr := os.Stat(shellPath); errors.Is(statErr, fs.ErrNotExist) {
-			_, _ = io.WriteString(status, "noshell\n")
+			reply = "noshell\n"
 		}
+		_, _ = io.WriteString(status, reply)
 		return err
 	}
 	_ = stdout.Close()
@@ -182,12 +184,13 @@ func (p *supervised) handshake(command string) error {
 		return err
 	}
 	_ = p.statusR.SetReadDeadline(time.Now().Add(helperStartTimeout))
-	line, err := p.status.ReadString('\n')
-	if line == "noshell\n" {
+	switch line, err := p.status.ReadString('\n'); {
+	case line == "noshell\n":
 		return tool.ErrNoShell
-	}
-	if err != nil || line != "started\n" {
+	case line == "failed\n":
 		return errors.New("command did not start")
+	case err != nil || line != "started\n":
+		return commandserver.ErrStartUnknown
 	}
 	return p.statusR.SetReadDeadline(time.Time{})
 }

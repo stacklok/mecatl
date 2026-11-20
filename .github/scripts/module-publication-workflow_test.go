@@ -14,12 +14,13 @@ import (
 )
 
 type step struct {
-	ID   string            `yaml:"id"`
-	Uses string            `yaml:"uses"`
-	If   string            `yaml:"if"`
-	Run  string            `yaml:"run"`
-	With map[string]any    `yaml:"with"`
-	Env  map[string]string `yaml:"env"`
+	ID      string            `yaml:"id"`
+	Uses    string            `yaml:"uses"`
+	If      string            `yaml:"if"`
+	Run     string            `yaml:"run"`
+	Timeout int               `yaml:"timeout-minutes"`
+	With    map[string]any    `yaml:"with"`
+	Env     map[string]string `yaml:"env"`
 }
 
 type job struct {
@@ -34,6 +35,7 @@ type job struct {
 	With        map[string]string `yaml:"with"`
 	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []step            `yaml:"steps"`
+	Timeout     int               `yaml:"timeout-minutes"`
 }
 
 type workflow struct {
@@ -42,8 +44,16 @@ type workflow struct {
 	Permissions map[string]string `yaml:"permissions"`
 	Jobs        map[string]job    `yaml:"jobs"`
 	On          struct {
+		Dispatch struct {
+			Inputs map[string]struct {
+				Type    string `yaml:"type"`
+				Default any    `yaml:"default"`
+			} `yaml:"inputs"`
+		} `yaml:"workflow_dispatch"`
 		Call struct {
-			Secrets any `yaml:"secrets"`
+			Secrets map[string]struct {
+				Required bool `yaml:"required"`
+			} `yaml:"secrets"`
 			Outputs map[string]struct {
 				Value string `yaml:"value"`
 			} `yaml:"outputs"`
@@ -84,8 +94,11 @@ func credential(key, value string) bool {
 }
 
 func isolation(w workflow) error {
-	if w.Secrets != nil || w.On.Call.Secrets != nil {
-		return fmt.Errorf("workflow must not accept or forward secrets")
+	if w.Secrets != nil {
+		return fmt.Errorf("workflow must not forward secrets globally")
+	}
+	if w.On.Call.Secrets != nil && (len(w.On.Call.Secrets) != 1 || !w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"].Required) {
+		return fmt.Errorf("reusable workflow must declare only the required release key")
 	}
 	for key, value := range w.Env {
 		if credential(key, value) {
@@ -93,8 +106,20 @@ func isolation(w workflow) error {
 		}
 	}
 	for name, j := range w.Jobs {
-		if j.Secrets != nil {
+		if j.Uses == "./.github/workflows/publish-module.yml" {
+			forwarded, ok := j.Secrets.(map[string]any)
+			if !ok || len(forwarded) != 1 || forwarded["RELEASE_APP_PRIVATE_KEY"] != "${{ secrets.RELEASE_APP_PRIVATE_KEY }}" {
+				return fmt.Errorf("%s must forward only the named release key", name)
+			}
+		} else if j.Secrets != nil {
 			return fmt.Errorf("%s forwards reusable secrets", name)
+		}
+		operation := map[string]string{"publish": "publish", "adoption-pr": "open-pr"}[name]
+		if operation == "" && j.Environment != "" {
+			return fmt.Errorf("%s must not bind an environment", name)
+		}
+		if operation != "" && j.Environment != "release" {
+			return fmt.Errorf("%s must bind the release environment", name)
 		}
 		if j.Uses == "" && j.RunsOn != "ubuntu-24.04" {
 			return fmt.Errorf("%s must use a fresh hosted ubuntu-24.04 runner", name)
@@ -109,7 +134,6 @@ func isolation(w workflow) error {
 				return fmt.Errorf("%s forwards credential input: %s", name, key)
 			}
 		}
-		operation := map[string]string{"publish": "publish", "adoption-pr": "open-pr"}[name]
 		for _, s := range j.Steps {
 			for key, value := range s.Env {
 				if !credential(key, value) {
@@ -140,6 +164,10 @@ func isolation(w workflow) error {
 }
 
 func TestPublicationRunnerAndCredentialIsolation(t *testing.T) {
+	one := load(t, "publish-module")
+	if len(one.On.Call.Secrets) != 1 || !one.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"].Required {
+		t.Fatal("reusable workflow must require explicit release key forwarding")
+	}
 	for _, name := range []string{"publish-module", "publish-modules"} {
 		if err := isolation(load(t, name)); err != nil {
 			t.Fatal(err)
@@ -167,6 +195,29 @@ func TestPublicationIsolationMutations(t *testing.T) {
 		{"step token", func(w *workflow) { w.Jobs["prove"].Steps[0].Env = map[string]string{"GH_TOKEN": "${{ github.token }}"} }},
 		{"hidden action token", func(w *workflow) { w.Jobs["prepare"].Steps[0].With["token"] = "${{ github.token }}" }},
 		{"hidden innocuous input", func(w *workflow) { w.Jobs["prove"].Steps[0].With["data"] = "${{ secrets.RELEASE_APP_PRIVATE_KEY }}" }},
+		{"candidate environment", func(w *workflow) {
+			j := w.Jobs["prepare"]
+			j.Environment = "release"
+			w.Jobs["prepare"] = j
+		}},
+		{"proof environment", func(w *workflow) {
+			j := w.Jobs["prove"]
+			j.Environment = "release"
+			w.Jobs["prove"] = j
+		}},
+		{"missing writer environment", func(w *workflow) {
+			j := w.Jobs["publish"]
+			j.Environment = ""
+			w.Jobs["publish"] = j
+		}},
+		{"optional release key", func(w *workflow) {
+			declaration := w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"]
+			declaration.Required = false
+			w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"] = declaration
+		}},
+		{"extra declared secret", func(w *workflow) {
+			w.On.Call.Secrets["UNRELATED"] = w.On.Call.Secrets["RELEASE_APP_PRIVATE_KEY"]
+		}},
 		{"writer token on checkout", func(w *workflow) {
 			w.Jobs["publish"].Steps[0].Env = map[string]string{"GH_TOKEN": "${{ steps.app.outputs.token }}"}
 		}},
@@ -182,7 +233,13 @@ func TestPublicationIsolationMutations(t *testing.T) {
 			}
 		})
 	}
-	for _, secrets := range []any{"inherit", map[string]any{"key": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"}} {
+	for _, secrets := range []any{
+		nil,
+		"inherit",
+		map[string]any{"key": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"},
+		map[string]any{"RELEASE_APP_PRIVATE_KEY": "${{ secrets.UNRELATED }}"},
+		map[string]any{"RELEASE_APP_PRIVATE_KEY": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}", "UNRELATED": "${{ secrets.UNRELATED }}"},
+	} {
 		w := load(t, "publish-modules")
 		j := w.Jobs["engine"]
 		j.Secrets = secrets
@@ -213,8 +270,12 @@ func TestPublicationProofChain(t *testing.T) {
 	previous := "preflight"
 	for i, name := range names {
 		j := w.Jobs[name]
-		if j.Uses != "./.github/workflows/publish-module.yml" || j.With["module"] != modules[i] || !needs(j, previous) || j.If != "" {
-			t.Fatalf("%s must follow %s without caller skips or failure bypasses", name, previous)
+		condition := ""
+		if i == 0 {
+			condition = "${{ !inputs.preflight_only }}"
+		}
+		if j.Uses != "./.github/workflows/publish-module.yml" || j.With["module"] != modules[i] || !needs(j, previous) || j.If != condition {
+			t.Fatalf("%s must follow %s without selection skips or failure bypasses", name, previous)
 		}
 		parent := "${{ needs." + previous + ".outputs.head }}"
 		if i == 0 {
@@ -227,8 +288,8 @@ func TestPublicationProofChain(t *testing.T) {
 	}
 	for name, prerequisite := range map[string]string{"reconcile": "adapters", "adoption-pr": "reconcile"} {
 		j := w.Jobs[name]
-		if !needs(j, prerequisite) || j.If != "" {
-			t.Fatalf("%s bypasses public proof or reconciliation failure", name)
+		if !needs(j, prerequisite) || j.If != "${{ !inputs.preflight_only }}" {
+			t.Fatalf("%s bypasses preflight-only, public proof or reconciliation failure", name)
 		}
 	}
 	one := load(t, "publish-module")
@@ -246,6 +307,75 @@ func TestPublicationProofChain(t *testing.T) {
 	}
 	if prove.Outputs["head"] != "${{ steps.prove.outputs.head }}" || one.Jobs["publish"].If != "needs.prepare.outputs.selected == 'true'" {
 		t.Fatal("selected publish/proof output gate drift")
+	}
+}
+
+func TestPublicationPreflightDiagnostics(t *testing.T) {
+	w := load(t, "publish-modules")
+	for _, name := range []string{"preflight_only", "verbose"} {
+		input, ok := w.On.Dispatch.Inputs[name]
+		if !ok || input.Type != "boolean" || input.Default != false {
+			t.Fatalf("%s must be an explicit boolean defaulting to false", name)
+		}
+	}
+	if w.Jobs["preflight"].If != "github.ref == 'refs/heads/main'" || w.Jobs["preflight"].Timeout != 75 {
+		t.Fatal("preflight must retain main-only authority with a 75-minute outer bound")
+	}
+	for name, j := range w.Jobs {
+		switch name {
+		case "preflight", "summary":
+		case "agentdef", "reconcile", "adoption-pr":
+			if j.If != "${{ !inputs.preflight_only }}" {
+				t.Fatalf("%s must be disabled in diagnostic mode", name)
+			}
+		default:
+			// Default success() propagation must skip every remaining reusable call.
+			if j.Uses != "./.github/workflows/publish-module.yml" || j.If != "" {
+				t.Fatalf("%s can bypass the skipped chain", name)
+			}
+		}
+	}
+	summary := w.Jobs["summary"]
+	if summary.If != "always()" || len(summary.Steps) != 1 || summary.Steps[0].Env["PREFLIGHT_ONLY"] != "${{ inputs.preflight_only }}" {
+		t.Fatal("summary must run even when the publication chain is skipped and report the mode")
+	}
+	var commands []step
+	for _, s := range w.Jobs["preflight"].Steps {
+		if strings.HasPrefix(s.Run, "python3 tooling/.github/scripts/module-publication.py preflight ") {
+			commands = append(commands, s)
+		}
+	}
+	if len(commands) != 3 {
+		t.Fatal("preflight needs three native command steps")
+	}
+	for i, phase := range []string{"validate", "workspace", "final"} {
+		s := commands[i]
+		if s.Timeout != 30 || s.If != "" || !strings.Contains(s.Run, "--phase "+phase+" ") ||
+			!strings.Contains(s.Run, `--environment-dir "$RUNNER_TEMP/mp"`) {
+			t.Fatalf("%s lost step ordering, success gating, bounds or shared environment", phase)
+		}
+		if (s.ID == "preflight") != (phase == "final") {
+			t.Fatal("only final source integrity may expose publication outputs")
+		}
+	}
+	preflight := w.Jobs["preflight"]
+	if preflight.Env["SOURCE"] != "${{ inputs.source }}" || preflight.Env["VERSIONS"] != "${{ inputs.versions }}" || preflight.Env["VERBOSE"] != "${{ inputs.verbose }}" {
+		t.Fatal("preflight must retain exact dispatch inputs across steps")
+	}
+	for _, key := range []string{"source", "versions", "branch"} {
+		if preflight.Outputs[key] != "${{ steps.preflight.outputs."+key+" }}" {
+			t.Fatalf("%s bypasses final integrity outputs", key)
+		}
+	}
+	data, err := json.Marshal(map[string]any{"preflight": commands, "summary": summary.Steps[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, file, _, _ := runtime.Caller(0)
+	cmd := exec.Command("python3", filepath.Join(filepath.Dir(file), "module-publication_test.py"), "DiagnosticsWorkflowTests", "LocalTests.test_preflight_workflow_boundaries")
+	cmd.Env = append(os.Environ(), "PUBLICATION_DIAGNOSTICS_WORKFLOW="+string(data), "PYTHONDONTWRITEBYTECODE=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("diagnostics shell boundary: %v\n%s", err, output)
 	}
 }
 

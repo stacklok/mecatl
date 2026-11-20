@@ -208,7 +208,12 @@ type grpcFixture struct {
 	stop      func()
 }
 
-func startFixture(t *testing.T, backend executioncontroller.Backend, ready func() bool) grpcFixture {
+func startFixture(
+	t *testing.T,
+	backend executioncontroller.Backend,
+	ready func() bool,
+	register ...func(*grpc.Server),
+) grpcFixture {
 	t.Helper()
 	_, ca, caKey := certificate(t, nil, nil, "ca", false)
 	serverCert, _, _ := certificate(t, ca, caKey, "example.test", false)
@@ -222,6 +227,9 @@ func startFixture(t *testing.T, backend executioncontroller.Backend, ready func(
 	}
 	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(executioncontroller.TLSConfig(serverCert, pool))), grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes), grpc.MaxSendMsgSize(executionenv.MaxMessageBytes))
 	executionv1.RegisterExecutionProviderServiceServer(s, h)
+	for _, r := range register {
+		r(s)
+	}
 	go func() { _ = s.Serve(ln) }()
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)

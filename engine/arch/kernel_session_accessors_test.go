@@ -19,7 +19,8 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 		methods        []string
 	}{
 		{"session.go", "Session", []string{"Snapshot"}},
-		{"record_view.go", "RecordView", []string{"ModelRequest", "ModelResponse", "InvocationFailure", "RunEnded"}},
+		{"record_view.go", "RecordView", []string{"Timestamp", "Commit", "ModelRequest", "ModelResponse", "InvocationFailure", "RunEnded"}},
+		{"commit_metadata.go", "CommitMetadata", []string{"Ref", "Timestamp", "InstanceID"}},
 		{"snapshot.go", "Snapshot", []string{"RootInstructions", "UserInstructions", "ToolCatalog", "ModelBinding", "UserInputByID"}},
 	} {
 		t.Run(owner.file, func(t *testing.T) {
@@ -37,7 +38,8 @@ func TestKernelSessionConstantTimeAccessors(t *testing.T) {
 
 // kernelAccessorViolations requires each named concrete method exactly once and
 // rejects loops and calls in its body, except len and integer conversions in the
-// identity lookup. Fields, conditionals and handle literals remain unrestricted;
+// identity lookup and time.Unix(...).UTC() in timestamp getters. Fields,
+// conditionals and handle literals remain unrestricted;
 // helper calls require review because they could hide traversal. Other methods
 // are intentionally outside scope.
 func kernelAccessorViolations(f *ast.File, receiver string, methods ...string) []string {
@@ -71,6 +73,17 @@ func kernelAccessorViolations(f *ast.File, receiver string, methods ...string) [
 			if call, ok := n.(*ast.CallExpr); ok && receiver == "Snapshot" && method.Name.Name == "UserInputByID" {
 				if name, ok := call.Fun.(*ast.Ident); ok && (name.Name == "len" || name.Name == "int" || name.Name == "uint64") {
 					return true
+				}
+			}
+			if call, ok := n.(*ast.CallExpr); ok && (receiver == "RecordView" || receiver == "CommitMetadata") && method.Name.Name == "Timestamp" {
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == "time" && selector.Sel.Name == "Unix" {
+						return true
+					}
+					if _, ok := selector.X.(*ast.CallExpr); ok && selector.Sel.Name == "UTC" {
+						// Inspect the receiver call too: only time.Unix is permitted.
+						return true
+					}
 				}
 			}
 			switch n.(type) {
@@ -122,6 +135,22 @@ func TestKernelSessionConstantTimeAccessorGuardControls(t *testing.T) {
 			_ = make(map[UserInputID]int)
 			return UserInputView{}, false
 		}`, 1},
+		{"record timestamp conversion", "RecordView", "Timestamp", `func (v RecordView) Timestamp() (time.Time, bool) {
+			if v.record == nil { return time.Time{}, false }
+			return time.Unix(0, v.record.value.Timestamp).UTC(), true
+		}`, 0},
+		{"commit timestamp conversion", "CommitMetadata", "Timestamp", `func (v CommitMetadata) Timestamp() time.Time {
+			if v == (CommitMetadata{}) { return time.Time{} }
+			return time.Unix(0, v.timestamp).UTC()
+		}`, 0},
+		{"timestamp scan", "RecordView", "Timestamp", `func (v RecordView) Timestamp() (time.Time, bool) {
+			for _, r := range v.records { _ = r }
+			return time.Unix(0, v.record.value.Timestamp).UTC(), true
+		}`, 1},
+		{"delegated timestamp", "CommitMetadata", "Timestamp", `func (v CommitMetadata) Timestamp() time.Time { return v.scanTimestamp().UTC() }`, 1},
+		{"timestamp conversion argument scan", "RecordView", "Timestamp", `func (v RecordView) Timestamp() (time.Time, bool) { return time.Unix(0, v.scanTimestamp()).UTC(), true }`, 1},
+		{"unrelated time call", "CommitMetadata", "Timestamp", `func (v CommitMetadata) Timestamp() time.Time { return time.Now().UTC() }`, 1},
+		{"conversion outside timestamp", "CommitMetadata", "Ref", `func (v CommitMetadata) Ref() time.Time { return time.Unix(0, v.timestamp).UTC() }`, 2},
 		{"missing method", "Session", "Snapshot", `func (s *Session) other() {}`, 1},
 		{"wrong owner", "Session", "Snapshot", `func (s *Other) Snapshot() Snapshot { return s.view }`, 1},
 		{"duplicate method", "Session", "Snapshot", `func (s *Session) Snapshot() Snapshot { return s.state.view }

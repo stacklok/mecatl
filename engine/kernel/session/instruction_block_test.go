@@ -137,7 +137,7 @@ func TestInstructionBlockDuplicateKeysStoredAcceptance(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			// An independent writer can store opaque payload bytes in History. Load
 			// must reject the entire continuation, including its valid first record.
-			invalid := fixtureRecord{historyformat.Record{Kind: tc.kind, KindVersion: sessionformat.Version, Payload: tc.value.AppendCBOR(nil)}}
+			invalid := fixtureRecord{historyformat.Record{Timestamp: 0, Kind: tc.kind, KindVersion: sessionformat.Version, Payload: tc.value.AppendCBOR(nil)}}
 			prefix := encodeFixture(t, sessionformat.KindRootInstructions, sessionformat.RootInstructions{})
 			assertRejected(t, h, s, proposedCommit(t, s, prefix, invalid), codec.ErrInvalidData)
 		})

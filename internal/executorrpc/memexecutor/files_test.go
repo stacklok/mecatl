@@ -23,8 +23,8 @@ func TestFileServiceConformance(t *testing.T) {
 			Files: memfs.NewWorkspaceOverFileSystem(backend),
 		})
 		return fileconformance.Target{
-			Client: executorv1.NewFileServiceClient(conn),
-			Root:   root,
+			Conn: conn,
+			Root: root,
 			External: fsconformance.ExternalAccess{
 				Read: func(p string) ([]byte, error) {
 					return backend.Read(context.Background(), p)

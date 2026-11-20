@@ -2633,6 +2633,9 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 		mm, cmd := m.switchToWorktree(intent.worktree)
 		return mm, cmd, true
 	case effortSelectIntent:
+		if m.phase != phaseIdle || !m.caps.ModelSelection {
+			return m, nil, true
+		}
 		sel := m.effortSelection(intent.effort)
 		m.closeModal()
 		mm, cmd, _ := m.switchEffort(sel)

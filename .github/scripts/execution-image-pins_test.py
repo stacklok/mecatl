@@ -101,7 +101,11 @@ print(os.environ["MANIFEST"])
         assert " /mecatl-executor\n" in workload
         assert "USER 65532:65532" in workload
         assert "ENV HOME=/workspace TMPDIR=/tmp GOTMPDIR=/tmp" in workload
-        assert 'ENTRYPOINT ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]' in workload
+        assert '\nENTRYPOINT ["/mecatl-executor", "serve"]\n' in workload
+        assert "\nCMD " not in workload
+        fixture_image = (root / "deploy/mecatl-execution-kind/fixture/derivative"
+                         / "Dockerfile").read_text()
+        assert "ENTRYPOINT" not in fixture_image and "\nCMD " not in fixture_image
 
 
 def main() -> None:

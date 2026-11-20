@@ -241,9 +241,12 @@ type runEntry struct {
 }
 
 // commitEntry preserves verified envelope fields and grouping without duplicating
-// record payloads. Pointer envelope fields are copied into scalar values.
+// record payloads. Pointer envelope fields are copied into scalar values. Metadata
+// has stable per-commit backing shared with accepted records, never a pointer into
+// this growable index.
 type commitEntry struct {
 	ref           history.CommitRef
+	metadata      *CommitMetadata
 	formatVersion int64
 	historyID     historyid.HistoryID // Nonzero only for genesis.
 	parent        contentid.CID       // Nonzero only for successors.

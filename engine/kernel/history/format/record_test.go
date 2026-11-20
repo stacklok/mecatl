@@ -13,7 +13,7 @@ import (
 
 func TestRecordClone(t *testing.T) {
 	for _, payload := range [][]byte{nil, {}, {0, 0xff, 'x'}} {
-		source := format.Record{Kind: "unknown.kind", KindVersion: -1, Payload: payload}
+		source := format.Record{Timestamp: -1, Kind: "unknown.kind", KindVersion: -1, Payload: payload}
 		cloned := source.Clone()
 		if !reflect.DeepEqual(cloned, source) {
 			t.Fatalf("clone = %#v; want %#v", cloned, source)
@@ -33,12 +33,13 @@ func TestRecordClone(t *testing.T) {
 }
 
 func TestRecordEqual(t *testing.T) {
-	base := format.Record{Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0, 0xff}}
+	base := format.Record{Timestamp: -1, Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0, 0xff}}
 	for name, other := range map[string]format.Record{
-		"kind":    {Kind: "other", KindVersion: 7, Payload: []byte{0, 0xff}},
-		"version": {Kind: "unknown.kind", KindVersion: 8, Payload: []byte{0, 0xff}},
-		"payload": {Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0, 0xfe}},
-		"length":  {Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0}},
+		"timestamp": {Timestamp: 0, Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0, 0xff}},
+		"kind":      {Timestamp: -1, Kind: "other", KindVersion: 7, Payload: []byte{0, 0xff}},
+		"version":   {Timestamp: -1, Kind: "unknown.kind", KindVersion: 8, Payload: []byte{0, 0xff}},
+		"payload":   {Timestamp: -1, Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0, 0xfe}},
+		"length":    {Timestamp: -1, Kind: "unknown.kind", KindVersion: 7, Payload: []byte{0}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if base.Equal(other) || other.Equal(base) {
@@ -46,7 +47,7 @@ func TestRecordEqual(t *testing.T) {
 			}
 		})
 	}
-	if other := (format.Record{Kind: base.Kind, KindVersion: 7, Payload: []byte{0, 0xff}}); !base.Equal(other) || !other.Equal(base) {
+	if other := (format.Record{Timestamp: base.Timestamp, Kind: base.Kind, KindVersion: 7, Payload: []byte{0, 0xff}}); !base.Equal(other) || !other.Equal(base) {
 		t.Fatal("independently allocated equal records compared unequal")
 	}
 	if !(format.Record{}).Equal(format.Record{Payload: []byte{}}) || !(format.Record{Payload: []byte{}}).Equal(format.Record{}) {
@@ -59,7 +60,7 @@ func TestRecordEqual(t *testing.T) {
 }
 
 func TestRecordReadCBORPreservesReceiver(t *testing.T) {
-	valid := []byte("\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x01")
+	valid := []byte("\xa4\x61k\x61x\x61p\x42\xff\x00\x61t\x20\x61v\x01")
 	limited := testLimits()
 	limited.MaxByteStringBytes = 1
 	for _, test := range []struct {
@@ -68,10 +69,10 @@ func TestRecordReadCBORPreservesReceiver(t *testing.T) {
 		category error
 	}{
 		{valid[:len(valid)-1], testLimits(), codec.ErrInvalidData},
-		{[]byte("\xa3\x61k\x61x\x61p\x42\xff\x00\x61v\x00"), testLimits(), codec.ErrInvalidData},
+		{[]byte("\xa4\x61k\x61x\x61p\x42\xff\x00\x61t\x20\x61v\x00"), testLimits(), codec.ErrInvalidData},
 		{valid, limited, codec.ErrLimitExceeded},
 	} {
-		r := format.Record{Kind: "previous", KindVersion: 7, Payload: []byte("previous payload")}
+		r := format.Record{Timestamp: -1, Kind: "previous", KindVersion: 7, Payload: []byte("previous payload")}
 		before := r.Clone()
 		wire := bytes.Clone(test.wire)
 		reader, err := codec.NewReader(wire, test.limits)

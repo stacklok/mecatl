@@ -19,10 +19,14 @@ import (
 
 // Runner starts commands for the service.
 type Runner interface {
-	// Start returns once the command runs, or an error if it never ran.
+	// Start returns once the command runs, or an error if it never ran, or
+	// one wrapping ErrStartUnknown if it may have.
 	// Ending ctx kills the command and every process it started.
 	Start(ctx context.Context, command string, stdout, stderr io.Writer) (Process, error)
 }
+
+// ErrStartUnknown reports a failed start that may have run the command.
+var ErrStartUnknown = errors.New("command start outcome unknown")
 
 // Process is a started command.
 type Process interface {
@@ -140,7 +144,11 @@ func (s *Server) RunCommand(
 			return failure(codes.FailedPrecondition, executorv1.ErrorReason_ERROR_REASON_NO_SHELL,
 				"no shell available")
 		}
-		return status.Error(codes.Internal, "command did not start")
+		if errors.Is(err, ErrStartUnknown) {
+			return status.Error(codes.Unknown, ErrStartUnknown.Error())
+		}
+		return failure(codes.Internal, executorv1.ErrorReason_ERROR_REASON_START_FAILED,
+			"command did not start")
 	}
 	if err := out.start(); err != nil {
 		cancel(err)

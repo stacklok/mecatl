@@ -47,7 +47,7 @@ func TestSessionCommitAcceptedLocalApplyFailure(t *testing.T) {
 	}
 	policy := Policy{CommitLimits: limits, PayloadLimits: limits,
 		MaxRecordsPerCommit: 16, SoftMaxRetainedRecords: 128, SoftMaxPayloadBytes: 32768, SoftMaxDecodedWork: 1 << 24, MaxRetainedRecords: 128, MaxPayloadBytes: 32768, MaxDecodedWork: 1 << 24}
-	s, err = New(h, id, policy)
+	s, err = New(h, id, testConfigFor(policy))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestSessionCommitAcceptedLocalApplyFailure(t *testing.T) {
 	if err := s.writeBarrier(); !errors.Is(err, ErrReloadRequired) {
 		t.Fatal("write barrier ignored reload")
 	}
-	recovered, err := Load(context.Background(), h, id, policy)
+	recovered, err := Load(context.Background(), h, id, testConfigFor(policy))
 	if err != nil || recovered.Snapshot().Head() != ref || !recovered.Snapshot().Created() {
 		t.Fatalf("accepted-local-failure recovery: %v", err)
 	}

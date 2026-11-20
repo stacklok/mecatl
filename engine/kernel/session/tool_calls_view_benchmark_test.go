@@ -48,7 +48,7 @@ func settledToolCallViews(t testing.TB, responses, count, field, sibling int) ma
 		}
 	}
 	interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.EndRun(RunEndedCompleted)) })
-	loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+	loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
 	return map[string]*Session{"Submit": s, "Load": loaded}
 }

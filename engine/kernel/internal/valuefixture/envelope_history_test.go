@@ -90,8 +90,8 @@ func TestEnvelopeHistoryPersistenceOwnership(t *testing.T) {
 	assertJSONMap(t, acceptedMap, want.Map)
 
 	id := history.NewHistoryID()
-	proposal := format.Commit{FormatVersion: 1, HistoryID: &id, Sequence: 1,
-		Records: []format.Record{{Kind: "opaque", KindVersion: 1, Payload: payload}},
+	proposal := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
+		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 1, Payload: payload}},
 	}
 	root, err := h.Append(ctx, id, proposal)
 	if err != nil || root.Status != history.StatusAccepted {
@@ -160,8 +160,8 @@ func TestEnvelopeHistoryPersistenceOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent := root.Proposal.CID
-	second, err := h.Append(ctx, id, format.Commit{FormatVersion: 1, Parent: &parent, Sequence: 2,
-		Records: []format.Record{{Kind: "opaque", KindVersion: 1, Payload: laterPayload}},
+	second, err := h.Append(ctx, id, format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Parent: &parent, Sequence: 2,
+		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 1, Payload: laterPayload}},
 	})
 	if err != nil || second.Status != history.StatusAccepted {
 		t.Fatalf("Append successor: %+v, %v", second, err)

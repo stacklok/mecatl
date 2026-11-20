@@ -103,7 +103,7 @@ func TestConstructCoalescesWithinContentSequences(t *testing.T) {
 			id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: built.Recipe()})
 			requireConstruction(t, err)
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), f.policy)
+			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
 			requireConstruction(t, err)
 			rebuilt, err := Reconstruct(loaded.Snapshot(), id, testLimits())
 			requireConstruction(t, err)

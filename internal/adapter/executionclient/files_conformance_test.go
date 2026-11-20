@@ -6,15 +6,23 @@ import (
 	"errors"
 	"io/fs"
 	"strings"
+	"sync"
 	"testing"
 
+	"google.golang.org/grpc"
+
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/engine/adapter/fstools"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/executionenv"
 	"github.com/stacklok/mecatl/internal/executionexecutor"
+	"github.com/stacklok/mecatl/internal/executorrpc/commandserver"
+	"github.com/stacklok/mecatl/internal/executorrpc/fileserver"
+	"github.com/stacklok/mecatl/internal/executorrpc/memexecutor"
 )
 
 type executorBackend struct {
@@ -36,24 +44,79 @@ func remoteExecutorEnvironment(t *testing.T) tool.Environment {
 	t.Cleanup(func() { _ = x.Close() })
 	fx := startFixture(t, &executorBackend{executor: x}, nil)
 	t.Cleanup(fx.stop)
+	return acquireRemoteRun(t, fx)
+}
+
+type recordingFiles struct {
+	*fileserver.Server
+	mu       sync.Mutex
+	contexts []*executorv1.RequestContext
+}
+
+func (r *recordingFiles) StatFile(
+	ctx context.Context,
+	req *executorv1.StatFileRequest,
+) (*executorv1.StatFileResponse, error) {
+	r.mu.Lock()
+	r.contexts = append(r.contexts, req.GetContext())
+	r.mu.Unlock()
+	return r.Server.StatFile(ctx, req)
+}
+
+func executorServicesEnvironment(
+	t *testing.T,
+	runner *memexecutor.Runner,
+) (tool.Environment, *recordingFiles) {
+	t.Helper()
+	srv, err := fileserver.New(
+		memfs.NewWorkspace(remoteRoot),
+		fileserver.WithPathEscapeErrors(memfs.ErrPathEscape),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &recordingFiles{Server: srv}
+	commands, err := commandserver.New(runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := startFixture(t, &integrationBackend{}, nil, func(s *grpc.Server) {
+		executorv1.RegisterFileServiceServer(s, files)
+		executorv1.RegisterCommandServiceServer(s, commands)
+	})
+	t.Cleanup(fx.stop)
+	return acquireRemoteRun(t, fx, WithExecutorServices()), files
+}
+
+func acquireRemoteRun(t *testing.T, fx grpcFixture, opts ...ProviderOption) tool.Environment {
+	t.Helper()
 	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	provider, err := NewTemplateProvider(client, "coding", codingRevision)
+	provider, err := NewTemplateProvider(client, "coding", codingRevision, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	principal := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	binding, err := provider.Bind(t.Context(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Principal: principal, BindingID: "files"})
+	binding, err := provider.Bind(t.Context(), server.PlacementBindRequest{
+		Selector:  server.DefaultPlacement(),
+		Principal: principal,
+		BindingID: "files",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := binding.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	handle, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{Ref: binding.Ref, Principal: principal, BindingID: "files", RunID: "run-files"})
+	handle, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{
+		Ref:       binding.Ref,
+		Principal: principal,
+		BindingID: "files",
+		RunID:     "run-files",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +124,56 @@ func remoteExecutorEnvironment(t *testing.T) tool.Environment {
 	return handle.Environment()
 }
 
+var remoteTransports = map[string]func(t *testing.T) tool.Environment{
+	"ProviderFiles": remoteExecutorEnvironment,
+	"ExecutorServices": func(t *testing.T) tool.Environment {
+		env, _ := executorServicesEnvironment(t, memexecutor.NewRunner())
+		return env
+	},
+}
+
 func TestRemoteWorkspaceConformanceThroughSignedGRPC(t *testing.T) {
-	factory := func(t *testing.T) tool.Workspace { return remoteExecutorEnvironment(t).Workspace() }
-	fsconformance.Run(t, factory)
-	fsconformance.RunNamespace(t, factory)
+	for name, environment := range remoteTransports {
+		t.Run(name, func(t *testing.T) {
+			factory := func(t *testing.T) tool.Workspace { return environment(t).Workspace() }
+			fsconformance.Run(t, factory)
+			fsconformance.RunNamespace(t, factory)
+		})
+	}
+}
+
+func TestExecutorServicesCarryTheRunClaim(t *testing.T) {
+	runner := memexecutor.NewRunner()
+	runner.Script("echo hi", memexecutor.Exit("hi\n", "", 0))
+	env, files := executorServicesEnvironment(t, runner)
+	if _, err := env.Workspace().Stat(t.Context(), "absent"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Stat = %v, want not found", err)
+	}
+	files.mu.Lock()
+	got := files.contexts
+	files.mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("server saw %d contexts, want 1", len(got))
+	}
+	rc := got[0]
+	if rc.GetOwner().GetSubject() != "alice" || rc.GetBindingId() != "files" ||
+		rc.GetRunId() != "run-files" || rc.GetClaimId() != "claim" || rc.GetEpoch() == 0 ||
+		rc.GetGrantGeneration() != 1 || rc.GetEnvironment().GetId() == "" {
+		t.Fatalf("request context = %v, want the run claim", rc)
+	}
+	res, err := env.CommandRunner().Run(t.Context(), "echo hi")
+	if err != nil || res.Stdout != "hi\n" {
+		t.Fatalf("Run = %+v, %v", res, err)
+	}
 }
 
 func TestRemoteFileToolsPreserveLedgerAndNamespaceContracts(t *testing.T) {
-	env := remoteExecutorEnvironment(t)
+	for name, environment := range remoteTransports {
+		t.Run(name, func(t *testing.T) { testRemoteFileTools(t, environment(t)) })
+	}
+}
+
+func testRemoteFileTools(t *testing.T, env tool.Environment) {
 	ctx := t.Context()
 	call := func(body tool.Tool, args string, wantError bool, contains string) {
 		t.Helper()

@@ -48,8 +48,8 @@ func newHistory(t *testing.T, b history.Backend, p history.Policy) *history.Hist
 }
 
 func dto(id history.HistoryID, parent history.CommitRef, payload string) format.Commit {
-	c := format.Commit{FormatVersion: 1, Sequence: parent.Sequence + 1,
-		Records: []format.Record{{Kind: "opaque", KindVersion: 1, Payload: []byte(payload)}}}
+	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: parent.Sequence + 1,
+		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 1, Payload: []byte(payload)}}}
 	if parent.Sequence == 0 {
 		c.HistoryID = &id
 	} else {

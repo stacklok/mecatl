@@ -18,6 +18,13 @@ import (
 type Commit struct {
 	// FormatVersion is the commit/record envelope version, currently 1.
 	FormatVersion int64 `cbor:"v"`
+	// Timestamp is the signed Unix nanoseconds when this commit was prepared.
+	// Every int64 value is valid, including zero (the Unix epoch) and negatives.
+	Timestamp int64 `cbor:"t"`
+	// InstanceID identifies the diagnostic writer instance that prepared this
+	// commit. It is required and nonzero; it does not establish authority or
+	// global uniqueness.
+	InstanceID uint64 `cbor:"i"`
 	// HistoryID is present only for a root commit. Present-zero is invalid.
 	HistoryID *historyid.HistoryID `cbor:"h,omitempty"`
 	// Parent is present only for a successor. Present-zero is invalid.
@@ -35,6 +42,9 @@ type Commit struct {
 func (c Commit) validateCBOR() error {
 	if c.FormatVersion != 1 {
 		return errors.New("unsupported commit format version")
+	}
+	if c.InstanceID == 0 {
+		return errors.New("commit instance ID must be nonzero")
 	}
 	if (c.Parent == nil) == (c.HistoryID == nil) {
 		return errors.New("commit requires exactly one of history ID or parent")

@@ -114,7 +114,7 @@ func TestModelRequestGenesisCaptureSubmitLoad(t *testing.T) {
 	_, err = s.SubmitCommit(t.Context(), b)
 	interactionCheck(t, err)
 	interactionReplay(t, s)
-	loaded, err := Load(t.Context(), s.history, run.historyID, s.policy)
+	loaded, err := Load(t.Context(), s.history, run.historyID, testConfigFor(s.policy))
 	interactionCheck(t, err)
 	for _, snapshot := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		request, ok := snapshot.RecordAt(7).ModelRequest()
@@ -228,7 +228,7 @@ func TestModelRequestNilAnchorOutsideGenesisAllPaths(t *testing.T) {
 				err = b.add(r, nil)
 				interactionCheck(t, b.Discard())
 			case "preflight":
-				_, err = s.prepare([]*materializedRecord{r})
+				_, err = s.prepare([]*materializedRecord{r}, 0, 1)
 			case "apply":
 				err = s.apply(interactionCommit(t, s, []*materializedRecord{r}))
 			case "load":
@@ -239,7 +239,7 @@ func TestModelRequestNilAnchorOutsideGenesisAllPaths(t *testing.T) {
 					t.Fatal("history rejected opaque record")
 				}
 				var loaded *Session
-				loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), s.policy)
+				loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
 				if loaded != nil {
 					t.Fatal("invalid load returned session")
 				}

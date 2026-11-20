@@ -15,6 +15,14 @@ on:
         description: 'Full main commit SHA containing the reviewed implementation'
         type: string
         required: true
+      preflight_only:
+        description: 'Run the full read-only preflight without publication or adoption'
+        type: boolean
+        default: false
+      verbose:
+        description: 'Show individual Go tests and detailed test output'
+        type: boolean
+        default: false
       versions:
         description: 'Explicit JSON mapping of module directories to exact versions'
         type: string
@@ -34,7 +42,11 @@ jobs:
   preflight:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
+    env:
+      SOURCE: ${{ inputs.source }}
+      VERSIONS: ${{ inputs.versions }}
+      VERBOSE: ${{ inputs.verbose }}
     outputs:
       source: ${{ steps.preflight.outputs.source }}
       versions: ${{ steps.preflight.outputs.versions }}
@@ -49,23 +61,38 @@ jobs:
         with:
           ref: ${{ inputs.source }}
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
           path: candidate
       - name: Refresh main and tags without persisted credentials
-        run: git -C candidate fetch --force origin main --tags
+        run: git -C candidate fetch --filter=blob:none --force origin main --tags
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tooling/go.work
           cache: false
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-      - name: Validate request and test assembled source
-        id: preflight
-        env:
-          SOURCE: ${{ inputs.source }}
-          VERSIONS: ${{ inputs.versions }}
+      # Share only this job's isolated Go environment/caches across the three invocations.
+      # Keep the root short: tests nest Unix sockets below its TMPDIR (Linux sun_path).
+      # Native step timeouts own long-command cleanup; Go retains its 20m package bound.
+      - name: Validate request
+        timeout-minutes: 30
         run: >-
-          python3 tooling/.github/scripts/module-publication.py preflight
+          python3 tooling/.github/scripts/module-publication.py preflight --phase validate
           --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/mp"
+      - name: Test workspace
+        timeout-minutes: 30
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight --phase workspace
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/mp" --verbose "$VERBOSE"
+      - name: Verify source integrity and expose publication outputs
+        id: preflight
+        timeout-minutes: 30
+        run: >-
+          python3 tooling/.github/scripts/module-publication.py preflight --phase final
+          --source "$SOURCE" --versions "$VERSIONS" --root "$GITHUB_WORKSPACE/candidate"
+          --environment-dir "$RUNNER_TEMP/mp"
 
   # Fixed dependency-first chain: GitHub matrices do not thread an evolving SHA
   # through ordered calls. Each call returns head only AFTER its public proof.
@@ -83,9 +110,17 @@ jobs:
   #   needs/PARENT.
   # - Update fixed-order workflow assertions and inventory/order, unselected,
   #   exact-pin and proof-before-consumer tests; run test:module-publication-tools.
+  # Explicit named forwarding is required even for an environment-only secret:
+  # https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow
+  # Keep the key in the release environment only; prepare/prove do not bind it.
+  # Never inherit all secrets into candidate jobs.
   agentdef:
     needs: preflight
+    # Skip the entire chain, not individual selections (which must pass head through).
+    if: ${{ !inputs.preflight_only }}
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: agentdef
       source: ${{ needs.preflight.outputs.source }}
@@ -96,6 +131,8 @@ jobs:
   engine:
     needs: [preflight, agentdef]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: engine
       source: ${{ needs.preflight.outputs.source }}
@@ -106,6 +143,8 @@ jobs:
   driver:
     needs: [preflight, engine]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: contracts/gen/go/mecatl/driver
       source: ${{ needs.preflight.outputs.source }}
@@ -116,6 +155,8 @@ jobs:
   ssefilter:
     needs: [preflight, driver]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/ssefilter
       source: ${{ needs.preflight.outputs.source }}
@@ -126,6 +167,8 @@ jobs:
   adaptersupport:
     needs: [preflight, ssefilter]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: internal/adaptersupport
       source: ${{ needs.preflight.outputs.source }}
@@ -136,6 +179,8 @@ jobs:
   oidc:
     needs: [preflight, adaptersupport]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: authn/oidc
       source: ${{ needs.preflight.outputs.source }}
@@ -146,6 +191,8 @@ jobs:
   anthropic:
     needs: [preflight, oidc]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/anthropic
       source: ${{ needs.preflight.outputs.source }}
@@ -156,6 +203,8 @@ jobs:
   openai:
     needs: [preflight, anthropic]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/openai
       source: ${{ needs.preflight.outputs.source }}
@@ -166,6 +215,8 @@ jobs:
   openaichat:
     needs: [preflight, openai]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: provider/openaichat
       source: ${{ needs.preflight.outputs.source }}
@@ -176,6 +227,8 @@ jobs:
   adapters:
     needs: [preflight, openaichat]
     uses: ./.github/workflows/publish-module.yml
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       module: adapters
       source: ${{ needs.preflight.outputs.source }}
@@ -191,6 +244,7 @@ jobs:
   # not a cache or executable patch; adoption-pr validates it on a fresh runner.
   reconcile:
     needs: [preflight, adapters]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -209,10 +263,11 @@ jobs:
         with:
           ref: ${{ needs.adapters.outputs.head }}
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
           path: candidate
       - name: Refresh main and tags without persisted credentials
-        run: git -C candidate fetch --force origin main --tags
+        run: git -C candidate fetch --filter=blob:none --force origin main --tags
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: tooling/go.work
@@ -238,6 +293,7 @@ jobs:
   # not reserve a release across PR review waits: humans coordinate open adoptions.
   adoption-pr:
     needs: [preflight, adapters, reconcile]
+    if: ${{ !inputs.preflight_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -286,10 +342,16 @@ jobs:
           SOURCE: ${{ inputs.source }}
           VERSIONS: ${{ inputs.versions }}
           BRANCH: module-publication/${{ github.run_id }}-${{ github.run_attempt }}
+          PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           {
-            printf 'Source: %s\nVersions: %s\nBranch: %s\n' "$SOURCE" "$VERSIONS" "$BRANCH"
+            printf 'Source: %s\nVersions: %s\n' "$SOURCE" "$VERSIONS"
+            if [ "$PREFLIGHT_ONLY" = true ]; then
+              printf '%s\n' 'Preflight only: publication and adoption disabled; no release branch or tags created.'
+            else
+              printf 'Branch: %s\n' "$BRANCH"
+              printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
+            fi
             printf 'Job results:\n%s\n' "$RESULTS"
-            printf '%s\n' 'On partial failure/cancellation inspect writer summaries and GitHub refs; no automatic recovery.'
           } >> "$GITHUB_STEP_SUMMARY"

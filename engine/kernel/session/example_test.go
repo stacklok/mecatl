@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
@@ -25,7 +26,11 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	s, err := session.New(h, id, policy) // No I/O or implicit creation.
+	// The embedding caller chooses this once per running writer and reuses it
+	// across sessions/reloads. This example uses an epoch clock for repeatable output;
+	// nil Now uses time.Now. No clock is sampled during construction or loading.
+	config := session.Config{Policy: policy, InstanceID: 1, Now: func() time.Time { return time.Unix(0, 0) }}
+	s, err := session.New(h, id, config) // No I/O or implicit creation.
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -82,16 +87,22 @@ func ExampleSession() {
 	}
 	old := s.Snapshot()
 	fmt.Printf("accepted head=%d active matches=%t\n", old.Head().Sequence, old.ActiveRun() == run)
-	loaded, err := session.Load(ctx, h, id, policy)
+	loaded, err := session.Load(ctx, h, id, config)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	loadedView := loaded.Snapshot()
 	inputs := 0
-	for i := 0; i < loadedView.RecordCount(); i++ {
-		if _, ok := loadedView.RecordAt(i).UserInput(); ok {
+	for record := range loadedView.Records() {
+		if _, ok := record.UserInput(); ok {
 			inputs++
+			// Timestamps are diagnostic, not action durations or ordering evidence.
+			// Commit is present only on fresh accepted records, never old proposals.
+			stamp, present := record.Timestamp()
+			commit, accepted := record.Commit()
+			fmt.Printf("record timestamp=%d present=%t; accepted=%t commit=%d writer=%d prepared=%d\n",
+				stamp.UnixNano(), present, accepted, commit.Ref().Sequence, commit.InstanceID(), commit.Timestamp().UnixNano())
 		}
 	}
 	original, ok := loadedView.UserInputByID(input)
@@ -146,7 +157,7 @@ func ExampleSession() {
 		return
 	}
 	fmt.Printf("successor owner matches=%t; distinct run=%t\n", second.RunID() == successor, successor != run)
-	loaded, err = session.Load(ctx, h, id, policy)
+	loaded, err = session.Load(ctx, h, id, config)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -164,6 +175,7 @@ func ExampleSession() {
 	// Output:
 	// provisional owner matches=true; created=false
 	// accepted head=1 active matches=true
+	// record timestamp=0 present=true; accepted=true commit=1 writer=1 prepared=0
 	// loaded active matches=true inputs=1
 	// instruction source=AGENTS.md
 	// prepared purpose=context; original="first"

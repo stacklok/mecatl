@@ -25,7 +25,11 @@ var ErrUnsupportedRecord = errors.New("unsupported session record kind or versio
 // Keep variants by value for now; evaluate alternative layouts with measurements
 // later, without changing public contracts or persistence.
 type materializedRecord struct {
-	value            format.Record
+	value format.Record
+	// commit is assigned only to freshly decoded accepted records before
+	// publication. One stable backing is shared by all records in that commit;
+	// proposed records and previously captured proposal views never acquire it.
+	commit           *CommitMetadata
 	created          sessionformat.Created
 	input            sessionformat.UserInput
 	started          sessionformat.RunStarted

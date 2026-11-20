@@ -142,7 +142,7 @@ func TestContextIndependentReplacementsAndFixtureFreeLoad(t *testing.T) {
 		}
 	}
 	readOnly := newLifecycleHistory(t, readOnlyHistoryBackend{Backend: backend, t: t})
-	loaded, err := session.Load(context.Background(), readOnly, scope, p)
+	loaded, err := session.Load(context.Background(), readOnly, scope, testConfigFor(p))
 	mustBatch(t, err)
 	if !reflect.DeepEqual(loaded.Snapshot(), s.Snapshot()) || loaded.Snapshot().ActiveRun() != run {
 		t.Fatal("fresh load re-resolved content or changed retained history")
@@ -158,7 +158,7 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	batchRun(t, b)
 	submitBatch(t, s, b)
 	scope := s.Snapshot().HistoryID()
-	other, err := session.Load(context.Background(), h, scope, sessionPolicy())
+	other, err := session.Load(context.Background(), h, scope, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	before := captureRejectedSnapshot(other.Snapshot())
 	winner := beginBatch(t, s)
@@ -176,7 +176,7 @@ func TestContextIndependentReplacementDoesNotMergeStaleHead(t *testing.T) {
 	if _, err := other.BeginCommit(); !errors.Is(err, session.ErrReloadRequired) {
 		t.Fatalf("stale owner reused without Load: %v", err)
 	}
-	loaded, err := session.Load(context.Background(), h, scope, sessionPolicy())
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	iv, ok := loaded.Snapshot().RootInstructions()
 	if !ok || !instructionsMatch(iv, instructions) || loaded.Snapshot().Head() != head {

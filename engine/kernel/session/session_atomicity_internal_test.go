@@ -109,7 +109,7 @@ func TestSessionPopulatedApplyRejectionPreservesPrivateState(t *testing.T) {
 	if err := b.Discard(); err != nil {
 		t.Fatal(err)
 	}
-	good, err := s.prepare(records)
+	good, err := s.prepare(records, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

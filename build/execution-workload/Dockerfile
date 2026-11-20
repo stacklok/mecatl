@@ -16,4 +16,4 @@ COPY --from=build --chown=65532:65532 /out/workspace /workspace
 USER 65532:65532
 WORKDIR /workspace
 ENV HOME=/workspace TMPDIR=/tmp GOTMPDIR=/tmp
-ENTRYPOINT ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
+ENTRYPOINT ["/mecatl-executor", "serve"]

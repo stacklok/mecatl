@@ -46,7 +46,7 @@ func encodeFixture(t testing.TB, kind string, v codec.Marshaler) fixtureRecord {
 	t.Helper()
 	wire, err := codec.Encode(v, testLimits())
 	mustBatch(t, err)
-	return fixtureRecord{format.Record{Kind: kind, KindVersion: sessionformat.Version, Payload: wire}}
+	return fixtureRecord{format.Record{Timestamp: 0, Kind: kind, KindVersion: sessionformat.Version, Payload: wire}}
 }
 func createdRecord(t testing.TB) fixtureRecord {
 	t.Helper()
@@ -82,7 +82,7 @@ func identify(t testing.TB, dto format.Commit) history.Commit {
 func proposedCommit(t testing.TB, s *session.Session, records ...fixtureRecord) history.Commit {
 	t.Helper()
 	v := s.Snapshot()
-	dto := format.Commit{FormatVersion: 1, Sequence: v.Head().Sequence + 1}
+	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: v.Head().Sequence + 1}
 	if v.Head() == (history.CommitRef{}) {
 		dto.HistoryID = new(v.HistoryID())
 	} else {
@@ -124,7 +124,7 @@ func loadFixtureCommit(t testing.TB, source *history.History, s *session.Session
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture continuation not accepted")
 	}
-	return session.Load(context.Background(), h, s.Snapshot().HistoryID(), p)
+	return session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(p))
 }
 func loadRecords(t testing.TB, h *history.History, s *session.Session, records ...fixtureRecord) *session.Session {
 	t.Helper()
@@ -133,7 +133,7 @@ func loadRecords(t testing.TB, h *history.History, s *session.Session, records .
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture append rejected")
 	}
-	loaded, err := session.Load(context.Background(), h, s.Snapshot().HistoryID(), sessionPolicy())
+	loaded, err := session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	return loaded
 }

@@ -21,6 +21,9 @@ import (
 // engine/adapter/*conformance test-support suites assert real-time behaviour. They
 // are not part of the clock-injectable core and ship a real clock by definition.
 //
+// The isolated kernel's Config.normalized may select time.Now as its injectable
+// default; actual sampling must still go through the configured callback.
+//
 // This is the source-text sibling of the import-graph guards in this package: it
 // is AST-based (so a time.Now token inside a comment or string never false-trips),
 // and it walks the on-disk engine/ tree, mirroring the go/build walkers elsewhere
@@ -57,9 +60,16 @@ func TestNoWallClockInEngineCore(t *testing.T) {
 		if perr != nil {
 			t.Fatalf("parse %s: %v", path, perr)
 		}
+		var clockDefault ast.Expr
+		if slash == "../kernel/session/config.go" {
+			clockDefault = kernelClockDefault(f)
+		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok || !wallClockReaders[sel.Sel.Name] {
+				return true
+			}
+			if sel == clockDefault && sel.Sel.Name == "Now" {
 				return true
 			}
 			pkg, ok := sel.X.(*ast.Ident)
@@ -80,6 +90,66 @@ func TestNoWallClockInEngineCore(t *testing.T) {
 		t.Errorf("direct wall-clock read in the engine core (issue #116 — time.Now/Since/Until must flow through the "+
 			"injected port.Clock / Engine.now(), so the engine stays clock-injectable):\n\t%s",
 			strings.Join(violations, "\n\t"))
+	}
+}
+
+// kernelClockDefault locates only Config.normalized's receiver.Now = time.Now
+// callback assignment. Other receivers, assignment targets, and direct clock
+// calls remain subject to the core wall-clock guard.
+func kernelClockDefault(f *ast.File) ast.Expr {
+	var allowed ast.Expr
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "normalized" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+			continue
+		}
+		recv := fn.Recv.List[0]
+		typ, ok := recv.Type.(*ast.Ident)
+		if !ok || typ.Name != "Config" || len(recv.Names) != 1 {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			a, ok := n.(*ast.AssignStmt)
+			if !ok || a.Tok != token.ASSIGN || len(a.Lhs) != 1 || len(a.Rhs) != 1 {
+				return true
+			}
+			lhs, lok := a.Lhs[0].(*ast.SelectorExpr)
+			rhs, rok := a.Rhs[0].(*ast.SelectorExpr)
+			if !lok || !rok || lhs.Sel.Name != "Now" || rhs.Sel.Name != "Now" {
+				return true
+			}
+			owner, ook := lhs.X.(*ast.Ident)
+			pkg, pok := rhs.X.(*ast.Ident)
+			if ook && pok && owner.Name == recv.Names[0].Name && pkg.Name == "time" {
+				allowed = rhs
+			}
+			return true
+		})
+	}
+	return allowed
+}
+
+func TestKernelClockDefaultBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, method string
+		allowed      bool
+	}{
+		{"callback", "func (c Config) normalized() { c.Now = time.Now }", true},
+		{"other receiver type", "func (c Other) normalized() { c.Now = time.Now }", false},
+		{"other method", "func (c Config) other() { c.Now = time.Now }", false},
+		{"other assignment target", "func (c Config) normalized() { other.Now = time.Now }", false},
+		{"direct call", "func (c Config) normalized() { c.Now = time.Now() }", false},
+		{"since", "func (c Config) normalized() { c.Now = time.Since }", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := parser.ParseFile(token.NewFileSet(), "config.go", "package p\n"+tc.method, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := kernelClockDefault(f) != nil; got != tc.allowed {
+				t.Fatalf("clock default exemption = %v; want %v", got, tc.allowed)
+			}
+		})
 	}
 }
 

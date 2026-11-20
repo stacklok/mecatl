@@ -3,6 +3,7 @@ package commandserver_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -60,6 +61,8 @@ func (r *fakeRunner) Start(
 		}}, nil
 	case "noshell":
 		return nil, tool.ErrNoShell
+	case "maybe":
+		return nil, fmt.Errorf("lost: %w", commandserver.ErrStartUnknown)
 	case "early":
 		_, _ = io.WriteString(stdout, "early")
 		return fakeProcess{func() commandserver.Exit {
@@ -153,14 +156,25 @@ func TestOutputIsBoundedAndFlagged(t *testing.T) {
 func TestStartFailures(t *testing.T) {
 	srv := newServer(t, &fakeRunner{}, commandserver.WithMaxCommandBytes(8))
 	client := commandconformance.Dial(t, srv)
-	for command, want := range map[string]codes.Code{
-		"noshell":        codes.FailedPrecondition,
-		"unknown":        codes.Internal,
-		"far too long !": codes.ResourceExhausted,
+	for command, want := range map[string]struct {
+		code   codes.Code
+		reason executorv1.ErrorReason
+	}{
+		"noshell": {codes.FailedPrecondition, executorv1.ErrorReason_ERROR_REASON_NO_SHELL},
+		"unknown": {codes.Internal, executorv1.ErrorReason_ERROR_REASON_START_FAILED},
+		"far too long !": {
+			codes.ResourceExhausted,
+			executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,
+		},
+		"maybe": {codes.Unknown, executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED},
 	} {
 		_, _, err := run(t, client, command)
-		if status.Code(err) != want {
-			t.Fatalf("%s: %v, want %v", command, err, want)
+		got := executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+		for _, d := range status.Convert(err).Details() {
+			got = d.(*executorv1.ErrorDetail).GetReason()
+		}
+		if status.Code(err) != want.code || got != want.reason {
+			t.Fatalf("%s: %v %v, want %v %v", command, err, got, want.code, want.reason)
 		}
 	}
 }

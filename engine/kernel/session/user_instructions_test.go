@@ -104,7 +104,7 @@ func TestUserInstructionsSubmitLoadReplacementAndOwnership(t *testing.T) {
 	mustBatch(t, b.ReplaceUserInstructions(scope, want))
 	mustBatch(t, b.ReplaceUserInstructions(scope, session.UserInstructions{}))
 	submitBatch(t, s, b)
-	loaded, err := session.Load(context.Background(), h, scope, p)
+	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		check(snapshot, session.UserInstructions{})

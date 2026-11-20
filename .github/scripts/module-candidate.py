@@ -20,12 +20,20 @@ class CheckError(Exception):
     pass
 
 
-def go(directory, env, *args):
-    result = subprocess.run(["go", *args], cwd=directory, env=env,
-                            capture_output=True, text=True)
+def run(command, directory, env=None, timeout=1800, capture=True):
+    try:
+        result = subprocess.run(command, cwd=directory, env=env,
+                                capture_output=capture, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise CheckError(f"command timed out: {command[0]}") from error
     if result.returncode:
-        raise CheckError(f"go {' '.join(args)}:\n{result.stdout}{result.stderr}".rstrip())
+        detail = f"{result.stdout}{result.stderr}" if capture else f"exit {result.returncode}"
+        raise CheckError(f"{' '.join(map(str, command))}:\n{detail}".rstrip())
     return result.stdout
+
+
+def go(directory, env, *args):
+    return run(["go", *args], directory, env, timeout=None, capture="-json" in args)
 
 
 def parse_mod(directory, env, path):
@@ -204,6 +212,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, help="checkout containing go.work (default: nearest ancestor)")
     parser.add_argument("--module", action="append", help="go.work module directory, e.g. . or engine; repeatable")
+    parser.add_argument("--verbose", action="store_true", help="show individual Go tests")
     parser.add_argument("--fix", action="store_true", help="apply safe tidy metadata repairs after all selected modules pass tests")
     args = parser.parse_args(argv)
     root = args.root
@@ -213,7 +222,7 @@ def main(argv=None):
         if root is None:
             parser.error("no ancestor go.work; use --root")
     root = root.resolve()
-    env = dict(os.environ, GOWORK="off", GOTOOLCHAIN="local", GOFLAGS="")
+    env = dict(os.environ, GOWORK="off", GOTOOLCHAIN="local", GOFLAGS="-v" if args.verbose else "")
     try:
         modules, snapshots = inventory(root, env)
         paths = {str(directory.relative_to(root)): identity
@@ -232,11 +241,12 @@ def main(argv=None):
             if identity not in selected:
                 continue
             label = f"{identity} ({directory.relative_to(root)})"
+            print(label + ": checking", flush=True)
             try:
                 with tempfile.TemporaryDirectory(prefix="module-candidate-") as temporary:
                     differences, repair = candidate(identity, directory, original, modules,
                                                     snapshots, env, Path(temporary))
-                print(label + (": metadata drift" if differences else ": OK"))
+                print(label + (": metadata drift" if differences else ": OK"), flush=True)
                 for difference in differences:
                     print("  " + difference)
                 dirty |= bool(differences)
