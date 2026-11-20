@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/port"
@@ -86,6 +89,79 @@ func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
 
 	if got := r.OperatorModelPolicy().ContextWindows["openai"]["shared-model"]; got != 321000 {
 		t.Fatalf("operator context window = %d, want 321000", got)
+	}
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
+		t.Fatalf("project models warning missing: %s", log)
+	}
+}
+
+func TestEffortLevelsStrictValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        string
+	}{
+		{"scalar", "nope", "models.effort_levels: must be a mapping"},
+		{"provider list", "{openai: []}", "models.effort_levels.openai: must be a model-to-levels mapping"},
+		{"non-string model key", "{openai: {7: [low]}}", "models.effort_levels.openai: model key must be a string"},
+		{"scalar leaf", "{openai: {model: low}}", "models.effort_levels.openai.model: effort levels must be a list"},
+		{"null leaf", "{openai: {model: null}}", "models.effort_levels.openai.model: effort levels must be a list"},
+		{"non-string level", "{openai: {model: [1]}}", "models.effort_levels.openai.model: effort level must be a string"},
+		{"unknown level", "{openai: {model: [low, minimal]}}", "models.effort_levels.openai.model: unknown effort level"},
+		{"auto is not a level", "{openai: {model: [auto]}}", "unknown effort level"},
+		{"case-sensitive level", "{openai: {model: [High]}}", "unknown effort level"},
+		{"duplicate level", "{openai: {model: [low, low]}}", "models.effort_levels.openai.model: duplicate effort level"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseBytes([]byte(tc.value), 0)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.value, err)
+			}
+			var levels EffortLevels
+			err = levels.UnmarshalYAML(file.Docs[0].Body)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("UnmarshalYAML error = %v, want it to contain %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "minimal") {
+				t.Fatalf("error %q echoes the configured level", err)
+			}
+			if _, err := parseYAML([]byte("models:\n  effort_levels: " + tc.value + "\n")); err == nil {
+				t.Fatal("parseYAML error = nil, want a strict models rejection")
+			}
+		})
+	}
+}
+
+func TestEffortLevelsAccepted(t *testing.T) {
+	const yamlCfg = "models:\n  effort_levels:\n    openai:\n      gpt-x:\n        - max\n        - low\n      no-effort: []\n"
+	cfg, err := parseYAML([]byte(yamlCfg))
+	if err != nil {
+		t.Fatalf("parseYAML: %v", err)
+	}
+	if got := cfg.Models.EffortLevels["openai"]["gpt-x"]; !slices.Equal(got, []string{"max", "low"}) {
+		t.Fatalf("gpt-x levels = %v, want [max low] as written", got)
+	}
+	got, ok := cfg.Models.EffortLevels["openai"]["no-effort"]
+	if !ok || got == nil || len(got) != 0 {
+		t.Fatalf("no-effort levels = %#v (present=%v), want a present empty list", got, ok)
+	}
+}
+
+func TestOperatorEffortLevelsHonouredAndProjectIgnored(t *testing.T) {
+	const operatorYAML = "models:\n  effort_levels:\n    openai:\n      shared-model: [low]\n"
+	const projectYAML = "models:\n  effort_levels:\n    openai:\n      shared-model: [max]\n"
+
+	var buf bytes.Buffer
+	diag := slogdiag.New(&buf, false, port.LevelDebug)
+	ws := &countingWS{Workspace: memfs.NewWorkspace("/repo")}
+	ws.seed(t, projectFileMecatl, projectYAML)
+	r := newWithEnv(Options{
+		Conventional: true, TrustProject: true,
+		ExplicitFiles: []string{"/etc/mecatl/models.yaml"}, Diagnostics: diag,
+	}, envWithExplicit("/etc/mecatl/models.yaml", operatorYAML))
+	_ = r.Resolve(context.Background(), ws)
+
+	if got := r.OperatorModelPolicy().EffortLevels["openai"]["shared-model"]; !slices.Equal(got, []string{"low"}) {
+		t.Fatalf("operator effort levels = %v, want [low]", got)
 	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("project models warning missing: %s", log)

@@ -94,6 +94,11 @@ type Model struct {
 	InputModalities []string
 	Reasoning       bool
 	ToolCall        bool
+	// ReasoningEfforts is reasoning.supported_efforts as upstream tokens, and
+	// ReasoningEffortsListed reports whether the entry carried the field. Many
+	// reasoning models omit it; the caller decides what that means.
+	ReasoningEfforts       []string
+	ReasoningEffortsListed bool
 }
 
 // Lister fetches the OpenRouter live model catalog over an INJECTED *http.Client
@@ -136,6 +141,9 @@ type wireModel struct {
 		MaxCompletionTokens int `json:"max_completion_tokens"`
 	} `json:"top_provider"`
 	SupportedParameters []string `json:"supported_parameters"`
+	Reasoning           *struct {
+		SupportedEfforts *[]string `json:"supported_efforts"`
+	} `json:"reasoning"`
 }
 
 // ListModels GETs the live OpenRouter catalog and maps it to []Model. It is
@@ -181,7 +189,7 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 		if w.Architecture.InputModalities != nil {
 			inputModalities = append([]string{}, (*w.Architecture.InputModalities)...)
 		}
-		out = append(out, Model{
+		m := Model{
 			ID:              modeltext.TruncateRunes(w.ID, maxIDRunes),
 			DisplayName:     modeltext.TruncateRunes(w.Name, maxNameRunes),
 			ContextLimit:    w.ContextLength,
@@ -189,7 +197,12 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 			InputModalities: inputModalities,
 			Reasoning:       slices.Contains(w.SupportedParameters, "reasoning"),
 			ToolCall:        slices.Contains(w.SupportedParameters, "tools"),
-		})
+		}
+		if w.Reasoning != nil && w.Reasoning.SupportedEfforts != nil {
+			m.ReasoningEfforts = append([]string{}, (*w.Reasoning.SupportedEfforts)...)
+			m.ReasoningEffortsListed = true
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }
