@@ -265,7 +265,9 @@ type RegisterAgentRequest struct {
 	// session's main agent.
 	Parent AgentRef
 	// ParentHostSessionID is the host session the child's session was created
-	// under, as the harness records it. It is required with Parent and must be
+	// under, as the harness records it, or the root host session for a member
+	// of a team created over the API, whose session records none and whose
+	// parent is the root's main agent. It is required with Parent and must be
 	// empty without one. The broker refuses a child whose ParentHostSessionID
 	// is not its parent's recorded host session, so each child is tied to its
 	// parent and, through it, to the session's tree.

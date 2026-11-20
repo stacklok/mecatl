@@ -77,6 +77,8 @@ const registerAttempts = 2
 // definition it registered with, whatever the broker loaded since.
 //
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
+//
+// Shortcut: a registration, and a refused one, records no lineage event; removed by #2541.
 func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Registration{}, err

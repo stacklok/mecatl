@@ -316,7 +316,7 @@ Test the checks at each hop:
 - mecak8s rejects each failing step (1) check, returning 401 `invalid_token` for checks 1–7 and, for check 8, the 404 `session_not_found` an absent session gets.
 - The broker rejects a legacy ServiceAccount token, a token with the Kubernetes API server's audience, a token whose `exp - iat` exceeds the maximum, and a ServiceAccount not on the allowlist.
 - SVID validation rejects a platform SVID with the broker's audience (wrong trust domain and bundle), a header without `kid`, an `aud` with two values, a disallowed `alg`, and an `exp` beyond the maximum lifetime.
-- Registration rejects names over 63 bytes, nesting past 8 child levels, `.` and `..`, and a parentless registration of a definition that is not root-eligible.
+- Registration rejects names over 63 bytes, nesting past 8 child levels, `.` and `..`, a parentless registration of a definition that is not root-eligible, and a child whose reported parent host session is not its parent's recorded host session.
 - An AS-1 503 maps to `UNAVAILABLE` and is reported as a retryable failure, not a denial; `invalid_client` and a bare `invalid_request` map to `INTERNAL`; each reason in [error reasons](credentials-and-lifecycle.md#error-reasons) maps to its gRPC status and mecak8s outcome.
 - Two users' calls through the same instance never share a `V`, ID-JAG, or vMCP session ID.
 - Signing out everywhere revokes only that user's grants and drops only that user's vMCP sessions.

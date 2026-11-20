@@ -119,7 +119,7 @@ sequenceDiagram
     rect rgb(245, 245, 245)
         Note over H,I: Reviewer bootstrap, after the list succeeds
         H->>H: Delegate review: D42 / R42
-        H->>I: registerInstance(reviewer, definition reference global/code-reviewer,<br/>parentRef = mainRef, A42), workload credential
+        H->>I: registerInstance(reviewer, definition reference global/code-reviewer,<br/>parentRef = mainRef, parent host session hostS42, A42), workload credential
         I-->>H: reviewerRef
         H->>B: ReportDelegation D42: A42, R41 to R42, run owner Alice
         Note over H,B: Delegation report
@@ -855,7 +855,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Access token issued before a user-wide revocation | AS-1 | `invalid_request` with that revocation's reason | Alice signs in again | Nothing more |
 | Echoed entry differs | Broker | Open fails | Session open fails | The new `RT-A42`, closing `A42` |
 | Registration into a closed or foreign session | Agent-instance issuer | The closing reason's status, or `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
-| Re-registration with a different owner, host session, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
+| Re-registration with a different owner, host session, definition reference or revision, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
 | Definition name or depth beyond the caps | Agent-instance issuer | `INVALID_ARGUMENT` | Child agent cannot start | Nothing |
 | SVID expired | Broker, AS-1 | `UNAUTHENTICATED` with `svid_expired`; AS-1: `invalid_request` with `actor_token_expired`, reported as `svid_expired` | None: renewed and retried once | Nothing |

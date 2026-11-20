@@ -104,6 +104,8 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 // resumed. A resumed subagent runs the default explorer, so it registers as
 // system/explorer; the broker refuses that for an agent it recorded with
 // another definition.
+//
+// Shortcut: the harness resumes every subagent on the default explorer, so a named subagent whose credential is gone cannot be resumed; removed by #2548.
 func (s *Service) RegisterResumedHelper(ctx context.Context, sess *session.Session, child port.ChildSessionInfo) error {
 	if s.cfg.IdentityBroker == nil || s.cfg.IdentityAgents == nil {
 		return nil
