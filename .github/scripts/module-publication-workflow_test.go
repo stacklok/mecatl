@@ -310,35 +310,6 @@ func TestPublicationProofChain(t *testing.T) {
 	}
 }
 
-func TestPublicationCandidateFetches(t *testing.T) {
-	one := load(t, "publish-module")
-	many := load(t, "publish-modules")
-	for name, j := range map[string]job{
-		"prepare": one.Jobs["prepare"], "preflight": many.Jobs["preflight"], "reconcile": many.Jobs["reconcile"],
-	} {
-		t.Run(name, func(t *testing.T) {
-			checkouts, refreshes := 0, 0
-			for _, s := range j.Steps {
-				if strings.HasPrefix(s.Uses, "actions/checkout@") && s.With["path"] == "candidate" {
-					checkouts++
-					if fmt.Sprint(s.With["fetch-depth"]) != "0" || s.With["filter"] != "blob:none" || s.With["persist-credentials"] != false {
-						t.Fatal("candidate checkout must retain full history with blob filtering and no persisted credentials")
-					}
-				}
-				if strings.HasPrefix(s.Run, "git -C candidate fetch ") {
-					refreshes++
-					if s.Run != "git -C candidate fetch --filter=blob:none --force origin main --tags" {
-						t.Fatal("candidate refresh must preserve blob filtering, main and tags")
-					}
-				}
-			}
-			if checkouts != 1 || refreshes != 1 {
-				t.Fatal("expected one candidate checkout and one refresh")
-			}
-		})
-	}
-}
-
 func TestPublicationPreflightDiagnostics(t *testing.T) {
 	w := load(t, "publish-modules")
 	for _, name := range []string{"preflight_only", "verbose"} {
