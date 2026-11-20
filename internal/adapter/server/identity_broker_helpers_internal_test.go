@@ -2,23 +2,17 @@ package server
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
-	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/identitybroker"
-	"github.com/stacklok/mecatl/internal/identitybroker/conformance"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -67,31 +61,10 @@ func (fakeNonBrokerTool) HelperGatewayTool() {}
 // tools that the root's authority allows, and nothing without a broker
 // attachment or a root.
 func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := identitybroker.New(identitybroker.Config{
-		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
-	}, conformance.Definitions(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := memstore.New()
-	svc, err := NewService(Config{
-		Engine:            brokerEngineResult().Engine,
-		Store:             store,
-		PlacementProvider: brokerPlacementProvider{},
-		PlacementScope:    "test",
-		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
-		MemberEngineWithHelperTools: func(context.Context, []tool.Tool) MemberEngineFactory {
-			return nil
-		},
+	svc, _ := newRegisteringService(t, func(cfg *Config) {
+		cfg.MemberEngineWithHelperTools = func(context.Context, []tool.Tool) MemberEngineFactory { return nil }
 	})
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-	t.Cleanup(svc.Close)
+	store := svc.cfg.Store
 
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	root := session.New("root", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
@@ -142,42 +115,23 @@ func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
 // over the API: its member factory is built with the root's allowed gateway
 // tools, and each member's authority allows them.
 func TestAPITeamMembersGetTheRootsGatewayTools(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := identitybroker.New(identitybroker.Config{
-		TrustDomain: "agents.example.com", Audience: "https://broker.example.com", CredentialLifetime: 5 * time.Minute,
-	}, conformance.Definitions(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := memstore.New()
 	var gotTools []string
 	memberFactory := func(_ *team.Team, _ agent.MemberSpec, _ string) agent.MemberBuild {
 		return agent.MemberBuild{Engine: brokerEngineResult().Engine}
 	}
-	svc, err := NewService(Config{
-		Engine:            brokerEngineResult().Engine,
-		Store:             store,
-		PlacementProvider: brokerPlacementProvider{},
-		PlacementScope:    "test",
-		IdentityBroker:    identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: "mecak8s-test"}, core),
-		MemberEngine:      memberFactory,
-		MemberEngineWithHelperTools: func(_ context.Context, tools []tool.Tool) MemberEngineFactory {
+	svc, _ := newRegisteringService(t, func(cfg *Config) {
+		cfg.MemberEngine = memberFactory
+		cfg.MemberEngineWithHelperTools = func(_ context.Context, tools []tool.Tool) MemberEngineFactory {
 			for _, tl := range tools {
 				gotTools = append(gotTools, tl.Spec().Name)
 			}
 			return memberFactory
-		},
-		RootAuthority: func(session.SessionKind) session.Authority {
+		}
+		cfg.RootAuthority = func(session.SessionKind) session.Authority {
 			return session.Authority{Provenance: "test-root", CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}}}
-		},
+		}
 	})
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-	t.Cleanup(svc.Close)
+	store := svc.cfg.Store
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	root := session.New("root", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := root.BindAuthority(session.Authority{Provenance: "test-root", CapabilitySet: governance.CapabilitySet{Tools: []string{"Read", "mcp__calendar__echo"}}}); err != nil {

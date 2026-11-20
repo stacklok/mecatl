@@ -8379,20 +8379,10 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
 	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
-	if a.mcpRuntimes != nil {
-		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
-			runtimeAssets := mcpCatalogAssets(ctx, a)
-			candidate := mcpRuntimeCandidate(ctx)
-			if candidate == nil {
-				return nil
-			}
-			operationFactory, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
-			return operationFactory
-		}
-	}
-	// A team rooted in a session builds its generic members with the root's
-	// gateway tools, through the same wiring.
-	svcCfg.MemberEngineWithHelperTools = func(ctx context.Context, helperTools []tool.Tool) server.MemberEngineFactory {
+	// memberEngine builds the RunTeam member factory from the operation-pinned
+	// MCP runtime, if any, giving generic members helperTools: the gateway
+	// tools of a team's root session.
+	memberEngine := func(ctx context.Context, helperTools []tool.Tool) server.MemberEngineFactory {
 		withTools := cfg
 		withTools.helperTools = helperTools
 		assets, manager := a, mainMgr
@@ -8406,6 +8396,10 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 		factory, _, _, _, _ := buildTeamWiring(ctx, withTools, reg, provider, reg.Default(), withTools.Model, manager, agentReg, skillIdx, assets, false)
 		return factory
 	}
+	if a.mcpRuntimes != nil {
+		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory { return memberEngine(ctx, nil) }
+	}
+	svcCfg.MemberEngineWithHelperTools = memberEngine
 	svcCfg.Forker = fk
 	svcCfg.ReadOnlyForker = roFk
 	svcCfg.SharedBaseWorkspace = sharedBaseWorkspace

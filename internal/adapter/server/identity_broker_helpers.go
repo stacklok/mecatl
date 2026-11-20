@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -268,13 +267,13 @@ func withHelperToolNames(authority session.Authority, names []string) session.Au
 	if len(names) == 0 {
 		return authority
 	}
-	tools := append([]string(nil), authority.CapabilitySet.Tools...)
+	tools := slices.Clone(authority.CapabilitySet.Tools)
 	for _, name := range names {
 		if !slices.Contains(tools, name) {
 			tools = append(tools, name)
 		}
 	}
-	sort.Strings(tools)
+	slices.Sort(tools)
 	authority.CapabilitySet.Tools = tools
 	return authority
 }
