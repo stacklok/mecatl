@@ -441669,6 +441669,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795194355486,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "daacbba6f480a6d1f5cac1f01317e048c653ca9c",
+          "message": "feat(executioncontroller): remove Pod exec and the operation lease (#2925)\n\nDelete the Pod exec transport, the `status.activeOperation` lease, its\nrenewal and expiry fencing in the controller, terminal-receipt fencing,\nand the provider's `pods/exec` RBAC rule.\n\nThe old `Files` and `StartCommand` RPCs keep working until #2718 removes\nthem. They authorize from a single read of the environment through\n`ExecutorRoute` and forward to the executor's pinned mutual-TLS gRPC\nserver through a new `ServerTransport`. A tool call writes nothing to\nKubernetes, and calls on one environment run concurrently, so\n`executionclient` no longer serializes workspace calls. Revocation\nrefuses new calls; calls already in progress finish. An unknown command\noutcome still returns `fence_unknown` but no longer fences the\nenvironment. Admin, run, and successor operations no longer gate on an\nactive operation.\n\nRemove the executor's one-shot stdin/stdout mode, its implementation in\n`internal/executionexecutor`, and `ExecutorEnvelope`, and describe\n`mecatl-executor` as a server in the self-knowledge prompt. The CRD\ndrops `activeOperation`; stored values are pruned. `k8s.io/utils` becomes\nan indirect dependency.\n\nThe Kind negative control now serves Files without the admitted\nCommands service, waits on `activeOperation` now wait on workspace\nmarker files, and the lease-dependent holder-loss and in-flight\nrevocation tests are removed pending withdrawal and unknown-outcome\nfencing (#2708, #2709).\n\nCloses: #2704",
+          "timestamp": "2026-11-20T17:54:45+01:00",
+          "tree_id": "8a8fba438725f65d364045f8de06b514212e3536",
+          "url": "https://github.com/stacklok/mecatl/commit/daacbba6f480a6d1f5cac1f01317e048c653ca9c"
+        },
+        "date": 1795195121987,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13423.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12918,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -575087,6 +575126,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795195117110,
+  "lastUpdate": 1795195123251,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
