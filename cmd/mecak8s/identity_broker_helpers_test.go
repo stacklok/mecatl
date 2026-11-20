@@ -29,7 +29,9 @@ const helperGatewayScript = `{"turns":[
 // test through mecak8s's startup, offline: a subagent the main agent creates
 // is registered as its own agent, gets the session's gateway tools but no
 // other broker tool, and its gateway call reaches AS-1 with its own SPIFFE ID
-// as the actor, not the main agent's. Its stand-ins are listed on
+// as the actor, not the main agent's. The helper's call names the run its
+// reported delegation started (#2557), which the broker's run and owner
+// checks refuse without that report. Its stand-ins are listed on
 // TestIdentityBrokerGatewayCallAgainstRealAS1.
 func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "script.json")

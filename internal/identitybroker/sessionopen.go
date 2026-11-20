@@ -92,6 +92,10 @@ type heldGrant struct {
 	// sourceJTI is the converted access token's jti, read unverified, which
 	// joins this record to AS-1's conversion record.
 	sourceJTI string
+	// owner is the user the grant is held for, the company identity AS-1
+	// verified (run-owner.md, item 3: grants keyed by session and user, one
+	// per session for now). A call's run owner must equal it.
+	owner Owner
 }
 
 // convertedClockSkew is how long past an access token's exp the broker
@@ -278,7 +282,7 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 	s.verifiedOwner = &owner
 	// One live refresh token per session: a new one replaces, and discards,
 	// any held before.
-	s.grant = &heldGrant{refreshToken: res.RefreshToken, expiresAt: res.Grants[0].ExpiresAt, sourceJTI: claims.jti}
+	s.grant = &heldGrant{refreshToken: res.RefreshToken, expiresAt: res.Grants[0].ExpiresAt, sourceJTI: claims.jti, owner: owner}
 	return t.viewLocked(s), nil
 }
 

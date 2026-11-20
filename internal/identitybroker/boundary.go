@@ -46,7 +46,8 @@ func (w Workload) Validate() error {
 //   - AuthorizeCall checks the workload, then the request, neither recorded;
 //     then the session, where an unknown session is not recorded and a
 //     closed one is; then a rejection report, the session's grant, the
-//     credential, and the server, in the order documented on Service; then it
+//     credential, the run, and the server, in the order documented on
+//     Service; then it
 //     exchanges the session's grant for an ID-JAG, records it, and redeems it
 //     for the gateway token. Every refusal after the session lookup is
 //     recorded with the configured Recorder, and is returned whether or not
@@ -57,6 +58,7 @@ type Core interface {
 	CloseSession(ctx context.Context, workload Workload, req CloseSessionRequest) error
 	RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error)
 	AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error)
+	ReportDelegation(ctx context.Context, workload Workload, req ReportDelegationRequest) error
 }
 
 // CredentialVerifier checks agent credentials inside the broker, in two
@@ -173,4 +175,12 @@ func (p inProcess) AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) 
 		return Authorization{}, err
 	}
 	return p.core.AuthorizeCall(ctx, workload, req)
+}
+
+func (p inProcess) ReportDelegation(ctx context.Context, req ReportDelegationRequest) error {
+	workload, err := p.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+	return p.core.ReportDelegation(ctx, workload, req)
 }

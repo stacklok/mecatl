@@ -106,6 +106,11 @@ func (c *recordingCore) AuthorizeCall(_ context.Context, workload Workload, _ Au
 	return Authorization{}, nil
 }
 
+func (c *recordingCore) ReportDelegation(_ context.Context, workload Workload, _ ReportDelegationRequest) error {
+	c.workloads = append(c.workloads, workload)
+	return nil
+}
+
 // callAll makes every Service call once and returns their errors in order.
 func callAll(svc Service) []error {
 	ctx := context.Background()
@@ -114,7 +119,8 @@ func callAll(svc Service) []error {
 	closeErr := svc.CloseSession(ctx, CloseSessionRequest{})
 	_, registerErr := svc.RegisterAgent(ctx, RegisterAgentRequest{})
 	_, authorizeErr := svc.AuthorizeCall(ctx, AuthorizeCallRequest{})
-	return []error{openErr, findErr, closeErr, registerErr, authorizeErr}
+	reportErr := svc.ReportDelegation(ctx, ReportDelegationRequest{})
+	return []error{openErr, findErr, closeErr, registerErr, authorizeErr, reportErr}
 }
 
 type authenticatorFunc func(context.Context) (Workload, error)
@@ -130,8 +136,8 @@ func TestInProcessPassesTheAuthenticatedWorkloadToEveryCall(t *testing.T) {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
-	if len(core.workloads) != 5 {
-		t.Fatalf("core received %d calls, want 5", len(core.workloads))
+	if len(core.workloads) != 6 {
+		t.Fatalf("core received %d calls, want 6", len(core.workloads))
 	}
 	for i, got := range core.workloads {
 		if got != want {

@@ -2,7 +2,9 @@
 // agents, in memory only, for the server, which registers a session's main
 // agent at run entry and each helper agent when it is created, and the MCP
 // broker, which presents them on gateway calls. A credential is
-// never persisted and never given to the engine or the model.
+// never persisted and never given to the engine or the model. It also holds
+// the run each helper acts in, delegated to it, and carries the main agent's
+// run on the context, so a gateway call names its run.
 package agentcredential
 
 import (
@@ -27,8 +29,7 @@ type Credential struct {
 	// credential verifies only there.
 	BrokerSessionID string
 	Agent           identitybroker.AgentRef
-	// Owner is the owner the agent was registered with: the run owner under
-	// the #2557 shortcut.
+	// Owner is the owner the agent was registered with.
 	Owner     identitybroker.Owner
 	Token     identitybroker.Token
 	ExpiresAt time.Time
@@ -73,6 +74,10 @@ func (e *entry) credential() Credential {
 // root's identity is its epoch.
 type root struct {
 	entries map[string]*entry
+	// current is each helper's current delegation, by helper session, and
+	// delegations every delegation in the order recorded.
+	current     map[string]Delegation
+	delegations []HelperDelegation
 }
 
 // renewalTimeout bounds a renewal, which runs apart from any one lookup's

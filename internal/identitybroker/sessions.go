@@ -38,7 +38,10 @@ type sessionTable struct {
 	// attempts holds the attempts AuthorizeCall issued, per session, until
 	// the session closes.
 	attempts *attemptLedger
-	now      func() time.Time
+	// runs holds each session's run and delegation records until the session
+	// closes.
+	runs *runLedger
+	now  func() time.Time
 
 	hostMu    sync.Mutex
 	hostLocks map[string]*hostLock // root host session ID -> its open lock
@@ -71,7 +74,7 @@ func newSessionTable() *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
 		incarnations: map[string]string{},
-		converted:    map[string]time.Time{}, attempts: newAttemptLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
+		converted:    map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
 	}
 }
 
@@ -153,7 +156,8 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 }
 
 // closeLocked closes s with reason, unless it is already closed, and
-// discards its refresh token and issued attempts. The caller holds t.mu.
+// discards its refresh token, issued attempts, and run records. The caller
+// holds t.mu.
 func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	if s.closed != "" {
 		return
@@ -162,6 +166,7 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	s.closedAt = t.now()
 	s.grant = nil
 	t.attempts.dropLocked(s.ID)
+	t.runs.dropLocked(s.ID)
 	delete(t.open, s.HostSessionID)
 }
 

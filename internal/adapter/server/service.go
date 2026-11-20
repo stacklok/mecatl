@@ -6105,7 +6105,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
+	ctx = rootedRunContext(ctx, sess, governanceRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID, CanPresentAuthorization: canPresentAuthorization})
 	})
@@ -10077,9 +10077,16 @@ func randomID() session.SessionID {
 
 // rootedRunContext is the context every server run entry hands to the engine: the
 // authoritative session becomes the causal root (overwriting anything the caller's
-// ctx carried) and memory writes bind to the session's governance root.
+// ctx carried), memory writes bind to the session's governance root, and the
+// session's run and owner become the main agent's run, which gateway calls and
+// helper delegations name. A session with no run ID or no owner carries no run,
+// so its gateway calls fail closed.
 func rootedRunContext(ctx context.Context, sess *session.Session, governanceRoot string) context.Context {
-	return memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
+	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
+	if owner, ok := identityBrokerOwner(sess.Owner); ok && sess.RunID() != "" {
+		return agentcredential.WithRun(ctx, agentcredential.Run{ID: sess.RunID(), Owner: owner})
+	}
+	return agentcredential.WithRun(ctx, agentcredential.Run{})
 }
 
 // --- MCP inspection ----------------------------------------------------------

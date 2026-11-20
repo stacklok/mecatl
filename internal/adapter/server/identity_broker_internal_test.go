@@ -256,7 +256,7 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 	unlock := svc.runEntryMu.lock(sess.ID)
 	done := make(chan error, 1)
-	go func() { done <- svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID) }()
+	go func() { _, err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID); done <- err }()
 	select {
 	case err := <-done:
 		unlock()
@@ -273,7 +273,7 @@ func TestTeamRootRegistrationForADeletedRootIsNotFound(t *testing.T) {
 	svc, sess := newRegisteringService(t)
 	// The root is gone from the store, as a delete that won run entry's lock
 	// leaves it: the team run is refused as not found, not as a server fault.
-	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	_, err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
 	if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrInternal) {
 		t.Fatalf("team root registration for a deleted root = %v, want ErrNotFound", err)
 	}
@@ -283,7 +283,7 @@ func TestTeamRootRegistrationReportsAStoreFailureAsInternal(t *testing.T) {
 	store := &oneSessionFailsStore{Store: memstore.New()}
 	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Store = store })
 	store.failID = sess.ID
-	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	_, err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
 	if !errors.Is(err, ErrInternal) || errors.Is(err, ErrNotFound) {
 		t.Fatalf("team root registration with a failing store = %v, want ErrInternal", err)
 	}
@@ -449,7 +449,7 @@ func TestTeamRootRegistrationIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID) }()
+	go func() { _, err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID); done <- err }()
 	select {
 	case err := <-done:
 		if !errors.Is(err, ErrIdentityBrokerUnavailable) {

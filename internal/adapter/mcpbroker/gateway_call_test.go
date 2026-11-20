@@ -37,6 +37,7 @@ const (
 	gatewayTestRouted  = "github.create"
 	gatewayTestResult  = "called " + gatewayTestRouted
 	gatewayTestSerial  = int64(7)
+	gatewayTestRun     = "run_main"
 	gatewayTestArgs    = `{"a":1}`
 )
 
@@ -73,9 +74,29 @@ func (f *fakeAuthorizer) calls() []identitybroker.AuthorizeCallRequest {
 // fakeCredentials holds credentials by key and records every lookup's renew
 // flag. It has no way to open, find, or register: a lookup only reads.
 type fakeCredentials struct {
-	mu      sync.Mutex
-	held    map[agentcredential.Key]agentcredential.Credential
-	lookups []bool
+	mu          sync.Mutex
+	held        map[agentcredential.Key]agentcredential.Credential
+	delegations map[agentcredential.Key]agentcredential.Delegation
+	lookups     []bool
+}
+
+func (f *fakeCredentials) Delegation(key agentcredential.Key) (agentcredential.Delegation, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.delegations[key]
+	return d, ok
+}
+
+func (f *fakeCredentials) hold(key agentcredential.Key, cred agentcredential.Credential, d agentcredential.Delegation) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.held[key] = cred
+	if d.ID != "" {
+		if f.delegations == nil {
+			f.delegations = map[agentcredential.Key]agentcredential.Delegation{}
+		}
+		f.delegations[key] = d
+	}
 }
 
 func (f *fakeCredentials) Credential(_ context.Context, key agentcredential.Key, renew bool) (agentcredential.Credential, error) {
@@ -279,8 +300,13 @@ func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture
 	return f
 }
 
-// runContext is the context of a tool call by the session's main agent.
+// gatewayTestOwner owns the main agent's run.
+var gatewayTestOwner = identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice"}
+
+// runContext is the context of a tool call by acting in root's tree, during
+// the main agent's run gatewayTestRun.
 func runContext(ctx context.Context, root, acting string) context.Context {
+	ctx = agentcredential.WithRun(ctx, agentcredential.Run{ID: gatewayTestRun, Owner: gatewayTestOwner})
 	return port.WithRunAttemptContext(port.WithRootSessionID(ctx, session.SessionID(root)), session.SessionID(acting), gatewayTestSerial)
 }
 
@@ -442,8 +468,8 @@ func TestGatewayCallSendsTokenAndMeta(t *testing.T) {
 	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
 	reqs := f.auth.calls()
 	want := identitybroker.AuthorizeCallRequest{
-		SessionID: "bs_test", OperationID: op, RunID: "run-7",
-		RunOwner: identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice"},
+		SessionID: "bs_test", OperationID: op, RunID: gatewayTestRun,
+		RunOwner: gatewayTestOwner,
 		Method:   identitybroker.MethodToolsCall, Server: "github", Tool: gatewayTestRouted,
 		ArgumentsSHA256: testHash(t, gatewayTestArgs),
 	}
@@ -1196,5 +1222,82 @@ func TestGatewayTokenNeverLeaks(t *testing.T) {
 	_, err := f.execute(ctx, t, "call-1", gatewayTestArgs)
 	if err == nil || strings.Contains(fmt.Sprintf("%v %+v", err, err), canary) {
 		t.Fatalf("cancelled Execute error = %v", err)
+	}
+}
+
+func TestGatewayCallNamesItsRun(t *testing.T) {
+	helperKey := agentcredential.Key{RootSessionID: gatewayTestSession, AgentSessionID: "child-session"}
+	helperCred := agentcredential.Credential{
+		BrokerSessionID: "bs_test",
+		Agent:           identitybroker.AgentRef{Subject: "spiffe://example.org/agent/ag_bbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		Owner:           gatewayTestOwner,
+		Token:           identitybroker.NewToken("helper-credential"),
+		ExpiresAt:       time.Now().Add(time.Hour),
+	}
+	delegation := agentcredential.Delegation{
+		ID:                     "dlg_one",
+		Run:                    agentcredential.Run{ID: "run_helper", Owner: gatewayTestOwner},
+		DelegatingRun:          gatewayTestRun,
+		DelegatingAgentSession: gatewayTestSession,
+	}
+
+	t.Run("a helper names its delegated run", func(t *testing.T) {
+		f := newGatewayFixture(t, gatewayFixtureOptions{})
+		f.creds.hold(helperKey, helperCred, delegation)
+		res, err := f.execute(runContext(t.Context(), gatewayTestSession, "child-session"), t, "call-1", gatewayTestArgs)
+		wantResult(t, res, err, gatewayTestResult)
+		reqs := f.auth.calls()
+		if len(reqs) != 1 {
+			t.Fatalf("AuthorizeCall requests = %d, want 1", len(reqs))
+		}
+		got := reqs[0]
+		if got.RunID != "run_helper" || got.DelegationID != "dlg_one" || got.RunOwner != gatewayTestOwner || got.Credential.Value() != "helper-credential" {
+			t.Fatalf("request = run %s, delegation %q, owner %+v; want the helper's delegated run, never the main agent's", got.RunID, got.DelegationID, got.RunOwner)
+		}
+	})
+
+	t.Run("the main agent names its run and no delegation", func(t *testing.T) {
+		f := newGatewayFixture(t, gatewayFixtureOptions{})
+		f.creds.hold(helperKey, helperCred, delegation)
+		res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+		wantResult(t, res, err, gatewayTestResult)
+		if reqs := f.auth.calls(); len(reqs) != 1 || reqs[0].RunID != gatewayTestRun || reqs[0].DelegationID != "" {
+			t.Fatalf("AuthorizeCall requests = %+v, want the main agent's run", reqs)
+		}
+	})
+
+	for name, setup := range map[string]struct {
+		ctx  func(t *testing.T) context.Context
+		hold func(f *gatewayFixture)
+	}{
+		"a helper with no delegation": {
+			ctx: func(t *testing.T) context.Context {
+				return runContext(t.Context(), gatewayTestSession, "child-session")
+			},
+			hold: func(f *gatewayFixture) { f.creds.hold(helperKey, helperCred, agentcredential.Delegation{}) },
+		},
+		"a main agent with no run": {
+			ctx: func(t *testing.T) context.Context {
+				ctx := agentcredential.WithRun(t.Context(), agentcredential.Run{})
+				return port.WithRunAttemptContext(port.WithRootSessionID(ctx, gatewayTestSession), gatewayTestSession, gatewayTestSerial)
+			},
+			hold: func(*gatewayFixture) {},
+		},
+	} {
+		t.Run(name+" is refused before authorization", func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			setup.hold(f)
+			res, err := f.execute(setup.ctx(t), t, "call-1", gatewayTestArgs)
+			wantRow(t, res, err, outcomeIdentityUnavailable)
+			if n := len(f.auth.calls()); n != 0 {
+				t.Fatalf("AuthorizeCall called %d times for a call with no run", n)
+			}
+			if calls := f.g.Calls(); len(calls) != 0 {
+				t.Fatalf("gateway received %d requests", len(calls))
+			}
+			if got := f.diag.String(); !strings.Contains(got, "causethe acting agent has no run") {
+				t.Fatalf("diagnostics = %s, want the missing run as the cause", got)
+			}
+		})
 	}
 }

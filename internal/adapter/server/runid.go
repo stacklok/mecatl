@@ -45,6 +45,14 @@ func newRunID() string {
 	return "run_" + strings.ToLower(runIDEncoding.EncodeToString(b[:]))
 }
 
+// newDelegationID mints an opaque identity broker delegation ID, with the
+// same entropy and encoding as a run ID.
+func newDelegationID() string {
+	var b [runIDBytes]byte
+	_, _ = rand.Read(b[:])
+	return "dlg_" + strings.ToLower(runIDEncoding.EncodeToString(b[:]))
+}
+
 // runlessEventTypes is the CLOSED set of event types permitted to carry an empty
 // Event.RunID.
 //
