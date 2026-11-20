@@ -154,6 +154,45 @@ func TestDefMCPToolsReferencePullsFromMainManager(t *testing.T) {
 	}
 }
 
+// TestDefMCPToolsLeavesOutDisallowedTools pins that defMCPTools, the one
+// place both the subagent and team-member paths resolve a definition's MCP
+// tools, leaves out each tool its disallowedTools names, from a referenced
+// server and an inline one alike, and keeps the rest.
+func TestDefMCPToolsLeavesOutDisallowedTools(t *testing.T) {
+	main := connectMainManager(t, "main", newMCPTestServerWithResource(t))
+	def := agents.AgentDef{
+		Name:            "no-echo",
+		Description:     "excludes both servers' echo",
+		DisallowedTools: []string{"mcp__main__echo", "mcp__inline__echo"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "main"}, {Name: "inline", URL: newMCPTestServerPrefixed(t, "inline:")}},
+	}
+	tools, names, resources, closeExcluded := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	if closeExcluded != nil {
+		t.Cleanup(func() { _ = closeExcluded() })
+	}
+	if len(tools) != 0 || len(names) != 0 {
+		t.Fatalf("defMCPTools kept %v, want neither excluded echo", names)
+	}
+	// The resource capability of the referenced server is not a tool, so an
+	// exclusion of its tool leaves it.
+	if len(resources) != 1 || resources[0] != governance.MCPResourceCapability("main") {
+		t.Fatalf("resource capabilities = %v, want the referenced server's", resources)
+	}
+
+	// Positive control: without the exclusions, both echoes are kept.
+	def.DisallowedTools = nil
+	tools, _, _, closeAll := defMCPTools(context.Background(), port.NopDiagnostics{}, def, main)
+	if closeAll != nil {
+		t.Cleanup(func() { _ = closeAll() })
+	}
+	got := toolNameSet(tools)
+	for _, want := range []string{"mcp__main__echo", "mcp__inline__echo"} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("without exclusions defMCPTools kept %v, want %s", got, want)
+		}
+	}
+}
+
 // TestDefMCPToolsInlineConnectsAndTearsDown asserts an INLINE entry connects its own
 // server (tool present), and that the returned close actually tears the session down
 // (a captured tool's Execute fails after close — proving no leak).
@@ -279,6 +318,62 @@ func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
 	sup.Run(context.Background(), func(ev agent.TeamEvent) { events = append(events, ev) })
 	if !sawToolCall(events, "mcp-reviewer", "mcp__inline__echo") {
 		t.Fatalf("member should dispatch the MCP echo tool (it is in the catalog); events=%d", len(events))
+	}
+}
+
+// TestMemberDefMCPToolHonorsDisallowedTools pins that a team member running a
+// named definition does not get an MCP tool its disallowedTools excludes, as
+// a subagent running the same definition does not: the member's catalog
+// leaves it out, so a call of it never reaches the server, while the
+// server's other tool still does. A member's authority is its parent's, so
+// the catalog is the only place the definition's exclusion applies.
+func TestMemberDefMCPToolHonorsDisallowedTools(t *testing.T) {
+	var echoes, pings atomic.Int32
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fake", Version: "v1"}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo", Description: "echoes the input text"},
+		func(_ context.Context, _ *mcpsdk.CallToolRequest, in mcpEchoArgs) (*mcpsdk.CallToolResult, any, error) {
+			echoes.Add(1)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "echo:" + in.Text}}}, nil, nil
+		})
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "ping", Description: "answers pong"},
+		func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+			pings.Add(1)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "pong"}}}, nil, nil
+		})
+	httpSrv := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+	t.Cleanup(httpSrv.Close)
+
+	cfg := Config{Workspace: t.TempDir(), Model: "m"}
+	def := agents.AgentDef{
+		Name:            "no-echo",
+		Description:     "member whose definition excludes the MCP echo tool",
+		Tools:           []string{"Read"},
+		DisallowedTools: []string{"mcp__inline__echo"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "inline", URL: httpSrv.URL}},
+	}
+	tm := team.New("t")
+	pingCall := session.ToolCall{ID: "c0", Name: "mcp__inline__ping", Args: json.RawMessage(`{}`)}
+	echoCall := session.ToolCall{ID: "c1", Name: "mcp__inline__echo", Args: json.RawMessage(`{"text":"x"}`)}
+	prov := mockllm.New(mockllm.ToolCallTurn(pingCall), mockllm.ToolCallTurn(echoCall), mockllm.TextTurn("done"))
+	factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), regOf(def), nil, nil, false, nil)
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
+		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			return factory(tm, spec, routedModel)
+		})
+	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "no-echo", AgentType: "no-echo", InitialPrompt: "go"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	var events []agent.TeamEvent
+	sup.Run(context.Background(), func(ev agent.TeamEvent) { events = append(events, ev) })
+	// Positive control: the server's other tool reaches it.
+	if !sawToolDispatched(events, "no-echo", "mcp__inline__ping") || pings.Load() != 1 {
+		t.Fatalf("the member's allowed MCP tool reached the server %d times, want once", pings.Load())
+	}
+	if sawToolDispatched(events, "no-echo", "mcp__inline__echo") {
+		t.Fatal("the member dispatched an MCP tool its definition excludes")
+	}
+	if n := echoes.Load(); n != 0 {
+		t.Fatalf("the MCP server received %d calls of a tool the member's definition excludes", n)
 	}
 }
 

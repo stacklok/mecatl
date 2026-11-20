@@ -8637,16 +8637,20 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			// supervisor tears them down on member teardown; the MCP tool names are handed
 			// to the supervisor so the read-only-member backstop exempts them (they report
 			// ReadOnly()==false but never touch the workspace).
-			mcpTools, names2, _, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
+			mcpTools, _, _, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
 			mcpEntry := classification(server.KindDerived,
 				"member agent-definition MCP tools are scoped to this already authorized team member")
+			var registered []string
+			// defMCPTools already left out the tools the def excludes.
 			for _, mt := range mcpTools {
 				if err := classified.register(mt, mcpEntry); err != nil {
 					cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def MCP tool registration failed; skipped",
 						"member", spec.Name, "agent", def.Name, "tool", mt.Spec().Name, "err", err)
+					continue
 				}
+				registered = append(registered, mt.Spec().Name)
 			}
-			mcpClose, mcpNames = cl, names2
+			mcpClose, mcpNames = cl, registered
 			memberLimits = defLimits(def, session.Limits{}) // only def-set fields; AddMember merges with the team default
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
 			// pinned-and-known provider switches the member engine; a def pinning none
