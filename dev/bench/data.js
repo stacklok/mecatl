@@ -443654,6 +443654,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795207864614,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "60bf072c10ed0d3d22cfadfeb65cb24227e24349",
+          "message": "feat(kernel): sketch SessionGroup residency and SessionRuntime contracts (#2936)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T13:12:17-08:00",
+          "tree_id": "87f55e6acbbd7a6903dc061dd13d6319d2792f6d",
+          "url": "https://github.com/stacklok/mecatl/commit/60bf072c10ed0d3d22cfadfeb65cb24227e24349"
+        },
+        "date": 1795209900361,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13381.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12875.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -577642,6 +577681,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795209896925,
+  "lastUpdate": 1795209901221,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
