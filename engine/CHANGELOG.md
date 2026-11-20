@@ -20,7 +20,9 @@ API snapshots live in [`engine/api/`](./api/).
   child before its first turn, exactly like a failed `Create`. Stores without
   the capability behave as before. Adds `agent.MemberBuild.DefinitionName`, the
   definition a team-member factory built the member from, which the supervisor
-  passes for members. Added (minor).
+  passes for members. Adds `port.ChildSessionResumer`, which the engine calls
+  with `ResumeChild` before a resumed subagent runs again; an error stops the
+  resume. Added (minor).
 
 - **Generated resource-ID persistence methods**: adds `id.ID.CheckCBOR`,
   `AppendCBOR`, `ReadCBOR`, `Clone`, and `Equal` for compositional persistence

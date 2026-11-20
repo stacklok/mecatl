@@ -30,11 +30,13 @@ type childCreation struct {
 // records each call and, when refuse is set, refuses the child without
 // publishing it.
 type childCreatorStore struct {
-	inner  *memstore.Store
-	refuse error
+	inner        *memstore.Store
+	refuse       error
+	refuseResume error
 
 	mu      sync.Mutex
 	created []childCreation
+	resumed []childCreation
 	creates int
 }
 
@@ -66,6 +68,19 @@ func (c *childCreatorStore) CreateChild(ctx context.Context, s *session.Session,
 		return refuse
 	}
 	return c.inner.Create(ctx, s)
+}
+
+func (c *childCreatorStore) ResumeChild(_ context.Context, s *session.Session, child port.ChildSessionInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resumed = append(c.resumed, childCreation{id: s.ID, kind: s.Kind, parent: s.Relationship.ParentSessionID, definition: child.DefinitionName})
+	return c.refuseResume
+}
+
+func (c *childCreatorStore) resumes() []childCreation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]childCreation(nil), c.resumed...)
 }
 
 func (c *childCreatorStore) children() []childCreation {
@@ -214,7 +229,18 @@ func TestChildSessionCreatorRefusalStopsTheChild(t *testing.T) {
 		store.refuse = errChildRefused
 		childLLM := mockllm.New(mockllm.TextTurn("must not run"))
 		task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)), agent.WithSubagentStore(store))
-		_ = runParentCall(t, task, "Subagent", `{"prompt":"investigate","background":true}`)
+		// The parent waits for the background child to end before the check,
+		// so a child that ran its model late would be caught.
+		parentLLM := mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"investigate","background":true}`))),
+			mockllm.ToolCallTurn(session.NewToolCall("wait", "SubagentStatus", json.RawMessage(`{"agent_id":"subagent-parent-p1","wait_ms":30000}`))),
+			mockllm.TextTurn("parent done"),
+		)
+		e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task, agent.NewSubagentStatusTool())})
+		events := drain(e.Run(context.Background(), childCreatorParent(t), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
+		if res := resultByCallID(events)["wait"]; res == nil {
+			t.Fatal("the parent never waited for the background child")
+		}
 		waitForChildren(t, store, 1)
 		if childLLM.Calls() != 0 {
 			t.Fatalf("refused background child called its model %d times", childLLM.Calls())
@@ -256,5 +282,57 @@ func waitForChildren(t *testing.T, store *childCreatorStore, n int) {
 			t.Fatalf("CreateChild calls = %d, want %d", len(store.children()), n)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestChildSessionResumerAdmitsAResumedSubagent pins that resuming a subagent,
+// in the foreground or the background, calls ResumeChild with the default
+// explorer's (empty) definition before the child runs again, and that a
+// refusal stops the resume before the child's model is called.
+func TestChildSessionResumerAdmitsAResumedSubagent(t *testing.T) {
+	for _, background := range []bool{false, true} {
+		for _, refuse := range []bool{false, true} {
+			name := map[bool]string{false: "foreground", true: "background"}[background] + map[bool]string{false: "", true: " refused"}[refuse]
+			t.Run(name, func(t *testing.T) {
+				store := newChildCreatorStore()
+				childLLM := mockllm.New(mockllm.TextTurn("seeded"), mockllm.TextTurn("resumed"))
+				task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t)), agent.WithSubagentStore(store))
+				seedLLM := mockllm.New(
+					mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent", json.RawMessage(`{"prompt":"seed"}`))),
+					mockllm.TextTurn("parent done"),
+				)
+				seed := agent.NewEngine(agent.Deps{LLM: seedLLM, Catalog: catalogWith(t, task), Policy: allowAll(), Model: "parent-model"})
+				seedSess := session.New("resume-parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+				if err := seedSess.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
+					t.Fatal(err)
+				}
+				drainObserving(t, seed.Run(context.Background(), seedSess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}), nil)
+				childID := session.SessionID("subagent-resume-parent-p1")
+				if len(store.resumes()) != 0 {
+					t.Fatalf("a fresh child called ResumeChild: %+v", store.resumes())
+				}
+				if refuse {
+					store.mu.Lock()
+					store.refuseResume = errChildRefused
+					store.mu.Unlock()
+				}
+				res := runResumeAttempt(t, task, childID, background, resumeOwnerAlice, background)
+				resumes := store.resumes()
+				if len(resumes) != 1 || resumes[0].id != childID || resumes[0].definition != "" {
+					t.Fatalf("ResumeChild calls = %+v, want one for %s with no definition", resumes, childID)
+				}
+				if n := len(store.children()); n != 1 {
+					t.Fatalf("the resume published the child again: %d CreateChild calls", n)
+				}
+				switch {
+				case refuse && childLLM.Calls() != 1:
+					t.Fatalf("a refused resume called the child's model: %d calls, want only the seed", childLLM.Calls())
+				case refuse && !background && (!res.IsError || !strings.Contains(res.Content, errChildRefused.Error())):
+					t.Fatalf("a refused resume returned %+v, want the refusal", res)
+				case !refuse && childLLM.Calls() != 2:
+					t.Fatalf("an admitted resume made %d child model calls, want 2", childLLM.Calls())
+				}
+			})
+		}
 	}
 }

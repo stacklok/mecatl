@@ -2651,6 +2651,9 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			_ = cleanupWS()
 			return session.NewToolError(call.ID, fmt.Sprintf("Subagent: durable child session could not be created: %v", err)), nil
 		}
+	} else if err := resumeChildSession(ctx, t.store, child); err != nil {
+		_ = cleanupWS()
+		return session.NewToolError(call.ID, fmt.Sprintf("Subagent: resumed child session was not admitted: %v", err)), nil
 	}
 	// Tear down the run workspace after the child fully drains. For a writable
 	// (direct-write) child this is a no-op — cleanupWS is the no-op returned by
@@ -3025,6 +3028,10 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 				fmt.Sprintf("Subagent: durable child session could not be created: %v", err)))
 			return
 		}
+	} else if err := resumeChildSession(ctx, t.store, child); err != nil {
+		endOnError(session.NewToolError(b.call.ID,
+			fmt.Sprintf("Subagent: resumed child session was not admitted: %v", err)))
+		return
 	}
 	// RESUME-START persist, mirroring prepareChildSession: refresh the resumed
 	// snapshot's last-modified time so the child-session GC's age pass never
@@ -4794,6 +4801,16 @@ func createChildSession(ctx context.Context, store port.SessionStore, sess *sess
 		return creator.CreateChild(ctx, sess, port.ChildSessionInfo{DefinitionName: definitionName})
 	}
 	return createSessionIfSupported(ctx, store, sess)
+}
+
+// resumeChildSession admits a resumed child through a store that implements
+// port.ChildSessionResumer; any other store needs nothing. A resumed subagent
+// continues on the default explorer, so it names no definition.
+func resumeChildSession(ctx context.Context, store port.SessionStore, sess *session.Session) error {
+	if resumer, ok := store.(port.ChildSessionResumer); ok {
+		return resumer.ResumeChild(ctx, sess, port.ChildSessionInfo{})
+	}
+	return nil
 }
 
 func (t *SubagentTool) persistChild(ctx context.Context, child *session.Session) {
