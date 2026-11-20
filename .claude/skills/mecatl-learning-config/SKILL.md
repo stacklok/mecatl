@@ -159,8 +159,9 @@ answers and the recommended default:
    inert default without implying activation.
 4. **Budget posture:** default / budget-conscious / eager / custom. Profiles set
    only the six automatic budget values; they never choose sensitivity. Explain
-   that limits and cooldowns are process-local, so N replicas may reserve about
-   N times the aggregate. They are not provider quotas or cluster-global limits.
+   that standard configurations enforce limits and cooldowns through a durable
+   admission ledger shared by cooperating processes; embeddings without a healthy
+   ledger enforce them per process. They are not provider quotas.
    For custom, ask one automatic value at a time and validate it; do not ask for
    sensitivity again.
 5. **Existing subtree:** when present, preserve or revise it. Recommend
@@ -193,7 +194,7 @@ provider, timeout, ownership, and lifecycle limits.
 ### 5. Preflight, propose, confirm, then edit
 
 Generate a complete `learning:` block containing mode, independently selected
-sensitivity, skill activation, and all six automatic controls. Do not emit a
+sensitivity, skill activation, admission interval, and all six automatic controls. Do not emit a
 partial subtree whose behavior depends on hidden defaults.
 
 Before asking for confirmation, write only that exact non-secret `learning:`
@@ -275,6 +276,6 @@ high-assurance `skills.activation: evaluated` tightening.
 | Evaluated without evaluator | Warn that ABSTAIN/no-evaluator remains staged; recommend validated or separately configure a trusted evaluator. |
 | Project raises mode/sensitivity or loosens evaluated | Explain project policy is tighten-only and cannot raise operator autonomy. |
 | Project specifies automatic budgets | Explain budgets are operator-only and the project block is warning-ignored. |
-| Multiple replicas | Multiply the process-local envelope by replica count; never call it a cluster/provider quota. |
+| Multiple replicas | Standard configurations share one durable ledger across cooperating processes; only embeddings without a healthy ledger multiply the envelope by replica count. Never call it a provider quota. |
 | Remote server inaccessible or `mecated` unavailable there | Supply the exact manual block and server-side instructions only; never inspect local client settings or auto-edit. Require `mecated config validate --file "<resolved-path>"` after installation when the binary becomes available. |
 | Routing, credentials, evaluator implementation, `/reflect` execution, proposal/memory review, skill drafting, or another harness | Decline that portion and route to its workflow. |

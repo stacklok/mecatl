@@ -7,8 +7,7 @@ description: >-
   when asked to review/audit/check a diff, issue, PRD, finished change, or PR.
   Fans reviewers out in parallel, preserves each axis, and ends with the stable
   PANEL machine summary. NOT for drafting code, trivial edits (use
-  /code-review), cloud review (/code-review ultra), pure config, or posting
-  GitHub comments (/pr-review-post).
+  /code-review), pure config, or posting GitHub comments.
 ---
 
 # Panel review
@@ -43,9 +42,8 @@ Each axis catches a different failure mode:
   duplication issue lurks.
 
 Reporting them separately is deliberate. Synthesised together, one
-axis masks another. Inspired by Matt Pocock's two-axis `/review`
-skill (Standards + Spec), generalised with a Domain axis powered by
-the project's installed specialist reviewer agents.
+axis masks another. The Domain axis is powered by the project's
+installed specialist reviewer agents.
 
 ## Prerequisites
 
@@ -143,7 +141,7 @@ them):
 - `.claude/rules/*.md`
 - the "Platform principles" section of `docs/architecture.md` if present
 
-**Explicit skip rule** (inherited from Matt's design): tell the Standards
+**Explicit skip rule**: tell the Standards
 subagent not to re-check anything enforced by detected formatter, linter,
 type-checker, compiler, or project tooling configs (for example
 `.editorconfig`, ESLint/Biome/Prettier/TypeScript, `.golangci.yml`, pyproject
@@ -312,7 +310,8 @@ They run concurrently, separate contexts, no order dependencies.
   > Quote the specific spec line / requirement for each finding. Classify
   > **every** finding explicitly as `blocker`, `important`, or `advisory`:
   > blocker = must fix before merge; important = concrete non-blocking fix;
-  > advisory = judgement/polish. Under 400 words. Default to silence when
+  > advisory = judgement/polish. Keep findings scannable: one entry per
+  > finding with location, evidence, and class. Default to silence when
   > uncertain — only flag concrete mismatches.
   >
   > Root-cause discipline: when a finding names a symptom, note
@@ -344,8 +343,8 @@ in final output.
   > Include a brief coverage receipt naming the families/examples compared and any
   > gaps. Classify **every** finding explicitly as `blocker`, `important`, or
   > `advisory`: blocker = must fix before merge; important = concrete
-  > non-blocking fix; advisory = judgement/polish. Keep findings under 400 words,
-  > with the coverage receipt separate. Default to silence when uncertain.
+  > non-blocking fix; advisory = judgement/polish. Keep findings scannable, one
+  > entry per finding, with the coverage receipt separate. Default to silence when uncertain.
 
 ### Test-adequacy subagent
 
@@ -363,7 +362,8 @@ in final output.
   > a planted violation, fake-only tests that bypass the real seam, and missing
   > boundary/failure cases. Do not re-report style or implementation findings.
   > Classify findings as blocker, important, or advisory and cite test paths and
-  > requirement/AC ids. Under 400 words; default to silence when adequate.
+  > requirement/AC ids. Keep findings scannable, one entry per finding;
+  > default to silence when adequate.
 
 For a pure-docs or pure-config diff with no executable behavior contract, mark
 this axis not applicable; that is a deliberate skip, not a reviewer failure.
@@ -398,8 +398,7 @@ score, and root-cause discipline (grep every caller, fix the shared
 function once). Read the reference file and paste the brief block
 into each reuse agent's prompt.
 
-Set `run_in_background: false` (default) so synthesis blocks on
-completion.
+Wait for every reviewer's completion notification before synthesis.
 
 If the environment or the user has expressed a model preference,
 honour it on each Agent call.
@@ -409,7 +408,7 @@ honour it on each Agent call.
 Do **NOT** merge findings across axes. They are deliberately
 orthogonal — one passing while another fails is exactly the
 information you want to preserve. Cross-axis merging is the
-failure mode Matt's design exists to prevent.
+failure mode this skill exists to prevent.
 
 For the **Spec**, **Standards**, and **Test adequacy** axes, present each
 subagent's explicitly classified findings verbatim or lightly cleaned. Preserve
@@ -524,4 +523,4 @@ Don't loop on synthesis. The panel ran once; the report stands.
 - [Matt Pocock's `/review`](https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md)
 - [Claude Code best practices](https://code.claude.com/docs/en/best-practices)
 - [Sub-agents reference](https://code.claude.com/docs/en/sub-agents)
-- Bundled `/code-review` (single pass) and `/code-review ultra` (cloud panel)
+- Bundled `/code-review` (single pass)

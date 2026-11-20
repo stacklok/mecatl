@@ -53,8 +53,8 @@ not modify code.
 
 1. **Read `CLAUDE.md` and `.claude/rules/*.md`** — many codebases
    have explicit policies on duplication: "prefer three similar lines
-   over a premature abstraction" (a downstream consumer), "DRY at the package
-   level, not the function level," etc. Respect them.
+   over a premature abstraction", "DRY at the package level, not the
+   function level," etc. Respect them.
 2. **Locate the change.** Default scope is the current `git diff` (or
    the diff vs. main). Out-of-diff duplication exists but isn't
    actionable in this PR — call it out as context only.
@@ -203,8 +203,8 @@ duplicate finder.
   of methods. **In Go, accept interfaces, return structs** —
   the interface lives at the consumer, not the producer.
 - Don't extract an interface to "enable mocking" — bufconn +
-  hand-written fakes are usually better. Cite the downstream consumer's
-  `.claude/rules/testing.md` if present.
+  hand-written fakes are usually better. Follow the project's
+  testing rules in `.claude/rules/`.
 - Single-method interfaces with a `-er` name (`Reader`,
   `Closer`, `Stringer`) are fine.
 
@@ -212,8 +212,9 @@ duplicate finder.
 - Use when the shape is identical and the only difference is
   the type parameter — `Map`, `Filter`, `Keys`, `Values` over
   collections.
-- Go 1.21+: `slices.Map` is built-in for many cases; prefer
-  the stdlib helper over a hand-rolled generic.
+- Go: prefer existing `slices` / `maps` / `iter` helpers; the
+  stdlib has no `Map`/`Filter`, so a small local generic is
+  acceptable.
 - TypeScript: `<T>` parameters when the logic is genuinely
   generic; resist generics that exist to mask "this can be one
   of three types."
@@ -377,11 +378,9 @@ keep these separate."
 
 - **`library-reuse-reviewer`** — when the right answer is "this
   is a wheel you reinvented; use stdlib/<known-library>."
-- **`go-architect`** — when the duplication is a symptom of a
+- **`software-architect`** — when the duplication is a symptom of a
   deeper layering / boundary problem (cross-module
   duplication suggesting a missing module).
-- **`project-test-writer` / project test-review skill** — for
-  test-specific dedup strategy.
 
 ## References to cite
 

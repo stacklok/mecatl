@@ -30,10 +30,10 @@ you produce a findings report or a design recommendation.
    triggered me". CWE-367-shaped bugs live here.
 2. **Reconcile is idempotent.** Calling reconcile twice in a row, or
    with stale cache, must converge to the same outcome.
-3. **Reconcile is fast and bounded.** Long-running work belongs in a
-   goroutine kicked off from reconcile *and tracked in status*, not
-   inline. A reconcile that blocks 30s blocks the entire workqueue
-   for that controller.
+3. **Reconcile is fast and bounded.** Long-running work is started
+   externally, its handle recorded in status, and polled on requeue —
+   not run inline. A reconcile that blocks 30s stalls a worker for
+   that controller.
 4. **Updates to `.status` do not trigger reconcile loops** — *if* the
    controller is watching with predicates that skip status-only
    changes. Without those predicates, `Status().Update()` re-enters
@@ -212,7 +212,7 @@ Deviations from this shape are not automatically findings, but the
 flow (fetch → delete branch → finalizer → reconcile → status)
 must be present in some recognisable form.
 
-### Common reconciler bugs (find these aggressively)
+### Common reconciler bugs
 
 - **Hot-loop from status-triggered watches.** The controller
   watches its own kind, `Status().Update()` produces an event,
@@ -301,7 +301,7 @@ must be present in some recognisable form.
   and synthesises a reconcile of the owner when an owned object
   changes. Use this for "I made this Deployment, react to its
   status".
-- `Watches(&source.Kind{Type: &v1.Bar{}}, handler.EnqueueRequestsFromMapFunc(r.mapBarToFoo))`
+- `Watches(&v1.Bar{}, handler.EnqueueRequestsFromMapFunc(r.mapBarToFoo))`
   for cross-resource watches (a Bar references a Foo, Bar
   changes should reconcile Foo).
 - **Predicates** filter events before they enter the workqueue:
@@ -487,12 +487,11 @@ not individual findings.
 
 - **`kubernetes-deployment-expert`** — for the operator's own
   Deployment, RBAC, NetworkPolicy, Helm chart layout.
-- **`go-architect`** — for Go-side architecture of the controller
-  package (file layout, dependency direction, interface shape).
-- **`go-security-reviewer`** — for security review of the
-  operator's Go code.
-- **`secure-code-reviewer`** — for security review of admission
-  webhooks (validating webhooks are HTTP endpoints).
+- **`software-architect`** — for the controller package's
+  structure (file layout, dependency direction, interface shape).
+- **`secure-code-reviewer`** — for security review of the
+  operator's Go code and its admission webhooks (validating
+  webhooks are HTTP endpoints).
 
 ## References to cite
 

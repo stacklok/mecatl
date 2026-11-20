@@ -59,10 +59,10 @@ One entry per curated metric. `kind` ∈ `"histogram" | "scalar" | "absent"`.
   }
 ]
 ```
-`role` values form a CLOSED family: `main | subagent | member | parallel | fork
-| usermodel | child` — `main` is the operator-facing engine; the rest are
-delegation children (Subagent, team member, Parallel branch, fork, user-model
-reviewer, unrecognised fallback). Never a session id or agent-def name.
+`role` values form a CLOSED family: `main | subagent | member | parallel | usermodel
+| child` — `main` is the operator-facing engine; the rest are delegation
+children (Subagent, team member, Parallel branch, user-model reviewer,
+unrecognised fallback). Never a session id or agent-def name.
 `by_role` rows carry `count` for histograms and `value` for counters.
 
 ### `perf://pprof/{profile}`  ({profile} ∈ heap|goroutine|allocs|mutex|block)
@@ -155,7 +155,7 @@ closed enum, not an identifier. `role` filters to one family (unknown roles →
 `isError` naming the valid set). `limit` 1-20 (default 10). Returns `isError`
 "per-turn history is not enabled" if the slow-turn ring is not wired.
 
-### `capture_flight_recorder{}` — needs `--flight-recorder`
+### `capture_flight_recorder{}` — on by default; off with `--flight-recorder=false`
 ```jsonc
 { "captured_bytes": 0, "window_summary": "execution-trace window of N bytes ..." }
 ```
