@@ -12,11 +12,14 @@ import (
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 )
 
 var (
@@ -65,6 +68,7 @@ type ExecutorDialer struct {
 	namespace       string
 	clientDirectory string
 	clientURI       string
+	port            int
 	now             func() time.Time
 }
 
@@ -77,6 +81,7 @@ func NewExecutorDialer(
 		namespace:       namespace,
 		clientDirectory: clientDirectory,
 		clientURI:       clientURI,
+		port:            executionenv.ExecutorServerPort,
 		now:             func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -123,21 +128,42 @@ func (d *ExecutorDialer) TLSConfig(pin ExecutorPin) *tls.Config {
 
 // Dial resolves the pinned Pod and completes a mutual TLS handshake with it.
 func (d *ExecutorDialer) Dial(ctx context.Context, pin ExecutorPin, port int) (*tls.Conn, error) {
+	raw, err := d.dialPod(ctx, pin, port)
+	if err != nil {
+		return nil, err
+	}
+	conn := tls.Client(raw, d.TLSConfig(pin))
+	if err := conn.HandshakeContext(ctx); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// Connect is an ExecutorConnectFunc for the executor server port. Every dial
+// re-resolves the pinned Pod, so a replacement Pod reusing the address is
+// refused before the handshake.
+func (d *ExecutorDialer) Connect(pin ExecutorPin) (grpc.ClientConnInterface, func(), error) {
+	conn, err := executorclient.Dial(
+		"passthrough:///"+pin.PodName,
+		credentials.NewTLS(d.TLSConfig(pin)),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return d.dialPod(ctx, pin, d.port)
+		}),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, func() { _ = conn.Close() }, nil
+}
+
+func (d *ExecutorDialer) dialPod(ctx context.Context, pin ExecutorPin, port int) (net.Conn, error) {
 	ip, err := d.Resolve(ctx, pin)
 	if err != nil {
 		return nil, err
 	}
-	dialer := &tls.Dialer{Config: d.TLSConfig(pin)}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
-	if err != nil {
-		return nil, err
-	}
-	tlsConn, ok := conn.(*tls.Conn)
-	if !ok {
-		_ = conn.Close()
-		return nil, errors.New("executor connection is not TLS")
-	}
-	return tlsConn, nil
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 }
 
 func (d *ExecutorDialer) clientCertificate() (*tls.Certificate, error) {

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 )
 
 // Harness supplies the client and the commands that produce each scenario.
@@ -35,6 +36,20 @@ type Harness struct {
 	ChildGone func(ctx context.Context) error
 	// Survivor exits 0, leaving a process that survives the kill.
 	Survivor string
+	// Context is sent with every call; nil sends an empty one.
+	Context executorclient.RequestContextFunc
+}
+
+func (h Harness) context(ctx context.Context, t *testing.T) *executorv1.RequestContext {
+	t.Helper()
+	if h.Context == nil {
+		return &executorv1.RequestContext{}
+	}
+	rc, err := h.Context(ctx)
+	if err != nil {
+		t.Fatalf("request context: %v", err)
+	}
+	return rc
 }
 
 const waitLimit = 30 * time.Second
@@ -70,7 +85,7 @@ func start(
 		req.Timeout = durationpb.New(timeout)
 	}
 	if err := stream.Send(&executorv1.RunCommandRequest{
-		Context: &executorv1.RequestContext{},
+		Context: h.context(ctx, t),
 		Action:  &executorv1.RunCommandRequest_Start{Start: req},
 	}); err != nil {
 		t.Fatalf("send start: %v", err)
@@ -194,12 +209,18 @@ func testOutcomeUnknown(t *testing.T, h Harness) {
 
 func testRejectsInvalidStart(t *testing.T, h Harness) {
 	startWith := func(s *executorv1.StartCommand) *executorv1.RunCommandRequest {
-		return &executorv1.RunCommandRequest{Action: &executorv1.RunCommandRequest_Start{Start: s}}
+		return &executorv1.RunCommandRequest{
+			Context: h.context(t.Context(), t),
+			Action:  &executorv1.RunCommandRequest_Start{Start: s},
+		}
 	}
 	for name, req := range map[string]*executorv1.RunCommandRequest{
-		"cancel first": {Action: &executorv1.RunCommandRequest_Cancel{
-			Cancel: &executorv1.CancelCommand{},
-		}},
+		"cancel first": {
+			Context: h.context(t.Context(), t),
+			Action: &executorv1.RunCommandRequest_Cancel{
+				Cancel: &executorv1.CancelCommand{},
+			},
+		},
 		"empty": startWith(&executorv1.StartCommand{}),
 		"negative timeout": startWith(&executorv1.StartCommand{
 			Command: h.Succeed, Timeout: durationpb.New(-time.Second),

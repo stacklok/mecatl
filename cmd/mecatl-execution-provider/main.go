@@ -135,6 +135,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	server := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(security.TLSConfig())),
 		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor),
+		grpc.ChainStreamInterceptor(limiter.StreamInterceptor),
 		grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes),
 		grpc.MaxSendMsgSize(executionenv.MaxMessageBytes),
 		grpc.MaxConcurrentStreams(uint32(maxConcurrentStreams)), //nolint:gosec // validated to 1..1024 above.

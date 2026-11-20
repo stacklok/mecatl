@@ -209,7 +209,8 @@ func startError(err error) error {
 	switch {
 	case why == executorv1.ErrorReason_ERROR_REASON_NO_SHELL:
 		return tool.ErrNoShell
-	case code == codes.InvalidArgument,
+	case why == executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED,
+		code == codes.InvalidArgument,
 		code == codes.ResourceExhausted &&
 			why == executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED,
 		code == codes.Internal && why == executorv1.ErrorReason_ERROR_REASON_START_FAILED:

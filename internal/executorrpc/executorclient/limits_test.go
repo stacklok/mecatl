@@ -108,6 +108,7 @@ func TestFailureBeforeStartedIsUnknownUnlessRefused(t *testing.T) {
 		limit   = executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED
 		noShell = executorv1.ErrorReason_ERROR_REASON_NO_SHELL
 		failed  = executorv1.ErrorReason_ERROR_REASON_START_FAILED
+		refused = executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED
 	)
 	cases := map[string]struct {
 		run     func(commandStream) error
@@ -127,6 +128,9 @@ func TestFailureBeforeStartedIsUnknownUnlessRefused(t *testing.T) {
 		"command over limit":  {refusal(codes.ResourceExhausted, limit), false},
 		"no shell":            {refusal(codes.FailedPrecondition, noShell), false},
 		"start failed tagged": {refusal(codes.Internal, failed), false},
+		"untagged denied":     {refusal(codes.PermissionDenied, none), true},
+		"denied unforwarded":  {refusal(codes.PermissionDenied, refused), false},
+		"unforwarded unready": {refusal(codes.Unavailable, refused), false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

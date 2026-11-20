@@ -22,13 +22,16 @@ type Target struct {
 	Conn     grpc.ClientConnInterface
 	Root     string
 	External fsconformance.ExternalAccess
+	// Context is sent with every call; nil sends an empty one.
+	Context executorclient.RequestContextFunc
 }
 
 // Run runs the Workspace conformance suites through the executor client.
 func Run(t *testing.T, newTarget func(t *testing.T) Target) {
 	fixture := func(t *testing.T) (tool.Workspace, fsconformance.ExternalAccess) {
 		target := newTarget(t)
-		return NewWorkspace(target.Conn, target.Root), target.External
+		ws := executorclient.NewWorkspace(target.Conn, target.Root, target.Context)
+		return ws, target.External
 	}
 	workspace := func(t *testing.T) tool.Workspace {
 		ws, _ := fixture(t)
