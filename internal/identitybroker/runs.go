@@ -80,10 +80,6 @@ func (s *sessionRuns) addDelegation(id string, d delegationRecord) {
 	s.delegations[id] = d
 }
 
-func runDenied(detail string) error {
-	return ReasonError(ReasonDenied, detail)
-}
-
 // ReportDelegation implements Core, with the checks of the design's
 // "Delegation report" in order. An accepted report records the delegation and
 // the receiving run, bound to the receiving agent and its owner, and records
@@ -109,25 +105,25 @@ func (b *Broker) ReportDelegation(_ context.Context, workload Workload, req Repo
 	delegating, known := runs.runs[req.DelegatingRun]
 	switch {
 	case known && delegating.agent != req.DelegatingAgent.Subject:
-		return runDenied("the delegating run is bound to another agent")
+		return deniedError("the delegating run is bound to another agent")
 	case known && delegating.delegationID != "":
 		if d, ok := runs.delegations[delegating.delegationID]; !ok || d.receivingRun != req.DelegatingRun {
-			return runDenied("the delegating run's own delegation was not reported for it")
+			return deniedError("the delegating run's own delegation was not reported for it")
 		}
 	case !known:
 		agent, ok := t.agents[req.DelegatingAgent.Subject]
 		if !ok || agent.sessionID != s.ID || !agent.parent.IsZero() {
-			return runDenied("a delegating run the broker has not seen must be a root run of a root instance registered to the session")
+			return deniedError("a delegating run the broker has not seen must be a root run of a root instance registered to the session")
 		}
 		delegating = runRecord{agent: req.DelegatingAgent.Subject, owner: req.Owner}
 	}
 	// Check 4: the receiving agent is registered to the session.
 	if agent, ok := t.agents[req.ReceivingAgent.Subject]; !ok || agent.sessionID != s.ID {
-		return runDenied("the receiving agent is not registered to the broker session")
+		return deniedError("the receiving agent is not registered to the broker session")
 	}
 	// Check 5: the receiving run keeps the delegating run's owner.
 	if req.Owner != delegating.owner {
-		return runDenied("the receiving run's owner is not the delegating run's owner")
+		return deniedError("the receiving run's owner is not the delegating run's owner")
 	}
 	// Check 6: a delegation is reported once; a repeat must match.
 	d := delegationRecord{
@@ -141,7 +137,7 @@ func (b *Broker) ReportDelegation(_ context.Context, workload Workload, req Repo
 		return nil
 	}
 	if _, ok := runs.runs[req.ReceivingRun]; ok {
-		return runDenied("the receiving run is already recorded")
+		return deniedError("the receiving run is already recorded")
 	}
 	if !known {
 		runs.addRun(req.DelegatingRun, delegating)
@@ -166,14 +162,14 @@ func (t *sessionTable) checkRunLocked(s *brokerSession, agent string, req Author
 	switch {
 	case known:
 		if rec.agent != agent {
-			return runDenied("the run is bound to another agent")
+			return deniedError("the run is bound to another agent")
 		}
 		if rec.delegationID != req.DelegationID {
-			return runDenied("the run acts under another delegation")
+			return deniedError("the run acts under another delegation")
 		}
 	case req.DelegationID == "":
 		if a, ok := t.agents[agent]; !ok || !a.parent.IsZero() {
-			return runDenied("a new run naming no delegation needs a root instance")
+			return deniedError("a new run naming no delegation needs a root instance")
 		}
 		rec = runRecord{agent: agent, owner: req.RunOwner}
 	default:
@@ -181,7 +177,7 @@ func (t *sessionTable) checkRunLocked(s *brokerSession, agent string, req Author
 		// only once that record was forgotten.
 		d, ok := runs.delegations[req.DelegationID]
 		if !ok || d.receivingRun != req.RunID || d.receivingAgent != agent {
-			return runDenied("the run's delegation was not reported for this run and agent")
+			return deniedError("the run's delegation was not reported for this run and agent")
 		}
 		rec = runRecord{agent: agent, owner: d.owner, delegationID: req.DelegationID}
 	}
@@ -198,10 +194,11 @@ func (t *sessionTable) checkRunLocked(s *brokerSession, agent string, req Author
 // run's owner and the owner recorded with the grant in use, the company
 // identity. It only refuses: the run owner never selects the grant. It is
 // one function so a later membership check, for sessions with several
-// members, replaces only its body (run-owner.md, item 2).
+// members, replaces only its body (docs/drafts/agent-identity/run-owner.md,
+// item 2).
 func checkRunOwner(reported, run, grant Owner) error {
 	if reported != run || reported != grant {
-		return runDenied("the run's owner is not the owner of the grant in use")
+		return deniedError("the run's owner is not the owner of the grant in use")
 	}
 	return nil
 }

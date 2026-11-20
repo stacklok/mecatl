@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,20 +36,21 @@ import (
 // lateScript is a mock model that loads its script at its first turn, so a
 // test can write a script naming the session it created.
 type lateScript struct {
-	path  string
-	once  sync.Once
-	inner port.LLMProvider
-	err   error
+	load func() (port.LLMProvider, error)
+}
+
+func newLateScript(path string) *lateScript {
+	return &lateScript{load: sync.OnceValues(func() (port.LLMProvider, error) { return mockscript.Load(path) })}
 }
 
 func (*lateScript) Capabilities() port.ProviderCapabilities { return port.ProviderCapabilities{} }
 
 func (l *lateScript) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-	l.once.Do(func() { l.inner, l.err = mockscript.Load(l.path) })
-	if l.err != nil {
-		return nil, l.err
+	inner, err := l.load()
+	if err != nil {
+		return nil, err
 	}
-	return l.inner.Stream(ctx, req)
+	return inner.Stream(ctx, req)
 }
 
 // delegationServe is mecak8s serving the gateway with parallel branches and
@@ -63,24 +65,14 @@ type delegationServe struct {
 func serveDelegations(t *testing.T) *delegationServe {
 	t.Helper()
 	d := &delegationServe{diag: &gatewayCallDiagnostics{}, script: filepath.Join(t.TempDir(), "script.json")}
-	model := &lateScript{path: d.script}
+	model := newLateScript(d.script)
 	d.gatewayServe = serveGatewayIdentityBroker(t, notesRoute(t),
 		[]string{"--enable-parallel", "--enable-teams", "--workspace", t.TempDir()},
 		func(cfg *app.Config) {
 			cfg.MockProvider = model
 			cfg.Diagnostics = d.diag
 		})
-	status, body := apiCall(t, http.MethodPost, d.api+"/v1/sessions", d.alice, "{}")
-	if status != http.StatusCreated && status != http.StatusOK {
-		t.Fatalf("Alice creates a session: status %d: %s", status, body)
-	}
-	var created struct {
-		ID string `json:"session_id"`
-	}
-	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
-		t.Fatalf("create session response %s: %v", body, err)
-	}
-	d.session = created.ID
+	d.session = createSession(t, d.api, d.alice)
 	return d
 }
 
@@ -88,9 +80,7 @@ func serveDelegations(t *testing.T) *delegationServe {
 // session's ID, followed by text turns for whichever agent asks next.
 func (d *delegationServe) writeScript(t *testing.T, turns ...string) {
 	t.Helper()
-	for range 40 {
-		turns = append(turns, scriptText)
-	}
+	turns = append(turns, slices.Repeat([]string{scriptText}, 40)...)
 	doc := `{"turns":[` + strings.ReplaceAll(strings.Join(turns, ","), "SESSION", d.session) + `]}`
 	if err := os.WriteFile(d.script, []byte(doc), 0o600); err != nil {
 		t.Fatal(err)

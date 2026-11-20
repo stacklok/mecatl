@@ -1110,6 +1110,23 @@ func unsignedToken(t *testing.T, issued string) string {
 	return signed
 }
 
+// createSession creates a session over the HTTP API with token and returns
+// its ID.
+func createSession(t *testing.T, api, token string) string {
+	t.Helper()
+	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", token, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("create session: status %d: %s", status, body)
+	}
+	var created struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
+		t.Fatalf("create session response %s: %v", body, err)
+	}
+	return created.ID
+}
+
 // listSessionOwners maps each listed session to its owner.
 func listSessionOwners(t *testing.T, api, token string) map[string]identitybroker.Owner {
 	t.Helper()

@@ -573,7 +573,7 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 	if err != nil {
 		return agent.TeamOutcome{}, err
 	}
-	if ctx, err = s.openTeamRootIdentityBrokerSession(ctx, ts.rootSessionID); err != nil {
+	if ctx, err = s.startTeamRootRun(ctx, ts.rootSessionID); err != nil {
 		return agent.TeamOutcome{}, err
 	}
 	// Claim startup under the per-team lock. teamStarting keeps cancellation and

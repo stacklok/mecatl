@@ -463,10 +463,10 @@ func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin st
 	return want, false
 }
 
-// openTeamRootIdentityBrokerSession opens the broker session of the session a
-// team is rooted in before the team runs. Team runs do not pass run entry, so
-// without this a team could run in a session tree whose broker session was
-// lost at a restart. A team on the default placement has no root session and
+// startTeamRootRun starts a RunTeam call as a run of the team root's main
+// agent, first opening the broker session of the session the team is rooted
+// in. Team runs do not pass run entry, so without this a team could run in a
+// session tree whose broker session was lost at a restart. A team on the default placement has no root session and
 // its members belong to no session tree, so they get no agent identity.
 //
 // It returns ctx carrying the team run: a RunTeam call is a run of the root's
@@ -474,7 +474,7 @@ func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin st
 // from it, the main agent being the members' stand-in creation parent. A
 // team with no broker, no root session, or a root with no owner has no such
 // run, and its members' gateway calls fail closed.
-func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root session.SessionID) (context.Context, error) {
+func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) (context.Context, error) {
 	if s.cfg.IdentityBroker == nil || root == "" {
 		return ctx, nil
 	}
