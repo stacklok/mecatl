@@ -22,7 +22,7 @@ type CommandProxy struct {
 }
 
 // NewCommandProxy authorizes with h's client policy and backend.
-func NewCommandProxy(h *Handler, connector ExecutorConnector) *CommandProxy {
+func NewCommandProxy(h *Handler, connector ExecutorConnectFunc) *CommandProxy {
 	return &CommandProxy{proxy: executorProxy{
 		handler:    h,
 		connector:  connector,
@@ -51,7 +51,7 @@ func (p *CommandProxy) RunCommand(stream commandStream) error {
 	if err != nil {
 		return notForwarded(err)
 	}
-	a, err := p.proxy.connect(ctx, route)
+	a, err := p.proxy.connect(route)
 	if err != nil {
 		return notForwarded(err)
 	}

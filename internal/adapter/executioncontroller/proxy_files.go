@@ -19,7 +19,7 @@ type FileProxy struct {
 }
 
 // NewFileProxy authorizes with h's client policy and backend.
-func NewFileProxy(h *Handler, connector ExecutorConnector) *FileProxy {
+func NewFileProxy(h *Handler, connector ExecutorConnectFunc) *FileProxy {
 	return &FileProxy{proxy: executorProxy{
 		handler:    h,
 		connector:  connector,

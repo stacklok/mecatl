@@ -56,10 +56,7 @@ type recordingConnector struct {
 	pins []ExecutorPin
 }
 
-func (c *recordingConnector) Connect(
-	_ context.Context,
-	pin ExecutorPin,
-) (grpc.ClientConnInterface, func(), error) {
+func (c *recordingConnector) Connect(pin ExecutorPin) (grpc.ClientConnInterface, func(), error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pins = append(c.pins, pin)
@@ -174,8 +171,8 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor),
 		grpc.ChainStreamInterceptor(limiter.StreamInterceptor),
 	)
-	executorv1.RegisterFileServiceServer(server, NewFileProxy(handler, connector))
-	executorv1.RegisterCommandServiceServer(server, NewCommandProxy(handler, connector))
+	executorv1.RegisterFileServiceServer(server, NewFileProxy(handler, connector.Connect))
+	executorv1.RegisterCommandServiceServer(server, NewCommandProxy(handler, connector.Connect))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -562,7 +559,7 @@ func TestFileProxyEnforcesTheTemplateFileLimit(t *testing.T) {
 	}
 }
 
-func TestExecutorConnectorFollowsThePinnedPod(t *testing.T) {
+func TestExecutorDialerConnectFollowsThePinnedPod(t *testing.T) {
 	pki := newPlatformPKI(t, testProviderClientURI)
 	cfg, fingerprint := executorServerTLS(t, "env", pki)
 	files := memfs.NewWorkspace(proxyRoot)
@@ -582,11 +579,11 @@ func TestExecutorConnectorFollowsThePinnedPod(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	kube := kubefake.NewSimpleClientset(executorPodAt("executor-env", "pod-1", "127.0.0.1"))
-	connector := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI).
-		Connector(listener.Addr().(*net.TCPAddr).Port)
+	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
+	dialer.port = listener.Addr().(*net.TCPAddr).Port
 	pin := ExecutorPin{PodName: "executor-env", PodUID: "pod-1", Fingerprint: fingerprint}
 	stat := func() error {
-		conn, release, err := connector.Connect(t.Context(), pin)
+		conn, release, err := dialer.Connect(pin)
 		if err != nil {
 			return err
 		}

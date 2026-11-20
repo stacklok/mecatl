@@ -23,13 +23,10 @@ type ExecutorRoute struct {
 	MaxCommandDuration time.Duration
 }
 
-// ExecutorConnector opens a connection to one pinned executor Pod; release closes it.
-type ExecutorConnector interface {
-	Connect(
-		ctx context.Context,
-		pin ExecutorPin,
-	) (conn grpc.ClientConnInterface, release func(), err error)
-}
+// ExecutorConnectFunc opens a connection to one pinned executor Pod; release closes it.
+type ExecutorConnectFunc func(
+	pin ExecutorPin,
+) (conn grpc.ClientConnInterface, release func(), err error)
 
 type executorRouter interface {
 	ExecutorRoute(
@@ -102,7 +99,7 @@ func (s *Store) requireAdmitted(o *unstructured.Unstructured, capability string)
 // executorProxy authorizes calls with the Handler's policy and forwards them.
 type executorProxy struct {
 	handler    *Handler
-	connector  ExecutorConnector
+	connector  ExecutorConnectFunc
 	capability string
 }
 
@@ -121,7 +118,7 @@ func (p *executorProxy) open(
 	if err != nil {
 		return authorizedCall{}, notForwarded(err)
 	}
-	a, err := p.connect(ctx, route)
+	a, err := p.connect(route)
 	return a, notForwarded(err)
 }
 
@@ -148,8 +145,8 @@ func (p *executorProxy) authorize(
 	return route, nil
 }
 
-func (p *executorProxy) connect(ctx context.Context, route ExecutorRoute) (authorizedCall, error) {
-	conn, release, err := p.connector.Connect(ctx, route.Pin)
+func (p *executorProxy) connect(route ExecutorRoute) (authorizedCall, error) {
+	conn, release, err := p.connector(route.Pin)
 	if err != nil {
 		return authorizedCall{}, wireError(executionenv.CodeNotReady, true)
 	}
