@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/childstore"
 )
 
 // ErrTeamsDisabled is returned by the team methods when no MemberEngine is wired
@@ -480,7 +481,7 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 		opts = append(opts, agent.WithTeamHooks(s.cfg.TeamHooks))
 	}
 	if s.cfg.Store != nil {
-		opts = append(opts, agent.WithMemberStore(s.cfg.Store))
+		opts = append(opts, agent.WithMemberStore(s.memberStore()))
 	}
 	if s.cfg.SessionLiveness != nil {
 		opts = append(opts, agent.WithMemberLiveness(s.cfg.SessionLiveness))
@@ -489,8 +490,11 @@ func (s *Service) buildTeamForOperation(ctx context.Context, teamID string, ts *
 		opts = append(opts, agent.WithTeamTokenBudget(budget))
 	}
 	sup := agent.NewSupervisor(t, ts.env, factory, opts...)
+	// Members are published, and registered as helpers, under the team's root
+	// session, as RunTeam later runs them; a default-placement team has none.
+	memberCtx := port.WithRootSessionID(ctx, ts.rootSessionID)
 	for _, spec := range ts.specs {
-		if err := sup.AddMember(ctx, spec); err != nil {
+		if err := sup.AddMember(memberCtx, spec); err != nil {
 			sup.Close()
 			return nil, nil, classifyAddMemberErr(err)
 		}
@@ -673,4 +677,14 @@ func (s *Service) CleanupTeam(ctx context.Context, teamID string) error {
 		ts.releasePlacement()
 	}
 	return nil
+}
+
+// memberStore is the store team members are published to: the service's
+// store, registering each member as a helper agent when an identity broker is
+// configured.
+func (s *Service) memberStore() port.SessionStore {
+	if s.cfg.IdentityBroker == nil {
+		return s.cfg.Store
+	}
+	return childstore.New(s.cfg.Store, s.RegisterHelper)
 }

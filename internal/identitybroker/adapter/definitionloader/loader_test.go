@@ -59,6 +59,8 @@ func TestLoadBuiltins(t *testing.T) {
 		want := map[string]string{
 			identitybroker.BuiltinExplorer: "d0070ba5a91151e6e8d5027241ec2bf3a8010ab4edd00a85cf8edd48b763eb3a",
 			identitybroker.BuiltinMain:     "1bdf8e2e3ad0d79f833e86406226c7c5b4a7e1af6a4e2a059fa75b940521b63a",
+			identitybroker.BuiltinBranch:   "64ec85aea8d2520653c62cc2e9a5f02888473ae990ae8370db70c661075dab1a",
+			identitybroker.BuiltinMember:   "e72923070f34e6b3e4e76d6364059cd5edf1fa654ede7c090a0c4aaa5443aca3",
 		}
 		if len(recs) != len(want) {
 			t.Fatalf("Load(%q) = %d records, want %d built-ins", tc.buildID, len(recs), len(want))
@@ -353,7 +355,7 @@ func TestLoadSortsAndKeepsBuiltins(t *testing.T) {
 	for _, rec := range recs {
 		got = append(got, rec.Ref.Source+"/"+rec.Ref.Name)
 	}
-	want := []string{"global/alpha", "global/main", "global/zeta", "system/explorer", "system/main"}
+	want := []string{"global/alpha", "global/main", "global/zeta", "system/branch", "system/explorer", "system/main", "system/member"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("Load order = %v, want %v", got, want)
 	}

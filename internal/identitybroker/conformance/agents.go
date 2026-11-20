@@ -172,12 +172,50 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		parent := mustRegister(t, svc, registerRequest(s))
-		child := registerRequest(s)
-		child.HostSessionID = "hostS42-child"
-		child.Incarnation = incarnation("child")
-		child.Parent = parent.Agent
-		if got := mustRegister(t, svc, child); got.Agent == parent.Agent {
+		if got := mustRegister(t, svc, childRequest(s, parent.Agent, "child")); got.Agent == parent.Agent {
 			t.Fatalf("the child shares its parent's agent %+v", got.Agent)
+		}
+	})
+
+	t.Run("a child must report its parent's host session", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		parent := mustRegister(t, svc, registerRequest(s))
+		sibling := mustRegister(t, svc, childRequest(s, parent.Agent, "sibling"))
+		for name, host := range map[string]string{
+			"another host session": "hostS43",
+			"the child's own":      "hostS42-child",
+			"a sibling's":          "hostS42-sibling",
+		} {
+			child := childRequest(s, parent.Agent, "child")
+			child.ParentHostSessionID = host
+			_, err := svc.RegisterAgent(ctx, child)
+			wantError(t, "RegisterAgent of a child reporting "+name+" as its parent's host session", err, identitybroker.CodePermissionDenied, "")
+		}
+		// A grandchild reports its own parent's host session, not the root's.
+		grandchild := childRequest(s, sibling.Agent, "grandchild")
+		_, err := svc.RegisterAgent(ctx, grandchild)
+		wantError(t, "RegisterAgent of a grandchild reporting the root host session", err, identitybroker.CodePermissionDenied, "")
+		grandchild.ParentHostSessionID = "hostS42-sibling"
+		mustRegister(t, svc, grandchild)
+		// Positive control: the child registers with its parent's host session.
+		mustRegister(t, svc, childRequest(s, parent.Agent, "child"))
+	})
+
+	t.Run("a child moves to a reopened session after its parent, keeping its identity", func(t *testing.T) {
+		svc := factory(t)
+		first := mustOpen(t, svc, openRequest("hostS42", alice))
+		parent := mustRegister(t, svc, registerRequest(first))
+		child := mustRegister(t, svc, childRequest(first, parent.Agent, "child"))
+		mustClose(t, svc, first.ID)
+		second := mustOpen(t, svc, openRequest("hostS42", alice))
+		_, err := svc.RegisterAgent(ctx, childRequest(second, parent.Agent, "child"))
+		wantError(t, "RegisterAgent of a child before its parent moved", err, identitybroker.CodePermissionDenied, "")
+		if again := mustRegister(t, svc, registerRequest(second)); again.Agent != parent.Agent {
+			t.Fatalf("the parent moved as %+v, want %+v", again.Agent, parent.Agent)
+		}
+		if again := mustRegister(t, svc, childRequest(second, parent.Agent, "child")); again.Agent != child.Agent {
+			t.Fatalf("the child moved as %+v, want %+v", again.Agent, child.Agent)
 		}
 	})
 
@@ -191,11 +229,7 @@ func runAgents(t *testing.T, factory serviceFactory) {
 			"in another session":     parentElsewhere.Agent,
 			"not a registered agent": {Subject: "spiffe://agents.example.com/other"},
 		} {
-			child := registerRequest(s)
-			child.HostSessionID = "hostS42-child"
-			child.Incarnation = incarnation("child")
-			child.Parent = parent
-			_, err := svc.RegisterAgent(ctx, child)
+			_, err := svc.RegisterAgent(ctx, childRequest(s, parent, "child"))
 			wantError(t, "RegisterAgent under a parent "+name, err, identitybroker.CodePermissionDenied, "")
 		}
 	})
@@ -238,20 +272,22 @@ func runAgents(t *testing.T, factory serviceFactory) {
 		svc := factory(t)
 		s := mustOpen(t, svc, openRequest("hostS42", alice))
 		parent := mustRegister(t, svc, registerRequest(s))
-		childReq := registerRequest(s)
-		childReq.HostSessionID = "hostS42-child"
-		childReq.Incarnation = incarnation("child")
-		childReq.Parent = parent.Agent
+		childReq := childRequest(s, parent.Agent, "child")
 		child := mustRegister(t, svc, childReq)
-		sibling := childReq
-		sibling.Incarnation = incarnation("sibling")
-		siblingReg := mustRegister(t, svc, sibling)
-		for name, newParent := range map[string]identitybroker.AgentRef{
-			"itself":    child.Agent,
-			"a sibling": siblingReg.Agent,
+		siblingReq := childRequest(s, parent.Agent, "sibling")
+		sibling := mustRegister(t, svc, siblingReq)
+		for name, newParent := range map[string]struct {
+			agent identitybroker.AgentRef
+			host  string
+		}{
+			"itself":    {child.Agent, childReq.HostSessionID},
+			"a sibling": {sibling.Agent, siblingReq.HostSessionID},
 		} {
+			// The reported parent host session matches the new parent, so
+			// only the earlier registration can refuse the change.
 			req := childReq
-			req.Parent = newParent
+			req.Parent = newParent.agent
+			req.ParentHostSessionID = newParent.host
 			_, err := svc.RegisterAgent(ctx, req)
 			wantError(t, "RegisterAgent of a child with "+name+" as parent", err, identitybroker.CodeAlreadyExists, "")
 		}

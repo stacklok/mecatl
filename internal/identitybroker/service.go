@@ -30,8 +30,9 @@ import (
 //     owner. It also refuses, with CodePermissionDenied, an agent with no
 //     parent whose host session or incarnation is not the broker session's
 //     root host session or incarnation, an agent whose parent is not
-//     registered to the session, and a new agent whose definition reference
-//     is not exactly one the broker loaded.
+//     registered to the session or whose reported parent host session is not
+//     the parent's recorded host session, and a new agent whose definition
+//     reference is not exactly one the broker loaded.
 //   - Registering the same incarnation again returns the same agent with a
 //     fresh credential, so a lost response or an expiring credential is
 //     handled by registering again. Registering it into a new broker session
@@ -243,9 +244,8 @@ func (a AgentRef) IsZero() bool { return a == AgentRef{} }
 type RegisterAgentRequest struct {
 	SessionID string
 	// HostSessionID is the agent's own host session. With no Parent it must
-	// equal the broker session's root host session. A child agent's differs,
-	// so it is not compared; checking that it belongs to the session's tree
-	// will be addressed later.
+	// equal the broker session's root host session. A child agent's is its own
+	// child session; ParentHostSessionID ties it to its parent.
 	HostSessionID string
 	// Owner must equal the broker session's owner.
 	Owner Owner
@@ -264,6 +264,12 @@ type RegisterAgentRequest struct {
 	// Parent is the registered instance that created this one; zero for a
 	// session's main agent.
 	Parent AgentRef
+	// ParentHostSessionID is the host session the child's session was created
+	// under, as the harness records it. It is required with Parent and must be
+	// empty without one. The broker refuses a child whose ParentHostSessionID
+	// is not its parent's recorded host session, so each child is tied to its
+	// parent and, through it, to the session's tree.
+	ParentHostSessionID string
 }
 
 // Validate reports whether r is well formed. The error is an *Error with
@@ -281,10 +287,16 @@ func (r RegisterAgentRequest) Validate() error {
 	if err := r.validateDefinition(); err != nil {
 		return err
 	}
-	if !r.Parent.IsZero() && !isToken(r.Parent.Subject) {
+	if r.Parent.IsZero() {
+		if r.ParentHostSessionID != "" {
+			return invalid("parent host session must be empty without a parent")
+		}
+		return nil
+	}
+	if !isToken(r.Parent.Subject) {
 		return invalid("parent subject must be non-empty printable text without spaces")
 	}
-	return nil
+	return requireIDs("parent host session", r.ParentHostSessionID)
 }
 
 // validateDefinition applies DefinitionRef's rules to the fields that are set,

@@ -432,17 +432,26 @@ func (s *Service) identityAgentDefinition(ctx context.Context, sess *session.Ses
 //
 // Shortcut: a session knows its definition by name only, so this sends the revision the broker loaded, not the one the session runs; removed by #2548.
 func identityAgentDefinition(loaded []identitybroker.DefinitionRef, sess *session.Session) (identitybroker.DefinitionRef, bool) {
-	want := identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain}
-	if sess.AgentDefinitionName != "" {
-		want = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: sess.AgentDefinitionName}
+	return loadedDefinitionRef(loaded, sess.AgentDefinitionName, identitybroker.BuiltinMain)
+}
+
+// loadedDefinitionRef is the loaded reference of the global definition name,
+// or, with no name, of the built-in builtin. A name with no loaded global
+// definition is sent by name only, and a built-in the broker did not load
+// with no revision; loaded is false for both, and the broker refuses them. A
+// name is never matched to a built-in.
+func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin string) (identitybroker.DefinitionRef, bool) {
+	want := identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: builtin}
+	if name != "" {
+		want = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: name}
 	}
 	for _, ref := range loaded {
 		if ref.Source == want.Source && ref.Name == want.Name {
 			return ref, true
 		}
 	}
-	if sess.AgentDefinitionName != "" {
-		return identitybroker.DefinitionRef{Name: sess.AgentDefinitionName}, false
+	if name != "" {
+		return identitybroker.DefinitionRef{Name: name}, false
 	}
 	return want, false
 }
@@ -451,7 +460,7 @@ func identityAgentDefinition(loaded []identitybroker.DefinitionRef, sess *sessio
 // team is rooted in before the team runs. Team runs do not pass run entry, so
 // without this a team could run in a session tree whose broker session was
 // lost at a restart. A team on the default placement has no root session and
-// its members belong to no session tree; helper agents get identities later.
+// its members belong to no session tree, so they get no agent identity.
 func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root session.SessionID) error {
 	if s.cfg.IdentityBroker == nil || root == "" {
 		return nil

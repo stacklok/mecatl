@@ -1,6 +1,7 @@
 // Package agentcredential holds the identity broker credentials of registered
-// agents, in memory only, for the server, which registers them at run entry,
-// and the MCP broker, which presents them on gateway calls. A credential is
+// agents, in memory only, for the server, which registers a session's main
+// agent at run entry and each helper agent when it is created, and the MCP
+// broker, which presents them on gateway calls. A credential is
 // never persisted and never given to the engine or the model.
 package agentcredential
 
@@ -14,7 +15,7 @@ import (
 )
 
 // Key names a held credential. For a session's main agent both IDs are the
-// root host session.
+// root host session; for a helper agent, AgentSessionID is its own session.
 type Key struct{ RootSessionID, AgentSessionID string }
 
 // Credential is a held agent credential and what it was registered with.
@@ -184,14 +185,17 @@ func newEntry(req identitybroker.RegisterAgentRequest, reg identitybroker.Regist
 
 // Credential is the MCP broker's lookup. With no entry for key it returns
 // ErrNoCredential: it never opens, reopens, or registers. Past renewAt, or
-// with renew set (after svid_expired), it renews the credential. Renewal is
-// single-flight per key: every lookup, the first included, waits for the one
-// in flight or for its own context, and one lookup's cancellation does not
-// end the renewal. A renewal is stored only if key's root was not dropped
-// and the holder not closed since it started (ErrDropped otherwise). If it
-// fails otherwise, a lookup past half-life gets the held credential while it
-// has not expired; a lookup with renew, made after the broker refused the held
-// credential, gets the renewal's error.
+// with renew set (after svid_expired), it renews the credential. A helper
+// agent's credential is also registered again when its root's main agent has
+// moved to another broker session since: the helper moves there too, after
+// its parent, keeping its identity. Renewal is single-flight per key: every
+// lookup, the first included, waits for the one in flight or for its own
+// context, and one lookup's cancellation does not end the renewal. A renewal
+// is stored only if key's root was not dropped and the holder not closed
+// since it started (ErrDropped otherwise). If it fails otherwise, a lookup
+// past half-life gets the held credential while it has not expired; a lookup
+// with renew, made after the broker refused the held credential, or for a
+// helper that could not move, gets the renewal's error.
 func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credential, error) {
 	h.mu.Lock()
 	r := h.roots[key.RootSessionID]
@@ -203,7 +207,8 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 		h.mu.Unlock()
 		return Credential{}, ErrNoCredential
 	}
-	if !renew && h.now().Before(e.renewAt) {
+	target := movedTo(r, key, e)
+	if !renew && target == "" && h.now().Before(e.renewAt) {
 		h.mu.Unlock()
 		return e.credential(), nil
 	}
@@ -214,7 +219,7 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 		go func() {
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), renewalTimeout)
 			defer cancel()
-			f.cred, f.err = h.renew(rctx, key, r, e)
+			f.cred, f.err = h.renew(rctx, key, r, e, target)
 			h.mu.Lock()
 			delete(h.renewals, key)
 			h.mu.Unlock()
@@ -224,27 +229,54 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 	h.mu.Unlock()
 	select {
 	case <-f.done:
-		return f.result(renew)
+		return f.result(renew || target != "")
 	case <-ctx.Done():
 		return Credential{}, ctx.Err()
 	}
 }
 
+// movedTo returns the broker session a helper agent's entry e must move to:
+// the one its root's main agent is registered to now, if that differs from
+// e's. It returns "" for a main agent, or a helper still in its root's broker
+// session. The caller holds h.mu.
+func movedTo(r *root, key Key, e *entry) string {
+	if key.AgentSessionID == key.RootSessionID {
+		return ""
+	}
+	main := r.entries[key.RootSessionID]
+	if main == nil || main.req.SessionID == e.req.SessionID {
+		return ""
+	}
+	return main.req.SessionID
+}
+
 // result is a renewal's answer to a lookup: on a failure with an unexpired
-// held credential, the held one, unless the lookup asked to renew.
-func (f *renewal) result(renew bool) (Credential, error) {
-	if f.err == nil || (!renew && !f.cred.ExpiresAt.IsZero()) {
+// held credential, the held one, unless the lookup must not fall back to it.
+func (f *renewal) result(noFallback bool) (Credential, error) {
+	if f.err == nil || (!noFallback && !f.cred.ExpiresAt.IsZero()) {
 		return f.cred, nil
 	}
 	return Credential{}, f.err
 }
 
 // renew registers e's agent again and stores the result in r, if r is still
-// key's root and e its entry. A failure returns its error, and the held
-// credential too while it has not expired.
-func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credential, error) {
+// key's root and e its entry. With a target broker session, e's helper agent
+// moves there, after its parent if that is another helper. A failure returns
+// its error, and the held credential too while it has not expired.
+func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target string) (Credential, error) {
+	req := e.req
+	if target != "" {
+		// Parents first: the broker refuses a child whose parent is not
+		// registered to the broker session. The main agent moved already.
+		if parent := req.ParentHostSessionID; parent != key.RootSessionID {
+			if _, err := h.Credential(ctx, Key{RootSessionID: key.RootSessionID, AgentSessionID: parent}, false); err != nil {
+				return Credential{}, err
+			}
+		}
+		req.SessionID = target
+	}
 	// Shortcut: a credential is renewed by registering again in the held broker session; removed by #2562 (a renew call).
-	reg, err := h.broker.RegisterAgent(ctx, e.req)
+	reg, err := h.broker.RegisterAgent(ctx, req)
 	now := h.now()
 	if err == nil {
 		err = checkRegistration(reg, e, now)
@@ -264,7 +296,7 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry) (Credent
 		}
 		return Credential{}, err
 	}
-	n := newEntry(e.req, reg, now)
+	n := newEntry(req, reg, now)
 	r.entries[key.AgentSessionID] = n
 	return n.credential(), nil
 }

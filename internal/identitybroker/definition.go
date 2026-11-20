@@ -33,6 +33,12 @@ const (
 	// BuiltinExplorer names the built-in definition of the child agent of a
 	// subagent call that names no definition: system/explorer.
 	BuiltinExplorer = "explorer"
+	// BuiltinBranch names the built-in definition of a parallel branch, which
+	// runs no named definition: system/branch.
+	BuiltinBranch = "branch"
+	// BuiltinMember names the built-in definition of a team member that names
+	// no agent type: system/member.
+	BuiltinMember = "member"
 )
 
 // DefinitionRef identifies one agent definition: the configured source it was

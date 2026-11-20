@@ -653,6 +653,7 @@ func TestReregistrationKeepsItsDefinitionAfterTheBrokerStopsLoadingIt(t *testing
 	child := RegisterAgentRequest{
 		SessionID: f.session.ID, HostSessionID: "hostS42-child", Owner: f.session.Owner,
 		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: testMainRef, Parent: f.reg.Agent,
+		ParentHostSessionID: f.session.HostSessionID,
 	}
 	_, err := f.broker.RegisterAgent(context.Background(), credentialTestWorkload, child)
 	if !errors.Is(err, NewError(CodePermissionDenied, "", "")) {

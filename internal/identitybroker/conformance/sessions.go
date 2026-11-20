@@ -267,7 +267,14 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 		"bad definition": func(r *identitybroker.RegisterAgentRequest) { r.Definition.Name = "../main" },
 		"bad source":     func(r *identitybroker.RegisterAgentRequest) { r.Definition.Source = "../system" },
 		"bad revision":   func(r *identitybroker.RegisterAgentRequest) { r.Definition.Revision = "v 1" },
-		"bad parent":     func(r *identitybroker.RegisterAgentRequest) { r.Parent.Subject = "spiffe://x/ y" },
+		"bad parent": func(r *identitybroker.RegisterAgentRequest) {
+			r.Parent.Subject = "spiffe://x/ y"
+			r.ParentHostSessionID = r.HostSessionID
+		},
+		"a parent with no parent host session": func(r *identitybroker.RegisterAgentRequest) {
+			r.Parent.Subject = "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
+		"a parent host session with no parent": func(r *identitybroker.RegisterAgentRequest) { r.ParentHostSessionID = r.HostSessionID },
 	}
 	// base32 has no 0, 1, 8, or 9.
 	for _, digit := range "0189" {

@@ -373,7 +373,7 @@ func TestIdentityBrokerSessionsRegisterTheirAgent(t *testing.T) {
 	}
 	_, err = built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 		SessionID: open.ID, HostSessionID: string(sess.ID) + "-child", Owner: open.Owner, Incarnation: string(sess.Incarnation()),
-		Definition: builtinMainRef(), Parent: main.Agent,
+		Definition: builtinMainRef(), Parent: main.Agent, ParentHostSessionID: string(sess.ID),
 	})
 	if !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {
 		t.Fatalf("a child taking the main agent's incarnation = %v, want ALREADY_EXISTS", err)
@@ -652,12 +652,16 @@ func TestIdentityBrokerLoadsTheOperatorsDefinitions(t *testing.T) {
 			t.Errorf("the broker did not load %+v", rec.Ref)
 		}
 	}
-	want := map[string]bool{"system/main": false, "system/explorer": false, "global/reviewer": false}
+	want := map[string]bool{"system/main": false, "system/explorer": false, "system/branch": false, "system/member": false, "global/reviewer": false}
 	for _, ref := range refs {
-		want[ref.Source+"/"+ref.Name] = true
+		if _, ok := want[ref.Source+"/"+ref.Name]; ok {
+			want[ref.Source+"/"+ref.Name] = true
+		}
 	}
-	if len(refs) != len(want) || !want["system/main"] || !want["system/explorer"] || !want["global/reviewer"] {
-		t.Fatalf("loaded %+v, want system/main, system/explorer, and global/reviewer", refs)
+	for name, loaded := range want {
+		if !loaded || len(refs) != len(want) {
+			t.Fatalf("loaded %+v, want the four built-ins and global/reviewer (missing %s)", refs, name)
+		}
 	}
 	if n := diag.warnCount("identity broker definition problem"); n != 1 {
 		t.Fatalf("logged %d definition problems, want 1 for %s", n, bad)

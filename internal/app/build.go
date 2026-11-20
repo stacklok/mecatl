@@ -3053,6 +3053,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
+	assets.helpers.bind(svc.RegisterHelper)
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;
@@ -6093,6 +6094,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 
 	assets := catalogAssets{
 		globalMgr:            mainMgr,
+		helpers:              newHelperRegistrar(cfg),
 		mcpRuntimes:          mcpRuntimes,
 		mcpReconciler:        mcpReconciler,
 		sharedEngineRevision: sharedEngineRevision,

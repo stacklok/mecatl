@@ -656,7 +656,22 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantRegistered(t, broker, wantBrokerSession(t, broker, source), source)
+			// The root's main agent registers first, then the member, as a
+			// helper whose parent is the root's main agent.
+			brokerSession := wantBrokerSession(t, broker, source)
+			regs := broker.registerRequests()
+			if len(regs) != 2 {
+				t.Fatalf("registrations = %+v, want the main agent and the member", regs)
+			}
+			main := regs[0]
+			if main.HostSessionID != string(source.ID) || !main.Parent.IsZero() || main.SessionID != brokerSession.ID {
+				t.Fatalf("first registration = %+v, want the root's main agent", main)
+			}
+			member := regs[1]
+			if member.Definition != conformance.MemberDefinition || member.ParentHostSessionID != string(source.ID) ||
+				member.Parent.IsZero() || member.SessionID != brokerSession.ID || member.HostSessionID == string(source.ID) {
+				t.Fatalf("member registration = %+v, want a system/member helper of the root's main agent", member)
+			}
 		})
 	}
 }
