@@ -183,7 +183,7 @@ func readOutput(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if marker := strings.SplitN(string(data), "\n", 2)[0]; marker != GeneratedMarker && (marker != legacyGeneratedMarker || !legacyOutput(path)) {
+	if marker := strings.SplitN(string(data), "\n", 2)[0]; marker != GeneratedMarker {
 		return nil, fmt.Errorf("refusing unmarked output: %s", path)
 	}
 	return data, nil

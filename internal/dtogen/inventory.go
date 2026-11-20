@@ -165,7 +165,7 @@ func checkInventory(root string, expected map[string]bool) error {
 		if err != nil {
 			return err
 		}
-		prefix := make([]byte, len(legacyGeneratedMarker)+1)
+		prefix := make([]byte, len(GeneratedMarker)+1)
 		n, readErr := io.ReadFull(file, prefix)
 		closeErr := file.Close()
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
@@ -175,7 +175,7 @@ func checkInventory(root string, expected map[string]bool) error {
 			return closeErr
 		}
 		marker := strings.SplitN(string(prefix[:n]), "\n", 2)[0]
-		if (marker == GeneratedMarker || marker == legacyGeneratedMarker) && !expected[path] {
+		if marker == GeneratedMarker && !expected[path] {
 			return fmt.Errorf("extra data output (removed or unlisted target): %s", path)
 		}
 		return nil
