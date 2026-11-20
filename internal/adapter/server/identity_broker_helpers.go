@@ -229,8 +229,8 @@ func HelperGatewayTools(sessionTools []tool.Tool) []tool.Tool {
 // teamHelperTools returns the gateway tools the generic members of a team
 // rooted in root get, limited to those root's bound authority allows, and
 // their names. It needs the root's broker attachment resident in this
-// process, as it is once the root has run here; otherwise members get none
-// and their gateway calls fail closed.
+// process, as it is once the root has run here, and a root with a bound
+// authority; otherwise members get none and their gateway calls fail closed.
 func (s *Service) teamHelperTools(ctx context.Context, root session.SessionID) ([]tool.Tool, []string) {
 	if s.cfg.IdentityBroker == nil || s.cfg.MemberEngineWithHelperTools == nil || root == "" {
 		return nil, nil
@@ -246,11 +246,14 @@ func (s *Service) teamHelperTools(ctx context.Context, root session.SessionID) (
 		return nil, nil
 	}
 	authority, bound := sess.BoundAuthority()
+	if !bound {
+		return nil, nil
+	}
 	var tools []tool.Tool
 	var names []string
 	for _, t := range HelperGatewayTools(attachment.Tools()) {
 		name := t.Spec().Name
-		if bound && !authority.CapabilitySet.AllowsTool(name) {
+		if !authority.CapabilitySet.AllowsTool(name) {
 			continue
 		}
 		tools = append(tools, t)

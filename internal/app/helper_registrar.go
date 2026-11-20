@@ -83,15 +83,25 @@ func (h *helperRegistrar) AdmitResumedChild(ctx context.Context, sess *session.S
 }
 
 // registerHelperTools registers helperTools, a session's gateway tools, in a
-// def-less helper's catalog and returns their names. A helper's bound
-// authority, derived from its parent's, still decides which it may call.
-func registerHelperTools(classified *classifiedCatalog, helperTools []tool.Tool) []string {
+// def-less helper's catalog and returns the names it registered. A helper's
+// bound authority, derived from its parent's, still decides which it may
+// call. A tool whose name the catalog already holds, such as a server-global
+// MCP tool of the same name, is skipped and reported to diag (which may be
+// nil), never a panic: the session's own catalog refuses the same collision
+// gracefully when it registers the session's tools.
+func registerHelperTools(classified *classifiedCatalog, helperTools []tool.Tool, diag port.Diagnostics) []string {
 	names := make([]string, 0, len(helperTools))
 	gateway := classification(server.KindDerived,
 		"session-bound gateway wrapper supplied by the root's host attachment; calls present the helper agent's own credential")
 	for _, t := range helperTools {
-		classified.mustRegister(t, gateway)
-		names = append(names, t.Spec().Name)
+		name := t.Spec().Name
+		if err := classified.register(t, gateway); err != nil {
+			if diag != nil {
+				diag.Log(context.Background(), port.LevelWarn, "helper catalog skipped a gateway tool whose name it already holds", "tool", name)
+			}
+			continue
+		}
+		names = append(names, name)
 	}
 	return names
 }

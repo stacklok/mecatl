@@ -830,7 +830,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, a)
 	})
-	registerHelperTools(classified, cfg.helperTools)
+	registerHelperTools(classified, cfg.helperTools, cfg.diag())
 	return classified
 }
 

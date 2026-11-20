@@ -7333,7 +7333,7 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner, helperTools []tool.Tool)
 		classified.mustRegister(agent.NewShellTool(), workspace)
 		classified.mustRegister(agent.NewShellStatusTool(), workspace)
 	}
-	registerHelperTools(classified, helperTools)
+	registerHelperTools(classified, helperTools, nil)
 	mustValidateClassifiedCatalog(classified, "read-only explorer tool catalog")
 	return cat
 }
@@ -7354,7 +7354,7 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string, helperTo
 	classified.mustRegister(fstools.CopyTool{}, workspace)
 	classified.mustRegister(fstools.MoveTool{}, workspace)
 	classified.mustRegister(fstools.RemoveTool{}, workspace)
-	registerHelperTools(classified, helperTools)
+	registerHelperTools(classified, helperTools, nil)
 	mustValidateClassifiedCatalog(classified, surface)
 	return classified.catalog
 }
@@ -8697,7 +8697,7 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			isolateReadOnly = registerDefaultMemberTools(classified, spec, runner, mutatingRunner, roIsolationAvailable)
 			// Gateway tools touch only the remote server, never the workspace, so
 			// the supervisor exempts them from the read-only-member backstop.
-			mcpNames = append(mcpNames, registerHelperTools(classified, cfg.helperTools)...)
+			mcpNames = append(mcpNames, registerHelperTools(classified, cfg.helperTools, cfg.diag())...)
 			// OPT-IN model router: the supervisor classified this UNDEFINED
 			// member, so run it on the ALREADY-RESOLVED routed model in place of the
 			// def-less default (a DEFINED member never reaches here — its def pinned the

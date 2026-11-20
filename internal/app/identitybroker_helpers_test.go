@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
@@ -254,5 +255,28 @@ func TestDefLessHelperCatalogsCarryTheSessionsGatewayTools(t *testing.T) {
 	defined := factory(tm, agent.MemberSpec{Name: "d", AgentType: "searcher"}, "")
 	if defined.Engine == nil || slices.Contains(defined.MCPToolNames, "mcp__calendar__echo") {
 		t.Errorf("a member built from a named definition = %+v, want it without the gateway tool", defined.MCPToolNames)
+	}
+}
+
+// TestHelperGatewayToolsSkipACollidingName pins that a gateway tool whose name
+// a helper catalog already holds, such as a server-global MCP tool in a no-FS
+// catalog, is skipped and reported rather than panicking, and is left out of
+// the names returned; and that a no-FS child catalog carries gateway tools.
+func TestHelperGatewayToolsSkipACollidingName(t *testing.T) {
+	classified := newClassifiedCatalog()
+	classified.mustRegister(helperCatalogTool{}, classification(server.KindSharedInfrastructure, "a server-global MCP tool of the same name"))
+	diag := &lockedDiag{}
+	names := registerHelperTools(classified, []tool.Tool{helperCatalogTool{}}, diag)
+	if len(names) != 0 {
+		t.Fatalf("registerHelperTools returned %v for a colliding name, want none", names)
+	}
+	if got := diag.find("helper catalog skipped a gateway tool whose name it already holds"); len(got) != 1 || diagArg(got[0], "tool") != "mcp__calendar__echo" {
+		t.Fatalf("collision diagnostics = %v, want one naming the tool", got)
+	}
+
+	cfg := Config{Workspace: t.TempDir(), Model: "m"}
+	cfg.helperTools = []tool.Tool{helperCatalogTool{}}
+	if _, ok := noFSChildCatalog(t.Context(), cfg, catalogAssets{}).Lookup("mcp__calendar__echo"); !ok {
+		t.Fatal("the no-FS child catalog lacks the gateway tool")
 	}
 }
