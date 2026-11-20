@@ -109,6 +109,32 @@ var coreImportRules = []coreImportRule{
 		desc: "session identity values may import only resource ID values, the codec runtime, and stdlib, never history or formats",
 	},
 	{
+		pkg: modulePrefix + "engine/kernel/sessiongroup/id",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/id":           true,
+			modulePrefix + "engine/kernel/codec": true,
+		},
+		desc: "group identity values may import only resource identity, codec runtime, and stdlib",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/sessionruntime",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/session":         true,
+			modulePrefix + "engine/kernel/session/id":      true,
+			modulePrefix + "engine/kernel/sessiongroup/id": true,
+		},
+		desc: "session runtime may import passive Session and identity leaves, never the hosting group, adapters, or legacy aggregate",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/sessiongroup",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/kernel/session/id":      true,
+			modulePrefix + "engine/kernel/sessiongroup/id": true,
+			modulePrefix + "engine/kernel/sessionruntime":  true,
+		},
+		desc: "session group may import member runtimes and identity leaves, never adapters or the legacy aggregate",
+	},
+	{
 		pkg: modulePrefix + "engine/kernel/history/format",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/kernel/contentid": true,

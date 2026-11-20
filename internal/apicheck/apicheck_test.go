@@ -58,6 +58,8 @@ func shortName(importPath string) string {
 	switch importPath {
 	case "github.com/stacklok/mecatl/engine/kernel/session/id":
 		return "kernel_session_id"
+	case "github.com/stacklok/mecatl/engine/kernel/sessiongroup/id":
+		return "kernel_sessiongroup_id"
 	case "github.com/stacklok/mecatl/engine/kernel/modelrequest":
 		return "kernel_modelrequest"
 	case "github.com/stacklok/mecatl/engine/kernel/modelrequest/format":
@@ -75,6 +77,9 @@ func TestShortName(t *testing.T) {
 		"github.com/stacklok/mecatl/engine/id":                         "id",
 		"github.com/stacklok/mecatl/engine/kernel/history":             "history",
 		"github.com/stacklok/mecatl/engine/kernel/session/id":          "kernel_session_id",
+		"github.com/stacklok/mecatl/engine/kernel/sessiongroup/id":     "kernel_sessiongroup_id",
+		"github.com/stacklok/mecatl/engine/kernel/sessiongroup":        "sessiongroup",
+		"github.com/stacklok/mecatl/engine/kernel/sessionruntime":      "sessionruntime",
 		"github.com/stacklok/mecatl/engine/kernel/modelrequest":        "kernel_modelrequest",
 		"github.com/stacklok/mecatl/engine/kernel/modelrequest/format": "kernel_modelrequest_format",
 		"github.com/stacklok/mecatl/engine/kernel/session":             "kernel_session",
