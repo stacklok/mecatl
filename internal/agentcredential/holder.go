@@ -8,6 +8,7 @@ package agentcredential
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -307,6 +308,36 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target s
 	n := newEntry(req, reg, now)
 	r.entries[key.AgentSessionID] = n
 	return n.credential(), nil
+}
+
+// MoveHelpers registers every helper agent held for root's session tree into
+// the broker session root's main agent is registered to now, if it is not
+// there already, parents first, keeping each helper's identity: what a
+// reopened broker session needs once its main agent registered again. It
+// returns the moves that failed, joined; a helper that failed to move gets
+// no credential until a later lookup moves it.
+func (h *Holder) MoveHelpers(ctx context.Context, root string) error {
+	h.mu.Lock()
+	r := h.roots[root]
+	var keys []Key
+	if r != nil {
+		for agent, e := range r.entries {
+			key := Key{RootSessionID: root, AgentSessionID: agent}
+			if movedTo(r, key, e) != "" {
+				keys = append(keys, key)
+			}
+		}
+	}
+	h.mu.Unlock()
+	// Credential moves each helper's parent before the helper, so the order
+	// here does not matter.
+	var errs []error
+	for _, key := range keys {
+		if _, err := h.Credential(ctx, key, false); err != nil {
+			errs = append(errs, fmt.Errorf("move helper %s: %w", key.AgentSessionID, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Held returns the credential held for key without renewing it, and whether

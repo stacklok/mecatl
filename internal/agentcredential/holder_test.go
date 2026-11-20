@@ -611,3 +611,44 @@ func TestHolderHelperLookupAfterTheRootMovedDoesNotJoinAStaleRenewal(t *testing.
 		t.Fatalf("a lookup after the root moved got a credential in %q, want bs_2", got.BrokerSessionID)
 	}
 }
+
+// TestHolderMoveHelpersMovesEveryHelperParentsFirst pins the eager move a
+// reopened broker session gets once its main agent registered again: every
+// held helper moves, parents before children, keeping its identity, without
+// waiting for a lookup.
+func TestHolderMoveHelpersMovesEveryHelperParentsFirst(t *testing.T) {
+	h, b, _ := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
+	grandKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "grandchild"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+		t.Fatal(err)
+	}
+	child, _ := h.Held(childKey)
+	if err := h.Ensure(t.Context(), grandKey, helperRequest("bs_1", "grandchild", "child", child.Agent), admitAll); err != nil {
+		t.Fatal(err)
+	}
+	grand, _ := h.Held(grandKey)
+
+	// Nothing to move while the main agent is where the helpers are.
+	before := len(b.requests())
+	if err := h.MoveHelpers(t.Context(), "root"); err != nil || len(b.requests()) != before {
+		t.Fatalf("MoveHelpers with nothing to move = %v after %d registrations, want none", err, len(b.requests())-before)
+	}
+
+	mustEnsure(t, h, "bs_2")
+	before = len(b.requests())
+	if err := h.MoveHelpers(t.Context(), "root"); err != nil {
+		t.Fatalf("MoveHelpers: %v", err)
+	}
+	reqs := b.requests()[before:]
+	if len(reqs) != 2 || reqs[0].HostSessionID != "child" || reqs[1].HostSessionID != "grandchild" {
+		t.Fatalf("MoveHelpers registered %+v, want the child then the grandchild", reqs)
+	}
+	for k, want := range map[agentcredential.Key]identitybroker.AgentRef{childKey: child.Agent, grandKey: grand.Agent} {
+		if got, _ := h.Held(k); got.BrokerSessionID != "bs_2" || got.Agent != want {
+			t.Fatalf("%s is held as %+v, want %+v in bs_2", k.AgentSessionID, got, want)
+		}
+	}
+}

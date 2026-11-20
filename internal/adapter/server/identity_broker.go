@@ -326,6 +326,12 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 	case err == nil:
 		if registered {
 			s.logIdentityBroker(ctx, "registered agent", host, brokerSession.ID)
+			// A reopened broker session also needs the tree's helpers, which
+			// keep their identities, registered again, parents first.
+			if err := s.cfg.IdentityAgents.MoveHelpers(ctx, host); err != nil {
+				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker could not register every helper agent again",
+					"session", host, "broker_session", brokerSession.ID, "err", err.Error())
+			}
 		}
 		return nil
 	case admitErr != nil:

@@ -243,3 +243,32 @@ func parentIncarnation(parent session.SessionID) session.IncarnationID {
 	}
 	return session.NewIncarnationID()
 }
+
+// TestHelpersRegisterAgainInAReopenedBrokerSession pins that once a root's
+// broker session reopens, its run entry registers the main agent and then the
+// tree's helpers again, keeping their identities, before any of them makes a
+// gateway call.
+func TestHelpersRegisterAgainInAReopenedBrokerSession(t *testing.T) {
+	f := newHelperFixture(t)
+	if err := f.svc.RegisterHelper(f.rootContext(t), newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{}); err != nil {
+		t.Fatalf("RegisterHelper: %v", err)
+	}
+	helper, _ := f.svc.HeldIdentityAgentForTest(f.root.ID, "child-1")
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: f.main.SessionID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runToEnd(aliceContext(t), t, f.svc, f.root.ID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reopened := wantBrokerSession(t, f.broker, f.root)
+	if reopened.ID == f.main.SessionID {
+		t.Fatal("the root's broker session did not reopen")
+	}
+	got := lastRegistration(t, f.broker)
+	if got.HostSessionID != "child-1" || got.SessionID != reopened.ID || got.Parent != f.mainAgent {
+		t.Fatalf("last registration = %+v, want the helper in %s under the main agent", got, reopened.ID)
+	}
+	if again, _ := f.svc.HeldIdentityAgentForTest(f.root.ID, "child-1"); again != helper {
+		t.Fatalf("the helper moved as %+v, want %+v", again, helper)
+	}
+}
