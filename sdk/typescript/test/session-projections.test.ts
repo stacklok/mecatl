@@ -39,6 +39,7 @@ function session() {
       modelId: "model",
       providerId: "provider",
       reasoningEffort: "high",
+      requestedReasoningEffort: "max",
     },
     sessionCapabilities: { audio: true, image: false, execution: ["filesystem"] },
     latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
@@ -97,6 +98,7 @@ describe("session projections", () => {
         modelId: "model",
         providerId: "provider",
         reasoningEffort: "high",
+        requestedReasoningEffort: "max",
       },
       sessionCapabilities: {
         audio: true,

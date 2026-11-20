@@ -47,7 +47,14 @@ export interface SessionResolvedModel {
   readonly providerId: string;
   readonly modelId: string;
   readonly contextWindow: bigint;
+  /** The reasoning effort requests for the session's model carry; absent when none is sent. */
   readonly reasoningEffort?: string;
+  /**
+   * The reasoning effort the session asks for; absent for Auto. It differs from
+   * `reasoningEffort` when the model doesn't accept the level. Servers without the
+   * `model_effort_levels` feature never report it.
+   */
+  readonly requestedReasoningEffort?: string;
 }
 
 /** Media input support for the provider and model bound to a session. @public */
@@ -432,6 +439,9 @@ export function projectSessionSnapshot(
             ...(value.resolvedModel.reasoningEffort === ""
               ? {}
               : { reasoningEffort: value.resolvedModel.reasoningEffort }),
+            ...(value.resolvedModel.requestedReasoningEffort === ""
+              ? {}
+              : { requestedReasoningEffort: value.resolvedModel.requestedReasoningEffort }),
           },
         }),
     ...(value.sessionCapabilities === undefined

@@ -5267,8 +5267,18 @@ readonly providerId: string;
 
 <Heading as="h4" id="api-sessionresolvedmodel-reasoningeffort-propertysignature"><code>SessionResolvedModel.reasoningEffort</code></Heading>
 
+The reasoning effort requests for the session's model carry; absent when none is sent.
+
 ```ts
 readonly reasoningEffort?: string;
+```
+
+<Heading as="h4" id="api-sessionresolvedmodel-requestedreasoningeffort-propertysignature"><code>SessionResolvedModel.requestedReasoningEffort</code></Heading>
+
+The reasoning effort the session asks for; absent for Auto. It differs from `reasoningEffort` when the model doesn't accept the level. Servers without the `model_effort_levels` feature never report it.
+
+```ts
+readonly requestedReasoningEffort?: string;
 ```
 
 <Heading as="h3" id="api-sessions-interface"><code>Sessions</code></Heading>
@@ -7488,6 +7498,7 @@ ServerFeature: {
     readonly ExecutionTemplates: "execution_templates";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
+    readonly ModelEffortLevels: "model_effort_levels";
     readonly PromptFreeControls: "prompt_free_controls";
     readonly RefusedModeRecovery: "refused_mode_recovery";
     readonly ServerInfo: "server_info";
