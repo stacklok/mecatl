@@ -45,7 +45,12 @@ type GatewayTool struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
-	ReadOnly    bool
+	// OutputSchema is the schema the tool's structured result declares; nil
+	// when the tool declares none. It is not checked for the bearer, because
+	// nothing uses it yet: whatever carries it into the catalogue must check
+	// it as the input schema is checked.
+	OutputSchema map[string]any
+	ReadOnly     bool
 }
 
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
@@ -91,8 +96,9 @@ func (g embeddedGateway) ListTools(ctx context.Context, server string, credentia
 		// The SDK decodes a listed schema as a JSON object; any other value is
 		// left nil for the catalogue to refuse.
 		schema, _ := t.InputSchema.(map[string]any)
+		outputSchema, _ := t.OutputSchema.(map[string]any)
 		tools = append(tools, GatewayTool{Name: name, Description: t.Description, InputSchema: schema,
-			ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint})
+			OutputSchema: outputSchema, ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint})
 	}
 	return tools, nil
 }

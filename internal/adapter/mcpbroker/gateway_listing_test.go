@@ -28,7 +28,11 @@ func anonymousMCPProfile(t *testing.T, name string, tools map[string]bool) ToolH
 	t.Helper()
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: "v1"}, nil)
 	for tool, readOnly := range tools {
-		mcpsdk.AddTool(server, &mcpsdk.Tool{Name: tool, Description: name + " " + tool, Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: readOnly}},
+		var outputSchema any
+		if tool == "echo" {
+			outputSchema = echoOutputSchema()
+		}
+		mcpsdk.AddTool(server, &mcpsdk.Tool{Name: tool, Description: name + " " + tool, OutputSchema: outputSchema, Annotations: &mcpsdk.ToolAnnotations{ReadOnlyHint: readOnly}},
 			func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
 				return &mcpsdk.CallToolResult{}, nil, nil
 			})
@@ -36,6 +40,12 @@ func anonymousMCPProfile(t *testing.T, name string, tools map[string]bool) ToolH
 	backend := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil))
 	t.Cleanup(backend.Close)
 	return ToolHiveProfile{Name: name, URL: backend.URL, Auth: authNone}
+}
+
+// echoOutputSchema is the output schema every test backend's echo tool
+// declares.
+func echoOutputSchema() map[string]any {
+	return map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string"}}}
 }
 
 // embeddedGatewayProcess is a ToolHive process with the embedded gateway in
@@ -113,6 +123,17 @@ func TestEmbeddedGatewayListsOnlyTheServersTools(t *testing.T) {
 				t.Fatalf("ListTools(%s) tool %q schema = %v, want an object schema", server, listed[i].Name, listed[i].InputSchema)
 			}
 			listed[i].InputSchema = nil
+			// The vMCP passes a declared output schema on, normalised (it adds
+			// an empty "required"), and invents none for a tool without one.
+			if listed[i].Name == "echo" {
+				if listed[i].OutputSchema["type"] != "object" ||
+					!reflect.DeepEqual(listed[i].OutputSchema["properties"], echoOutputSchema()["properties"]) {
+					t.Fatalf("ListTools(%s) tool echo output schema = %v, want %v", server, listed[i].OutputSchema, echoOutputSchema())
+				}
+			} else if len(listed[i].OutputSchema) != 0 {
+				t.Fatalf("ListTools(%s) tool %q output schema = %v, want none", server, listed[i].Name, listed[i].OutputSchema)
+			}
+			listed[i].OutputSchema = nil
 		}
 		if !reflect.DeepEqual(listed, want) {
 			t.Fatalf("ListTools(%s) = %+v, want %+v", server, listed, want)
