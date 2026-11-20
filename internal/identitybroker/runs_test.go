@@ -2,6 +2,7 @@ package identitybroker_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -186,4 +187,44 @@ func TestAuthorizeCallConcurrentFirstCallsKeepOneRun(t *testing.T) {
 	}
 	// One record, bound to the main agent.
 	f.wantRunDenied(t, f.childCall("R42", ""), "bound to another agent")
+}
+
+// TestRunRecordsForgottenAtTheCap pins what the broker does once a session's
+// run and delegation records reach their cap and the oldest are forgotten.
+// A delegated run whose record was forgotten is recorded again from its
+// delegation, for the delegation's receiving agent only; a run whose own
+// delegation was forgotten can no longer delegate.
+func TestRunRecordsForgottenAtTheCap(t *testing.T) {
+	f := newRunFixture(t)
+	f.delegate(t, "D1", "R43")
+	report := func(delegation, delegatingRun string, delegating identitybroker.AgentRef, receivingRun string, receiving identitybroker.AgentRef) error {
+		return f.b.ReportDelegation(context.Background(), testWorkload, identitybroker.ReportDelegationRequest{
+			SessionID: f.s.ID, DelegationID: delegation, DelegatingRun: delegatingRun, DelegatingAgent: delegating,
+			ReceivingRun: receivingRun, ReceivingAgent: receiving, Owner: testOwner,
+		})
+	}
+	// Each report from an unseen root run records two runs and one
+	// delegation, so R43's run record is forgotten while D1 is kept.
+	for i := range identitybroker.MaxRunsPerSession/2 + 1 {
+		if err := report(fmt.Sprintf("Dfill%d", i), fmt.Sprintf("Rroot%d", i), f.main, fmt.Sprintf("Rfill%d", i), f.child); err != nil {
+			t.Fatalf("filling report %d: %v", i, err)
+		}
+	}
+	main := callRequest(f.s.ID, f.cred)
+	main.RunID, main.DelegationID = "R43", "D1"
+	f.wantRunDenied(t, main, "not reported for this run and agent")
+	if _, err := f.authorize(f.childCall("R43", "D1")); err != nil {
+		t.Fatalf("the delegated run after its record was forgotten: %v", err)
+	}
+
+	// R43 is now the newest run record. Delegations reported from one root
+	// run forget D1 before R43.
+	for i := range identitybroker.MaxRunsPerSession / 2 {
+		if err := report(fmt.Sprintf("Dmore%d", i), "Rbase", f.main, fmt.Sprintf("Rmore%d", i), f.child); err != nil {
+			t.Fatalf("report %d: %v", i, err)
+		}
+	}
+	err := report("D2", "R43", f.child, "R50", f.main)
+	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+	wantDetail(t, err, "own delegation was not reported")
 }

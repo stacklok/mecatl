@@ -3,6 +3,7 @@ package agentcredential_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/agentcredential"
@@ -61,5 +62,33 @@ func TestHolderKeepsDelegationsWhileItsHelpersAreHeld(t *testing.T) {
 	}
 	if all := h.Delegations("root"); len(all) != 0 {
 		t.Fatalf("a dropped root lists %+v", all)
+	}
+}
+
+// TestHolderForgetsTheOldestDelegationAtTheCap pins that a root lists at most
+// MaxDelegationsPerRoot delegations, forgetting the oldest first, while each
+// helper's current delegation stays held.
+func TestHolderForgetsTheOldestDelegationAtTheCap(t *testing.T) {
+	h, _, _ := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+		t.Fatalf("Ensure child: %v", err)
+	}
+	delegation := func(i int) agentcredential.Delegation {
+		return agentcredential.Delegation{ID: fmt.Sprintf("dlg_%d", i), Run: agentcredential.Run{ID: fmt.Sprintf("run_%d", i)}, DelegatingRun: "run_root", DelegatingAgentSession: "root"}
+	}
+	for i := range agentcredential.MaxDelegationsPerRoot + 1 {
+		if err := h.SetDelegation(childKey, delegation(i)); err != nil {
+			t.Fatalf("SetDelegation %d: %v", i, err)
+		}
+	}
+	all := h.Delegations("root")
+	if len(all) != agentcredential.MaxDelegationsPerRoot || all[0].Delegation != delegation(1) || all[len(all)-1].Delegation != delegation(agentcredential.MaxDelegationsPerRoot) {
+		t.Fatalf("Delegations lists %d, first %+v; want %d from %+v", len(all), all[0].Delegation, agentcredential.MaxDelegationsPerRoot, delegation(1))
+	}
+	if got, ok := h.Delegation(childKey); !ok || got != delegation(agentcredential.MaxDelegationsPerRoot) {
+		t.Fatalf("Delegation = %+v, %v; want the latest", got, ok)
 	}
 }
