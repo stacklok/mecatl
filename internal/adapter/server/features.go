@@ -101,6 +101,11 @@ const (
 	// without running it and applies the mode, instead of refusing mid-turn.
 	// Every other SetMode on an awaiting session is still refused.
 	FeatureRefusedModeRecovery = "refused_mode_recovery"
+
+	// FeatureModelEffortLevels reports that ListModels carries each model's
+	// effort_levels and effort_levels_known, and resolved_model carries
+	// requested_reasoning_effort. Without it an empty effort_levels says nothing.
+	FeatureModelEffortLevels = "model_effort_levels"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -137,6 +142,7 @@ var allFeatures = []string{
 	FeatureExecutionTemplates,
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
+	FeatureModelEffortLevels,
 	FeaturePromptFreeControls,
 	FeatureRefusedModeRecovery,
 	FeatureServerInfo,

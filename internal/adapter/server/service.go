@@ -252,10 +252,14 @@ type ResolvedModel struct {
 	ModelID       string
 	ContextWindow int64
 	// ReasoningEffort is the effective per-session reasoning-effort token,
-	// "" when unset. Carried on the resolved-model echo so the wire (and the
+	// "" when none is sent. Carried on the resolved-model echo so the wire (and the
 	// TUI footer) can show the active effort; it is the value held on the
 	// per-session engine record (sessionEngine.reasoningEffort), not recomputed.
 	ReasoningEffort string
+	// RequestedReasoningEffort is the normalised level the session asks for, ""
+	// for Auto (sessionEngine.requestedReasoningEffort). It differs from
+	// ReasoningEffort when the model doesn't accept the level.
+	RequestedReasoningEffort string
 }
 
 // SessionEngineFactory builds a PER-SESSION agent engine over a non-default
@@ -1534,6 +1538,9 @@ type sessionEngine struct {
 	// verbatim on resolved_model via ResolvedModel — never recomputed. Same single-
 	// source discipline as providerID/modelID.
 	reasoningEffort string
+	// requestedReasoningEffort is stamped from
+	// SessionEngineResult.RequestedReasoningEffort, the same way.
+	requestedReasoningEffort string
 	// builtForMode is the session PermissionMode this engine's model was RESOLVED FOR
 	// (mode→model re-resolution). Stamped from SessionEngineResult.BuiltForMode at every
 	// construction site (create, rehydrate, mode-rebuild) — the SAME single source the
@@ -3292,14 +3299,15 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// then persist OUTSIDE the lock (no I/O under the mutex). If the persist fails,
 	// evict the reservation and tear the engine down.
 	s.sessionEngines[sess.ID] = &sessionEngine{
-		engine:          eng,
-		caps:            res.Capabilities,
-		providerID:      res.ProviderID,
-		modelID:         res.ModelID,
-		reasoningEffort: res.ReasoningEffort,
-		builtForMode:    res.BuiltForMode,
-		runtimeRevision: res.RuntimeRevision,
-		close:           closeFn,
+		engine:                   eng,
+		caps:                     res.Capabilities,
+		providerID:               res.ProviderID,
+		modelID:                  res.ModelID,
+		reasoningEffort:          res.ReasoningEffort,
+		requestedReasoningEffort: res.RequestedReasoningEffort,
+		builtForMode:             res.BuiltForMode,
+		runtimeRevision:          res.RuntimeRevision,
+		close:                    closeFn,
 	}
 	if len(specs) > 0 {
 		s.clientMCPSpecs[sess.ID] = append([]mcp.ServerConfig(nil), specs...)
@@ -5579,14 +5587,15 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		_ = prior.close()
 	}
 	s.sessionEngines[id] = &sessionEngine{
-		engine:          res.Engine,
-		caps:            res.Capabilities,
-		providerID:      res.ProviderID,
-		modelID:         res.ModelID,
-		reasoningEffort: res.ReasoningEffort,
-		builtForMode:    res.BuiltForMode,
-		runtimeRevision: res.RuntimeRevision,
-		close:           res.Close,
+		engine:                   res.Engine,
+		caps:                     res.Capabilities,
+		providerID:               res.ProviderID,
+		modelID:                  res.ModelID,
+		reasoningEffort:          res.ReasoningEffort,
+		requestedReasoningEffort: res.RequestedReasoningEffort,
+		builtForMode:             res.BuiltForMode,
+		runtimeRevision:          res.RuntimeRevision,
+		close:                    res.Close,
 	}
 	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
 		// A no-fs session's environment override is re-registered with the engine
@@ -7360,14 +7369,15 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		}
 	}
 	se := &sessionEngine{
-		engine:          res.Engine,
-		caps:            res.Capabilities,
-		providerID:      res.ProviderID,
-		modelID:         res.ModelID,
-		reasoningEffort: res.ReasoningEffort,
-		builtForMode:    res.BuiltForMode,
-		runtimeRevision: res.RuntimeRevision,
-		close:           res.Close,
+		engine:                   res.Engine,
+		caps:                     res.Capabilities,
+		providerID:               res.ProviderID,
+		modelID:                  res.ModelID,
+		reasoningEffort:          res.ReasoningEffort,
+		requestedReasoningEffort: res.RequestedReasoningEffort,
+		builtForMode:             res.BuiltForMode,
+		runtimeRevision:          res.RuntimeRevision,
+		close:                    res.Close,
 	}
 	s.mu.Lock()
 	prior, hadPrior := s.sessionEngines[id]
@@ -7510,7 +7520,7 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 	se, ok := s.sessionEngines[sess.ID]
 	s.mu.Unlock()
 	if ok {
-		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort})
+		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort, RequestedReasoningEffort: se.requestedReasoningEffort})
 	}
 	if sess.AgentDefinitionName != "" {
 		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort})
@@ -7564,7 +7574,7 @@ func (s *Service) ResolvedModel(id session.SessionID) ResolvedModel {
 	se, ok := s.sessionEngines[id]
 	s.mu.Unlock()
 	if ok {
-		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort})
+		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort, RequestedReasoningEffort: se.requestedReasoningEffort})
 	}
 	return s.resolveModelWindow(s.cfg.DefaultResolvedModel)
 }

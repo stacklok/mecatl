@@ -2360,6 +2360,8 @@ informs the picker&#39;s display only (the server is the cap authority).
 | `reasoning` | `bool` |  |  | reasoning is true when the model emits reasoning/thinking (catalog flag). |
 | `context_limit` | `int64` |  |  | context_limit is the model&#39;s total context window in tokens (0 when unknown). |
 | `prompt_cached` | `bool` |  |  | prompt_cached is true when mecatl ASKS the upstream to cache this (provider, model) pair&#39;s conversation prefix. Mecatl arms the protocol-native breakpoint on EVERY Responses endpoint, so false means caching is off harness-wide (the server&#39;s --no-prompt-cache), NOT that this endpoint cannot cache. Whether an upstream HONOURS the ask is not statically knowable and this field does not claim it. Clients SHOULD mark a false row rather than hide it; scoping the mark to Anthropic-family ids is the useful convention, since those cache solely on an explicit ask while an implicit cacher may cache regardless. Additive: an older client reads false. |
+| `effort_levels` | `string` | repeated |  | effort_levels are the reasoning-effort levels a session on this model sends, from low, medium, high, xhigh and max, in that order. Meaningful only when effort_levels_known is true; then an empty list means the model gets no effort. Additive (feature model_effort_levels): a server without the feature leaves both fields unset, so a client must check the feature before reading an empty list as &#34;no effort&#34;. |
+| `effort_levels_known` | `bool` |  |  | effort_levels_known is true when the server knows which levels the model accepts (from the operator&#39;s models.effort_levels, the live listing, or the catalog). False means unknown: a requested level is sent and the provider may refuse it. |
 
 
 
@@ -2856,7 +2858,8 @@ display_name is carried here.
 | `provider_id` | `string` |  |  | provider_id is the resolved provider (e.g. &#34;openai&#34;, &#34;anthropic&#34;). |
 | `model_id` | `string` |  |  | model_id is the resolved model id (the opaque id the adapter was given). |
 | `context_window` | `int64` |  |  | context_window is the resolved model&#39;s context window in tokens (0 = unknown). |
-| `reasoning_effort` | `string` |  |  | reasoning_effort is the EFFECTIVE reasoning-effort tier this session resolved to, enum-as-string (the same neutral vocabulary as CreateSessionRequest.reasoning_effort, NO proto enum): &#34;&#34; when unset (the provider default applies), else the normalised + per-provider-CLAMPED token actually wired into the adapter — e.g. an OpenAI session that requested &#34;max&#34; echoes &#34;high&#34;. The client renders it (e.g. in the model footer) and never recomputes it. |
+| `reasoning_effort` | `string` |  |  | reasoning_effort is the EFFECTIVE reasoning-effort tier requests for this session&#39;s model carry, enum-as-string (the same neutral vocabulary as CreateSessionRequest.reasoning_effort, NO proto enum): &#34;&#34; when none is sent (Auto, or the model doesn&#39;t accept the requested level, so the provider default applies), else that level. The client renders it (e.g. in the model footer) and never recomputes it. |
+| `requested_reasoning_effort` | `string` |  |  | requested_reasoning_effort is the level the session asks for, normalised: &#34;&#34; for Auto, else a level, with the server default applied when the session didn&#39;t choose. It differs from reasoning_effort when the model doesn&#39;t accept the level; a later model that accepts it gets it. Additive (feature model_effort_levels). |
 
 
 
