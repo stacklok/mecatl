@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	"github.com/stacklok/mecatl/engine/kernel/views"
 )
 
@@ -44,7 +44,7 @@ func newToolInvocationRecord(v ToolInvocation, call RequestedCallID, limits code
 //
 //dtogen:include
 type ToolInvocationView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ToolInvocation
 }
 

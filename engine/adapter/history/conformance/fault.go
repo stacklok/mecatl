@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
 )
@@ -19,7 +20,7 @@ type lostAckBackend struct {
 	lost  error
 }
 
-func (s *lostAckBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, b history.ByteCommit) (history.Observation, error) {
+func (s *lostAckBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, b history.ByteCommit) (history.Observation, error) {
 	s.calls++
 	got, err := s.Backend.Append(ctx, id, expected, b)
 	if err == nil && got.Head == b.Ref && got.Commit == b.Ref && s.calls == 1 {
@@ -35,7 +36,7 @@ func lostAcknowledgement(t *testing.T, factory Factory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, _ := encoded(t, id, history.CommitRef{}, "root")
 	r1, err := client.Identify(id, root)
 	if err != nil {
@@ -85,7 +86,7 @@ type delayedStore struct {
 	forwardContext context.Context
 }
 
-func (s *delayedStore) Append(ctx context.Context, id history.HistoryID, b format.Commit) (history.Resolution, error) {
+func (s *delayedStore) Append(ctx context.Context, id resourceid.ID, b format.Commit) (history.Resolution, error) {
 	serialized := b.Clone()
 	go func() {
 		defer close(s.done)
@@ -119,7 +120,7 @@ func delayedRequest(t *testing.T, factory historyFactory) {
 	release := func() { releaseOnce.Do(func() { close(client.release) }) }
 	callerDone := make(chan struct{})
 	callerResult := make(chan appendResult, 1)
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, _ := encoded(t, id, history.CommitRef{}, "root")
 	r1, err := backend.Identify(id, root)
 	if err != nil {
@@ -155,7 +156,7 @@ func delayedRequest(t *testing.T, factory historyFactory) {
 	root.Records[0].Payload[0] ^= 0xff
 	got, err := backend.Resolve(context.Background(), id, r1)
 	wantResolution(t, got, err, history.StatusNotObserved, r1, history.CommitRef{})
-	otherID := history.NewHistoryID()
+	otherID := resourceid.New("FOO")
 	other, otherRef := encoded(t, otherID, history.CommitRef{}, "independent history")
 	appendAccepted(t, backend, otherID, other, otherRef)
 	got, err = backend.Append(context.Background(), id, child)

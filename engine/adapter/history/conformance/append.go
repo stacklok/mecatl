@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -17,7 +18,7 @@ import (
 func appendLimits(t *testing.T, factory historyFactory) {
 	for _, name := range []string{"bytes", "records", "kind", "payload", "version", "sequence", "empty-records"} {
 		t.Run(name, func(t *testing.T) {
-			id := history.NewHistoryID()
+			id := resourceid.New("FOO")
 			commit := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
 				Records: []format.Record{
 					{Timestamp: 0, Kind: "opaque-kind-longer-than-history", KindVersion: 7, Payload: []byte("private-payload")},
@@ -85,7 +86,7 @@ func appendLargeLimitRejections(t *testing.T, factory historyFactory) {
 		MaxByteStringBytes: 600 << 10, MaxMapPairs: 8, MaxDepth: 8,
 		MaxNodes: 100000, MaxCollectionElements: 40000,
 	}
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	fixture := func(records []format.Record) format.Commit {
 		return format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1, Records: records}
 	}
@@ -132,7 +133,7 @@ func appendLargeLimitRejections(t *testing.T, factory historyFactory) {
 func scopeIsolation(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
 	ctx := context.Background()
-	id, otherID := history.NewHistoryID(), history.NewHistoryID()
+	id, otherID := resourceid.New("FOO"), resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "root")
 	otherRoot, otherR1 := encoded(t, otherID, history.CommitRef{}, "other root")
 	appendAccepted(t, s, id, root, r1)
@@ -158,7 +159,7 @@ func scopeIsolation(t *testing.T, factory historyFactory) {
 
 func concurrentSuccessorAndDuplicateAppends(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, rootRef := encoded(t, id, history.CommitRef{}, "root")
 	appendAccepted(t, s, id, root, rootRef)
 	b1, r1 := encoded(t, id, rootRef, "successor one")

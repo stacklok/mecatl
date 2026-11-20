@@ -104,6 +104,41 @@ func TestOptionalBoolCBOR(t *testing.T) {
 	runOwner(t, cfg, "")
 }
 
+func TestClosureFailurePreservesEveryArtifact(t *testing.T) {
+	cfg := moduleFixture(t, `import("github.com/stacklok/mecatl/engine/first";"github.com/stacklok/mecatl/engine/last")
+type Record struct { A first.Value; Z last.Value }
+`)
+	cfg.Emit = "clone,equal"
+	module := filepath.Dir(cfg.Dir)
+	for _, pkg := range []string{"first", "last"} {
+		writeFixture(t, filepath.Join(module, pkg, "value.go"), "//go:generate go -C ../.. run ./internal/dtogen/cmd/dtogen -dir engine/"+pkg+" -types Value -emit clone,equal -out zz_data_generated.go\npackage "+pkg+"\ntype Value struct { Data []byte }\n")
+	}
+	if err := Generate(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	before := repositoryState(t, module)
+	writeFixture(t, filepath.Join(module, "first/change.go"), "package first\ntype Extra []byte\n")
+	path := filepath.Join(module, "first/value.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, path, strings.Replace(string(data), "Data []byte", "Data []byte; More Extra", 1))
+	writeFixture(t, filepath.Join(module, "last/collision.go"), "package last\nvar dtogen int\n")
+	if err := Generate(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "collides with generated dtogen") {
+		t.Fatal("late render failure missing", err)
+	}
+	for path, prior := range before {
+		if !strings.HasSuffix(path, "generated.go") {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != prior.data {
+			t.Fatalf("failure replaced %s: %v", path, err)
+		}
+	}
+}
+
 func TestGenerateOutputFailurePreservesArtifact(t *testing.T) {
 	cfg := executableFixture(t, "type Record struct{}")
 	path := filepath.Join(cfg.Dir, cfg.Output)

@@ -38,7 +38,7 @@ func TestUsagePayloadPolicyBoundaries(t *testing.T) {
 					reflect.ValueOf(&limits).Elem().Field(field).SetInt(int64(lo))
 					s.policy.PayloadLimits = limits
 					// Only the accounting record, not the preceding creation, violates the bound.
-					_, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+					_, err := Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					mustBatch(t, err)
 					before := detachedSessionState(s.state)
 					switch path {
@@ -53,13 +53,13 @@ func TestUsagePayloadPolicyBoundaries(t *testing.T) {
 					case "apply":
 						err = s.apply(c)
 					case "load":
-						result, e := s.history.Append(t.Context(), s.Snapshot().HistoryID(), c.Commit)
+						result, e := s.history.Append(t.Context(), s.Snapshot().SessionID().ResourceID(), c.Commit)
 						mustBatch(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("history rejected payload")
 						}
 						var loaded *Session
-						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+						loaded, err = Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 						if err != nil && loaded != nil {
 							t.Fatal("failed load returned partial session")
 						}
@@ -145,10 +145,10 @@ func TestUsageMixedCommitPolicyAtomicity(t *testing.T) {
 					case "apply":
 						err = s.apply(c)
 					case "load":
-						_, e := s.history.Append(t.Context(), s.Snapshot().HistoryID(), c.Commit)
+						_, e := s.history.Append(t.Context(), s.Snapshot().SessionID().ResourceID(), c.Commit)
 						mustBatch(t, e)
 						var loaded *Session
-						loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(p))
+						loaded, err = Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(p))
 						if err != nil && loaded != nil {
 							t.Fatal("partial load")
 						}
@@ -162,7 +162,7 @@ func TestUsageMixedCommitPolicyAtomicity(t *testing.T) {
 							b = beginBatch(t, s)
 							next, e := b.AddUsage(nil, nil, UsagePurposeMain, UsageReport{State: UsageReportActive})
 							mustBatch(t, e)
-							if next.HistoryRelative() != 2 {
+							if next.SessionRelative() != 2 {
 								t.Fatal("failed commit consumed usage identity")
 							}
 							mustBatch(t, b.Discard())

@@ -17,7 +17,7 @@ func TestSessionCommitOrdinalExhaustion(t *testing.T) {
 	for _, input := range []bool{false, true} {
 		t.Run(map[bool]string{false: "run", true: "input"}[input], func(t *testing.T) {
 			s, _ := internalFixture(t)
-			run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}
+			run := RunID{sessionID: s.Snapshot().SessionID(), ordinal: 1}
 			s.state.view.lifecycle = lifecycleState{created: true, runs: math.MaxUint64}
 			if input {
 				s.state.view.lifecycle = lifecycleState{created: true, runs: 1, activeRun: run, inputs: math.MaxUint64}
@@ -51,13 +51,13 @@ func TestSessionSequenceExhaustion(t *testing.T) {
 	for _, active := range []bool{false, true} {
 		t.Run(map[bool]string{false: "start cannot strand", true: "last closeout fits"}[active], func(t *testing.T) {
 			s, limits := internalFixture(t)
-			id := s.Snapshot().HistoryID()
-			run := RunID{historyID: id, ordinal: 1}
+			id := s.Snapshot().SessionID()
+			run := RunID{sessionID: id, ordinal: 1}
 			created, err := newCreatedRecord(Created{}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			start, err := newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, limits)
+			start, err := newRunStartedRecord(RunStarted{ID: run.SessionRelative()}, limits)
 			if err != nil {
 				t.Fatal(err)
 			}

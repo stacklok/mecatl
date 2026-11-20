@@ -20,8 +20,8 @@ var ErrUnsupportedRecord = errors.New("unsupported session record kind or versio
 // All nested storage is privately owned; consumers must not mutate or expose it.
 // Local decoding validates payloads, not scope membership, lifecycle or acceptance.
 // Public batch methods validate explicit destination scope before materialization;
-// admission and views supply enclosing history, and verified replay establishes
-// ancestry.
+// admission and views supply enclosing Session scope, and verified replay
+// establishes ancestry.
 // Keep variants by value for now; evaluate alternative layouts with measurements
 // later, without changing public contracts or persistence.
 type materializedRecord struct {

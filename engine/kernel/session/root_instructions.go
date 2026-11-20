@@ -3,12 +3,12 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // RootInstructions is a complete replacement for the harness root operating
-// contract. ReplaceRootInstructions supplies history scope. It is selected by
+// contract. ReplaceRootInstructions supplies Session scope. It is selected by
 // intended placement and authority, not producer, file, or provider message
 // role. Nil and empty Blocks explicitly clear it. Assignment shares storage;
 // Clone detaches it.
@@ -37,14 +37,14 @@ func newRootInstructionsRecord(v RootInstructions, limits codec.Limits) (*materi
 }
 
 // RootInstructionsView retains immutable accepted or proposed backing storage,
-// including its record. Capture and navigation cost O(1); zero has no history or
+// including its record. Capture and navigation cost O(1); zero has no Session scope or
 // blocks.
 //
 //dtogen:include
 type RootInstructionsView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.RootInstructions
 }
 
-// HistoryID returns the retained scope, or zero for zero.
-func (v RootInstructionsView) HistoryID() historyid.HistoryID { return v.scope }
+// SessionID returns the retained scope, or zero for zero.
+func (v RootInstructionsView) SessionID() sessionid.SessionID { return v.scope }

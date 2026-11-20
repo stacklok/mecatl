@@ -6,7 +6,9 @@
 //
 // Payloads are mutable DTOs defined in session/format. That package validates
 // individual payloads; this package checks history membership and cross-record
-// legality. Occurrence IDs carry their enclosing history or run scope, but
+// legality. A typed [SessionID] identifies both the Session and its canonical
+// history under the same resource key, without another allocation or mapping.
+// Occurrence IDs carry their enclosing Session or run scope, but
 // reconstructing an ID alone establishes neither membership nor authority.
 //
 // # Authoring and reconstruction
@@ -24,7 +26,8 @@
 // not action durations, storage receipt times, or an ordering guarantee. Loading
 // preserves stored metadata without sampling the clock; subsequent writes use the
 // loading writer's Config. History validates supplied metadata but never stamps it.
-// Metadata affects history identity but not logical model-request bytes or identity.
+// Metadata affects commit content identity, not the SessionID or logical
+// model-request bytes or identity.
 //
 // # Inspection and ownership
 //

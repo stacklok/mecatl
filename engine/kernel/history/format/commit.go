@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 // Commit is a mutable persistence DTO for an atomic, nonempty ordered group of
@@ -25,8 +25,10 @@ type Commit struct {
 	// commit. It is required and nonzero; it does not establish authority or
 	// global uniqueness.
 	InstanceID uint64 `cbor:"i"`
-	// HistoryID is present only for a root commit. Present-zero is invalid.
-	HistoryID *historyid.HistoryID `cbor:"h,omitempty"`
+	// HistoryID is the owning resource's generic ID, present only for a root
+	// commit. Present-zero is invalid. Its kind is not restricted by History;
+	// acceptance checks exact agreement with the supplied storage key.
+	HistoryID *resourceid.ID `cbor:"h,omitempty"`
 	// Parent is present only for a successor. Present-zero is invalid.
 	Parent *contentid.CID `cbor:"p,omitempty"`
 	// Sequence is the one-based commit ordinal. Roots are exactly 1; successors
@@ -70,7 +72,7 @@ func (c Commit) Validate() error {
 		return err
 	}
 	if c.HistoryID != nil {
-		if _, err := historyid.ParseHistoryID(c.HistoryID.String()); err != nil {
+		if _, err := resourceid.Parse(c.HistoryID.String()); err != nil {
 			return errors.New("invalid history ID")
 		}
 	}

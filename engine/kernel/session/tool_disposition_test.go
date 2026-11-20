@@ -23,7 +23,7 @@ func toolFactOutput() ToolOutput {
 }
 
 func TestToolDispositionMaterializationAndView(t *testing.T) {
-	call := RequestedCallID{requestID: requestID(testHistoryID(t), 7, 9), ordinal: 3}
+	call := RequestedCallID{requestID: requestID(testSessionID(t), 7, 9), ordinal: 3}
 	for _, kind := range []string{"returned", "not invoked", "indeterminate"} {
 		t.Run(kind, func(t *testing.T) {
 			v := ToolDisposition{Diagnostic: new("")}
@@ -46,7 +46,7 @@ func TestToolDispositionMaterializationAndView(t *testing.T) {
 			if r.value.Kind != sessionformat.KindToolDisposition || r.value.KindVersion != 1 || !bytes.Equal(wire, r.value.Payload) || !r.toolDisposition.Equal(want) {
 				t.Fatal("materialized disposition differs from persisted DTO")
 			}
-			record := RecordView{scope: testHistoryID(t), record: r}
+			record := RecordView{scope: testSessionID(t), record: r}
 			view, ok := record.ToolDisposition()
 			if !ok || view.CallID() != call {
 				t.Fatal("disposition identity")
@@ -207,14 +207,14 @@ func TestToolOutputZeroAndEmptyViews(t *testing.T) {
 			t.Fatal("zero resource label")
 		}
 	}
-	call := RequestedCallID{requestID: requestID(testHistoryID(t), 1, 1), ordinal: 1}
+	call := RequestedCallID{requestID: requestID(testSessionID(t), 1, 1), ordinal: 1}
 	for _, v := range []ToolDisposition{
 		{Returned: &ToolReturned{Status: ToolReturnSuccess, Output: ToolOutput{Capture: ToolCaptureComplete}}},
 		{Indeterminate: &ToolIndeterminate{Reason: ToolIndeterminateTimeout, Output: ToolOutput{Capture: ToolCaptureOmitted}}},
 	} {
 		r, err := newToolDispositionRecord(v, call, testLimits())
 		interactionCheck(t, err)
-		view, _ := (RecordView{scope: testHistoryID(t), record: r}).ToolDisposition()
+		view, _ := (RecordView{scope: testSessionID(t), record: r}).ToolDisposition()
 		if text, ok := view.Diagnostic(); ok || text != "" {
 			t.Fatal("absent diagnostic became present empty")
 		}
@@ -232,7 +232,7 @@ func TestToolOutputZeroAndEmptyViews(t *testing.T) {
 }
 
 func TestToolDispositionMaterializationBounds(t *testing.T) {
-	call := RequestedCallID{requestID: requestID(testHistoryID(t), 1, 1), ordinal: 1}
+	call := RequestedCallID{requestID: requestID(testSessionID(t), 1, 1), ordinal: 1}
 	for _, tc := range []struct {
 		name string
 		v    ToolDisposition

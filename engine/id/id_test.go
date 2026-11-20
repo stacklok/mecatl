@@ -9,34 +9,43 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	v := New(History)
-	if v.Kind() != History || len(v.String()) != 25 {
-		t.Fatalf("unexpected ID: %q (%q)", v.String(), v.Kind())
-	}
-	parsed, err := Parse(v.String())
-	if err != nil || parsed != v {
-		t.Fatalf("round trip: got %v, %v; want %v", parsed, err, v)
-	}
-	if got := map[ID]bool{v: true}; !got[parsed] {
-		t.Fatal("equal IDs must be interchangeable map keys")
+	for _, kind := range []Kind{"FOO", "SES", "RUN", "ABC", "ZZZ"} {
+		v := New(kind)
+		if v.Kind() != kind || len(v.String()) != 25 {
+			t.Fatalf("unexpected ID: %q (%q)", v.String(), v.Kind())
+		}
+		parsed, err := Parse(v.String())
+		if err != nil || parsed != v {
+			t.Fatalf("round trip: got %v, %v; want %v", parsed, err, v)
+		}
+		if got := map[ID]bool{v: true}; !got[parsed] {
+			t.Fatal("equal IDs must be interchangeable map keys")
+		}
 	}
 }
 
 func TestParse(t *testing.T) {
-	for _, body := range []string{
-		strings.Repeat("1", 22),
-		strings.Repeat("z", 22),
-		"123456789ABCDEFGHJKLMN",
-	} {
-		text := "HST" + body
-		v, err := Parse(text)
-		if err != nil || v.String() != text || v.Kind() != History {
-			t.Fatalf("Parse(%q) = %v, %v", text, v, err)
+	for _, kind := range []Kind{"FOO", "SES", "RUN", "AAA", "IOO", "ZZZ"} {
+		for _, body := range []string{
+			strings.Repeat("1", 22),
+			strings.Repeat("z", 22),
+			"123456789ABCDEFGHJKLMN",
+		} {
+			text := string(kind) + body
+			v, err := Parse(text)
+			if err != nil || v.String() != text || v.Kind() != kind {
+				t.Fatalf("Parse(%q) = %v, %v", text, v, err)
+			}
 		}
 	}
 	for _, text := range []string{
 		"", "HST", "hst" + strings.Repeat("1", 22),
-		"RUN" + strings.Repeat("1", 22),
+		"HsT" + strings.Repeat("1", 22),
+		"1ST" + strings.Repeat("1", 22),
+		"HS_" + strings.Repeat("1", 22),
+		"H\x00T" + strings.Repeat("1", 22),
+		"H\xffT" + strings.Repeat("1", 22),
+		"ÉT" + strings.Repeat("1", 22),
 		"HST" + strings.Repeat("1", 21),
 		"HST" + strings.Repeat("1", 23),
 		" HST" + strings.Repeat("1", 22),
@@ -67,7 +76,7 @@ func TestZero(t *testing.T) {
 func TestNewAlphabet(t *testing.T) {
 	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 	for i := range len(alphabet) {
-		v, err := newID(History, bytes.NewReader(bytes.Repeat([]byte{byte(i)}, 22)))
+		v, err := newID("HST", bytes.NewReader(bytes.Repeat([]byte{byte(i)}, 22)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +92,7 @@ func TestNewAlphabet(t *testing.T) {
 func TestNewRejectsOutOfRangeSamples(t *testing.T) {
 	// rand.Int masks each byte to six bits; 58–63 must be rejected, not reduced modulo 58.
 	samples := bytes.Repeat([]byte{58, 59, 60, 61, 62, 63, 0}, 22)
-	v, err := newID(History, bytes.NewReader(samples))
+	v, err := newID("HST", bytes.NewReader(samples))
 	if err != nil || v.String() != "HST"+strings.Repeat("1", 22) {
 		t.Fatalf("rejection sampling: got %v, %v", v, err)
 	}
@@ -91,12 +100,12 @@ func TestNewRejectsOutOfRangeSamples(t *testing.T) {
 
 func TestNewFailure(t *testing.T) {
 	for _, n := range []int{0, 10, 21} {
-		v, err := newID(History, bytes.NewReader(make([]byte, n)))
+		v, err := newID("HST", bytes.NewReader(make([]byte, n)))
 		if !errors.Is(err, io.EOF) || v != (ID{}) {
 			t.Fatalf("%d bytes: got %v, %v; want zero ID and EOF", n, v, err)
 		}
 	}
-	for _, kind := range []Kind{"", "RUN", "hst", "HSTextra"} {
+	for _, kind := range []Kind{"", "HS", "HSTextra", "hst", "HsT", "1ST", "HS_", "H\x00T", "H\xffT", "ÉT"} {
 		t.Run(string(kind), func(t *testing.T) {
 			defer func() {
 				if recover() == nil {

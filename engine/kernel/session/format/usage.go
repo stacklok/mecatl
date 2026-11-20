@@ -5,7 +5,7 @@ import (
 	"unicode/utf8"
 )
 
-// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Usage is one complete accounting report for a Session-scoped identity. Its zero
 // Go value is invalid because it lacks a positive ID and a valid report state.
 // Explicitly reported zero token counts are valid and distinct from absent counts.
 // The first record alone carries Definition and must be active; later records omit
@@ -18,8 +18,8 @@ import (
 //dtogen:include
 //dtogen:validate validateLocal
 type Usage struct {
-	// ID is the required positive usage component within the enclosing history.
-	// It is independent of runs; the history envelope supplies omitted scope.
+	// ID is the required positive Session-relative usage component, independent of
+	// runs; the root history envelope supplies omitted Session scope.
 	ID uint64 `cbor:"o" view:"manual"`
 	// Definition is required only on the first record for ID, and immutable
 	// thereafter. Nil denotes a replacement report, not missing metadata to merge.
@@ -58,7 +58,7 @@ const (
 )
 
 // UsageDefinition is immutable first-record metadata. Correlations omit enclosing
-// history scope and assert association, not unique ownership or complete coverage.
+// Session scope and assert association, not unique ownership or complete coverage.
 // Assignment shares optional components; Clone detaches them. Zero is invalid.
 //
 //dtogen:validate Validate
@@ -67,7 +67,7 @@ type UsageDefinition struct {
 	// UsagePurpose constants. No trimming, fallback, or normalization is applied.
 	Purpose string `cbor:"p"`
 	// RunID optionally correlates a positive run component within the enclosing
-	// history. Nil with nil RequestID means session-level work. Zero is invalid.
+	// Session. Nil with nil RequestID means Session-level work. Zero is invalid.
 	RunID *uint64 `cbor:"r,omitempty" view:"manual"`
 	// RequestID optionally correlates a positive request component within RunID;
 	// it requires RunID. Nil means no request correlation. Admission checks both
@@ -75,7 +75,7 @@ type UsageDefinition struct {
 	RequestID *uint64 `cbor:"q,omitempty" view:"manual"`
 }
 
-// Validate checks exact purpose syntax and relative reference shape, not history
+// Validate checks exact purpose syntax and relative reference shape, not Session
 // scope, allocation, membership or lifecycle.
 func (v UsageDefinition) Validate() error {
 	if v.Purpose == "" || !utf8.ValidString(v.Purpose) {

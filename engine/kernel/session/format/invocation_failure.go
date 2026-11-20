@@ -31,8 +31,8 @@ const (
 //dtogen:validate validateLocal
 //dtogen:include
 type InvocationFailure struct {
-	// RunID is the required positive numeric run component within the history
-	// supplied by the enclosing envelope.
+	// RunID is the required positive Session-relative run component; the root
+	// history envelope supplies Session scope.
 	RunID uint64 `cbor:"r" view:"-"`
 	// RequestID is the required positive numeric request component within RunID.
 	// Payload validation checks positivity, not accepted request membership.

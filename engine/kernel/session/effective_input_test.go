@@ -9,22 +9,22 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestEffectiveInputRelativeReferences(t *testing.T) {
-	run := allocatedRun(t, testHistoryID(t), 1)
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	run := allocatedRun(t, testSessionID(t), 1)
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
 	for _, id := range []session.UserInputID{
 		allocatedInput(t, allocatedRun(t, foreign, 1), 1),
-		allocatedInput(t, allocatedRun(t, run.HistoryID(), 2), 1), {},
+		allocatedInput(t, allocatedRun(t, run.SessionID(), 2), 1), {},
 	} {
 		v := session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(id.RunRelative())}}}
 		stored := v
-		stored.RunID = run.HistoryRelative()
+		stored.RunID = run.SessionRelative()
 		if (stored.Validate() == nil) != (id.RunRelative() != 0) {
 			t.Fatal("relative reference validation")
 		}
@@ -53,7 +53,7 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			backend := &batchBackend{Backend: mem.New()}
 			h := newLifecycleHistory(t, backend)
 			s := boundSession(t, h, sessionPolicy())
-			run := allocatedRun(t, s.Snapshot().HistoryID(), 1)
+			run := allocatedRun(t, s.Snapshot().SessionID(), 1)
 			if state != "uncreated" {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
@@ -88,12 +88,12 @@ func TestEffectiveInputExternalRunAdmission(t *testing.T) {
 			if len(backend.attempts) != attempts || !reflect.DeepEqual(before, captureRejectedSnapshot(s.Snapshot())) {
 				t.Fatal("independent Load changed source session or storage")
 			}
-			result, err := h.Append(context.Background(), run.HistoryID(), c.Commit)
+			result, err := h.Append(context.Background(), run.SessionID().ResourceID(), c.Commit)
 			mustBatch(t, err)
 			if result.Status != history.StatusAccepted {
 				t.Fatal("external append")
 			}
-			loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(sessionPolicy()))
+			loaded, err := session.Load(context.Background(), h, run.SessionID(), testConfigFor(sessionPolicy()))
 			if state == "active" {
 				mustBatch(t, err)
 				if !reflect.DeepEqual(independent.Snapshot(), loaded.Snapshot()) {

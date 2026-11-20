@@ -9,11 +9,12 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // batchBackend records real byte proposals and fails once, before or after acceptance.
@@ -25,12 +26,12 @@ type batchBackend struct {
 	cancel   context.CancelFunc
 }
 type batchAttempt struct {
-	id       history.HistoryID
+	id       resourceid.ID
 	expected history.CommitRef
 	commit   history.ByteCommit
 }
 
-func (b *batchBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (b *batchBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	b.attempts = append(b.attempts, batchAttempt{id, expected, history.ByteCommit{Ref: c.Ref, Bytes: bytes.Clone(c.Bytes)}})
 	fault := b.fail
 	b.fail = nil
@@ -51,7 +52,7 @@ func (b *batchBackend) Append(ctx context.Context, id history.HistoryID, expecte
 }
 func boundSession(t testing.TB, h *history.History, p session.Policy) *session.Session {
 	t.Helper()
-	s, err := session.New(h, testHistoryID(t), testConfigFor(p))
+	s, err := session.New(h, testSessionID(t), testConfigFor(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	content := []byte{0xff, 0, 'x'}
 	input := batchInput(t, b, run, content)
 	clear(content)
-	if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testHistoryID(t), 1) {
+	if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testSessionID(t), 1) {
 		t.Fatal("provisional numbering/scope")
 	}
 	if s.Snapshot().Created() || s.Snapshot().RecordCount() != 0 {
@@ -116,7 +117,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	if v.Head() != root || v.ActiveRun() != run || !bytes.Equal(inputBytes(lookupInput(t, v, run, 1)), []byte{0xff, 0, 'x'}) || lookupInput(t, v, run, 1).ID() != input {
 		t.Fatal("accepted facts")
 	}
-	page, err := h.Read(context.Background(), testHistoryID(t), history.ReadRequest{Through: root, MaxCommits: 1})
+	page, err := h.Read(context.Background(), testSessionID(t).ResourceID(), history.ReadRequest{Through: root, MaxCommits: 1})
 	mustBatch(t, err)
 	fact := page.Commits[0].Commit.Records[2]
 	if !fact.Equal(inputRecord(t, 1).MutableClone()) {
@@ -132,7 +133,7 @@ func TestSessionCommitHappyPathOwnershipAndNumbering(t *testing.T) {
 	mustBatch(t, next.EndRun(session.RunEndedInterrupted))
 	secondRun := batchRun(t, next)
 	second := batchInput(t, next, secondRun, []byte("second"))
-	if second != allocatedInput(t, secondRun, 1) || secondRun != allocatedRun(t, testHistoryID(t), 2) {
+	if second != allocatedInput(t, secondRun, 1) || secondRun != allocatedRun(t, testSessionID(t), 2) {
 		t.Fatal("run-relative numbering")
 	}
 	submitBatch(t, s, next)
@@ -164,7 +165,7 @@ func TestSessionCommitOrderedProvisionalInterruption(t *testing.T) {
 	}
 	run := batchRun(t, b)
 	second := batchInput(t, b, run, []byte("second"))
-	if run != allocatedRun(t, testHistoryID(t), 2) || second != allocatedInput(t, run, 1) {
+	if run != allocatedRun(t, testSessionID(t), 2) || second != allocatedInput(t, run, 1) {
 		t.Fatal("same-batch numbering")
 	}
 	submitBatch(t, s, b)
@@ -250,9 +251,9 @@ func TestSessionCommitHandlesDiscardAndFailedAdditions(t *testing.T) {
 	if _, err := b.StartRun(); !errors.Is(err, session.ErrTransition) {
 		t.Fatal("duplicate start")
 	}
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
-	for _, owner := range []session.RunID{{}, allocatedRun(t, foreign, 1), allocatedRun(t, testHistoryID(t), 2)} {
+	for _, owner := range []session.RunID{{}, allocatedRun(t, foreign, 1), allocatedRun(t, testSessionID(t), 2)} {
 		if id, err := b.AddUserInput(owner, session.UserInput{}); id != (session.UserInputID{}) || !errors.Is(err, session.ErrTransition) {
 			t.Fatal("invalid owner")
 		}
@@ -320,7 +321,7 @@ func TestSessionCommitInvalidPreflightNoAppend(t *testing.T) {
 			}
 			mustBatch(t, next.Create())
 			if name == "reserve" {
-				if id := batchRun(t, next); id != allocatedRun(t, testHistoryID(t), 1) {
+				if id := batchRun(t, next); id != allocatedRun(t, testSessionID(t), 1) {
 					t.Fatal("rejection consumed run")
 				}
 			}
@@ -397,7 +398,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 			next := beginBatch(t, s)
 			run := batchRun(t, next)
 			input := batchInput(t, next, run, []byte("second"))
-			if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testHistoryID(t), 2) {
+			if input != allocatedInput(t, run, 1) || run != allocatedRun(t, testSessionID(t), 2) {
 				t.Fatal("successor ordinals")
 			}
 			ref, err := s.SubmitCommit(context.Background(), next)
@@ -408,7 +409,7 @@ func TestSessionCommitUncertainSuccessorIdenticalExplicitRetry(t *testing.T) {
 				t.Fatal("hidden retry/publication")
 			}
 			original := backend.attempts[2]
-			if original.id != testHistoryID(t) || original.expected != parent.Head() || original.commit.Ref.Sequence != parent.Head().Sequence+1 || len(original.commit.Bytes) == 0 {
+			if original.id != testSessionID(t).ResourceID() || original.expected != parent.Head() || original.commit.Ref.Sequence != parent.Head().Sequence+1 || len(original.commit.Bytes) == 0 {
 				t.Fatal("lost nonzero parent")
 			}
 			if got := submitBatch(t, s, next); got != original.commit.Ref {
@@ -594,7 +595,7 @@ func TestSessionCommitConflictExpiryAndNewerHead(t *testing.T) {
 					t.Fatal("missing lost ack")
 				}
 				root := backend.attempts[0].commit.Ref
-				winner, err = session.Load(context.Background(), h, testHistoryID(t), testConfigFor(sessionPolicy()))
+				winner, err = session.Load(context.Background(), h, testSessionID(t), testConfigFor(sessionPolicy()))
 				mustBatch(t, err)
 				if winner.Snapshot().Head() != root {
 					t.Fatal("loaded winner endpoint")

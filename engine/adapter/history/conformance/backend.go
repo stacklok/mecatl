@@ -7,6 +7,7 @@ import (
 	"math"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 )
@@ -16,7 +17,7 @@ import (
 func backendContract(t *testing.T, factory Factory) {
 	b := factory(t)
 	ctx := context.Background()
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	_, root := encoded(t, id, history.CommitRef{}, "root")
 	_, second := encoded(t, id, root, "second")
 	_, competing := encoded(t, id, history.CommitRef{}, "competing")
@@ -117,7 +118,7 @@ func backendContract(t *testing.T, factory Factory) {
 	if got, err := b.Observe(canceled, id, 1); !errors.Is(err, context.Canceled) || got != (history.Observation{}) {
 		t.Fatalf("canceled Observe = %+v, %v", got, err)
 	}
-	if got, err := b.Append(canceled, history.NewHistoryID(), history.CommitRef{}, history.ByteCommit{Ref: root, Bytes: original}); !errors.Is(err, context.Canceled) || got != (history.Observation{}) {
+	if got, err := b.Append(canceled, resourceid.New("FOO"), history.CommitRef{}, history.ByteCommit{Ref: root, Bytes: original}); !errors.Is(err, context.Canceled) || got != (history.Observation{}) {
 		t.Fatalf("canceled Append = %+v, %v", got, err)
 	}
 	r.Through = second
@@ -143,7 +144,7 @@ func backendAppendSequences(t *testing.T, factory Factory) {
 		{"overflow-expected", 1, math.MaxInt64, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			b, ctx, id := factory(t), context.Background(), history.NewHistoryID()
+			b, ctx, id := factory(t), context.Background(), resourceid.New("FOO")
 			ref := func(sequence int64) history.CommitRef {
 				if sequence == 0 {
 					return history.CommitRef{}
@@ -192,7 +193,7 @@ func backendAppendSequences(t *testing.T, factory Factory) {
 // This intentionally is not part of the portable backend contract test.
 func boundedByteReadAllocation(t *testing.T, factory Factory) {
 	b := factory(t)
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	_, root := encoded(t, id, history.CommitRef{}, "large opaque bytes")
 	stored := bytes.Repeat([]byte{1}, largeInputBytes)
 	if got, err := b.Append(context.Background(), id, history.CommitRef{}, history.ByteCommit{Ref: root, Bytes: stored}); err != nil || got != (history.Observation{Head: root, Commit: root}) {
@@ -221,7 +222,7 @@ func boundedByteReadAllocation(t *testing.T, factory Factory) {
 		})
 	}
 
-	prefixID := history.NewHistoryID()
+	prefixID := resourceid.New("FOO")
 	_, small := encoded(t, prefixID, history.CommitRef{}, "small opaque bytes")
 	_, large := encoded(t, prefixID, small, "large opaque tail")
 	prefix := []byte{0xff, 2, 3, 4}

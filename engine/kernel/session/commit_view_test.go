@@ -24,7 +24,7 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 			h, s, p := newIteratorSession(t)
 			b := beginBatch(t, s)
 			empty := captureCommit(t, b)
-			if empty.HistoryID() != s.Snapshot().HistoryID() || empty.RecordCount() != 0 || empty.ActiveRun() != (session.RunID{}) {
+			if empty.SessionID() != s.Snapshot().SessionID() || empty.RecordCount() != 0 || empty.ActiveRun() != (session.RunID{}) {
 				t.Fatal("uncreated capture")
 			}
 			mustBatch(t, b.Create())
@@ -41,7 +41,7 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 			mustBatch(t, err)
 			v := captureCommit(t, b)
 			clear(data)
-			if v.HistoryID() != run.HistoryID() || v.ActiveRun() != run || v.RecordCount() != 4 || empty.RecordCount() != 0 {
+			if v.SessionID() != run.SessionID() || v.ActiveRun() != run || v.RecordCount() != 4 || empty.RecordCount() != 0 {
 				t.Fatal("capture scope, active run or bounds")
 			}
 			accepted, _ := v.RecordAt(2).UserInput()
@@ -64,14 +64,14 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 			for i := range before {
 				before[i] = v.RecordAt(i).MutableClone().Payload
 			}
-			mustBatch(t, b.ReplaceRootInstructions(run.HistoryID(), session.RootInstructions{}))
+			mustBatch(t, b.ReplaceRootInstructions(run.SessionID(), session.RootInstructions{}))
 			mustBatch(t, b.EndRun(session.RunEndedInterrupted))
 			if captureCommit(t, b).ActiveRun() != (session.RunID{}) || v.ActiveRun() != run {
 				t.Fatal("active run not pinned")
 			}
 			if closeBatch == "Submit" {
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, run.HistoryID(), testConfigFor(p))
+				loaded, err := session.Load(t.Context(), h, run.SessionID(), testConfigFor(p))
 				mustBatch(t, err)
 				for i := range before {
 					if !bytes.Equal(before[i], loaded.Snapshot().RecordAt(i).MutableClone().Payload) {
@@ -107,7 +107,7 @@ func TestCommitViewPinnedSegmentsAndLifetime(t *testing.T) {
 
 func TestCommitViewZeroAndOriginalHandle(t *testing.T) {
 	var zero session.CommitView
-	if zero.RecordCount() != 0 || zero.ActiveRun() != (session.RunID{}) || zero.HistoryID() != (session.Snapshot{}).HistoryID() {
+	if zero.RecordCount() != 0 || zero.ActiveRun() != (session.RunID{}) || zero.SessionID() != (session.Snapshot{}).SessionID() {
 		t.Fatal("zero view")
 	}
 	for range zero.Records() {

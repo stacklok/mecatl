@@ -15,7 +15,7 @@ import (
 )
 
 func TestContextActualReserveAndSoftBounds(t *testing.T) {
-	scope := testHistoryID(t)
+	scope := testSessionID(t)
 	instructions := session.RootInstructions{Blocks: []session.InstructionBlock{{Key: "harness/core", Parts: []session.ContentPart{{Text: new("retained context payload")}}, Source: session.ContentSource{Description: "caller prepared"}}}}
 	contextRecord := encodeFixture(t, sessionformat.KindRootInstructions, sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core", Parts: []sessionformat.ContentPart{{Text: new("retained context payload")}}, Source: sessionformat.ContentSource{Description: "caller prepared"}}}})
 	initial := []fixtureRecord{createdRecord(t), startRecord(t, 1), contextRecord}

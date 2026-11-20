@@ -22,7 +22,7 @@ func testConfigFor(p Policy) Config {
 
 func TestAuthoringConfig(t *testing.T) {
 	h := newSessionHistory(t)
-	id := testHistoryID(t)
+	id := testSessionID(t)
 	p := sessionPolicy()
 	for _, construct := range []func(Config) (*Session, error){
 		func(c Config) (*Session, error) { return New(h, id, c) },

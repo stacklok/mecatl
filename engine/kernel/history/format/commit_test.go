@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 func TestCommitClone(t *testing.T) {
@@ -33,14 +33,14 @@ func TestCommitClone(t *testing.T) {
 	if cloned.HistoryID == source.HistoryID || cloned.Parent == source.Parent {
 		t.Fatal("clone retained identity pointers")
 	}
-	*source.HistoryID = historyid.HistoryID{}
+	*source.HistoryID = resourceid.ID{}
 	*source.Parent = contentid.CID{}
 	if want := commitFixture(t); *cloned.HistoryID != *want.HistoryID || *cloned.Parent != *want.Parent {
 		t.Fatal("source identity mutation changed clone")
 	}
 	want := commitFixture(t)
 	*source.HistoryID, *source.Parent = *want.HistoryID, *want.Parent
-	*cloned.HistoryID, *cloned.Parent = historyid.HistoryID{}, contentid.CID{}
+	*cloned.HistoryID, *cloned.Parent = resourceid.ID{}, contentid.CID{}
 	if *source.HistoryID != *want.HistoryID || *source.Parent != *want.Parent {
 		t.Fatal("clone identity mutation changed source")
 	}
@@ -81,7 +81,7 @@ func TestCommitEqual(t *testing.T) {
 			case "parent":
 				other.Parent = nil
 			case "history value":
-				*other.HistoryID = historyid.HistoryID{}
+				*other.HistoryID = resourceid.ID{}
 			case "parent value":
 				*other.Parent = contentid.CID{}
 			case "record timestamp":
@@ -107,7 +107,7 @@ func TestCommitEqual(t *testing.T) {
 	if !(format.Commit{}).Equal(format.Commit{Records: []format.Record{}}) || !(format.Commit{Records: []format.Record{}}).Equal(format.Commit{}) {
 		t.Fatal("nil and empty record groups must compare equal, without validation")
 	}
-	for _, present := range []format.Commit{{HistoryID: new(historyid.HistoryID)}, {Parent: new(contentid.CID)}} {
+	for _, present := range []format.Commit{{HistoryID: new(resourceid.ID)}, {Parent: new(contentid.CID)}} {
 		if (format.Commit{}).Equal(present) || present.Equal(format.Commit{}) || !present.Equal(present.Clone()) {
 			t.Fatal("pointer presence lost or present-zero normalized")
 		}
@@ -123,7 +123,7 @@ func TestCommitEqual(t *testing.T) {
 // and equality must preserve data without claiming format validity.
 func commitFixture(t *testing.T) format.Commit {
 	t.Helper()
-	h, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	h, err := resourceid.Parse("HST1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}

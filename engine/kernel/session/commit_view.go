@@ -4,7 +4,7 @@ import (
 	"iter"
 
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // CommitView pins the accepted prefix and proposed prefix of one SessionCommit.
@@ -16,7 +16,7 @@ import (
 // [0, RecordCount()). Readers may run concurrently with later owner-serialized writes.
 type CommitView struct {
 	origin    *SessionCommit
-	historyID historyid.HistoryID
+	sessionID sessionid.SessionID
 	activeRun RunID
 	head      history.CommitRef
 	accepted  []*materializedRecord
@@ -31,12 +31,12 @@ func (b *SessionCommit) View() (CommitView, error) {
 		return CommitView{}, err
 	}
 	v := b.owner.state.view
-	return CommitView{origin: b, historyID: v.historyID, activeRun: b.admission.candidate.activeRun,
+	return CommitView{origin: b, sessionID: v.sessionID, activeRun: b.admission.candidate.activeRun,
 		head: v.head, accepted: v.records, proposed: b.records}, nil
 }
 
-// HistoryID returns the captured history scope, including before creation.
-func (v CommitView) HistoryID() historyid.HistoryID { return v.historyID }
+// SessionID returns the captured Session scope, including before creation.
+func (v CommitView) SessionID() sessionid.SessionID { return v.sessionID }
 
 // ActiveRun returns the captured candidate run, or zero while idle.
 func (v CommitView) ActiveRun() RunID { return v.activeRun }
@@ -47,9 +47,9 @@ func (v CommitView) RecordCount() int { return len(v.accepted) + len(v.proposed)
 // RecordAt returns a scoped immutable record; out-of-range indices panic.
 func (v CommitView) RecordAt(i int) RecordView {
 	if i < len(v.accepted) {
-		return RecordView{scope: v.historyID, record: v.accepted[i]}
+		return RecordView{scope: v.sessionID, record: v.accepted[i]}
 	}
-	return RecordView{scope: v.historyID, record: v.proposed[i-len(v.accepted)]}
+	return RecordView{scope: v.sessionID, record: v.proposed[i-len(v.accepted)]}
 }
 
 // Records returns a repeatable, early-stoppable sequence pinned to both prefixes.

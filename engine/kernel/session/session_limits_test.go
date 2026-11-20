@@ -79,7 +79,7 @@ func TestSessionSoftAdmissionAndCleanupBoundaries(t *testing.T) {
 				if s.Snapshot().ActiveRun() != (session.RunID{}) || s.Snapshot().RecordCount() != 4 || len(backend.attempts) != 2 {
 					t.Fatal("cleanup did not consume only its own reserved fact")
 				}
-				loaded, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(p))
+				loaded, err := session.Load(context.Background(), h, testSessionID(t), testConfigFor(p))
 				mustBatch(t, err)
 				if !reflect.DeepEqual(captureRejectedSnapshot(loaded.Snapshot()), captureRejectedSnapshot(s.Snapshot())) || len(backend.attempts) != 2 {
 					t.Fatal("above-soft cleanup did not replay without writes")
@@ -108,9 +108,9 @@ func TestSessionHardReplayWithoutFutureWriteCapacity(t *testing.T) {
 					hard = closed
 				}
 				p := limitPolicy(t, dimension, initial[:2], hard)
-				loaded, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(p))
+				loaded, err := session.Load(context.Background(), h, testSessionID(t), testConfigFor(p))
 				mustBatch(t, err)
-				asserted, err := session.Load(context.Background(), h, testHistoryID(t), testConfigFor(p))
+				asserted, err := session.Load(context.Background(), h, testSessionID(t), testConfigFor(p))
 				mustBatch(t, err)
 				if !reflect.DeepEqual(captureRejectedSnapshot(loaded.Snapshot()), captureRejectedSnapshot(wide.Snapshot())) || !reflect.DeepEqual(captureRejectedSnapshot(asserted.Snapshot()), captureRejectedSnapshot(wide.Snapshot())) || len(backend.attempts) != 1 {
 					t.Fatal("hard-valid above-soft active replay changed state or wrote")
@@ -252,7 +252,7 @@ func TestSessionPolicySoftBoundsExplicit(t *testing.T) {
 				if !errors.Is(p.Validate(), session.ErrInvalidPolicy) {
 					t.Fatal("invalid soft bound accepted")
 				}
-				if s, err := session.New(newSessionHistory(t), testHistoryID(t), testConfigFor(p)); s != nil || !errors.Is(err, session.ErrInvalidPolicy) {
+				if s, err := session.New(newSessionHistory(t), testSessionID(t), testConfigFor(p)); s != nil || !errors.Is(err, session.ErrInvalidPolicy) {
 					t.Fatalf("New accepted invalid soft policy: %v", err)
 				}
 			})

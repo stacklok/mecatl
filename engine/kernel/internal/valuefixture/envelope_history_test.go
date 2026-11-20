@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -89,7 +90,7 @@ func TestEnvelopeHistoryPersistenceOwnership(t *testing.T) {
 	assertJSONValue(t, accepted, want.Value)
 	assertJSONMap(t, acceptedMap, want.Map)
 
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	proposal := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
 		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 1, Payload: payload}},
 	}

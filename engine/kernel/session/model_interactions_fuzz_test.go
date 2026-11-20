@@ -17,7 +17,7 @@ func FuzzModelInteractionConstructors(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, kind uint8, ordinal uint64, version, count int64, name string, data []byte) {
 		fixture, limits := internalFixture(t)
-		id := ModelRequestID{runID: RunID{historyID: fixture.Snapshot().HistoryID(), ordinal: ordinal}, requestOrdinal: ordinal}
+		id := ModelRequestID{runID: RunID{sessionID: fixture.Snapshot().SessionID(), ordinal: ordinal}, requestOrdinal: ordinal}
 		usage := UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: &count, CacheRead: new(int64(0))}}}, Raw: &OpaqueProviderData{Producer: name, Format: "usage", Version: version, Data: data}}
 		evidence := &ObservedEvidence{Detail: &name, Correlation: new("")}
 		var r *materializedRecord

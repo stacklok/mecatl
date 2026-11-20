@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 )
@@ -25,7 +26,7 @@ func (c *precheckedContext) Err() error {
 }
 
 func TestCancellationAfterInitialBackendCheck(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	encoded := []byte{0xff, 0, 1} // Backend storage is schema-opaque.
 	cid := contentid.Sum(encoded)
 	root := history.ByteCommit{Ref: history.CommitRef{Sequence: 1, CID: cid}, Bytes: encoded}

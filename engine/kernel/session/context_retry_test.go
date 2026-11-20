@@ -22,7 +22,7 @@ func TestContextFrozenRetryAndConcurrentPinnedReads(t *testing.T) {
 	p.SoftMaxRetainedRecords = 256
 	p.MaxRetainedRecords = 256
 	s := boundSession(t, h, p)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
@@ -117,7 +117,7 @@ func TestContextSoftAdmissionAndActualBulkReserve(t *testing.T) {
 		batchRun(t, b)
 		submitBatch(t, s, b)
 		b = beginBatch(t, s)
-		mustBatch(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), session.RootInstructions{}))
+		mustBatch(t, b.ReplaceRootInstructions(s.Snapshot().SessionID(), session.RootInstructions{}))
 		if mixedCloseout {
 			// A mixed context+bulk ending is ordinary resource admission, not cleanup.
 			mustBatch(t, b.AddRunEnded(s.Snapshot().ActiveRun(), session.RunEnded{Reason: session.RunEndedCaptureFailed, BulkToolCloseout: true}))

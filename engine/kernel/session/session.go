@@ -9,8 +9,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ErrTransition identifies illegal lifecycle ordering or input ownership.
@@ -40,9 +40,9 @@ type sessionState struct {
 	payloadBytes uint64
 }
 
-// validateHistoryID checks the session's history identity grammar.
-func validateHistoryID(id historyid.HistoryID) error {
-	if _, err := historyid.ParseHistoryID(id.String()); err != nil {
+// validateSessionID checks the Session-owned identity grammar, including its kind.
+func validateSessionID(id sessionid.SessionID) error {
+	if _, err := sessionid.ParseSessionID(id.String()); err != nil {
 		return errors.New("invalid session history ID")
 	}
 	return nil
@@ -52,21 +52,21 @@ func validateHistoryID(id historyid.HistoryID) error {
 // I/O or clock sampling. Invalid Config.Policy returns nil, ErrInvalidPolicy; zero
 // config InstanceID returns nil, ErrInvalidConfig; nil History or invalid scope
 // returns nil, ErrIdentity. Creation must be added to the first batch.
-func New(h *history.History, id historyid.HistoryID, config Config) (*Session, error) {
+func New(h *history.History, id sessionid.SessionID, config Config) (*Session, error) {
 	if err := config.Policy.Validate(); err != nil {
 		return nil, err
 	}
 	if h == nil {
 		return nil, ErrIdentity
 	}
-	if err := validateHistoryID(id); err != nil {
+	if err := validateSessionID(id); err != nil {
 		return nil, ErrIdentity
 	}
 	config, err := config.normalized()
 	if err != nil {
 		return nil, err
 	}
-	return &Session{history: h, policy: config.Policy, config: config, state: sessionState{view: Snapshot{historyID: id}}}, nil
+	return &Session{history: h, policy: config.Policy, config: config, state: sessionState{view: Snapshot{sessionID: id}}}, nil
 }
 
 // loadError preserves the storage cause without projecting backend-controlled
@@ -85,12 +85,12 @@ func (e loadError) Unwrap() error { return e.cause }
 // write admission or future closeout room. Unknown histories return
 // history.ErrNotFound, not an uncreated session.
 // Any error returns nil, never a partially reconstructed object.
-func Load(ctx context.Context, h *history.History, id historyid.HistoryID, config Config) (*Session, error) {
+func Load(ctx context.Context, h *history.History, id sessionid.SessionID, config Config) (*Session, error) {
 	s, err := New(h, id, config)
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := h.Head(ctx, id)
+	endpoint, err := h.Head(ctx, id.ResourceID())
 	if err != nil {
 		return nil, loadError{cause: err}
 	}
@@ -98,7 +98,7 @@ func Load(ctx context.Context, h *history.History, id historyid.HistoryID, confi
 	// commit respects every valid History policy; its byte bounds still apply.
 	request := history.ReadRequest{Through: endpoint, MaxCommits: 1}
 	for request.After != endpoint {
-		page, err := h.Read(ctx, id, request)
+		page, err := h.Read(ctx, id.ResourceID(), request)
 		if err != nil {
 			return nil, loadError{cause: err}
 		}
@@ -147,7 +147,7 @@ func (s *Session) prepareEnding(reason RunEndedReason) (prepared, error) {
 
 // prepare deterministically assembles owner-validated immutable backing with
 // explicitly supplied metadata, also while submission holds its batch's slot.
-// It never samples a clock. It supplies enclosing history scope; payload references
+// It never samples a clock. It supplies enclosing Session scope; payload references
 // are destination-run-relative and carry no origin provenance.
 func (s *Session) prepare(records []*materializedRecord, timestamp int64, instanceID uint64) (prepared, error) {
 	if err := s.policy.Validate(); err != nil {
@@ -176,7 +176,7 @@ func (s *Session) prepare(records []*materializedRecord, timestamp int64, instan
 	}
 	c := format.Commit{FormatVersion: 1, Timestamp: timestamp, InstanceID: instanceID, Sequence: v.head.Sequence + 1, Records: make([]format.Record, len(records))}
 	if v.head == (history.CommitRef{}) {
-		c.HistoryID = new(v.historyID)
+		c.HistoryID = new(v.sessionID.ResourceID())
 	} else {
 		c.Parent = new(v.head.CID)
 	}
@@ -188,7 +188,7 @@ func (s *Session) prepare(records []*materializedRecord, timestamp int64, instan
 		return prepared{}, err
 	}
 	if s.history != nil {
-		if _, err := s.history.Identify(v.historyID, c); err != nil {
+		if _, err := s.history.Identify(v.sessionID.ResourceID(), c); err != nil {
 			return prepared{}, err
 		}
 	}
@@ -246,7 +246,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 		if err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
-		if err := admission.admit(candidate.view.historyID, fact); err != nil {
+		if err := admission.admit(candidate.view.sessionID, fact); err != nil {
 			return sessionState{}, history.CommitRef{}, err
 		}
 		fact.commit = metadata
@@ -271,7 +271,7 @@ func (s *Session) evaluate(c format.Commit, expected *history.CommitRef) (sessio
 	candidate.payloadBytes += total
 	entry := commitEntry{ref: ref, metadata: metadata, formatVersion: c.FormatVersion, recordStart: len(candidate.view.records), recordCount: len(staged)}
 	if c.HistoryID != nil {
-		entry.historyID = *c.HistoryID
+		entry.sessionID = candidate.view.sessionID
 	}
 	if c.Parent != nil {
 		entry.parent = *c.Parent
@@ -316,7 +316,7 @@ func (s *Session) checkAncestry(c format.Commit, expected *history.CommitRef) er
 		return ErrIdentity
 	}
 	if v.head == (history.CommitRef{}) {
-		if c.HistoryID == nil || *c.HistoryID != v.historyID || c.Parent != nil {
+		if c.HistoryID == nil || *c.HistoryID != v.sessionID.ResourceID() || c.Parent != nil {
 			return ErrIdentity
 		}
 	} else if c.HistoryID != nil || c.Parent == nil || *c.Parent != v.head.CID {

@@ -4,15 +4,15 @@ import (
 	"reflect"
 	"testing"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestRunID(t *testing.T) {
-	h := testHistoryID(t)
+	h := testSessionID(t)
 	first, second := allocatedRun(t, h, 1), allocatedRun(t, h, 2)
 	copied := first
-	if first.Validate() != nil || first.HistoryID() != h || !first.Equal(copied) || first == second {
+	if first.Validate() != nil || first.SessionID() != h || !first.Equal(copied) || first == second {
 		t.Fatal("allocated run identity or scope")
 	}
 	if (session.RunID{}).Validate() == nil {
@@ -29,7 +29,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 	mustBatch(t, err)
 	allocatedInput, err := b.AddUserInput(allocatedRun, session.UserInput{})
 	mustBatch(t, err)
-	mustBatch(t, b.ReplaceModelBinding(allocatedRun.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+	mustBatch(t, b.ReplaceModelBinding(allocatedRun.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	b = beginBatch(t, s)
 	requestID, err := b.AddModelRequest(allocatedRun, captureCommit(t, b), session.ModelRequest{Recipe: session.ConstructionRecipe{Algorithm: "fixture", Version: 1, Check: []byte{1}}})
@@ -44,7 +44,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 		t.Fatal("submitted response missing")
 	}
 	allocatedCall := response.CallAt(0).ID()
-	if got := mustRunID(t, allocatedRun.HistoryID(), allocatedRun.HistoryRelative()); got != allocatedRun {
+	if got := mustRunID(t, allocatedRun.SessionID(), allocatedRun.SessionRelative()); got != allocatedRun {
 		t.Fatal("allocated run round trip")
 	}
 	if got := mustUserInputID(t, allocatedInput.RunID(), allocatedInput.RunRelative()); got != allocatedInput {
@@ -56,7 +56,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 	if got := mustRequestedCallID(t, allocatedCall.RequestID(), allocatedCall.RequestRelative()); got != allocatedCall {
 		t.Fatal("allocated call round trip")
 	}
-	s, err = session.Load(t.Context(), h, allocatedRun.HistoryID(), testConfigFor(sessionPolicy()))
+	s, err = session.Load(t.Context(), h, allocatedRun.SessionID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 
 	loadedRun := s.Snapshot().ActiveRun()
@@ -83,7 +83,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 		got  any
 		want any
 	}{
-		"loaded run":     {mustRunID(t, loadedRun.HistoryID(), loadedRun.HistoryRelative()), loadedRun},
+		"loaded run":     {mustRunID(t, loadedRun.SessionID(), loadedRun.SessionRelative()), loadedRun},
 		"loaded input":   {mustUserInputID(t, inputID.RunID(), inputID.RunRelative()), inputID},
 		"loaded request": {mustModelRequestID(t, requestID.RunID(), requestID.RunRelative()), requestID},
 		"loaded call":    {mustRequestedCallID(t, callID.RequestID(), callID.RequestRelative()), callID},
@@ -95,7 +95,7 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 		})
 	}
 
-	otherRun := mustRunID(t, historyid.NewHistoryID(), loadedRun.HistoryRelative())
+	otherRun := mustRunID(t, sessionid.NewSessionID(), loadedRun.SessionRelative())
 	otherInput := mustUserInputID(t, otherRun, inputID.RunRelative())
 	otherRequest := mustModelRequestID(t, otherRun, requestID.RunRelative())
 	otherCall := mustRequestedCallID(t, otherRequest, callID.RequestRelative())
@@ -113,11 +113,11 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 
 	for name, tc := range map[string]func() bool{
 		"run parent": func() bool {
-			id, err := session.NewRunID(historyid.HistoryID{}, 1)
+			id, err := session.NewRunID(sessionid.SessionID{}, 1)
 			return err != nil && id == (session.RunID{})
 		},
 		"run component": func() bool {
-			id, err := session.NewRunID(loadedRun.HistoryID(), 0)
+			id, err := session.NewRunID(loadedRun.SessionID(), 0)
 			return err != nil && id == (session.RunID{})
 		},
 		"input parent": func() bool {
@@ -152,14 +152,14 @@ func TestOccurrenceIDDecompositionAndReconstruction(t *testing.T) {
 		})
 	}
 
-	if (session.RunID{}).HistoryRelative() != 0 || (session.UserInputID{}).RunRelative() != 0 || (session.ModelRequestID{}).RunRelative() != 0 || (session.RequestedCallID{}).RequestRelative() != 0 {
+	if (session.RunID{}).SessionRelative() != 0 || (session.UserInputID{}).RunRelative() != 0 || (session.ModelRequestID{}).RunRelative() != 0 || (session.RequestedCallID{}).RequestRelative() != 0 {
 		t.Fatal("zero identity relative component")
 	}
 }
 
-func mustRunID(t testing.TB, historyID historyid.HistoryID, component uint64) session.RunID {
+func mustRunID(t testing.TB, sessionID sessionid.SessionID, component uint64) session.RunID {
 	t.Helper()
-	id, err := session.NewRunID(historyID, component)
+	id, err := session.NewRunID(sessionID, component)
 	mustBatch(t, err)
 	return id
 }
@@ -200,7 +200,7 @@ func TestOccurrenceIDsExposeOnlyIdentityOperations(t *testing.T) {
 			for _, receiver := range []reflect.Type{typ, reflect.PointerTo(typ)} {
 				for i := range receiver.NumMethod() {
 					switch name := receiver.Method(i).Name; name {
-					case "Equal", "Validate", "HistoryID", "HistoryRelative", "RunID", "RunRelative", "RequestID", "RequestRelative", "String":
+					case "Equal", "Validate", "SessionID", "SessionRelative", "RunID", "RunRelative", "RequestID", "RequestRelative", "String":
 					default:
 						t.Errorf("non-identity public operation: %s", name)
 					}

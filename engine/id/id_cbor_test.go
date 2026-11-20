@@ -44,7 +44,7 @@ func TestIDCBOR(t *testing.T) {
 		t.Fatal("transparent read depth", err)
 	}
 
-	for _, invalid := range []ID{{}, {value: "RUN" + text[3:]}, {value: text[:24] + "0"}, {value: "HST"}} {
+	for _, invalid := range []ID{{}, {value: "RuN" + text[3:]}, {value: text[:24] + "0"}, {value: "HST"}} {
 		if err := codec.Check(invalid, limits); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatal("invalid ID accepted", err)
 		}
@@ -61,11 +61,29 @@ func TestIDCBOR(t *testing.T) {
 	}
 }
 
+func TestIDCBOROpenKinds(t *testing.T) {
+	for _, kind := range []Kind{"FOO", "SES", "RUN", "AAA", "IOO", "ZZZ"} {
+		text := string(kind) + strings.Repeat("1", 22)
+		v, err := Parse(text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := codec.Encode(v, idCodecLimits())
+		if err != nil || !bytes.Equal(wire, append([]byte{0x78, 25}, text...)) {
+			t.Fatalf("kind %q encoding = %x, %v", kind, wire, err)
+		}
+		decoded, err := codec.Decode[ID](wire, idCodecLimits())
+		if err != nil || decoded != v {
+			t.Fatalf("kind %q round trip = %v, %v", kind, decoded, err)
+		}
+	}
+}
+
 func TestIDCBORReadFailurePreservesReceiver(t *testing.T) {
 	text := "HST" + strings.Repeat("1", 22)
 	v, _ := Parse(text)
 	wire := append([]byte{0x78, 25}, text...)
-	cases := [][]byte{{0xf6}, {0xa0}, {0x60}, append([]byte{0x78, 25}, "RUN"+text[3:]...), append([]byte{0x78, 25}, text[:24]+"0"...)}
+	cases := [][]byte{{0xf6}, {0xa0}, {0x60}, append([]byte{0x78, 25}, "RuN"+text[3:]...), append([]byte{0x78, 25}, text[:24]+"0"...)}
 	for end := range len(wire) {
 		cases = append(cases, wire[:end])
 	}

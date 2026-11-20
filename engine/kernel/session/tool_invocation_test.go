@@ -13,7 +13,7 @@ import (
 )
 
 func TestToolInvocationMaterializationAndView(t *testing.T) {
-	call := RequestedCallID{requestID: requestID(testHistoryID(t), 7, 9), ordinal: 3}
+	call := RequestedCallID{requestID: requestID(testSessionID(t), 7, 9), ordinal: 3}
 	items := []value.Value{value.Int64(math.MinInt64), value.Uint64(math.MaxUint64), value.Null()}
 	nested := value.Map{"items": value.Array(items), "empty": value.Object(nil)}
 	v := ToolInvocation{Name: " effective tool ", Arguments: value.Map{"nested": value.Object(nested), "sibling": value.String("unchanged")}, Prerequisites: []uint64{2, 1}}
@@ -26,7 +26,7 @@ func TestToolInvocationMaterializationAndView(t *testing.T) {
 	if r.value.Kind != sessionformat.KindToolInvocation || r.value.KindVersion != 1 || !bytes.Equal(wire, r.value.Payload) || !r.toolInvocation.Equal(want) {
 		t.Fatal("materialized invocation differs from complete persisted DTO")
 	}
-	view, ok := (RecordView{scope: testHistoryID(t), record: r}).ToolInvocation()
+	view, ok := (RecordView{scope: testSessionID(t), record: r}).ToolInvocation()
 	if !ok || view.CallID() != call || view.Name() != v.Name || view.Arguments().Len() != 2 {
 		t.Fatal("invocation identity or fields")
 	}
@@ -87,7 +87,7 @@ func TestToolInvocationMaterializationAndView(t *testing.T) {
 	requested := []byte{0xff, 0, '{', ' '}
 	responseRecord, err := newModelResponseRecord(ModelResponse{Terminal: ResponseTerminalNormal, Items: []ResponseItem{{Call: &RequestedCall{Name: "requested", Arguments: requested}}}}, call.RequestID(), testLimits())
 	interactionCheck(t, err)
-	response, _ := (RecordView{scope: testHistoryID(t), record: responseRecord}).ModelResponse()
+	response, _ := (RecordView{scope: testSessionID(t), record: responseRecord}).ModelResponse()
 	original := response.CallAt(0)
 	clear(requested)
 	if original.Name() != "requested" || !bytes.Equal(original.Arguments().Copy(), []byte{0xff, 0, '{', ' '}) || view.Name() != " effective tool " {
@@ -96,7 +96,7 @@ func TestToolInvocationMaterializationAndView(t *testing.T) {
 	for _, args := range []value.Map{nil, {}} {
 		r, err := newToolInvocationRecord(ToolInvocation{Name: "x", Arguments: args}, call, testLimits())
 		interactionCheck(t, err)
-		view, _ := (RecordView{scope: testHistoryID(t), record: r}).ToolInvocation()
+		view, _ := (RecordView{scope: testSessionID(t), record: r}).ToolInvocation()
 		j, err := json.Marshal(view.Arguments())
 		if err != nil || string(j) != "{}" {
 			t.Fatalf("empty effective object: %s, %v", j, err)
@@ -105,7 +105,7 @@ func TestToolInvocationMaterializationAndView(t *testing.T) {
 }
 
 func TestToolInvocationMaterializationBounds(t *testing.T) {
-	call := RequestedCallID{requestID: requestID(testHistoryID(t), 1, 1), ordinal: 3}
+	call := RequestedCallID{requestID: requestID(testSessionID(t), 1, 1), ordinal: 3}
 	cycle := value.Map{}
 	cycle["self"] = value.Object(cycle)
 	for _, tc := range []struct {
@@ -133,7 +133,7 @@ func TestToolInvocationMaterializationBounds(t *testing.T) {
 
 func TestToolFactZeroAndWrongKindViews(t *testing.T) {
 	created := interactionRecord(t)(newCreatedRecord(Created{}, testLimits()))
-	for _, record := range []RecordView{{}, {scope: testHistoryID(t), record: created}} {
+	for _, record := range []RecordView{{}, {scope: testSessionID(t), record: created}} {
 		invocation, ok := record.ToolInvocation()
 		if ok || invocation.CallID() != (RequestedCallID{}) || invocation.Name() != "" || invocation.Arguments().Len() != 0 || invocation.Prerequisites().Len() != 0 {
 			t.Fatal("zero or wrong-kind invocation")

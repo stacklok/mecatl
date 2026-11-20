@@ -39,7 +39,7 @@ func interactionRecord(t testing.TB) func(*materializedRecord, error) *materiali
 }
 func interactionRequest(s *Session, ordinal uint64) identifiedRequest {
 	head := s.Snapshot().Head()
-	return identifiedRequest{ID: ModelRequestID{runID: RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}, requestOrdinal: ordinal}, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: ConstructionRecipe{Algorithm: "unknown/construction", Version: 9, Parameters: []byte{0xff, 0}, Check: []byte{1}}}}
+	return identifiedRequest{ID: ModelRequestID{runID: RunID{sessionID: s.Snapshot().SessionID(), ordinal: 1}, requestOrdinal: ordinal}, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: head.Sequence, CID: head.CID}, Recipe: ConstructionRecipe{Algorithm: "unknown/construction", Version: 9, Parameters: []byte{0xff, 0}, Check: []byte{1}}}}
 }
 func interactionFixture(t testing.TB, stage string) *Session {
 	t.Helper()
@@ -50,7 +50,7 @@ func interactionFixture(t testing.TB, stage string) *Session {
 			_, err := b.StartRun()
 			interactionCheck(t, err)
 			if stage != "unbound" {
-				interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
+				interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().SessionID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 			}
 		}
 	})
@@ -80,7 +80,7 @@ func interactionCommit(t testing.TB, s *Session, records []*materializedRecord) 
 	for _, r := range records {
 		c.Records = append(c.Records, r.format())
 	}
-	ref, err := s.history.Identify(s.Snapshot().HistoryID(), c)
+	ref, err := s.history.Identify(s.Snapshot().SessionID().ResourceID(), c)
 	interactionCheck(t, err)
 	return history.Commit{Ref: ref, Commit: c}
 }
@@ -159,7 +159,7 @@ func TestAdmissionFailureAtomicity(t *testing.T) {
 			a := newAdmission(s.state.view)
 			candidate, source, head := a.candidate, a.source, a.head
 
-			if err := a.admit(s.Snapshot().HistoryID(), tc.make(s)); !errors.Is(err, tc.want) {
+			if err := a.admit(s.Snapshot().SessionID(), tc.make(s)); !errors.Is(err, tc.want) {
 				t.Fatalf("admit: %v; want %v", err, tc.want)
 			}
 			if a.candidate != candidate {
@@ -237,12 +237,12 @@ func TestInteractionEffectiveContributionFrontier(t *testing.T) {
 				err = s.apply(interactionCommit(t, s, records))
 			case "load":
 				commit := interactionCommit(t, s, records)
-				result, appendErr := s.history.Append(context.Background(), s.Snapshot().HistoryID(), commit.Commit)
+				result, appendErr := s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), commit.Commit)
 				interactionCheck(t, appendErr)
 				if result.Status != history.StatusAccepted {
 					t.Fatal("history rejected locally valid forged contribution")
 				}
-				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+				loaded, loadErr := Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 				if loaded != nil && (loaded.state.view.lifecycle.captured != 3 || loaded.state.view.lifecycle.pending != interactionRequest(s, 2).ID) {
 					t.Fatal("load lost prospective coverage")
 				}
@@ -295,7 +295,7 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 	cases := []testCase{
 		{"valid request", "active", func(s *Session) []*materializedRecord { return []*materializedRecord{request(s)} }, nil},
 		{"candidate start and binding", "idle", func(s *Session) []*materializedRecord {
-			return []*materializedRecord{interactionRecord(t)(newRunStartedRecord(RunStarted{ID: interactionRequest(s, 1).ID.runID.HistoryRelative()}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
+			return []*materializedRecord{interactionRecord(t)(newRunStartedRecord(RunStarted{ID: interactionRequest(s, 1).ID.runID.SessionRelative()}, s.policy.PayloadLimits)), contextRecord(s), request(s)}
 		}, nil},
 		{"candidate binding", "unbound", func(s *Session) []*materializedRecord { return []*materializedRecord{contextRecord(s), request(s)} }, nil},
 		{"context before and after prospective", "active", func(s *Session) []*materializedRecord {
@@ -384,12 +384,12 @@ func TestInteractionAdmissionAllPaths(t *testing.T) {
 						err = s.apply(interactionCommit(t, s, records))
 					case "load":
 						c := interactionCommit(t, s, records)
-						result, e := s.history.Append(context.Background(), s.Snapshot().HistoryID(), c.Commit)
+						result, e := s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), c.Commit)
 						interactionCheck(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("history did not accept locally valid commit")
 						}
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+						_, err = Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					}
 					if !errors.Is(err, tc.want) {
 						t.Fatalf("got %v; want %v", err, tc.want)
@@ -444,7 +444,7 @@ func TestInteractionOverflowAndMaterializationAgreement(t *testing.T) {
 		imported, err := decodeMaterialized(r.format(), s.policy.PayloadLimits)
 		interactionCheck(t, err)
 		a, b := newAdmission(s.state.view), newAdmission(s.state.view)
-		x, y := a.admit(s.Snapshot().HistoryID(), r), b.admit(s.Snapshot().HistoryID(), imported)
+		x, y := a.admit(s.Snapshot().SessionID(), r), b.admit(s.Snapshot().SessionID(), imported)
 		if !errors.Is(x, y) || !reflect.DeepEqual(a.candidate, b.candidate) {
 			t.Fatalf("constructed and decoded gates disagree for %s: %v/%v", r.value.Kind, x, y)
 		}

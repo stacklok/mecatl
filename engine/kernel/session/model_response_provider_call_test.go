@@ -14,7 +14,7 @@ func TestModelResponseProviderCallIDsSubmitLoadAndSettlement(t *testing.T) {
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+	mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	providerIDs := []string{" exact provider/尾 \n", "duplicate", "duplicate", ""}
 	reasons := []session.ToolNotInvokedReason{session.ToolNotInvokedUserDenied, session.ToolNotInvokedUnavailable, session.ToolNotInvokedInfrastructureFailed, session.ToolNotInvokedPolicyRejected}

@@ -8,8 +8,8 @@ import (
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 //
 //dtogen:validate validateLocal
 //dtogen:include

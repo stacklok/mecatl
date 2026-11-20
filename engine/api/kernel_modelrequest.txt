@@ -1,8 +1,8 @@
     ifacemethod func (Source).ActiveRun() session.RunID
-    ifacemethod func (Source).HistoryID() id.HistoryID
     ifacemethod func (Source).RecordAt(int) session.RecordView
     ifacemethod func (Source).RecordCount() int
     ifacemethod func (Source).Records() iter.Seq[session.RecordView]
+    ifacemethod func (Source).SessionID() id.SessionID
     method func (AssistantItemView).Call() (ToolCallView, bool)
     method func (AssistantItemView).MutableClone() format.AssistantItem
     method func (AssistantItemView).Output() (ContentBlockView, bool)
@@ -76,7 +76,7 @@ type MediaView struct{}
 type ModelSettingsView struct{}
 type OpaqueProviderDataView struct{}
 type Request struct{}
-type Source interface{ActiveRun() session.RunID; HistoryID() id.HistoryID; RecordAt(int) session.RecordView; RecordCount() int; Records() iter.Seq[session.RecordView]}
+type Source interface{ActiveRun() session.RunID; RecordAt(int) session.RecordView; RecordCount() int; Records() iter.Seq[session.RecordView]; SessionID() id.SessionID}
 type ToolCallView struct{}
 type ToolDefinitionView struct{}
 type ToolResultView struct{}

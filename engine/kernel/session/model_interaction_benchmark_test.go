@@ -30,7 +30,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+	mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 	submitBatch(t, s, b)
 	parameters := bytes.Repeat([]byte{0xa5}, field)
 	check := bytes.Repeat([]byte{0x5a}, sibling)
@@ -88,7 +88,7 @@ func completeInteractionFixture(t testing.TB, count, field, sibling int) map[str
 		mustBatch(t, err)
 	}
 	submitBatch(t, s, b)
-	loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
+	loaded, err := session.Load(t.Context(), h, s.Snapshot().SessionID(), testConfigFor(p))
 	mustBatch(t, err)
 	sessions := map[string]*session.Session{"Submit": s, "Load": loaded}
 	for seam, inspected := range sessions {
@@ -197,7 +197,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 		if usage, ok := record.Usage(); ok {
 			definition, present := usage.Definition()
 			request, correlated := definition.RequestID()
-			if !present || !correlated || request.RunID().HistoryID() != snap.HistoryID() || definition.Purpose() != session.UsagePurposeMain {
+			if !present || !correlated || request.RunID().SessionID() != snap.SessionID() || definition.Purpose() != session.UsagePurposeMain {
 				panic("usage scope")
 			}
 			inspectInteractionUsage(usage.Report(), true, exports, &visits)
@@ -205,7 +205,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 		if v, ok := record.ModelRequest(); ok {
 			visits.requests++
 			source, present := v.Source()
-			if v.ID().RunID().HistoryID() != snap.HistoryID() || !present || source.Sequence() == 0 || source.CID() == (contentid.CID{}) {
+			if v.ID().RunID().SessionID() != snap.SessionID() || !present || source.Sequence() == 0 || source.CID() == (contentid.CID{}) {
 				panic("request scope/source")
 			}
 			if retry, ok := v.RetryOf(); ok {
@@ -326,7 +326,7 @@ func traverseCompleteInteraction(snap session.Snapshot, exports bool) interactio
 		}
 		if v, ok := record.RunEnded(); ok {
 			visits.endings++
-			if v.RunID().HistoryID() != snap.HistoryID() {
+			if v.RunID().SessionID() != snap.SessionID() {
 				panic("ending scope")
 			}
 			text, textOK := v.Explanation()

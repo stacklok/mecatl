@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // InvocationFailureClass is a closed classification of locally observed invocation
@@ -58,7 +58,7 @@ func newInvocationFailureRecord(v InvocationFailure, request ModelRequestID, lim
 //
 //dtogen:include
 type InvocationFailureView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.InvocationFailure
 }
 
