@@ -400638,6 +400638,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795209896058,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "01bbed031c0f9e83721e25ce304516f8fa258c4b",
+          "message": "feat(history): add durable SQLite kernel backend (#2766)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-20T14:28:54-08:00",
+          "tree_id": "74cfdb9c9497ce7ccafd30a3e19bcba185d0a537",
+          "url": "https://github.com/stacklok/mecatl/commit/01bbed031c0f9e83721e25ce304516f8fa258c4b"
+        },
+        "date": 1795214531002,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -578119,6 +578153,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795214527554,
+  "lastUpdate": 1795214531799,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
