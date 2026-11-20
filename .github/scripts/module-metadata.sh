@@ -35,8 +35,10 @@ fi
 if [ "$failed" -ne 0 ]; then
   cat >&2 <<'EOF'
 Review the files above and include legitimate metadata changes in the commit.
-If requirements need updating, tidy the affected module deliberately and inspect
-its replacements; `task tidy` also runs `go work sync` and can upgrade requirements.
+If candidate requirements need repair, run `task tidy:module-candidate` (or select
+one module, for example `task tidy:module-candidate MODULE=engine`). Review
+`git diff -- '**/go.mod' '**/go.sum'` and its staged counterpart, then rerun
+`task test:module-candidate`. Metadata changes alone do not imply a repair is needed.
 After committing the intended metadata, rerun verification and
 `task test:module-metadata`.
 EOF

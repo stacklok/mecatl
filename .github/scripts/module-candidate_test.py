@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import shlex
 import shutil
 import subprocess
 import sys
@@ -179,6 +180,7 @@ func TestPublicationDiagnostics(t *testing.T) {
                    'func TestFailure(t *testing.T) { t.Fatal("candidate test failed") }\n')
         output = self.check("--module", ".", succeeds=False)
         self.assertIn("candidate test failed", output)
+        self.assertNotIn("task tidy:module-candidate", output)
         before = self.snapshot()
         output = self.check("--module", ".", succeeds=False, fix=True)
         self.assertIn("candidate test failed", output)
@@ -214,7 +216,9 @@ func TestPublicationDiagnostics(t *testing.T) {
 
     def test_test_sources_are_compiled(self):
         self.write("invalid_test.go", "package fixture\nvar _ = DoesNotExist\n")
-        self.assertIn("undefined: DoesNotExist", self.check("--module", ".", succeeds=False))
+        output = self.check("--module", ".", succeeds=False)
+        self.assertIn("undefined: DoesNotExist", output)
+        self.assertNotIn("task tidy:module-candidate", output)
 
     def test_workspace_masks_missing_thirdparty_requirement(self):
         self.third(module="sibling space")
@@ -233,7 +237,9 @@ func TestPublicationDiagnostics(t *testing.T) {
         self.go("test", "-exec=true", "-run=^$", "./...", workspace=True)
         self.go("mod", "tidy")
         self.assertIn(f"{THIRD} v1.0.0", (self.root / "go.mod").read_text())
-        self.assertIn("undefined", self.check("--module", ".", succeeds=False))
+        output = self.check("--module", ".", succeeds=False)
+        self.assertIn("undefined", output)
+        self.assertNotIn("task tidy:module-candidate", output)
 
     def test_missing_sibling_require_is_not_repaired_with_fake_version(self):
         self.write("go.mod", "module fixture.invalid/root\n\ngo 1.23.0\n")
@@ -433,23 +439,34 @@ func TestPublicationDiagnostics(t *testing.T) {
         task = shutil.which("task")
         self.assertIsNotNone(task, "task must be on PATH")
         self.third(module="sibling space", indirect=True)
+        module = "sibling ' $space"
+        (self.root / "sibling space").rename(self.root / module)
+        self.write("go.work", 'go 1.23.0\nuse (\n .\n ' + json.dumps("./" + module) + '\n)\n')
         before = self.snapshot()
-        args = ["MODULE=sibling space"]
+        args = ["MODULE=" + module]
         result = subprocess.run([task, "test:module-candidate", *args],
                                 cwd=self.root, env=self.env, capture_output=True,
                                 text=True, timeout=120)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("metadata drift", result.stdout + result.stderr)
+        output = result.stdout + result.stderr
+        self.assertIn("metadata drift", output)
+        self.assertIn("git diff -- '**/go.mod' '**/go.sum'", output)
         self.assertEqual(self.snapshot(), before)
-        result = subprocess.run([task, "tidy:module-candidate", *args],
+        repair = re.search(r"^Repair candidate metadata: (.+)$", output, re.M)[1]
+        recheck = re.search(r"^Recheck: (.+)$", output, re.M)[1]
+        self.assertEqual(shlex.split(repair), ["task", "tidy:module-candidate", *args])
+        self.assertEqual(shlex.split(recheck), ["task", "test:module-candidate", *args])
+        result = subprocess.run(["sh", "-c", repair],
                                 cwd=self.root, env=self.env, capture_output=True,
                                 text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = subprocess.run([task, "test:module-candidate", *args],
+        self.assertNotEqual(self.snapshot(), before)
+        self.assertNotIn("indirect", (self.root / module / "go.mod").read_text())
+        result = subprocess.run(["sh", "-c", recheck],
                                 cwd=self.root, env=self.env, capture_output=True,
                                 text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.write("sibling space/failure_test.go", 'package sibling\nimport "testing"\n'
+        self.write(module + "/failure_test.go", 'package sibling\nimport "testing"\n'
                    'func TestFailure(t *testing.T) { t.Fatal("task candidate test failed") }\n')
         before = self.snapshot()
         result = subprocess.run([task, "test:module-candidate", *args],

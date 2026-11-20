@@ -77,7 +77,10 @@ class ModuleMetadataTests(unittest.TestCase):
         for path in ("go.work", "go.mod", "go.sum", "nested/go.mod", "nested/go.sum"):
             self.assertIn(path, result.stderr)
         self.assertIn("Unstaged Go module metadata changes", result.stderr)
-        self.assertIn("task tidy", result.stderr)
+        self.assertIn("task tidy:module-candidate", result.stderr)
+        self.assertIn("task test:module-candidate", result.stderr)
+        self.assertIn("git diff -- '**/go.mod' '**/go.sum'", result.stderr)
+        self.assertNotIn("go work sync", result.stderr)
         self.assertIn("task test:module-metadata", result.stderr)
 
     def test_untracked_metadata_fails_but_unrelated_and_ignored_files_do_not(self):
@@ -146,7 +149,13 @@ class ModuleMetadataTests(unittest.TestCase):
         self.assertIn(suite, test)
         self.assertLess(test.index(infrastructure), test.index(suite))
         self.assertLess(test.index(suite), test.index(guard))
-        self.assertIn("          task tidy\n          task test:module-metadata\n", build)
+        candidate = "          task test:module-candidate\n"
+        self.assertIn(candidate + "          task test:module-metadata\n", build)
+        self.assertEqual(workflow.count("task test:module-candidate"), 1)
+        self.assertNotIn("task tidy", build)
+        self.assertNotIn("go work sync", build)
+        self.assertIn("        run: task test:workspace:module MODULE=engine\n", build)
+        self.assertNotIn("task test:module MODULE=engine", build)
         condition = ("        if: needs.changes.outputs.docs_only != 'true' "
                      "&& needs.changes.outputs.go_relevant == 'true'\n")
         for command in (guard, infrastructure):
@@ -160,8 +169,11 @@ class ModuleMetadataTests(unittest.TestCase):
         for broken in (
             workflow.replace(guard, '        run: echo "task test:module-metadata"\n'),
             workflow.replace(guard, ""),
-            workflow.replace("          task tidy\n          task test:module-metadata\n",
-                             "          task test:module-metadata\n          task tidy\n"),
+            workflow.replace("          task test:module-candidate\n", "          task tidy\n"),
+            workflow.replace("          task test:module-candidate\n", ""),
+            workflow.replace("        run: task --concurrency 3 test:race\n",
+                             "        run: task test:module-candidate\n        run: task --concurrency 3 test:race\n"),
+            workflow.replace("task test:workspace:module MODULE=engine", "task test:module MODULE=engine"),
             workflow.replace("task --concurrency 3 test:race\n", "task --concurrency 3 test:workspace:race\n"),
         ):
             with self.subTest(broken=broken != workflow):

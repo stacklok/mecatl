@@ -8,9 +8,10 @@ symlink; edit this file, never the symlink.
 Build through the Taskfile; bare root `go build` leaves stray binaries.
 
 ```sh
-task build              # binaries in bin/
-task test               # complete offline suite, all modules and standalone proofs
-task test:race          # complete suite with race detection
+task build              # binaries in bin/, against this checkout's workspace
+task test               # complete offline suite against this checkout's workspace
+task test:race          # complete offline suite with race detection, against this checkout's workspace
+task test:standalone    # explicit complete offline suite with GOWORK=off
 task lint               # root, engine, authn/oidc, and provider modules
 task docs               # regenerate references and run strict documentation checks
 task generate           # regenerate protobuf contracts and configuration reference
@@ -24,16 +25,18 @@ go run ./cmd/mecademo    # offline session smoke test
   the offline demo must show tool call, permission ask/approval, and result. CI runs
   more than this; `.github/workflows/ci.yml` lists the jobs for each surface. CI
   verifies the branch independently; it does not replace these local gates. Give
-  complete Go test suites (`test`, `test:race`, `test:workspace`, and
-  `test:workspace:race`) an outer timeout of 1800 seconds (30 minutes). Give other
+  complete Go test suites (`test`, `test:race`, `test:workspace`,
+  `test:workspace:race`, `test:standalone`, and `test:standalone:race`) an outer
+  timeout of 1800 seconds (30 minutes). Give other
   full gates a 600-second timeout.
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
-- For changes spanning Go modules, follow [the cross-module workflow](docs/module-development.md)
-  before changing dependency pins. Use `task test:workspace:race` for same-checkout
-  evidence; it does not replace standalone/publication checks. Keep module sums
-  tracked; root `go.work.sum` is ignored.
+- For changes spanning Go modules, follow [the cross-module workflow](docs/module-development.md).
+  Ordinary build, lint, and test tasks use this checkout's workspace. Use the
+  explicit standalone tasks to validate published dependency closure or release
+  readiness; they can fail until a required sibling API is published. Keep module
+  sums tracked; root `go.work.sum` is ignored.
 - See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
 
 ## Module layout

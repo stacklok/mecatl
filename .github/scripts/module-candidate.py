@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -236,6 +237,7 @@ def main(argv=None):
             selected = set(modules)
         failed = False
         dirty = False
+        drifted = []
         changes = {}
         for identity, (directory, original) in modules.items():
             if identity not in selected:
@@ -250,10 +252,18 @@ def main(argv=None):
                 for difference in differences:
                     print("  " + difference)
                 dirty |= bool(differences)
+                if differences:
+                    drifted.append(str(directory.relative_to(root)))
                 changes.update(repair)
             except CheckError as error:
                 print(f"{label}: FAIL\n{error}", file=sys.stderr)
                 failed = True
+        if dirty and not args.fix:
+            for module in drifted:
+                selection = "MODULE=" + shlex.quote(module)
+                print(f"Repair candidate metadata: task tidy:module-candidate {selection}\n"
+                      "Review: git diff -- '**/go.mod' '**/go.sum'\n"
+                      f"Recheck: task test:module-candidate {selection}", file=sys.stderr)
         if failed:
             if args.fix:
                 print("No repairs applied: a selected module failed.", file=sys.stderr)
@@ -263,8 +273,6 @@ def main(argv=None):
             if changes:
                 print("Repaired metadata; sibling versions and original replacements preserved.")
             return 0
-        if dirty:
-            print("Use --fix to apply safe metadata repairs; review the diff.", file=sys.stderr)
         return int(dirty)
     except (CheckError, OSError, ValueError, KeyError) as error:
         print(f"module-candidate: {error}", file=sys.stderr)

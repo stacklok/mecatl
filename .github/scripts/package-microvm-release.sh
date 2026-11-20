@@ -21,6 +21,8 @@ case "$version" in
 esac
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+# Official packaging stays standalone; development/E2E callers opt into a workfile.
+export GOWORK="${MICROVM_RELEASE_GOWORK:-off}"
 mkdir -p "$output"
 output=$(CDPATH= cd -- "$output" && pwd)
 microvmd="mecatl-microvmd-$platform"
@@ -33,15 +35,15 @@ if [ -n "${MICROVM_RELEASE_FIXTURE_DIR:-}" ]; then
 else
   (
     cd "$repo_root/environment/microvm"
-    GOWORK=off CGO_ENABLED=0 GOOS="$host_os" GOARCH="$arch" \
+    CGO_ENABLED=0 GOOS="$host_os" GOARCH="$arch" \
       go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "$output/$microvmd" ./cmd/mecatl-microvmd
-    GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
       go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "$output/$guest" ./cmd/mecatl-guest-agent
   )
 fi
 (
   cd "$repo_root/environment/microvm"
-  GOWORK=off CGO_ENABLED=0 GOOS="$host_os" GOARCH="$arch" \
+  CGO_ENABLED=0 GOOS="$host_os" GOARCH="$arch" \
     go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "$output/$digest_tool" ./cmd/mecatl-artifact-digest
 )
 chmod 0755 "$output/$microvmd" "$output/$guest" "$output/$digest_tool"
@@ -174,7 +176,7 @@ if platform not in ("linux/amd64", "linux/arm64"):
 PY
 
 artifact_digest() {
-  (cd "$repo_root/environment/microvm" && GOWORK=off go run ./cmd/mecatl-artifact-digest "$1")
+  (cd "$repo_root/environment/microvm" && go run ./cmd/mecatl-artifact-digest "$1")
 }
 
 write_artifact() {

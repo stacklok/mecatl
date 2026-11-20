@@ -1040,9 +1040,9 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
-      - name: Verify Go module and workspace metadata freshness
+      - name: Verify candidate module metadata
         run: |
-          task tidy
+          task test:module-candidate
           task test:module-metadata
 
       - name: Verify nested module publication
@@ -1068,11 +1068,11 @@ jobs:
       - name: Verify macOS-job closure allowlist
         run: bash .github/scripts/macos-closure-guard.sh
 
-      # The Test job already runs every module with GOWORK=off, but under -race,
-      # which skips the engine's allocation guards (engine/governance raceEnabled).
-      # This non-race pass keeps them running on every PR.
-      - name: go test (engine module, GOWORK=off, non-race)
-        run: task test:module MODULE=engine
+      # The Test job runs the checkout workspace under -race, which skips the
+      # engine's allocation guards (engine/governance raceEnabled).
+      # This non-race pass keeps them running on every PR with current siblings.
+      - name: go test (engine module, workspace, non-race)
+        run: task test:workspace:module MODULE=engine
 
       - name: Save Go caches
         uses: ./.github/actions/go-cache-save

@@ -42,15 +42,109 @@ func TestMicroVMRuntime_StandardBinariesDoNotLinkLibkrun(t *testing.T) {
 	microvm := filepath.Join(repo, "environment", "microvm")
 	for _, target := range []string{"./cmd/mecatl-microvmd", "./cmd/mecatl-guest-agent"} {
 		outputPath := filepath.Join(t.TempDir(), filepath.Base(target))
-		cmd := exec.Command("go", "build", "-o", outputPath, target)
-		cmd.Dir = microvm
-		cmd.Env = append(os.Environ(), "GOWORK=off")
+		cmd := checkoutGoCommand(repo, microvm, "build", "-o", outputPath, target)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("build microVM target %s: %v\n%s", target, err, output)
 		}
 	}
 	assertGoListExcludes(t, repo, "./cmd/mecated", "./cmd/mecademo", "./cmd/mecatequi", "./cmd/mecak8s", "./cmd/mecatui")
 	assertGoListExcludes(t, filepath.Join(repo, "engine"), "./...")
+}
+
+// These cross-module contracts inspect current checkout binaries, including when
+// the outer test uses a per-module candidate manifest with GOWORK=off. That
+// manifest belongs only to the outer module, not to the nested build targets.
+func checkoutGoCommand(repo, dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK="+filepath.Join(repo, "go.work"))
+	return cmd
+}
+
+func TestCheckoutGoCommandUsesCurrentSiblingSources(t *testing.T) {
+	if os.Getenv("MECATL_APICHECK_FIXTURE_CHILD") == "1" {
+		assertGoListExcludes(t, repoRoot(t), ".")
+		return
+	}
+	repo := t.TempDir()
+	for name, contents := range map[string]string{
+		"go.work":                    "go 1.23.0\nuse (\n .\n ./sibling\n)\n",
+		"go.mod":                     "module fixture.invalid/root\ngo 1.23.0\nrequire fixture.invalid/sibling v1.0.0\nreplace fixture.invalid/sibling => ./published\n",
+		"main.go":                    "package main\nimport \"fixture.invalid/sibling\"\nfunc main() { _ = sibling.CheckoutOnly }\n",
+		"published/go.mod":           "module fixture.invalid/sibling\ngo 1.23.0\n",
+		"published/api.go":           "package sibling\nconst PublishedOnly = true\n",
+		"sibling/go.mod":             "module fixture.invalid/sibling\ngo 1.23.0\n",
+		"sibling/api.go":             "package sibling\nimport _ \"fixture.invalid/sibling/libkrun\"\nconst CheckoutOnly = true\n",
+		"sibling/libkrun/runtime.go": "package libkrun\n",
+	} {
+		path := filepath.Join(repo, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkDir := filepath.Join(repo, "internal", "apicheck")
+	if err := os.MkdirAll(checkDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MECATL_APICHECK_FIXTURE_CHILD", "1")
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOFLAGS", "")
+	for _, ambient := range []string{"off", filepath.Join(t.TempDir(), "foreign.work")} {
+		t.Run(ambient, func(t *testing.T) {
+			t.Setenv("GOWORK", ambient)
+			cmd := checkoutGoCommand(repo, repo, "build", "-o", filepath.Join(t.TempDir(), "fixture"), ".")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build checkout-only API: %v\n%s", err, output)
+			}
+			// Run the real assertion in a child so its expected Fatalf can be checked.
+			// Its cwd gives repoRoot the disposable checkout, as in production callers.
+			for _, forbidden := range []bool{true, false} {
+				source := "package sibling\nconst CheckoutOnly = true\n"
+				if forbidden {
+					source = "package sibling\nimport _ \"fixture.invalid/sibling/libkrun\"\nconst CheckoutOnly = true\n"
+				}
+				if err := os.WriteFile(filepath.Join(repo, "sibling", "api.go"), []byte(source), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd = exec.Command(testBinary, "-test.run=^TestCheckoutGoCommandUsesCurrentSiblingSources$")
+				cmd.Dir = checkDir
+				output, err := cmd.CombinedOutput()
+				if forbidden {
+					if err == nil || !bytes.Contains(output, []byte(`unexpectedly includes "libkrun"`)) {
+						t.Fatalf("dependency assertion must reject current-sibling libkrun: %v\n%s", err, output)
+					}
+				} else if err != nil {
+					t.Fatalf("dependency assertion positive control: %v\n%s", err, output)
+				}
+			}
+		})
+	}
+	// Without the checkout workspace, the same source must reject the old API.
+	cmd := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "fixture"), ".")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	output, err := cmd.CombinedOutput()
+	if err == nil || !bytes.Contains(output, []byte("undefined: sibling.CheckoutOnly")) {
+		t.Fatalf("standalone negative control: %v\n%s", err, output)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "sibling", "api.go"), []byte("package sibling\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = checkoutGoCommand(repo, repo, "build", "-o", filepath.Join(t.TempDir(), "fixture"), ".")
+	output, err = cmd.CombinedOutput()
+	if err == nil || !bytes.Contains(output, []byte("undefined: sibling.CheckoutOnly")) {
+		t.Fatalf("broken checkout source must still fail: %v\n%s", err, output)
+	}
 }
 
 func repoRoot(t *testing.T) string {
@@ -111,8 +205,7 @@ func assertProductionImportsExclude(t *testing.T, root, excluded string) {
 
 func assertGoListExcludes(t *testing.T, dir string, patterns ...string) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"list", "-deps"}, patterns...)...)
-	cmd.Dir = dir
+	cmd := checkoutGoCommand(repoRoot(t), dir, append([]string{"list", "-deps"}, patterns...)...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps %s: %v\n%s", strings.Join(patterns, " "), err, output)

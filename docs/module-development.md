@@ -1,9 +1,9 @@
 # Develop changes across Go modules
 
 Use this procedure when a change spans the engine, providers, persistence modules,
-or host. First verify the same-checkout candidate. Then verify each released module
-against its declared dependencies as you publish dependencies before their callers.
-These are separate kinds of evidence.
+or host. Ordinary development and CI verify the assembled checkout workspace.
+Standalone and publication checks verify released dependency pins separately, after
+their prerequisites are available. These are separate kinds of evidence.
 
 Run commands from the repository root unless a step specifies a module directory.
 Use the Go toolchain declared in `go.mod` and install [Task](https://taskfile.dev/).
@@ -37,14 +37,15 @@ Register a new module in the same PR that introduces it:
 5. Run `task test:module-publication-tools`. Its offline repository-inventory check
    validates the actual `go.work` members and dependency order, alongside the
    publication fixtures. Run `task test:workspace:module MODULE=<DIRECTORY>` for
-   same-checkout integration and `task test:module MODULE=<DIRECTORY>` for the
-   standalone dependency closure. Use `task test:module-candidate MODULE=<DIRECTORY>`
-   when sibling changes are not yet published. Complete the normal repository gates
-   before review.
+   focused same-checkout integration. Use `task test:module MODULE=<DIRECTORY>` for
+   the standalone dependency closure and `task test:module-candidate MODULE=<DIRECTORY>`
+   to validate candidate metadata. Complete the normal repository gates before review.
 
-Workspace replacements let you develop sibling modules together; independently
-published modules must resolve their requirements with `GOWORK=off`. Publish missing
-sibling versions in dependency order using [the publication procedure](#4-publish-selected-go-modules).
+Workspace replacements let you develop sibling modules together. The ordinary
+checkout tasks use this workspace, so sibling APIs do not need publication before
+ordinary CI is green. Independently published modules must resolve their declared
+requirements with `GOWORK=off`; publish missing sibling versions in dependency order
+using [the publication procedure](#4-publish-selected-go-modules).
 
 ## 1. Identify the affected modules
 
@@ -92,23 +93,32 @@ To test that module with workspace mode disabled, use `task test:module` or
 Then verify the complete candidate:
 
 ```sh
-task --concurrency 3 test:workspace
-task --concurrency 3 test:workspace:race
+task --concurrency 3 test
+task --concurrency 3 test:race
 ```
 
-These tasks select this checkout's absolute `go.work`, even if the environment has
-`GOWORK=off` or names another workspace. They run root and every nested module's
-tests plus the offline `microvm_dev` tagged proof. They do not tidy requirements.
+`test:workspace` and `test:workspace:race` remain aliases for these commands. They
+select this checkout's absolute `go.work`, even if the environment has `GOWORK=off`
+or names another workspace. They run root and every nested module's tests plus the
+offline `microvm_dev` tagged proof. They do not tidy requirements.
 
 Workspace mode uses the local modules together with a combined third-party
 module graph. A shared dependency can resolve to a higher version than a module
 uses independently. A pass proves candidate integration, not standalone dependency
-closure or public availability.
+closure or public availability. A standalone check can therefore fail until a
+required sibling API is published without invalidating the assembled candidate.
 
 For a coordinated release, include your local workspace result in the PR with the
-commit, any uncommitted candidate changes, Go version, command, and outcome. Rerun
-checks affected by later changes. Ordinary CI does not automatically run the full
-workspace suite; the local assertion is accepted as workspace evidence.
+commit, any uncommitted candidate changes, Go version, command, and outcome. CI runs
+the workspace race suite, candidate metadata validation once in Build, and the
+engine's non-race workspace pass. It does not require sibling APIs to be published
+before ordinary changes can pass.
+
+`task e2e:k8s` uses this checkout's workspace for its image builds and Kind
+journey, matching official application releases, which compile sibling source from
+the immutable release checkout. Its pinned counterpart, `task e2e:k8s:pinned`,
+tests declared sibling pins rather than local nested changes when that evidence is
+needed. Module publication does not run the pinned Kind suite.
 
 ## 3. Reconcile dependency metadata deliberately
 
@@ -133,12 +143,14 @@ test-result cache disabled; test failures fail the task.
 Use the repository's required Go toolchain; this check disables automatic toolchain
 downloads and ignores ambient `GOWORK` and `GOFLAGS` values.
 
-The dependency commands use temporary copies of checkout metadata. Tests run in
-the source directories with their normal filesystem access. To apply metadata repairs:
+The dependency commands use temporary copies of checkout metadata. Candidate checking
+is non-mutating: tests run in the source directories with their normal filesystem
+access, but the checker does not edit the manifests. To apply metadata repairs:
 
 ```sh
 task tidy:module-candidate MODULE=provider/openai
 git diff -- provider/openai/go.mod provider/openai/go.sum
+task test:module-candidate MODULE=provider/openai
 ```
 
 Repair preserves declared sibling versions and original replacements. A missing
@@ -150,7 +162,7 @@ edits; an interrupted repair can leave partial changes, so review the diff and r
 Candidate checks prove dependency resolution with current sibling source, whose
 requirements still contribute to the selected dependency versions. They do not
 prove compatibility with published sibling versions or replace the standalone and
-publication checks below. Ordinary CI still uses its existing standalone gates.
+publication checks below. CI uses candidate validation without modifying metadata.
 
 If imports or requirements changed, tidy the affected module against its declared
 published dependencies and review the diff. For example:
@@ -161,10 +173,11 @@ git diff -- provider/openai/go.mod provider/openai/go.sum
 ```
 
 `task tidy:module` always uses `GOWORK=off` and tidies only the selected module.
-Inspect its `replace` directives as well as
+It still honors that module's own `replace` directives, so inspect them as well as
 its requirements. Tidy can fail while source depends on an API absent from its
-published dependency version; report that boundary and finish reconciliation after
-the prerequisite release. Do not invent a PR-head version to bypass publication.
+published dependency version; that is expected until the prerequisite release.
+Report that boundary and finish reconciliation after publication. Do not invent a
+PR-head version to bypass publication.
 
 `task tidy` is broader: it tidies root, runs `go work sync`, then tidies nested
 modules with workspace mode disabled. **`go work sync` can upgrade requirements in
@@ -273,11 +286,14 @@ standalone, and public-download evidence separately in the PR or release record.
 
 | Command | Dependency/test scope |
 | --- | --- |
-| `task build` | Builds binaries and nested modules using normal workspace discovery |
-| `task test`, `task test:race` | All modules with `GOWORK=off`; local replacements remain; tagged leg uses ambient workspace selection |
-| `task test:workspace`, `task test:workspace:race` | All modules and tagged proof against this checkout's workspace |
-| `task test:module MODULE=provider/openai`, `task test:module:race MODULE=provider/openai` | Selected module with `GOWORK=off`; local replacements remain |
+| `task build` | Builds binaries and nested modules against this checkout's workspace |
+| `task test`, `task test:race` | All modules and tagged proof against this checkout's workspace |
+| `task test:workspace`, `task test:workspace:race` | Compatibility aliases for `task test` and `task test:race` |
+| `task test:standalone`, `task test:standalone:race` | Complete workspace-disabled suite; published sibling APIs must be available |
+| `task test:module MODULE=provider/openai`, `task test:module:race MODULE=provider/openai` | Selected module with `GOWORK=off`; module-local replacements still apply |
 | `task test:workspace:module MODULE=provider/openai`, `task test:workspace:module:race MODULE=provider/openai` | Selected module against this checkout's workspace |
+| `task e2e:k8s` | Kind E2E and image builds against this checkout's workspace |
+| `task e2e:k8s:pinned` | Explicit Kind E2E and image builds with `GOWORK=off` and declared sibling pins |
 | `task test:engine-standalone`, `task test:provider-standalone` | Module build/tests with workspace off; inspect manifests for the actual dependency closure |
 | `task test:microvm-standalone`, `task test:microvm-integration-standalone` | Workspace-disabled verification with local replacements retained |
 | `task tidy:module MODULE=provider/openai` | Tidy only the selected module with `GOWORK=off`; no workspace synchronization |

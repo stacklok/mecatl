@@ -42,6 +42,9 @@ includes:
     dir: .
 
 vars:
+  # Resolve in Task's checkout directory; do not trust ambient GOWORK or ROOT_DIR.
+  GO_WORKFILE:
+    sh: 'printf "%s/go.work" "$(pwd -P)"'
   GO_MODULES:
     - '.'
     - engine
@@ -90,40 +93,40 @@ tasks:
   build:
     desc: Compile binaries into bin/
     cmds:
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecademo ./cmd/mecademo
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecademo ./cmd/mecademo
       # mecatequi: the single-shot, headless CI/batch runner (one prompt -> diff +
       # summary JSON + optional durable event log -> exit code).
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatequi ./cmd/mecatequi
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatequi ./cmd/mecatequi
       # mecak8s: the storage-free, k8s-native agent binary (a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
       # Optional native Kubernetes execution provider and its fixed workload helper.
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-execution-provider ./cmd/mecatl-execution-provider
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-executor ./cmd/mecatl-executor
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-execution-provider ./cmd/mecatl-execution-provider
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatl-executor ./cmd/mecatl-executor
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
-      - cd engine && go build ./...
-      - cd internal/adaptersupport && go build ./...
-      - cd contracts/gen/go/mecatl/driver && go build ./...
-      - cd adapters && go build ./...
+      - cd engine && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd internal/adaptersupport && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd contracts/gen/go/mecatl/driver && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd adapters && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
       # agentdef is the agent definition format shared by the identity broker
       # and the harness; it imports nothing from Mecatl.
-      - cd agentdef && go build ./...
+      - cd agentdef && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
       # authn/oidc is the opt-in caller-identity adapter module,
       # separate from both the dependency-free engine and provider modules.
-      - cd authn/oidc && go build ./...
+      - cd authn/oidc && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
       # environment/microvm is the opt-in local microVM runtime module.
       # It remains isolated from the root and engine dependency graphs.
-      - cd environment/microvm && go build ./...
+      - cd environment/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
       # provider/ holds the opt-in LLM-provider Go submodules, each its
       # own module under the workspace. Building them here keeps the importable
       # adapters compiling alongside the binaries.
-      - cd provider/ssefilter && go build ./...
-      - cd provider/anthropic && go build ./...
-      - cd provider/openai && go build ./...
-      - cd provider/openaichat && go build ./...
+      - cd provider/ssefilter && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd provider/anthropic && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd provider/openai && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
+      - cd provider/openaichat && GOWORK={{.GO_WORKFILE | shellQuote}} go build ./...
 
   build:mecated:
     desc: Compile only bin/mecated, the daemon the SDK, Slack bot, and Studio suites spawn
@@ -132,19 +135,19 @@ tasks:
     status:
       - test "${MECATL_PREBUILT_MECATED:-}" = 1 && test -x bin/mecated
     cmds:
-      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecated ./cmd/mecated
 
   install:
     desc: Install mecated and mecatui into GOBIN/GOPATH/bin
     cmds:
-      - go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecated
-      - go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecatui
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go install -ldflags "{{.BUILD_LDFLAGS}}" ./cmd/mecatui
 
   test:golden:
     desc: Refresh mecatui View/teatest golden files (-update) then re-run them
     cmds:
-      - go test ./cmd/mecatui/ui/ -update
-      - go test ./cmd/mecatui/ui/
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go test ./cmd/mecatui/ui/ -update
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go test ./cmd/mecatui/ui/
 
   api:check:
     desc: |
@@ -152,7 +155,7 @@ tasks:
       eight core packages) drifts from the committed engine/api/*.txt snapshots.
       See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
-      - go test ./internal/apicheck
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go test ./internal/apicheck
 
   api:update:
     desc: |
@@ -160,7 +163,7 @@ tasks:
       INTENTIONAL change to a core engine package. Commit the result and add an
       engine/CHANGELOG.md entry classified per engine/COMPATIBILITY.md.
     cmds:
-      - go test ./internal/apicheck -update
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go test ./internal/apicheck -update
 
   api:release-check:
     desc: |
@@ -196,7 +199,7 @@ tasks:
       # --local loads the image into the local Docker/podman daemon; --bare
       # keeps the repo path clean (no extra import-path suffix) and prints the
       # fully-qualified image ref (with content-hash tag) on stdout.
-      - ko build --local --bare ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --local --bare ./cmd/mecated
 
   ko:publish:
     desc: Build and push the mecated image with ko (honours KO_DOCKER_REPO)
@@ -208,7 +211,7 @@ tasks:
             echo "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ghcr.io/stacklok/mecatl)"; exit 1
           fi
         silent: true
-      - ko build --push --bare ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --push --bare ./cmd/mecated
 
   ko:resolve:
     desc: Render deploy/ manifests with the ko-built image ref (honours KO_DOCKER_REPO)
@@ -229,7 +232,7 @@ tasks:
       KO_DOCKER_REPO: ko.local
       VERSION: "{{.BUILD_ID}}"
     cmds:
-      - ko build --local --bare ./cmd/mecak8s
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --local --bare ./cmd/mecak8s
 
   ko:publish:k8s:
     desc: Build and push the mecak8s image with ko (honours KO_DOCKER_REPO)
@@ -241,7 +244,7 @@ tasks:
             echo "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ghcr.io/stacklok/mecatl/mecak8s)"; exit 1
           fi
         silent: true
-      - ko build --push --bare ./cmd/mecak8s
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --push --bare ./cmd/mecak8s
 
   ko:build:mecatui:
     desc: Build the mecatui image locally with ko (issue #302; no push; tagged under ko.local)
@@ -253,7 +256,7 @@ tasks:
       # agent manifest (cmd/mecatui/kodata/agent.yaml, which ko lands at
       # /var/run/ko/agent.yaml via $KO_DATA_PATH). VERSION feeds the
       # {{.Env.VERSION}} ldflag template in .ko.yaml.
-      - ko build --local --bare
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --local --bare
           --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
           ./cmd/mecatui
 
@@ -267,7 +270,7 @@ tasks:
             echo "KO_DOCKER_REPO is required (e.g. export KO_DOCKER_REPO=ghcr.io/stacklok/mecatl/mecatui)"; exit 1
           fi
         silent: true
-      - ko build --push --bare
+      - GOWORK={{.GO_WORKFILE | shellQuote}} ko build --push --bare
           --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml
           ./cmd/mecatui
 
@@ -400,8 +403,8 @@ tasks:
     desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
     cmds:
       - mkdir -p bin/microvm
-      - cd environment/microvm && GOWORK=off go build -o ../../bin/microvm/mecatl-microvmd ./cmd/mecatl-microvmd
-      - cd environment/microvm && GOWORK=off CGO_ENABLED=0 GOOS=linux go build -o ../../bin/microvm/mecatl-guest-agent ./cmd/mecatl-guest-agent
+      - cd environment/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} go build -o ../../bin/microvm/mecatl-microvmd ./cmd/mecatl-microvmd
+      - cd environment/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} CGO_ENABLED=0 GOOS=linux go build -o ../../bin/microvm/mecatl-guest-agent ./cmd/mecatl-guest-agent
 
   microvm:package:
     desc: Package the independently admitted guest-agent artifact.
@@ -421,14 +424,14 @@ tasks:
             Darwin-arm64) platform=darwin-arm64 ;;
             *) echo "unsupported microVM development platform: $(uname -s)/$(uname -m)" >&2; exit 1 ;;
           esac
-          MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/${platform}/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
+          GOWORK={{.GO_WORKFILE | shellQuote}} MECATL_MICROVM_DEV_RELEASE_DESCRIPTOR="$(pwd)/.scratch/microvm-dev/${platform}/release.json" go test -tags=microvm_dev -run '^TestPreparedDevelopmentReleaseBundleIsImportable$' ./internal/adapter/microvmmanager
 
   microvm:dev:build:
     desc: Build microvm_dev-tagged mecated and mecatui binaries under .scratch; ordinary task build is unchanged.
     cmds:
       - mkdir -p .scratch/microvm-dev/bin
-      - go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecated ./cmd/mecated
-      - go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecatui ./cmd/mecatui
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecated ./cmd/mecated
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go build -tags=microvm_dev -ldflags "{{.BUILD_LDFLAGS}}" -o .scratch/microvm-dev/bin/mecatui ./cmd/mecatui
 
   microvm:dev:e2e:
     desc: Run the local-development descriptor/tag gate, then the current-host Linux KVM or Darwin HVF journey (network and hypervisor required).
@@ -443,7 +446,7 @@ tasks:
       vars: [MECATL_MICROVM_E2E_MECATUI_BIN, MECATL_MICROVM_E2E_VERSION, MECATL_MICROVM_E2E_DEFAULTS_B64]
     cmds:
       - mkdir -p "$(dirname \"{{.MECATL_MICROVM_E2E_MECATUI_BIN}}\")" .scratch/go-build
-      - GOTMPDIR="$(pwd)/.scratch/go-build" go build -trimpath -o "{{.MECATL_MICROVM_E2E_MECATUI_BIN}}" -ldflags "-X main.version={{.MECATL_MICROVM_E2E_VERSION}} -X main.microVMReleaseDefaultsB64={{.MECATL_MICROVM_E2E_DEFAULTS_B64}}" ./cmd/mecatui
+      - GOWORK={{.GO_WORKFILE | shellQuote}} GOTMPDIR="$(pwd)/.scratch/go-build" go build -trimpath -o "{{.MECATL_MICROVM_E2E_MECATUI_BIN}}" -ldflags "-X main.version={{.MECATL_MICROVM_E2E_VERSION}} -X main.microVMReleaseDefaultsB64={{.MECATL_MICROVM_E2E_DEFAULTS_B64}}" ./cmd/mecatui
 
   e2e:microvm:
     desc: Run the deterministic mock-provider Linux amd64 KVM or Darwin arm64 HVF production-composed journey (artifact network required; no live LLM; never part of task test).
@@ -453,6 +456,7 @@ tasks:
     cmds:
       - cmd: |
           set -eu
+          export GOWORK={{.GO_WORKFILE | shellQuote}}
           if [ "${MECATL_MICROVM_E2E_PREPARED:-}" != "1" ]; then
             ./environment/microvm/e2e/prepare.sh
           fi
@@ -473,7 +477,7 @@ tasks:
           INSTALL_ROOT="${E2E_STATE_ROOT}/mecatl-release-install-${PLATFORM}-$$"
           rm -rf "${INSTALL_ROOT}"
           trap 'rm -rf "${INSTALL_ROOT}"' EXIT
-          (cd environment/microvm && GOWORK=off go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
+          (cd environment/microvm && go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
           # The focused live test crosses ordinary first-use readiness and the
           # production UDS through the server-owned microVM default. It drives
           # filesystem Read/Write/Shell, source and host-path isolation, logical-child
@@ -537,7 +541,7 @@ tasks:
     desc: Run the complete offline test suite without the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '', TEST_GOWORK: ''}
+        vars: {RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
 
   test:non-race:
     desc: Compatibility alias for the complete offline test suite
@@ -548,20 +552,29 @@ tasks:
     desc: Run the complete offline test suite with the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '-race', TEST_GOWORK: ''}
+        vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
 
   test:workspace:
-    desc: Run the complete offline test suite against this checkout's workspace
-    # Resolve in Task's checkout directory; ROOT_DIR is CLI-overridable.
+    desc: Compatibility alias for the complete offline workspace test suite
     cmds:
-      - task: test:_suite
-        vars: {RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+      - task: test
 
   test:workspace:race:
-    desc: Run the complete offline workspace test suite with the race detector
+    desc: Compatibility alias for the complete offline workspace race suite
+    cmds:
+      - task: test:race
+
+  test:standalone:
+    desc: Run the complete offline test suite with GOWORK=off
     cmds:
       - task: test:_suite
-        vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+        vars: {RACE: '', TEST_GOWORK: 'off'}
+
+  test:standalone:race:
+    desc: Run the complete offline test suite with GOWORK=off and the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race', TEST_GOWORK: 'off'}
 
   test:module:
     desc: Run one module's tests with GOWORK=off (MODULE=. for root)
@@ -642,7 +655,7 @@ tasks:
       RACE: '{{default "" .RACE}}'
       TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     cmds:
-      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}{{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
+      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}}{{else}}GOWORK={{.GO_WORKFILE | shellQuote}}{{end}} {{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
 
   test:microvm-standalone:
     desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
@@ -670,8 +683,7 @@ tasks:
       Prove the opt-in provider/ submodules build + test with NO workspace
       (GOWORK=off), the same hygiene gate as test:engine-standalone. All four
       provider modules are checked with their own published dependency closures.
-      CI covers this through `task test:race`, which tests every module with
-      GOWORK=off. To prove the closure needs no network over a warmed module
+      To prove the closure needs no network over a warmed module
       cache, run `task test:provider-standalone GOPROXY=off`.
     vars:
       GOPROXY: '{{.GOPROXY | default ""}}'
@@ -723,7 +735,7 @@ tasks:
       # classification + transcript + AfterSuite teardown + cost ledger) always
       # fires long before go test's panic path. The per-spec driver timeouts ×
       # flake attempts sum to ~50m worst-case (see e2e/suite_test.go).
-      - go test -tags e2e -count=1 -timeout 60m ./e2e/...
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go test -tags e2e -count=1 -timeout 60m ./e2e/...
 
   executor:smoke:
     desc: |
@@ -751,7 +763,20 @@ tasks:
       `CONTAINER_ENGINE=podman` (Kind's `k8s-file` Podman log driver is required;
       see https://kind.sigs.k8s.io/docs/user/rootless/). NOT part of `task test`
       (slow ~5-8 min mock-only, ~10-15 min with live).
-    deps: [build]
+    cmds:
+      - task: e2e:_k8s
+        vars: {K8S_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  e2e:k8s:pinned:
+    desc: Run the same Kind E2E suite and image builds with published sibling dependencies
+    cmds:
+      - task: e2e:_k8s
+        vars: {K8S_GOWORK: 'off'}
+
+  e2e:_k8s:
+    internal: true
+    requires:
+      vars: [K8S_GOWORK]
     preconditions:
       - sh: command -v kind >/dev/null 2>&1
         msg: "kind is not installed (https://kind.sigs.k8s.io/docs/user/quick-start/#installation)"
@@ -778,8 +803,7 @@ tasks:
       # real haiku turn takes 10-30s, the live lease/persistence specs each drive
       # 2-3 turns with FlakeAttempts(2), and the provider patch + rollout adds
       # ~1-2 min. Without the key the live specs Skip and the suite fits in 15m;
-      # the outer bound only matters when the live variant runs. GOWORK=off proves
-      # the image uses tagged external dependencies rather than workspace overlays.
+      # the outer bound only matters when the live variant runs.
       - cmd: |
           runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
           case "$runtime:${KIND_EXPERIMENTAL_PROVIDER:-}" in
@@ -787,7 +811,7 @@ tasks:
             podman:) export KIND_EXPERIMENTAL_PROVIDER=podman ;;
             *) echo "CONTAINER_ENGINE and KIND_EXPERIMENTAL_PROVIDER disagree" >&2; exit 2 ;;
           esac
-          GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+          GOWORK={{.K8S_GOWORK | shellQuote}} go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
 
   e2e:k8s:execution:
     desc: |
@@ -805,7 +829,7 @@ tasks:
           case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
         msg: "CONTAINER_ENGINE must be docker or podman and available on PATH"
     cmds:
-      - deploy/mecatl-execution-kind/run.sh
+      - GOWORK={{.GO_WORKFILE | shellQuote}} deploy/mecatl-execution-kind/run.sh
 
   e2e:k8s:execution:production:
     desc: |
@@ -831,7 +855,7 @@ tasks:
       - sh: test -n "${MECATL_EXECUTION_QUAL_STATE:-}"
         msg: "MECATL_EXECUTION_QUAL_STATE is required"
     cmds:
-      - deploy/mecatl-execution-kind/live.sh
+      - GOWORK={{.GO_WORKFILE | shellQuote}} deploy/mecatl-execution-kind/live.sh
 
   e2e:k8s:podman:
     desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
@@ -1126,7 +1150,7 @@ tasks:
         cmd: |
           set -o pipefail
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} GOWORK=off go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
+            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} GOWORK={{.GO_WORKFILE | shellQuote}} go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
           done | sort -u | while read -r pkg; do
             case " runtime/cgo net os/user plugin {{.CGO_ALLOWED}} " in
               *" $pkg "*) ;;
@@ -1148,26 +1172,26 @@ tasks:
       - sh: test -x "$GOLANGCI_LINT"
         msg: "missing pinned golangci-lint; run: task tools:golangci-lint"
     cmds:
-      - '"$GOLANGCI_LINT" run --allow-parallel-runners ./...'
+      - 'GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --allow-parallel-runners ./...'
       # engine/ is its own module — it shares the ROOT golangci config (no
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary.
-      - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd internal/adaptersupport && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd contracts/gen/go/mecatl/driver && "$GOLANGCI_LINT" run --config ../../../../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd adapters && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd agentdef && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd engine && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd internal/adaptersupport && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd contracts/gen/go/mecatl/driver && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../../../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd adapters && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd agentdef && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
       # authn/oidc and environment/microvm are separate opt-in adapter modules,
       # sharing the root config.
-      - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd integration/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd authn/oidc && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd environment/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd integration/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       # provider/ submodules — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
-      - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
-      - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd provider/ssefilter && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd provider/anthropic && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd provider/openai && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd provider/openaichat && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
 
   vuln:
     desc: |
@@ -1216,15 +1240,15 @@ tasks:
       - sh: test -x "$GOLANGCI_LINT"
         msg: "missing pinned golangci-lint; run: task tools:golangci-lint"
     cmds:
-      - '"$GOLANGCI_LINT" run --allow-parallel-runners --fix ./...'
-      - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd agentdef && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd provider/anthropic && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd provider/openai && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
-      - 'cd provider/openaichat && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --allow-parallel-runners --fix ./...'
+      - 'cd engine && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd agentdef && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd authn/oidc && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd environment/microvm && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/ssefilter && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/anthropic && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/openai && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
+      - 'cd provider/openaichat && GOWORK={{.GO_WORKFILE | shellQuote}} "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners --fix ./...'
 
   test:docs-only-classifier:
     desc: Run the offline CI path-classifier and workflow-wiring tests
@@ -1441,9 +1465,9 @@ tasks:
       - task: docs:check
 
   ci:
-    desc: Full local CI gate (tidy, fmt, lint, race test, build)
+    desc: Full local CI gate (candidate metadata, fmt, lint, race test, build)
     cmds:
-      - task: tidy
+      - task: test:module-candidate
       - task: fmt
       - task: lint
       - task: test:race
@@ -1456,11 +1480,10 @@ tasks:
     cmds:
       - sh scripts/vet-build-tags.sh
       - task: lint:cgo
-      # go work sync fails under an operator's GOWORK=off; CI uses the workspace.
-      - GOWORK= task tidy
+      - task: test:module-candidate
       - task: test:module-metadata
       - bash .github/scripts/macos-closure-guard.sh
-      - task: test:module
+      - task: test:workspace:module
         vars: {MODULE: engine}
       - task: sdk:install
       - task: generate:data:check
