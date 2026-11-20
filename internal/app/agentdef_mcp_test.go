@@ -282,6 +282,62 @@ func TestMemberReadOnlyDefWithMCPAccepted(t *testing.T) {
 	}
 }
 
+// TestMemberDefMCPToolHonorsDisallowedTools pins that a team member running a
+// named definition does not get an MCP tool its disallowedTools excludes, as
+// a subagent running the same definition does not: the member's catalog
+// leaves it out, so a call of it never reaches the server, while the
+// server's other tool still does. A member's authority is its parent's, so
+// the catalog is the only place the definition's exclusion applies.
+func TestMemberDefMCPToolHonorsDisallowedTools(t *testing.T) {
+	var echoes, pings atomic.Int32
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fake", Version: "v1"}, nil)
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "echo", Description: "echoes the input text"},
+		func(_ context.Context, _ *mcpsdk.CallToolRequest, in mcpEchoArgs) (*mcpsdk.CallToolResult, any, error) {
+			echoes.Add(1)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "echo:" + in.Text}}}, nil, nil
+		})
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{Name: "ping", Description: "answers pong"},
+		func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+			pings.Add(1)
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "pong"}}}, nil, nil
+		})
+	httpSrv := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+	t.Cleanup(httpSrv.Close)
+
+	cfg := Config{Workspace: t.TempDir(), Model: "m"}
+	def := agents.AgentDef{
+		Name:            "no-echo",
+		Description:     "member whose definition excludes the MCP echo tool",
+		Tools:           []string{"Read"},
+		DisallowedTools: []string{"mcp__inline__echo"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "inline", URL: httpSrv.URL}},
+	}
+	tm := team.New("t")
+	pingCall := session.ToolCall{ID: "c0", Name: "mcp__inline__ping", Args: json.RawMessage(`{}`)}
+	echoCall := session.ToolCall{ID: "c1", Name: "mcp__inline__echo", Args: json.RawMessage(`{"text":"x"}`)}
+	prov := mockllm.New(mockllm.ToolCallTurn(pingCall), mockllm.ToolCallTurn(echoCall), mockllm.TextTurn("done"))
+	factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), regOf(def), nil, nil, false, nil)
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
+		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			return factory(tm, spec, routedModel)
+		})
+	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "no-echo", AgentType: "no-echo", InitialPrompt: "go"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	var events []agent.TeamEvent
+	sup.Run(context.Background(), func(ev agent.TeamEvent) { events = append(events, ev) })
+	// Positive control: the server's other tool reaches it.
+	if !sawToolDispatched(events, "no-echo", "mcp__inline__ping") || pings.Load() != 1 {
+		t.Fatalf("the member's allowed MCP tool reached the server %d times, want once", pings.Load())
+	}
+	if sawToolDispatched(events, "no-echo", "mcp__inline__echo") {
+		t.Fatal("the member dispatched an MCP tool its definition excludes")
+	}
+	if n := echoes.Load(); n != 0 {
+		t.Fatalf("the MCP server received %d calls of a tool the member's definition excludes", n)
+	}
+}
+
 // TestMemberReadOnlyDefWithEditStillRejected guards the OTHER side of the exemption:
 // a genuine workspace-mutating tool (Edit) on a read-only member is STILL rejected, so
 // the MCP exemption did not weaken the backstop.
