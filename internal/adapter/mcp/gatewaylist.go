@@ -88,6 +88,8 @@ func ListGatewayTools(ctx context.Context, endpoint string, client *http.Client,
 		DisableStandaloneSSE: true,
 	}
 	sdkClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, nil)
+	// A listing would work on 2026-07-28 too; it speaks the calls' revision
+	// so the gateway sees one protocol (see gatewayProtocolVersion).
 	cs, err := sdkClient.Connect(listCtx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
 	if err != nil {
 		return nil, listError(ctx)
