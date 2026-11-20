@@ -79,9 +79,12 @@ const renewalTimeout = 30 * time.Second
 // renewal is one in-flight renewal, which concurrent lookups of its key wait
 // for.
 type renewal struct {
-	done chan struct{}
-	cred Credential
-	err  error
+	// target is the broker session the renewal moves a helper to; "" for a
+	// renewal in place.
+	target string
+	done   chan struct{}
+	cred   Credential
+	err    error
 }
 
 // Holder holds agent credentials. Callers that take their own lock around
@@ -214,7 +217,7 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 	}
 	f := h.renewals[key]
 	if f == nil {
-		f = &renewal{done: make(chan struct{})}
+		f = &renewal{target: target, done: make(chan struct{})}
 		h.renewals[key] = f
 		go func() {
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), renewalTimeout)
@@ -229,6 +232,11 @@ func (h *Holder) Credential(ctx context.Context, key Key, renew bool) (Credentia
 	h.mu.Unlock()
 	select {
 	case <-f.done:
+		if f.target != target {
+			// The renewal in flight began before the root moved, so it renewed
+			// in the old broker session: look up again to move.
+			return h.Credential(ctx, key, renew)
+		}
 		return f.result(renew || target != "")
 	case <-ctx.Done():
 		return Credential{}, ctx.Err()

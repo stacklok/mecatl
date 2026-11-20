@@ -177,6 +177,16 @@ func TestMemberUnknownAgentTypeFallsBack(t *testing.T) {
 	if build.Mode != "" {
 		t.Fatalf("unknown AgentType mode = %q, want empty (team default)", build.Mode)
 	}
+	// A generic member runs no definition, so it registers as one (#2555).
+	if build.DefinitionName != "" {
+		t.Fatalf("unknown AgentType DefinitionName = %q, want empty", build.DefinitionName)
+	}
+	// Positive control: a known AgentType reports its definition, trimmed as
+	// the lookup trims it.
+	known := memberFactoryForTest(cfg, mockllm.New(mockllm.TextTurn("x")), hookexec.New(nil), regOf(agents.AgentDef{Name: "searcher", Description: "s"}), nil, nil, false, nil)
+	if got := known(tm, agent.MemberSpec{Name: "s", AgentType: " searcher "}, "").DefinitionName; got != "searcher" {
+		t.Fatalf("known AgentType DefinitionName = %q, want searcher", got)
+	}
 
 	sup := newTestSupervisor(tm, memEnvironment("/ws"),
 		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {

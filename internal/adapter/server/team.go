@@ -357,8 +357,15 @@ func (s *Service) SpawnTeammate(ctx context.Context, teamID string, spec agent.M
 //     member handed a workspace-mutating tool → FailedPrecondition.
 //   - Server-internal fault: workspace fork I/O failure, or a factory that returned
 //     a nil Engine → Internal.
+//   - A failure the member's child store already classified, such as an
+//     unavailable identity broker when it registers the member → unchanged.
 func classifyAddMemberErr(err error) error {
 	switch {
+	case errors.Is(err, ErrIdentityBrokerUnavailable), errors.Is(err, ErrSessionLeasedElsewhere),
+		errors.Is(err, ErrUnavailable), errors.Is(err, ErrInternal):
+		// The member's child store already classified it: registering the
+		// member as a helper agent failed, or the session cannot run here.
+		return err
 	case errors.Is(err, agent.ErrMemberNameRequired),
 		errors.Is(err, agent.ErrMemberAlreadyAdded),
 		errors.Is(err, team.ErrMemberExists),

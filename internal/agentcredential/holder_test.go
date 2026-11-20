@@ -564,3 +564,50 @@ func TestHolderMovesHelpersAfterTheirRoot(t *testing.T) {
 		t.Fatalf("Credential of a helper that cannot move = %+v, %v; want the refusal", got, err)
 	}
 }
+
+// TestHolderHelperLookupAfterTheRootMovedDoesNotJoinAStaleRenewal pins that a
+// lookup made after the root moved, while an in-place renewal from before
+// the move is in flight, still moves the helper.
+func TestHolderHelperLookupAfterTheRootMovedDoesNotJoinAStaleRenewal(t *testing.T) {
+	h, b, c := newHolder(t)
+	mustEnsure(t, h, "bs_1")
+	main, _ := h.Held(key)
+	childKey := agentcredential.Key{RootSessionID: "root", AgentSessionID: "child"}
+	if err := h.Ensure(t.Context(), childKey, helperRequest("bs_1", "child", "root", main.Agent), admitAll); err != nil {
+		t.Fatalf("Ensure child: %v", err)
+	}
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	b.setRegister(func(_ context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {
+		if req.HostSessionID == "child" && req.SessionID == "bs_1" {
+			entered <- struct{}{}
+			<-release
+		}
+		return registration(req.Incarnation, "credential-"+req.SessionID, b.clock.Now().Add(10*time.Minute)), nil
+	})
+	// Past half its lifetime, the child renews in place, in bs_1.
+	c.Advance(6 * time.Minute)
+	stale := make(chan error, 1)
+	go func() {
+		_, err := h.Credential(context.Background(), childKey, false)
+		stale <- err
+	}()
+	<-entered
+	// The main agent moves; a lookup now must move the child.
+	mustEnsure(t, h, "bs_2")
+	moved := make(chan agentcredential.Credential, 1)
+	go func() {
+		got, err := h.Credential(context.Background(), childKey, false)
+		if err != nil {
+			t.Errorf("Credential after the root moved: %v", err)
+		}
+		moved <- got
+	}()
+	time.Sleep(50 * time.Millisecond) // let the second lookup join the renewal in flight
+	close(release)
+	if err := <-stale; err != nil {
+		t.Fatalf("the in-place renewal: %v", err)
+	}
+	if got := <-moved; got.BrokerSessionID != "bs_2" {
+		t.Fatalf("a lookup after the root moved got a credential in %q, want bs_2", got.BrokerSessionID)
+	}
+}

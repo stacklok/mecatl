@@ -48,12 +48,7 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 	// if the root moved since the parent registered.
 	parent, err := s.cfg.IdentityAgents.Credential(ctx, agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}, false)
 	if err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker helper has no registered parent",
-			"session", host, "parent_session", parentHost, "err", err.Error())
-		if errors.Is(err, agentcredential.ErrNoCredential) {
-			return fmt.Errorf("%w: the helper's parent agent is not registered", ErrInternal)
-		}
-		return ErrIdentityBrokerUnavailable
+		return s.helperParentFailure(ctx, host, parentHost, err)
 	}
 	// One session tree has one owner. A helper labelled with an owner reports
 	// it, so the broker refuses one labelled with another; an unlabelled one,
@@ -97,6 +92,25 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 		return fmt.Errorf("%w: identity broker returned an unusable registration", ErrInternal)
 	default:
 		return s.identityBrokerFailure(ctx, "register helper", host, parent.BrokerSessionID, err)
+	}
+}
+
+// helperParentFailure maps a failed lookup of a helper's parent credential.
+// A parent with no credential, or one the broker answered unusably, is an
+// internal fault; a credential dropped meanwhile, like an unavailable broker,
+// is retryable; any other broker error maps as a registration's does.
+func (s *Service) helperParentFailure(ctx context.Context, host, parentHost string, err error) error {
+	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker helper's parent has no usable credential",
+		"session", host, "parent_session", parentHost, "err", err.Error())
+	switch {
+	case errors.Is(err, agentcredential.ErrNoCredential):
+		return fmt.Errorf("%w: the helper's parent agent is not registered", ErrInternal)
+	case errors.Is(err, agentcredential.ErrDropped):
+		return ErrIdentityBrokerUnavailable
+	case errors.Is(err, agentcredential.ErrExpired), errors.Is(err, agentcredential.ErrOtherAgent):
+		return fmt.Errorf("%w: identity broker returned an unusable registration", ErrInternal)
+	default:
+		return s.identityBrokerFailure(ctx, "register helper parent", host, "", err)
 	}
 }
 
