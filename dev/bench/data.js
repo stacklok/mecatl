@@ -438493,6 +438493,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795136994918,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1558cc51e8302c0cf71e46bde894aca7bfe613ac",
+          "message": "test: remove stale Go floor and dependency text assertions (#2909)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-19T17:07:07-08:00",
+          "tree_id": "3caa48186225179ea99fd5386f760fd63101c639",
+          "url": "https://github.com/stacklok/mecatl/commit/1558cc51e8302c0cf71e46bde894aca7bfe613ac"
+        },
+        "date": 1795137717427,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -570999,6 +571038,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795137713873,
+  "lastUpdate": 1795137718403,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
