@@ -3053,6 +3053,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
+	assets.helpers.bind(svc)
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;
@@ -6093,6 +6094,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 
 	assets := catalogAssets{
 		globalMgr:            mainMgr,
+		helpers:              newHelperRegistrar(cfg),
 		mcpRuntimes:          mcpRuntimes,
 		mcpReconciler:        mcpReconciler,
 		sharedEngineRevision: sharedEngineRevision,
@@ -8721,7 +8723,13 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			}
 			return errors.Join(mcpErr, generationErr)
 		})
-		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
+		// The definition the member runs: its def's when adopted, none for a
+		// generic member, including one whose agent type was not found.
+		var definitionName string
+		if defined {
+			definitionName = def.Name
+		}
+		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly, DefinitionName: definitionName}
 	}
 }
 

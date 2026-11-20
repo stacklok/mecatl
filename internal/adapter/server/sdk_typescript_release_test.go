@@ -250,6 +250,8 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ReattachPlacementInScope",
 		"ReconcileLeaseLossTombstone",
 		"RecoverNotice",
+		"RegisterHelper",
+		"RegisterResumedHelper",
 		"ResolvedModel",
 		"RetryFailedRun",
 		"ScheduleFirePlacement",

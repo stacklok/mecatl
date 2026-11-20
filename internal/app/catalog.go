@@ -75,6 +75,9 @@ import (
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
 	globalMgr *mcp.Manager
+	// helpers registers helper agents with the identity broker when their
+	// sessions are published; nil without an identity broker.
+	helpers *helperRegistrar
 	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
 	// Catalog copies select the operation-pinned manager before assembly; cached
 	// engines retain only the returned revision tag.
@@ -295,20 +298,23 @@ func assembleCatalogDetailed(ctx context.Context, cfg Config, reg *providerRegis
 		refMgr = s.clientMgr
 	}
 	var subagentClose func() error
+	// Child sessions are published through a store that registers each helper
+	// agent with the identity broker before it runs.
+	childStore := a.helpers.wrap(store)
 	if !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
-			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, childStore, hooks, *a, s, refMgr)
 		})
 	}
 	// Parallel is ABSENT under no-FS and remote execution profiles.
 	if !s.noFS && !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
-			registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
+			registerParallelTool(ctx, cfg, cat, reg, childStore, hooks, *a, s)
 		})
 	}
 	if !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
-			registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+			registerTeamTools(ctx, cfg, cat, reg, childStore, *a, s, refMgr)
 		})
 	}
 	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,

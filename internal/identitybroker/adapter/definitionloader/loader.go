@@ -97,11 +97,13 @@ func BuiltinRevision(buildID string) string {
 // Shortcut: each built-in is a name and a description, and the harness builds
 // its default main agent and anonymous child without them, so their digests
 // cover these stand-ins rather than what runs; removed by #2553 (the harness
-// builds system/main and system/explorer from these definitions).
+// builds system/main and its def-less helpers from these definitions).
 func builtins() []agentdef.Definition {
 	return []agentdef.Definition{
 		{Name: identitybroker.BuiltinMain, Description: "The main agent of a session started without a named definition."},
 		{Name: identitybroker.BuiltinExplorer, Description: "The child agent of a subagent call that names no definition."},
+		{Name: identitybroker.BuiltinBranch, Description: "A parallel branch."},
+		{Name: identitybroker.BuiltinMember, Description: "A team member that names no agent type."},
 	}
 }
 

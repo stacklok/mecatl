@@ -53,6 +53,9 @@ type recordingBroker struct {
 	renamedAgent bool
 	// registerErr, when set, makes RegisterAgent fail with it.
 	registerErr error
+	// helperUnavailable makes only the registrations of helper agents, those
+	// with a parent, fail as unavailable.
+	helperUnavailable bool
 	// editRegistration, when set, changes each registration RegisterAgent
 	// returns.
 	editRegistration func(*identitybroker.Registration)
@@ -153,8 +156,9 @@ func (b *recordingBroker) RegisterAgent(ctx context.Context, req identitybroker.
 	b.registers = append(b.registers, req)
 	registerDown, hook, other, renamed := b.registerUnavailable, b.beforeRegister, b.otherAgent, b.renamedAgent
 	registerErr, edit := b.registerErr, b.editRegistration
+	helperDown := b.helperUnavailable && !req.Parent.IsZero()
 	b.mu.Unlock()
-	if registerDown {
+	if registerDown || helperDown {
 		return identitybroker.Registration{}, identitybroker.NewError(identitybroker.CodeUnavailable, "", "test broker cannot register")
 	}
 	if registerErr != nil {
@@ -609,12 +613,16 @@ func TestIdentityBrokerEndScheduledRunCloses(t *testing.T) {
 }
 
 func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
-	for _, down := range []bool{false, true} {
-		name := "available"
-		if down {
-			name = "unavailable"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		down, memberDown bool
+	}{
+		{name: "available"},
+		{name: "unavailable", down: true},
+		{name: "unavailable for the member", memberDown: true},
+	} {
+		down := tc.down
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := memstore.New()
 			ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
@@ -646,7 +654,15 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			broker.setUnavailable(down)
+			broker.set(func(b *recordingBroker) { b.helperUnavailable = tc.memberDown })
 			_, err = svc.RunTeam(ctx, teamID, nil)
+			if tc.memberDown {
+				// The root registered; the member's refusal keeps its class.
+				if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+					t.Fatalf("RunTeam with the broker down for the member: %v, want ErrIdentityBrokerUnavailable", err)
+				}
+				return
+			}
 			if down {
 				if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
 					t.Fatalf("RunTeam with the identity broker down: %v, want ErrIdentityBrokerUnavailable", err)
@@ -656,7 +672,22 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantRegistered(t, broker, wantBrokerSession(t, broker, source), source)
+			// The root's main agent registers first, then the member, as a
+			// helper whose parent is the root's main agent.
+			brokerSession := wantBrokerSession(t, broker, source)
+			regs := broker.registerRequests()
+			if len(regs) != 2 {
+				t.Fatalf("registrations = %+v, want the main agent and the member", regs)
+			}
+			main := regs[0]
+			if main.HostSessionID != string(source.ID) || !main.Parent.IsZero() || main.SessionID != brokerSession.ID {
+				t.Fatalf("first registration = %+v, want the root's main agent", main)
+			}
+			member := regs[1]
+			if member.Definition != conformance.MemberDefinition || member.ParentHostSessionID != string(source.ID) ||
+				member.Parent.IsZero() || member.SessionID != brokerSession.ID || member.HostSessionID == string(source.ID) {
+				t.Fatalf("member registration = %+v, want a system/member helper of the root's main agent", member)
+			}
 		})
 	}
 }

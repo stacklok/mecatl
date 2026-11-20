@@ -70,13 +70,15 @@ func credentialHash(credential Token) [sha256.Size]byte {
 const registerAttempts = 2
 
 // RegisterAgent implements Core. It checks the session, the owner, the root
-// host session or parent, and the definition or an earlier registration of
+// host session or the parent and its host session, and the definition or an earlier registration of
 // the instance, issues the credential, and only then records the instance in
 // the session, so a failure changes nothing. A new instance's definition must
 // be one the broker loaded; an instance registered before keeps the
 // definition it registered with, whatever the broker loaded since.
 //
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
+//
+// Shortcut: a registration, and a refused one, records no lineage event; removed by #2541.
 func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Registration{}, err
@@ -189,8 +191,8 @@ func (r *agentRecord) pruneCredentials(now time.Time) {
 }
 
 // checkRegistrationLocked returns the usable session for req after the
-// owner, root host session or parent, and definition or re-registration
-// checks, and the identity of the instance if its incarnation registered
+// owner, root host session or parent and its host session, and definition
+// or re-registration checks, and the identity of the instance if its incarnation registered
 // before. An instance registered before, in any session, must keep its owner,
 // host session, definition, and parent, and is not checked against the
 // definitions loaded now (design check 7 replaces check 3); only its broker
@@ -217,6 +219,10 @@ func (b *Broker) checkRegistrationLocked(workload Workload, req RegisterAgentReq
 		}
 	} else if parent, ok := t.agents[req.Parent.Subject]; !ok || parent.sessionID != s.ID {
 		return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "the parent agent is not registered to the broker session")
+	} else if req.ParentHostSessionID != parent.hostSessionID {
+		// Each child is tied to its parent's host session, and the parent to
+		// its own, so the chain ends at the root host session checked above.
+		return Session{}, agentIdentity{}, NewError(CodePermissionDenied, "", "the reported parent host session is not the parent agent's host session")
 	}
 	if subject, ok := t.incarnations[req.Incarnation]; ok {
 		rec := t.agents[subject]

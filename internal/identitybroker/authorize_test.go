@@ -1191,7 +1191,7 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 	child, err := f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
 		SessionID: f.s.ID, HostSessionID: "hostS-child", Owner: testOwner,
 		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: conformance.MainDefinition,
-		Parent: main.Agent,
+		Parent: main.Agent, ParentHostSessionID: f.s.HostSessionID,
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent child: %v", err)
