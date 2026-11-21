@@ -233,3 +233,49 @@ func TestRunRecordsForgottenAtTheCap(t *testing.T) {
 	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
 	wantDetail(t, err, "own delegation was not reported")
 }
+
+// TestDelegationsDoNotCrossBrokerSessions pins that a delegation reported in
+// one broker session does not authorize a call in the session that replaces
+// it: after a reopen, the helper's call naming it is refused until the
+// delegation is reported in the new session.
+func TestDelegationsDoNotCrossBrokerSessions(t *testing.T) {
+	f := newRunFixture(t)
+	f.delegate(t, "D1", "R43")
+	ctx := context.Background()
+	if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: f.s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
+		HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner, AccessToken: unsignedToken(t, testOwner),
+	})
+	if err != nil || reopened.ID == f.s.ID || !reopened.HoldsRefreshToken {
+		t.Fatalf("reopen = %+v, %v; want a new session holding a grant", reopened, err)
+	}
+	if _, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(reopened)); err != nil {
+		t.Fatalf("RegisterAgent main: %v", err)
+	}
+	child, err := f.b.RegisterAgent(ctx, testWorkload, identitybroker.RegisterAgentRequest{
+		SessionID: reopened.ID, HostSessionID: "hostS-child", Owner: testOwner,
+		Incarnation: "inc_bbcdefghijklmnopqrstuvwxya", Definition: conformance.MainDefinition,
+		Parent: f.main, ParentHostSessionID: f.s.HostSessionID,
+	})
+	if err != nil || child.Agent != f.child {
+		t.Fatalf("RegisterAgent child = %+v, %v; want the same agent", child, err)
+	}
+	call := callRequest(reopened.ID, child.Credential)
+	call.RunID, call.DelegationID = "R43", "D1"
+	_, err = f.authorize(call)
+	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, child.Credential)
+	wantDetail(t, err, "not reported for this run and agent")
+
+	if err := f.b.ReportDelegation(ctx, testWorkload, identitybroker.ReportDelegationRequest{
+		SessionID: reopened.ID, DelegationID: "D1", DelegatingRun: "R42", DelegatingAgent: f.main,
+		ReceivingRun: "R43", ReceivingAgent: f.child, Owner: testOwner,
+	}); err != nil {
+		t.Fatalf("ReportDelegation in the new session: %v", err)
+	}
+	call.OperationID = "op-after-report"
+	if _, err := f.authorize(call); err != nil {
+		t.Fatalf("the call once its delegation was reported in the new session: %v", err)
+	}
+}
