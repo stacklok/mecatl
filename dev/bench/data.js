@@ -445242,6 +445242,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795277291331,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b6524a41bc351287eead4deacbb3a193c9d3823",
+          "message": "feat(identitybroker): start the broker from operator configuration and keys (#2875)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-11-21T16:51:51Z",
+          "tree_id": "932448067ac9557c0aa5343038e9ed669009c223",
+          "url": "https://github.com/stacklok/mecatl/commit/7b6524a41bc351287eead4deacbb3a193c9d3823"
+        },
+        "date": 1795280646085,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -579686,6 +579725,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795280642686,
+  "lastUpdate": 1795280646996,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
