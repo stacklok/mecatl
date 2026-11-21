@@ -812,6 +812,48 @@ func TestMecak8sHelmChart_IdentityBrokerConfigAndKeys(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_IdentityBrokerOnlyConfigLoads loads the configuration
+// file a broker without AS-1 renders through the broker's own loader, as a
+// process with no hosted AS-1 does: the file names only the agent issuer key,
+// and nothing in it asks for a broker client key or an AS-1 signing key.
+func TestMecak8sHelmChart_IdentityBrokerOnlyConfigLoads(t *testing.T) {
+	rendered, err := helm(t, "template", "broker", ".", "--set", "mockProvider=true,permissionMode=yolo,replicaCount=1", "--set", "redis.local.enabled=true",
+		"--set", "identityBroker.enabled=true", "--set", identityBrokerBase, "--set", "extraArgs={--no-shell}")
+	if err != nil {
+		t.Fatalf("render: %v\n%s", err, rendered)
+	}
+	const dir = "/var/run/secrets/identity-broker/"
+	raw := identityBrokerConfigFromRender(t, rendered)
+	var got struct {
+		Keys map[string]any `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("identity-broker.json: %v", err)
+	}
+	if len(got.Keys) != 1 || got.Keys["agent_issuer"] == nil {
+		t.Fatalf("keys in the broker-only file = %v, want only agent_issuer", got.Keys)
+	}
+	keys := t.TempDir()
+	keyFile := filepath.Join(keys, "agent-issuer", "key.pem")
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	brokerconfigtest.WriteKey(t, keyFile, brokerconfigtest.NewKey(t))
+	configFile := filepath.Join(t.TempDir(), "identity-broker.json")
+	if err := os.WriteFile(configFile, []byte(strings.ReplaceAll(raw, dir, keys+"/")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := brokerconfig.Load(configFile, brokerconfig.Host{})
+	if err != nil {
+		t.Fatalf("brokerconfig.Load of the broker-only file: %v", err)
+	}
+	// Only fields are printed: the loaded value holds the parsed private key.
+	if loaded.Config.TrustDomain != "agents.example.com" || loaded.Keys.BrokerClient != nil || loaded.AS1SigningKeyFile != "" {
+		t.Fatalf("loaded trust domain %q, broker client key present %v, AS-1 signing key file %q; want the values' trust domain and neither key",
+			loaded.Config.TrustDomain, loaded.Keys.BrokerClient != nil, loaded.AS1SigningKeyFile)
+	}
+}
+
 // TestMecak8sHelmChart_IdentityBrokerConfigChecksumDrivesRollout: the broker
 // reads its configuration file only at startup, so a change to it rolls the
 // pods, and a user's podAnnotations entry cannot replace the chart's checksum.
