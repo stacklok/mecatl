@@ -10,12 +10,12 @@ require (
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
 	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1
-	github.com/stacklok/toolhive-core/redisconn v0.0.60
+	github.com/stacklok/toolhive-core/redisconn v0.0.61
 	go.uber.org/goleak v1.3.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261110000943-09e21b237f2c
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/libc v1.80.2
+	modernc.org/libc v1.82.7
 	modernc.org/sqlite v1.62.0
 )
 

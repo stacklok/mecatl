@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/lestrrat-go/jwx/v4 v4.6.0
 	github.com/stacklok/mecatl/engine v0.19.0
-	github.com/stacklok/toolhive-core v0.0.60
+	github.com/stacklok/toolhive-core v0.0.61
 )
 
 require (
@@ -21,7 +21,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.10 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
