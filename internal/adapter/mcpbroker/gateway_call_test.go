@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -101,7 +99,7 @@ type testGateway struct {
 	endpoint string
 	resource string
 	client   *http.Client
-	list     func(server string, credential oauth2.TokenSource) ([]GatewayTool, error)
+	list     func(server string, token identitybroker.Token) ([]GatewayTool, error)
 }
 
 func (g testGateway) Endpoint() string         { return g.endpoint }
@@ -110,11 +108,11 @@ func (g testGateway) HTTPClient() *http.Client { return g.client }
 func (testGateway) Route(backend, name string) (string, string, error) {
 	return embeddedGateway{}.Route(backend, name)
 }
-func (g testGateway) ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
+func (g testGateway) ListTools(ctx context.Context, server string, token identitybroker.Token) ([]GatewayTool, error) {
 	if g.list != nil {
-		return g.list(server, credential)
+		return g.list(server, token)
 	}
-	return embeddedGateway{endpoint: g.endpoint, resource: g.resource, client: g.client}.ListTools(ctx, server, credential)
+	return embeddedGateway{endpoint: g.endpoint, resource: g.resource, client: g.client}.ListTools(ctx, server, token)
 }
 
 // TestCheckGatewayRefusesAnIncompleteGateway refuses gateway calls that miss
