@@ -166,9 +166,9 @@ func (c countingGatewayTool) Execute(_ context.Context, call session.ToolCall, _
 // running a named definition through the member factory with the session's
 // gateway tools (#2842): it gets the tools of the server its definition
 // references, minus the one it excludes, and the excluded tool never runs.
-// The broker's own end-to-end tests cannot start a team member running a
-// named definition: that needs a workspace, which the broker allows only
-// with Kubernetes execution.
+// This is the member path with a filesystem, which the broker allows only
+// with Kubernetes execution, so its end-to-end tests reach only the
+// file-less one.
 func TestNamedMemberGetsItsDefinitionsGatewayTools(t *testing.T) {
 	var lookups, echoes atomic.Int32
 	cfg := Config{Workspace: t.TempDir(), Model: "m"}

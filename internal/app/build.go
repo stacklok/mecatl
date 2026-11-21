@@ -8476,12 +8476,15 @@ func modelCfgFor(cfg Config, model string) Config {
 // buildForceCopyRunner), so untrust withholds ONLY the worktree shell — the
 // asymmetry the trust-gate tests pin.
 // NO-FS PROFILE (issue #55): with noFS true every member — lead included,
-// Mutating or not, def or not — gets the SAME file-less surface: the no-FS child
-// catalog (memory six + WebFetch + global MCP) + the team coordination tools,
-// with the noFSMemberNote prompt posture and no cwd/shell/git in its <env>.
-// Agent-def adoption is deliberately SKIPPED on this branch (a def's scoped
-// catalog is file-oriented — same rationale as buildNoFSSubagentTool); the
-// member still resolves its model through the def-less chain. The catalog's
+// Mutating or not — gets the file-less surface: the no-FS child catalog
+// (memory six + WebFetch + global MCP) + the team coordination tools, with the
+// noFSMemberNote prompt posture and no cwd/shell/git in its <env>. A member
+// that names a def keeps to the def's tool limit (newNoFSDefinedMemberCatalog:
+// its exclusions, its own MCP servers, its servers' gateway tools) and reports
+// the def, so the identity broker checks the same limit; the rest of the def
+// (prompt, model, hooks) stays file-oriented and is SKIPPED, the same rationale
+// as buildNoFSSubagentTool, and the member resolves its model through the
+// def-less chain. The catalog's
 // non-read-only tools (Remember/RememberUser, MCP) ride MemberBuild.MCPToolNames
 // — the supervisor's documented exemption for non-WORKSPACE mutators — so the
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
@@ -8526,7 +8529,21 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				}
 				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 			}
-			classified := newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
+			// A member that names a definition keeps to its tool limit even
+			// without a filesystem: its catalog follows the definition's
+			// exclusions and MCP servers, and it reports the definition, so the
+			// identity broker checks its calls against the same limit. The rest
+			// of the definition (prompt, model, hooks) stays file-oriented and
+			// is not applied here.
+			var classified *classifiedCatalog
+			var defClose func() error
+			var definitionName string
+			if def, defined := lookupMemberDef(cfg.diag(), reg, spec); defined {
+				classified, defClose = newNoFSDefinedMemberCatalog(context.Background(), cfg, a, def, mainMgr)
+				definitionName = def.Name
+			} else {
+				classified = newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
+			}
 			cat := classified.catalog
 			// Exempt the catalog's non-workspace mutators (memory writers, MCP
 			// tools) BEFORE the coordination tools are added (those are exempted
@@ -8540,7 +8557,11 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
 			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, nil)
-			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: generationClose, MCPToolNames: exempt}
+			memberClose := generationClose
+			if defClose != nil {
+				memberClose = sync.OnceValue(func() error { return errors.Join(defClose(), generationClose()) })
+			}
+			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: memberClose, MCPToolNames: exempt, DefinitionName: definitionName}
 		}
 		classified := newClassifiedCatalog()
 		cat := classified.catalog

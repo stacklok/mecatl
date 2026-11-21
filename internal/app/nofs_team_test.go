@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
@@ -185,6 +186,61 @@ func TestNoFSTeamLeadSynthesisSmoke(t *testing.T) {
 		// from the main-engine posture test applies here too).
 		if !strings.Contains(sys, noFSMemberNote) {
 			t.Errorf("member request %d system prompt missing the no-FS member posture note:\n%s", i, sys)
+		}
+	}
+}
+
+// TestNoFSDefinedMemberKeepsToItsToolLimit pins that a file-less team member
+// that names a definition keeps to the definition's tool limit, as it does
+// with a filesystem: the gateway tools of the server it references minus the
+// one it excludes, its own MCP servers instead of the server-global ones and
+// CallMcpWithQuery, the core tools it does not exclude, and the definition
+// reported for the identity broker. A generic member keeps the whole file-less
+// surface.
+func TestNoFSDefinedMemberKeepsToItsToolLimit(t *testing.T) {
+	a := noFSTeamAssets(t)
+	var calls atomic.Int32
+	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
+	cfg.helperTools = []tool.Tool{
+		countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &calls},
+		countingGatewayTool{fakeGatewayTool{"calendar", "echo"}, &calls},
+	}
+	def := agents.AgentDef{
+		Name:            "scoped",
+		Description:     "a member whose definition limits its tools",
+		DisallowedTools: []string{"mcp__calendar__echo", "WebFetch"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "calendar"}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("ok"))
+	factory := buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
+		nil, regOf(def), nil, nil, nil, false, a.globalMgr, a, true)
+	tm := team.New("nofs-team")
+
+	defined := factory(tm, agent.MemberSpec{Name: "scout", AgentType: "scoped", InitialPrompt: "go"}, "")
+	if defined.Engine == nil {
+		t.Fatal("no engine for the defined member")
+	}
+	if defined.DefinitionName != "scoped" {
+		t.Fatalf("DefinitionName = %q, want the definition the member keeps to", defined.DefinitionName)
+	}
+	for _, name := range []string{"mcp__calendar__lookup", "Remember"} {
+		if !defined.Engine.HasTool(name) {
+			t.Errorf("the defined member lacks %q", name)
+		}
+	}
+	for _, name := range []string{"mcp__calendar__echo", "WebFetch", "mcp__globe__echo", "CallMcpWithQuery"} {
+		if defined.Engine.HasTool(name) {
+			t.Errorf("the defined member has %q, which its definition does not allow", name)
+		}
+	}
+
+	generic := factory(tm, agent.MemberSpec{Name: "generic", InitialPrompt: "go"}, "")
+	if generic.DefinitionName != "" {
+		t.Fatalf("a generic member reports definition %q", generic.DefinitionName)
+	}
+	for _, name := range []string{"mcp__calendar__lookup", "mcp__calendar__echo", "WebFetch", "mcp__globe__echo", "CallMcpWithQuery"} {
+		if !generic.Engine.HasTool(name) {
+			t.Errorf("the generic member lacks %q", name)
 		}
 	}
 }

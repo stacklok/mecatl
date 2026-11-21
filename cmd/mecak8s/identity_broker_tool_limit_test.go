@@ -68,3 +68,40 @@ func TestIdentityBrokerNamedHelperGetsItsDefinitionsGatewayTools(t *testing.T) {
 		}
 	}
 }
+
+// TestIdentityBrokerNamedTeamMemberGetsItsDefinitionsGatewayTools pins the
+// same for a team member that runs a named definition, in the file-less
+// sessions the broker runs without Kubernetes execution: one referencing the
+// gateway's server calls its tool under its own identity; one that excludes
+// the tool never reaches the gateway.
+func TestIdentityBrokerNamedTeamMemberGetsItsDefinitionsGatewayTools(t *testing.T) {
+	agents := t.TempDir()
+	for name, frontmatter := range map[string]string{
+		"calendar-reader": "mcpServers: [calendar]\n",
+		"no-echo":         "mcpServers: [calendar]\ndisallowedTools: [mcp__calendar__echo]\n",
+	} {
+		content := "---\nname: " + name + "\ndescription: A " + name + " specialist.\n" + frontmatter + "---\nYou help.\n"
+		if err := os.WriteFile(filepath.Join(agents, name+".md"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	team := func(agent string) string {
+		return `{"tool_calls":[{"id":"team","name":"Team","args":{"goal":"call the calendar","members":[{"name":"member","role":"call","agent":"` + agent + `"}]}}]}`
+	}
+
+	t.Run("referencing the server", func(t *testing.T) {
+		d := serveDelegations(t, "--agents-dir", agents)
+		d.writeScript(t, gatewayTurn("main-call"), team("calendar-reader"), gatewayTurn("member-call"), scriptText)
+		promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
+		d.wantHelperGatewayCalls(t, 1)
+	})
+
+	t.Run("excluding the tool", func(t *testing.T) {
+		d := serveDelegations(t, "--agents-dir", agents)
+		d.writeScript(t, gatewayTurn("main-call"), team("no-echo"), gatewayTurn("member-call"), scriptText)
+		promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
+		if ops := d.diag.operations(d.session); len(ops) != 1 {
+			t.Fatalf("%d gateway calls, want only the main agent's", len(ops))
+		}
+	})
+}

@@ -834,6 +834,40 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 	return classified
 }
 
+// newNoFSDefinedMemberCatalog is the file-less catalog of a team member
+// that runs def: the file-less core and memory tools def does not exclude,
+// def's own MCP tools (defMCPTools: its referenced and inline servers, minus
+// its exclusions) in place of the server-global ones and CallMcpWithQuery,
+// and the session's gateway tools of the servers def references
+// (defGatewayTools). It is the tool limit a defined member keeps with a
+// filesystem, so the definition narrows the member the same way either way.
+// The returned func closes def's inline MCP servers; it may be nil.
+func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAssets, def agents.AgentDef, mainMgr *mcp.Manager) (*classifiedCatalog, func() error) {
+	base, baseAssets := cfg, a
+	base.helperTools, baseAssets.globalMgr = nil, nil
+	generic := newNoFSClassifiedChildCatalog(ctx, base, baseAssets)
+	out := newClassifiedCatalog()
+	for _, t := range generic.catalog.Tools() {
+		name := t.Spec().Name
+		if defDisallowsTool(def, name) {
+			continue
+		}
+		entry := generic.entries[name]
+		out.mustRegister(t, &entry)
+	}
+	mcpTools, _, _, closeFn := defMCPTools(ctx, cfg.diag(), def, mainMgr)
+	mcpEntry := classification(server.KindDerived,
+		"member agent-definition MCP tools are scoped to this already authorized team member")
+	for _, mt := range mcpTools {
+		if err := out.register(mt, mcpEntry); err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "no-FS team member agent def MCP tool registration failed; skipped",
+				"agent", def.Name, "tool", mt.Spec().Name, "err", err)
+		}
+	}
+	registerHelperTools(out, defGatewayTools(def, cfg.helperTools), cfg.diag())
+	return out, closeFn
+}
+
 func noFSChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *tool.Catalog {
 	classified := newNoFSClassifiedChildCatalog(ctx, cfg, a)
 	mustValidateClassifiedCatalog(classified, "no-FS child tool catalog")
