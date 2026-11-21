@@ -39,6 +39,8 @@ func runWorkloads(t *testing.T, factory coreFactory) {
 			wantError(t, "RegisterAgent by another workload", err, identitybroker.CodePermissionDenied, "")
 			_, err = core.AuthorizeCall(ctx, other, authorizeRequest(s.ID))
 			wantError(t, "AuthorizeCall by another workload", err, identitybroker.CodePermissionDenied, "")
+			err = core.ReportDelegation(ctx, other, delegationRequest(s.ID))
+			wantError(t, "ReportDelegation by another workload", err, identitybroker.CodePermissionDenied, "")
 			err = core.CloseSession(ctx, other, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
 			wantError(t, "CloseSession by another workload", err, identitybroker.CodePermissionDenied, "")
 			if got, ok, err := core.FindSession(ctx, workloadA, findRequest("hostS42")); err != nil || !ok || got != s {
@@ -58,6 +60,9 @@ func runWorkloads(t *testing.T, factory coreFactory) {
 		_, theirs = core.AuthorizeCall(ctx, workloadB, authorizeRequest(s.ID))
 		_, missing = core.AuthorizeCall(ctx, workloadB, authorizeRequest(unknown.ID))
 		sameError(t, "AuthorizeCall", theirs, missing)
+		theirs = core.ReportDelegation(ctx, workloadB, delegationRequest(s.ID))
+		missing = core.ReportDelegation(ctx, workloadB, delegationRequest(unknown.ID))
+		sameError(t, "ReportDelegation", theirs, missing)
 		theirs = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
 		missing = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: unknown.ID, Reason: identitybroker.ReasonSessionClosed})
 		sameError(t, "CloseSession", theirs, missing)

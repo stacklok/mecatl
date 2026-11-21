@@ -43,11 +43,18 @@ func outcomeFor(code Code) DecisionOutcome {
 
 // IDJAGRecord records an ID-JAG the broker obtained for a call.
 type IDJAGRecord struct {
-	At          time.Time
-	SessionID   string
-	Agent       AgentRef
-	AgentID     string
-	RunID       string
+	At        time.Time
+	SessionID string
+	Agent     AgentRef
+	AgentID   string
+	RunID     string
+	// DelegationID is the delegation the run acts under; empty for a root
+	// run.
+	DelegationID string
+	// RunOwner is the owner the run acts for, as reported.
+	RunOwner Owner
+	// User is the user of the grant the ID-JAG was exchanged from.
+	User        Owner
 	OperationID string
 	AttemptID   string
 	IDJAG       CredentialRef

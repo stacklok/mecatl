@@ -332,6 +332,7 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker could not register every helper agent again",
 					"session", host, "broker_session", brokerSession.ID, "err", err.Error())
 			}
+			s.reportDelegationsAgain(ctx, host, brokerSession.ID)
 		}
 		return nil
 	case admitErr != nil:
@@ -462,15 +463,22 @@ func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin st
 	return want, false
 }
 
-// openTeamRootIdentityBrokerSession opens the broker session of the session a
-// team is rooted in before the team runs. Team runs do not pass run entry, so
-// without this a team could run in a session tree whose broker session was
-// lost at a restart. A team on the default placement has no root session and
+// startTeamRootRun starts a RunTeam call as a run of the team root's main
+// agent, first opening the broker session of the session the team is rooted
+// in. Team runs do not pass run entry, so without this a team could run in a
+// session tree whose broker session was lost at a restart. A team on the default placement has no root session and
 // its members belong to no session tree, so they get no agent identity.
-func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root session.SessionID) error {
+//
+// It returns ctx carrying the team run: a RunTeam call is a run of the root's
+// main agent, owned by the root's owner, and each member's run is delegated
+// from it, the main agent being the members' stand-in creation parent. A
+// team with no broker, no root session, or a root with no owner has no such
+// run, and its members' gateway calls fail closed.
+func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) (context.Context, error) {
 	if s.cfg.IdentityBroker == nil || root == "" {
-		return nil
+		return ctx, nil
 	}
+	runCtx := ctx
 	// The team run fails if registration does, so it keeps the caller's
 	// cancellation; the timeout keeps a slow broker from holding the root's
 	// runEntryMu, as fork and clear bound theirs.
@@ -485,12 +493,18 @@ func (s *Service) openTeamRootIdentityBrokerSession(ctx context.Context, root se
 	defer unlock()
 	sess, err := s.cfg.Store.Load(ctx, root)
 	if errors.Is(err, port.ErrSessionNotFound) {
-		return fmt.Errorf("%w: team root session %q", ErrNotFound, root)
+		return runCtx, fmt.Errorf("%w: team root session %q", ErrNotFound, root)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: load team root session: %v", ErrInternal, err)
+		return runCtx, fmt.Errorf("%w: load team root session: %v", ErrInternal, err)
 	}
-	return s.openIdentityBrokerSession(ctx, sess)
+	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
+		return runCtx, err
+	}
+	if owner, ok := identityBrokerOwner(sess.Owner); ok {
+		runCtx = agentcredential.WithRun(runCtx, agentcredential.Run{ID: newRunID(), Owner: owner})
+	}
+	return runCtx, nil
 }
 
 // EndScheduledRun closes a scheduled session's broker session when its run
@@ -606,4 +620,39 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 
 func (s *Service) logIdentityBroker(ctx context.Context, msg, host, brokerSession string) {
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, msg, "session", host, "broker_session", brokerSession)
+}
+
+// reportDelegationsAgain reports every delegation held for root's tree into
+// brokerSession, in the order they were first reported, so each delegating
+// run is recorded before the runs it delegated to: a reopened broker session
+// starts with no runs, and a moved helper's calls name its run and
+// delegation. A report into the session that already holds it succeeds
+// again. A helper or delegating agent not registered there, as one that
+// failed to move, is skipped; failures are logged, and the helper's gateway
+// calls are refused until its next delegation.
+func (s *Service) reportDelegationsAgain(ctx context.Context, root, brokerSession string) {
+	agents := s.cfg.IdentityAgents
+	var errs []error
+	for _, d := range agents.Delegations(root) {
+		receiving, ok := agents.Held(agentcredential.Key{RootSessionID: root, AgentSessionID: d.AgentSessionID})
+		if !ok || receiving.BrokerSessionID != brokerSession {
+			continue
+		}
+		delegating, ok := agents.Held(agentcredential.Key{RootSessionID: root, AgentSessionID: d.DelegatingAgentSession})
+		if !ok || delegating.BrokerSessionID != brokerSession {
+			continue
+		}
+		err := s.cfg.IdentityBroker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
+			SessionID:    brokerSession,
+			DelegationID: d.ID, DelegatingRun: d.DelegatingRun, DelegatingAgent: delegating.Agent,
+			ReceivingRun: d.Run.ID, ReceivingAgent: receiving.Agent, Owner: d.Run.Owner,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("report delegation %s for helper %s: %w", d.ID, d.AgentSessionID, err))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker could not report every helper delegation again",
+			"session", root, "broker_session", brokerSession, "err", err.Error())
+	}
 }

@@ -64,6 +64,15 @@ func (s *Service) HeldIdentityAgentForTest(root, agentSession session.SessionID)
 	return held.Agent, ok
 }
 
+// IdentityDelegationForTest returns the current delegation held for the
+// helper of agentSession in root's tree, and whether one is held.
+func (s *Service) IdentityDelegationForTest(root, agentSession session.SessionID) (agentcredential.Delegation, bool) {
+	if s.cfg.IdentityAgents == nil {
+		return agentcredential.Delegation{}, false
+	}
+	return s.cfg.IdentityAgents.Delegation(agentcredential.Key{RootSessionID: string(root), AgentSessionID: string(agentSession)})
+}
+
 // SessionEngineContextWindowForTest exposes the per-session engine's compaction
 // context window (Engine.ContextWindow(), engine/agent/loop.go) for the session
 // under id, or (0, false) if no per-session engine is registered (the session is

@@ -1196,6 +1196,14 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterAgent child: %v", err)
 	}
+	// The child acts in its own run, delegated from the main agent's, so its
+	// report passes the run checks and reaches the attempt.
+	if err := f.b.ReportDelegation(context.Background(), testWorkload, identitybroker.ReportDelegationRequest{
+		SessionID: f.s.ID, DelegationID: "D1", DelegatingRun: "R42", DelegatingAgent: main.Agent,
+		ReceivingRun: "R43", ReceivingAgent: child.Agent, Owner: testOwner,
+	}); err != nil {
+		t.Fatalf("ReportDelegation: %v", err)
+	}
 	for _, tc := range []struct {
 		name   string
 		change func(*identitybroker.AuthorizeCallRequest)
@@ -1207,7 +1215,9 @@ func TestAuthorizeCallRejectedTokenRetry(t *testing.T) {
 		{"server", func(r *identitybroker.AuthorizeCallRequest) { r.Server = "calendar" }},
 		{"tool", func(r *identitybroker.AuthorizeCallRequest) { r.Tool = "github.issue_write" }},
 		{"arguments hash", func(r *identitybroker.AuthorizeCallRequest) { r.ArgumentsSHA256 = strings.Repeat("cd", 32) }},
-		{"agent", func(r *identitybroker.AuthorizeCallRequest) { r.Credential = child.Credential }},
+		{"agent", func(r *identitybroker.AuthorizeCallRequest) {
+			r.Credential, r.RunID, r.DelegationID = child.Credential, "R43", "D1"
+		}},
 	} {
 		t.Run("a different "+tc.name, func(t *testing.T) {
 			issued, err := f.authorize(callRequest(f.s.ID, f.cred))

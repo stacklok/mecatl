@@ -457,7 +457,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 3. `R41` belongs to `A42` and is bound to `mainRef`. If `R41` has no run record yet, the broker records it as a root run of `mainRef` with the reported owner, which needs `mainRef` to be a root instance, as [step (6)](#6-per-operation-authorization) check 4 would. If `R41` was itself delegated, its delegation was reported in `A42` with `R41` as the receiving run.
 4. `reviewerRef` is registered to `A42`.
 5. The reported owner of `R42` equals the owner of `R41`.
-6. `D42` has not been reported in `A42`, or was reported in it with exactly the same content. Delegation records are kept per session.
+6. `D42` has not been reported in `A42`, or was reported in it with exactly the same content. Delegation records are kept per session. A new delegation needs `R42` to have no run record yet, so one run is never bound to two delegations.
 
 **Output.** A recorded delegation and a run record for `R42`, bound to `reviewerRef` and its owner, which lets `R42` pass [check 4](#6-per-operation-authorization) of every later call.
 
@@ -470,6 +470,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 | 3–5 | `PERMISSION_DENIED` | No. Until a consistent report arrives, `R42` cannot call tools. |
 | 6, different content | `ALREADY_EXISTS` | No. |
 | 6, same content | Success | A lost response is retried safely. |
+| 6, `R42` already recorded | `PERMISSION_DENIED` | No. |
 
 **Why.** The broker sees delegations only through these reports. Checking each one when it arrives keeps a later call from naming a run the broker never heard of, or a run whose owner changed on the way down.
 

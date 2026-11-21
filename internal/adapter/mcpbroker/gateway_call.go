@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -21,22 +20,35 @@ const (
 	diagnosticCodeCompleted    = "completed"
 )
 
-// gatewayScope is the run a gateway call belongs to, read from the tool
-// call's context before the attachment operation replaces it.
+// gatewayScope is the session tree a gateway call belongs to, read from the
+// tool call's context before the attachment operation replaces it, with the
+// main agent's run the context carries.
 type gatewayScope struct {
 	acting, root string
-	runSerial    int64
+	mainRun      agentcredential.Run
 	ok           bool
 }
 
 func gatewayScopeFrom(ctx context.Context) gatewayScope {
 	acting, hasActing := port.SessionIDFromContext(ctx)
 	root, hasRoot := port.RootSessionIDFromContext(ctx)
-	serial, hasSerial := port.RunSerialFromContext(ctx)
+	mainRun, _ := agentcredential.RunFromContext(ctx)
 	return gatewayScope{
-		acting: string(acting), root: string(root), runSerial: serial,
-		ok: hasActing && hasRoot && hasSerial && acting != "" && root != "",
+		acting: string(acting), root: string(root), mainRun: mainRun,
+		ok: hasActing && hasRoot && acting != "" && root != "",
 	}
+}
+
+// callRun is the run a gateway call names: the main agent's run for a call
+// of the root's main agent, or a helper's current delegation and the run
+// delegated to it. ok is false when there is none, and the call is refused
+// rather than sent with a stand-in.
+func (g *gatewayCall) callRun() (run agentcredential.Run, delegationID string, ok bool) {
+	if g.scope.acting == g.scope.root {
+		return g.scope.mainRun, "", !g.scope.mainRun.IsZero()
+	}
+	d, held := g.r.gatewayCalls.Credentials.Delegation(g.key)
+	return d.Run, d.ID, held && !d.Run.IsZero() && d.ID != ""
 }
 
 // operationID identifies one tool call of an agent in a session tree. It is
@@ -56,17 +68,21 @@ func hashArguments(args json.RawMessage) (string, error) {
 
 // gatewayCall is one model tool call sent through the gateway.
 type gatewayCall struct {
-	t      *sessionTool
-	r      *Runtime
-	call   session.ToolCall
-	scope  gatewayScope
-	key    agentcredential.Key
-	op     string
-	server string
-	tool   string
-	args   json.RawMessage
-	hash   string
-	claim  bool
+	t     *sessionTool
+	r     *Runtime
+	call  session.ToolCall
+	scope gatewayScope
+	key   agentcredential.Key
+	// agentRun and delegationID are the run the call names and the delegation it
+	// acts under, empty for the main agent's run.
+	agentRun     agentcredential.Run
+	delegationID string
+	op           string
+	server       string
+	tool         string
+	args         json.RawMessage
+	hash         string
+	claim        bool
 	// authErr is the identity broker's refusal that ended the call, if any;
 	// cause names any other failure before a send.
 	authErr *identitybroker.Error
@@ -108,6 +124,11 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 	}
 	g.key = agentcredential.Key{RootSessionID: g.scope.root, AgentSessionID: g.scope.acting}
 	g.op = operationID(g.scope.root, g.scope.acting, g.call.ID)
+	var ok bool
+	if g.agentRun, g.delegationID, ok = g.callRun(); !ok {
+		g.cause = "the acting agent has no run"
+		return fail(outcomeIdentityUnavailable)
+	}
 	var err error
 	if g.server, g.tool, err = g.r.gateway.Route(g.t.route.backend, g.call.Name); err != nil {
 		g.cause = "route: " + err.Error()
@@ -191,13 +212,13 @@ func (g *gatewayCall) authorize(ctx context.Context, rejectedAttemptID string) (
 }
 
 func (g *gatewayCall) request(cred agentcredential.Credential, rejectedAttemptID string) identitybroker.AuthorizeCallRequest {
-	// Shortcut: run ID is the session's run serial and run owner the session owner, no delegation, accepted unchecked; removed by #2557 (run and owner checks with delegation).
 	return identitybroker.AuthorizeCallRequest{
 		SessionID:         cred.BrokerSessionID,
 		Credential:        cred.Token,
 		OperationID:       g.op,
-		RunID:             "run-" + strconv.FormatInt(g.scope.runSerial, 10),
-		RunOwner:          cred.Owner,
+		RunID:             g.agentRun.ID,
+		DelegationID:      g.delegationID,
+		RunOwner:          g.agentRun.Owner,
 		Method:            identitybroker.MethodToolsCall,
 		Server:            g.server,
 		Tool:              g.tool,

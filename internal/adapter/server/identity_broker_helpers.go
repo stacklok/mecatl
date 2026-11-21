@@ -80,7 +80,7 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "registered helper agent",
 			"session", host, "parent_session", parentHost, "broker_session", parent.BrokerSessionID,
 			"definition", definition.Source+"/"+definition.Name)
-		return nil
+		return s.reportHelperDelegation(ctx, root, host, parentHost, parent)
 	case admitErr != nil:
 		return admitErr
 	case errors.Is(err, agentcredential.ErrDropped),
@@ -131,6 +131,74 @@ func (s *Service) RegisterResumedHelper(ctx context.Context, sess *session.Sessi
 		}
 		return s.credentialLookupFailure(ctx, string(sess.ID), err)
 	}
+	// A resumed helper runs again in a new run, delegated from the run that
+	// resumed it.
+	parentHost := string(sess.Relationship.ParentSessionID)
+	if parentHost == "" {
+		parentHost = root
+	}
+	parent, err := s.cfg.IdentityAgents.Credential(ctx, agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}, false)
+	if err != nil {
+		return s.helperParentFailure(ctx, string(sess.ID), parentHost, err)
+	}
+	return s.reportHelperDelegation(ctx, root, string(sess.ID), parentHost, parent)
+}
+
+// reportHelperDelegation reports the delegation that starts the run of host's
+// helper, registered in root's tree, and records it as the helper's current
+// delegation: from the current run of its parent agent, parent, which is the
+// main agent's run on ctx or the parent helper's own delegated run, to a new
+// run of the helper with the same owner. Each call is a new delegation and a
+// new run. A parent with no run (a run entry that carries none, or a parent
+// helper whose delegation failed) is logged and the helper starts with none,
+// so its gateway calls fail closed. A failed report stops the helper as a
+// failed registration does.
+func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parentHost string, parent agentcredential.Credential) error {
+	var delegating agentcredential.Run
+	if parentHost == root {
+		delegating, _ = agentcredential.RunFromContext(ctx)
+	} else if d, ok := s.cfg.IdentityAgents.Delegation(agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}); ok {
+		delegating = d.Run
+	}
+	key := agentcredential.Key{RootSessionID: root, AgentSessionID: host}
+	if delegating.IsZero() {
+		// A resumed helper must not keep acting in its earlier run.
+		s.cfg.IdentityAgents.ClearDelegation(key)
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker helper's parent agent has no run; the helper's gateway calls fail closed",
+			"session", host, "parent_session", parentHost)
+		return nil
+	}
+	helper, ok := s.cfg.IdentityAgents.Held(key)
+	if !ok {
+		// Dropped since it registered: the root's next run entry opens its
+		// broker session again.
+		return ErrIdentityBrokerUnavailable
+	}
+	d := agentcredential.Delegation{
+		ID:                     newDelegationID(),
+		Run:                    agentcredential.Run{ID: newRunID(), Owner: delegating.Owner},
+		DelegatingRun:          delegating.ID,
+		DelegatingAgentSession: parentHost,
+	}
+	err := s.cfg.IdentityBroker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
+		SessionID:    helper.BrokerSessionID,
+		DelegationID: d.ID, DelegatingRun: d.DelegatingRun, DelegatingAgent: parent.Agent,
+		ReceivingRun: d.Run.ID, ReceivingAgent: helper.Agent, Owner: d.Run.Owner,
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, identitybroker.ReasonError(identitybroker.ReasonSessionClosed, "")):
+		s.logIdentityBroker(ctx, "broker session closed during a helper's delegation report", host, helper.BrokerSessionID)
+		return ErrIdentityBrokerUnavailable
+	default:
+		return s.identityBrokerFailure(ctx, "report delegation", host, helper.BrokerSessionID, err)
+	}
+	if err := s.cfg.IdentityAgents.SetDelegation(key, d); err != nil {
+		return ErrIdentityBrokerUnavailable
+	}
+	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "reported helper delegation",
+		"session", host, "parent_session", parentHost, "broker_session", helper.BrokerSessionID,
+		"delegation", d.ID, "run", d.Run.ID, "delegating_run", d.DelegatingRun)
 	return nil
 }
 

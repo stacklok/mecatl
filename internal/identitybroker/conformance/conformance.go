@@ -89,6 +89,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("sessions", func(t *testing.T) { runSessions(t, service) })
 	t.Run("closed sessions", func(t *testing.T) { runClosedSessions(t, service) })
 	t.Run("agents", func(t *testing.T) { runAgents(t, service) })
+	t.Run("delegations", func(t *testing.T) { runDelegations(t, service) })
 	t.Run("credentials", func(t *testing.T) { runCredentials(t, factory) })
 	t.Run("credentials for an owner", func(t *testing.T) { runOwnerCredentials(t, factory) })
 	t.Run("invalid requests", func(t *testing.T) { runInvalidRequests(t, service) })
@@ -161,6 +162,19 @@ func authorizeRequest(sessionID string) identitybroker.AuthorizeCallRequest {
 		Server:          "github",
 		Tool:            "github.pull_request_read",
 		ArgumentsSHA256: strings.Repeat("ab", 32),
+	}
+}
+
+// delegationRequest is a well-formed report in sessionID naming agents the
+// session need not hold.
+func delegationRequest(sessionID string) identitybroker.ReportDelegationRequest {
+	return identitybroker.ReportDelegationRequest{
+		SessionID: sessionID, DelegationID: "D42",
+		DelegatingRun:   delegatingRun,
+		DelegatingAgent: identitybroker.AgentRef{Subject: "spiffe://agents.example.com/agent/ag_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		ReceivingRun:    receivingRun,
+		ReceivingAgent:  identitybroker.AgentRef{Subject: "spiffe://agents.example.com/agent/ag_bbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		Owner:           alice,
 	}
 }
 

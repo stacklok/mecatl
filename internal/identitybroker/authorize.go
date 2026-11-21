@@ -45,7 +45,16 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	}
 	rec.Agent, rec.AgentID = agent.Agent, agent.AgentID
 
-	// Shortcut: step (6) checks 4 and 5 (run and owner) and 7 (ceiling) accept their inputs; removed by #2557 (checks 4 and 5) and the authority work (docs/drafts/agent-identity/README.md, "Order of work") for check 7.
+	// Checks 4 and 5: the run belongs to this session and is bound to the
+	// agent, and its reported owner is the run's and the grant's.
+	t.mu.Lock()
+	err = t.checkRunLocked(s, agent.Agent.Subject, req)
+	t.mu.Unlock()
+	if err != nil {
+		return Authorization{}, b.refuse(ctx, rec, err)
+	}
+
+	// Shortcut: step (6) check 7 (ceiling) accepts its input; removed by the authority work (docs/drafts/agent-identity/README.md, "Order of work").
 
 	// Check 6: the gateway routes the server.
 	// Shortcut: check 6 matches the call's server, not the tool's route; removed by #2538 (gateway entries carry their routed tools, or the design moves the tool check to the vMCP).
@@ -150,7 +159,8 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 		rec.IDJAG = claims.ref
 		if err := b.recorder.RecordIDJAG(ctx, IDJAGRecord{
 			At: t.now(), SessionID: s.ID, Agent: rec.Agent, AgentID: rec.AgentID,
-			RunID: req.RunID, OperationID: req.OperationID, AttemptID: attemptID,
+			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, User: g.owner,
+			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
 		}); err != nil {
 			return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")

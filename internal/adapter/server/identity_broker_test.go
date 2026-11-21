@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,10 @@ type recordingBroker struct {
 	opens     []identitybroker.OpenSessionRequest
 	closes    []identitybroker.CloseSessionRequest
 	registers []identitybroker.RegisterAgentRequest
+	// delegations holds every ReportDelegation request.
+	delegations []identitybroker.ReportDelegationRequest
+	// reportErr, when set, makes ReportDelegation fail with it.
+	reportErr error
 	// registered holds the registrations the broker accepted.
 	registered  []identitybroker.RegisterAgentRequest
 	unavailable bool
@@ -206,6 +211,26 @@ func (b *recordingBroker) set(f func(*recordingBroker)) {
 
 func (b *recordingBroker) AuthorizeCall(ctx context.Context, req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
 	return b.inner.AuthorizeCall(ctx, req)
+}
+
+func (b *recordingBroker) ReportDelegation(ctx context.Context, req identitybroker.ReportDelegationRequest) error {
+	if err := b.down(); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.delegations = append(b.delegations, req)
+	reportErr := b.reportErr
+	b.mu.Unlock()
+	if reportErr != nil {
+		return reportErr
+	}
+	return b.inner.ReportDelegation(ctx, req)
+}
+
+func (b *recordingBroker) delegationRequests() []identitybroker.ReportDelegationRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.delegations)
 }
 
 func (b *recordingBroker) openCount() int {
@@ -687,6 +712,19 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			if member.Definition != conformance.MemberDefinition || member.ParentHostSessionID != string(source.ID) ||
 				member.Parent.IsZero() || member.SessionID != brokerSession.ID || member.HostSessionID == string(source.ID) {
 				t.Fatalf("member registration = %+v, want a system/member helper of the root's main agent", member)
+			}
+			// The RunTeam call is a run of the root's main agent, which
+			// delegates the member's run.
+			mainAgent, _ := svc.HeldIdentityAgentForTest(source.ID, source.ID)
+			memberAgent, _ := svc.HeldIdentityAgentForTest(source.ID, session.SessionID(member.HostSessionID))
+			delegations := broker.delegationRequests()
+			if len(delegations) != 1 {
+				t.Fatalf("delegation reports = %+v, want the member's", delegations)
+			}
+			d := delegations[0]
+			if !strings.HasPrefix(d.DelegatingRun, "run_") || d.DelegatingAgent != mainAgent || d.ReceivingAgent != memberAgent ||
+				d.Owner != main.Owner || d.SessionID != brokerSession.ID {
+				t.Fatalf("member delegation = %+v, want a run_ run of the main agent %+v delegating to the member %+v", d, mainAgent, memberAgent)
 			}
 		})
 	}
