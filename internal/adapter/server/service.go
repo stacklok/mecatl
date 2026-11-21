@@ -10082,7 +10082,7 @@ func randomID() session.SessionID {
 // helper delegations name. A session with no run ID or no owner carries no run,
 // so its gateway calls fail closed.
 //
-// Shortcut: the run owner is the session's owner, read at each run entry, not recorded from the request that started the run, and a scheduled run takes it from its session rather than its schedule grant; removed by #2569.
+// Shortcut: the run owner is the session's owner, read at each run entry, not recorded from the request that started the run, and a scheduled run takes it from its session rather than its schedule grant; removed by #2947 (interactive runs) and #2569 (scheduled runs).
 func rootedRunContext(ctx context.Context, sess *session.Session, governanceRoot string) context.Context {
 	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 	if owner, ok := identityBrokerOwner(sess.Owner); ok && sess.RunID() != "" {
