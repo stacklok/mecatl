@@ -25,6 +25,7 @@ var CorePackages = []string{
 	modulePrefix + "engine/kernel/session",
 	modulePrefix + "engine/kernel/session/format",
 	modulePrefix + "engine/kernel/sessiongroup/id",
+	modulePrefix + "engine/kernel/lease",
 	modulePrefix + "engine/kernel/sessionruntime",
 	modulePrefix + "engine/kernel/sessiongroup",
 	modulePrefix + "engine/session",

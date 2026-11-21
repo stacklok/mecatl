@@ -1,9 +1,34 @@
-    method func (*SessionGroup).Close(context.Context) error
+    ifacemethod func (Clock).Now() time.Time
+    ifacemethod func (Clock).Wait(ctx context.Context, until time.Time) error
+    method func (*SessionGroup).Close(context.Context) (CloseReport, error)
     method func (*SessionGroup).GroupID() id.GroupID
     method func (*SessionGroup).Load(context.Context, id.SessionID) (*sessionruntime.SessionRuntime, error)
     method func (*SessionGroup).LoadedRuntimes() ([]*sessionruntime.SessionRuntime, error)
     method func (*SessionGroup).Members(context.Context) ([]id.SessionID, error)
     method func (*SessionGroup).Unload(context.Context, id.SessionID) error
-func Open(context.Context, id.GroupID) (*SessionGroup, error)
+    method func (CloseObligationCause).Error() string
+    method func (Config).Validate() error
+const CloseCauseDeadline CloseObligationCause = 1
+const CloseCauseOperationBlocked CloseObligationCause = 2
+const CloseCauseStillActive CloseObligationCause = 3
+const CloseCauseUnknown CloseObligationCause = 0
+const CloseObligationMember CloseObligationKind = 3
+const CloseObligationProvider CloseObligationKind = 1
+const CloseObligationUnknown CloseObligationKind = 0
+const CloseObligationWork CloseObligationKind = 2
+const CloseReleaseNotHeld CloseRelease = 1
+const CloseReleaseReleased CloseRelease = 2
+const CloseReleaseUnattempted CloseRelease = 4
+const CloseReleaseUncertain CloseRelease = 3
+const CloseReleaseUnknown CloseRelease = 0
+func Open(context.Context, id.GroupID, Config) (*SessionGroup, error)
+type Clock interface{Now() time.Time; Wait(ctx context.Context, until time.Time) error}
+type CloseObligation struct{Kind CloseObligationKind; Member id.SessionID; Cause CloseObligationCause}
+type CloseObligationCause uint8
+type CloseObligationKind uint8
+type CloseRelease uint8
+type CloseReport struct{GroupID id.GroupID; Release CloseRelease; Unresolved []CloseObligation}
+type Config struct{Provider lease.Provider; Clock Clock; HistoryPolicy history.Policy; SessionPolicy session.Policy; InstanceID uint64; OpeningTimeout time.Duration; AttemptTimeout time.Duration; RetryInterval time.Duration; RenewInterval time.Duration; DrainTimeout time.Duration; CloseTimeout time.Duration; MaxLoadedSessions int}
 type SessionGroup struct{}
+var ErrInvalidConfig error
 var ErrNotImplemented error

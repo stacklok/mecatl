@@ -11,18 +11,26 @@ import (
 // hosting implementation. Open currently returns ErrNotImplemented. The
 // application supplies an existing group ID; parsing does not create a group.
 func ExampleSessionGroup() {
+	// A real host must supply validated lease/lifecycle and member inputs.
+	// This zero config is only a placeholder in the non-executable sketch.
+	var config sessiongroup.Config
 	ctx := context.Background()
 	id, err := groupid.ParseGroupID("GRP1111111111111111111111")
 	if err != nil {
 		panic(err)
 	}
-	group, err := sessiongroup.Open(ctx, id)
+	group, err := sessiongroup.Open(ctx, id, config)
 	if err != nil {
 		panic(err)
 	}
 	defer func() {
-		if err := group.Close(ctx); err != nil {
+		report, err := group.Close(ctx)
+		if err != nil {
 			panic(err)
+		}
+		if report.Release != sessiongroup.CloseReleaseReleased || len(report.Unresolved) != 0 {
+			// A completed close can still report uncertain release or live work.
+			panic("session group close left unresolved responsibility")
 		}
 	}()
 

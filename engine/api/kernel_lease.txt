@@ -1,0 +1,29 @@
+    ifacemethod func (Attempt).Abandon(context.Context) error
+    ifacemethod func (Attempt).Try(context.Context) (Hold, Validity, error)
+    ifacemethod func (Hold).Backend() history.Backend
+    ifacemethod func (Hold).CheckMember(context.Context, id.SessionID) error
+    ifacemethod func (Hold).Done() <-chan struct{}
+    ifacemethod func (Hold).Err() error
+    ifacemethod func (Hold).GroupID() id.GroupID
+    ifacemethod func (Hold).Release(context.Context) error
+    ifacemethod func (Hold).Renew(context.Context) (Validity, error)
+    ifacemethod func (Provider).Begin(id.GroupID) (Attempt, error)
+    method func (*AcquireError).Error() string
+    method func (*AcquireError).Failure() AcquireFailure
+    method func (*AcquireError).Unwrap() error
+const AcquireHeld AcquireFailure = 1
+const AcquireInvalid AcquireFailure = 0
+const AcquireRetryable AcquireFailure = 2
+const AcquireUncertain AcquireFailure = 3
+func NewAcquireError(failure AcquireFailure, cause error) *AcquireError
+type AcquireError struct{}
+type AcquireFailure uint8
+type Attempt interface{Abandon(context.Context) error; Try(context.Context) (Hold, Validity, error)}
+type Hold interface{Backend() history.Backend; CheckMember(context.Context, id.SessionID) error; Done() <-chan struct{}; Err() error; GroupID() id.GroupID; Release(context.Context) error; Renew(context.Context) (Validity, error)}
+type Provider interface{Begin(id.GroupID) (Attempt, error)}
+type Validity struct{Until time.Time}
+var ErrExpired error
+var ErrNotMember error
+var ErrReleased error
+var ErrSuperseded error
+var ErrValidityUnknown error

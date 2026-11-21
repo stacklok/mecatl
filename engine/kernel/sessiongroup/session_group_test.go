@@ -17,9 +17,25 @@ func TestSkeletonCannotEstablishHosting(t *testing.T) {
 		if canceled {
 			cancel()
 		}
-		g, err := sessiongroup.Open(ctx, groupid.NewGroupID())
+		provider := &testProvider{}
+		clock := &testClock{}
+		g, err := sessiongroup.Open(ctx, groupid.NewGroupID(), validConfig(provider, clock))
 		if g != nil || !errors.Is(err, sessiongroup.ErrNotImplemented) {
 			t.Fatalf("Open created a placeholder owner: %v, %v", g, err)
+		}
+		if provider.called || clock.nowCalled || clock.waitCalled {
+			t.Fatal("skeleton Open executed an injected dependency")
+		}
+		config := validConfig(provider, clock)
+		config.OpeningTimeout = 0 // Invalid inputs must not activate dependencies either.
+		g, err = sessiongroup.Open(ctx, groupid.NewGroupID(), config)
+		if g != nil || !errors.Is(err, sessiongroup.ErrNotImplemented) ||
+			provider.called || clock.nowCalled || clock.waitCalled {
+			t.Fatalf("Open activated or validated invalid config: %v, %v", g, err)
+		}
+		g, err = sessiongroup.Open(ctx, groupid.GroupID{}, sessiongroup.Config{})
+		if g != nil || !errors.Is(err, sessiongroup.ErrNotImplemented) {
+			t.Fatalf("Open validated configuration instead of remaining a stub: %v, %v", g, err)
 		}
 		for _, g := range []*sessiongroup.SessionGroup{nil, {}} {
 			if g.GroupID() != (groupid.GroupID{}) {
@@ -41,8 +57,12 @@ func TestSkeletonCannotEstablishHosting(t *testing.T) {
 			if err := g.Unload(ctx, member); !errors.Is(err, sessiongroup.ErrNotImplemented) {
 				t.Fatalf("Unload claimed success: %v", err)
 			}
-			if err := g.Close(ctx); !errors.Is(err, sessiongroup.ErrNotImplemented) {
-				t.Fatalf("Close claimed drain/release: %v", err)
+			for range 2 {
+				report, err := g.Close(ctx)
+				if report.GroupID != (groupid.GroupID{}) || report.Release != sessiongroup.CloseReleaseUnknown ||
+					report.Unresolved != nil || !errors.Is(err, sessiongroup.ErrNotImplemented) {
+					t.Fatalf("Close claimed drain/release: %+v, %v", report, err)
+				}
 			}
 		}
 	}
