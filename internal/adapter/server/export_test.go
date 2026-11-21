@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -62,6 +63,13 @@ func (s *Service) HeldIdentityAgentForTest(root, agentSession session.SessionID)
 	}
 	held, ok := s.cfg.IdentityAgents.Held(agentcredential.Key{RootSessionID: string(root), AgentSessionID: string(agentSession)})
 	return held.Agent, ok
+}
+
+// IdentityAgentLookupForTest looks up the credential of the agent of
+// session agentSession in root's tree as the MCP broker does before a
+// gateway call, which moves a helper its root's reopen left behind.
+func (s *Service) IdentityAgentLookupForTest(ctx context.Context, root, agentSession session.SessionID) (agentcredential.Credential, error) {
+	return s.cfg.IdentityAgents.Credential(ctx, agentcredential.Key{RootSessionID: string(root), AgentSessionID: string(agentSession)}, false)
 }
 
 // IdentityDelegationForTest returns the current delegation held for the

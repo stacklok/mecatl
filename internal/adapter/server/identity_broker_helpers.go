@@ -196,6 +196,13 @@ func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parent
 	if err := s.cfg.IdentityAgents.SetDelegation(key, d); err != nil {
 		return ErrIdentityBrokerUnavailable
 	}
+	// A reopen may have moved the helper to another broker session after the
+	// report and before d was set, too early to report d there: report it now.
+	if now, ok := s.cfg.IdentityAgents.Held(key); ok && now.BrokerSessionID != helper.BrokerSessionID {
+		if err := s.cfg.IdentityAgents.ReportDelegationAgain(ctx, key); err != nil {
+			return s.identityBrokerFailure(ctx, "report delegation again", host, now.BrokerSessionID, err)
+		}
+	}
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "reported helper delegation",
 		"session", host, "parent_session", parentHost, "broker_session", helper.BrokerSessionID,
 		"delegation", d.ID, "run", d.Run.ID, "delegating_run", d.DelegatingRun)
