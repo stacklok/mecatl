@@ -14,11 +14,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.6",
+    "@hono/node-server": "2.1.9",
     "@hono/zod-openapi": "1.6.3",
     "@stacklok-oss/mecatl-sdk": "file:../../sdk/typescript",
-    "hono": "4.13.17",
-    "openid-client": "6.8.9",
+    "hono": "4.13.19",
+    "openid-client": "6.9.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -27,6 +27,6 @@
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   }
 }
