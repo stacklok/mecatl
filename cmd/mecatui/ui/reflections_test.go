@@ -498,6 +498,47 @@ func TestReflectionsScopedIdentityAndPointer(t *testing.T) {
 		t.Fatal("pointer close did not tear down browser")
 	}
 }
+
+func TestReflectionsRowSelectionUsesScopedIdentityAndRejectsInvalidTargets(t *testing.T) {
+	operator := reflectionFact("same-id")
+	project := operator
+	project.ProjectScoped, project.Project = true, "/trusted"
+	s := &reflectionsState{view: reflectionsList, page: client.LearningProposalPage{Proposals: []client.LearningProposal{operator, project}}}
+	s.syncList()
+	s.list.SetGeometry(80, 2, 1, bounded.Wrap)
+	s.list.SelectID(reflectionIdentity(operator))
+
+	selectHit := func(identity string) {
+		s.hitTargets = map[HitID]reflectionHit{1: {action: "select", identity: identity, view: reflectionsList}}
+		s.handleHit(surfaceHitMsg{ID: 1})
+	}
+	selectHit(reflectionIdentity(project))
+	if s.list.CursorID() != reflectionIdentity(project) {
+		t.Fatalf("scoped row selection = %q, want %q", s.list.CursorID(), reflectionIdentity(project))
+	}
+
+	selected, offset := s.list.CursorID(), s.list.Offset()
+	selectHit("missing")
+	if s.list.CursorID() != selected || s.list.Offset() != offset {
+		t.Fatal("missing row target disturbed browsing")
+	}
+	for name, set := range map[string]func(){
+		"closed":  func() { s.closed = true },
+		"compact": func() { s.compact = true },
+		"loading": func() { s.loading = true },
+		"pending": func() { s.pending = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			set()
+			selectHit(reflectionIdentity(operator))
+			if s.list.CursorID() != selected || s.list.Offset() != offset {
+				t.Fatal("ineligible row target changed browsing")
+			}
+			s.closed, s.compact, s.loading, s.pending = false, false, false, false
+		})
+	}
+}
+
 func reflectionClick(t *testing.T, m Model, s *reflectionsState, action string) Model {
 	t.Helper()
 	_ = m.View()

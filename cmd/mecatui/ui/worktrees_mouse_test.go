@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -15,14 +14,14 @@ import (
 func worktreesMouseHit(t *testing.T, m Model, action worktreeAction, selector client.WorktreeSelector) renderedHitRegion {
 	t.Helper()
 	s := m.modal.(*worktreesState)
-	for _, region := range m.hits.frame {
+	hit, ok := currentFrameHit(m, func(region renderedHitRegion) bool {
 		target, ok := s.hitTargets[region.id]
-		if ok && target.action == action && (action != worktreeRow || target.id == s.identities[selector]) {
-			return region
-		}
+		return ok && target.action == action && (action != worktreeRow || target.id == s.identities[selector])
+	})
+	if !ok {
+		t.Fatalf("missing worktrees hit in %d current-frame regions: action=%d selector=%v", len(m.hits.frame), action, selector)
 	}
-	t.Fatalf("missing worktrees hit: action=%d selector=%v", action, selector)
-	return renderedHitRegion{}
+	return hit
 }
 
 func TestWorktreesMouseConfirmationAndHandoff(t *testing.T) {
@@ -37,7 +36,7 @@ func TestWorktreesMouseConfirmationAndHandoff(t *testing.T) {
 				s.deps = (&m).surfaceDeps()
 				choose = navigationTestKey("a")
 			}
-			m = effortOffer(m, 80, 10)
+			m = offerCardBody(m, 80, 10)
 			m.conv.addUser("keep source until confirmed success")
 			before := m.vp.YOffset()
 			for range 12 {
@@ -51,7 +50,7 @@ func TestWorktreesMouseConfirmationAndHandoff(t *testing.T) {
 				_ = m.View()
 				var cmd tea.Cmd
 				if pointer {
-					m, cmd = effortClick(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), remap)
+					m, cmd = clickFrameHit(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), remap)
 				} else {
 					updated, c := m.Update(choose)
 					m, cmd = updated.(Model), c
@@ -69,7 +68,7 @@ func TestWorktreesMouseConfirmationAndHandoff(t *testing.T) {
 				t.Fatal("confirmation wheel leaked")
 			}
 			_ = m.View()
-			m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
+			m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
 			if s.confirm != nil || s.list.Offset() != offset {
 				t.Fatal("Back lost picker state")
 			}
@@ -104,7 +103,7 @@ func TestWorktreesMouseFilterAndContinuation(t *testing.T) {
 	rows[1].Label = strings.Repeat("long label 界 ", 8)
 	m, s := openedWorktrees(t, rows)
 	m.deps.NoAltScreen = false
-	m = effortOffer(m, 26, 26)
+	m = offerCardBody(m, 26, 26)
 	_ = m.View()
 	var continuations []renderedHitRegion
 	for _, region := range m.hits.frame {
@@ -117,7 +116,7 @@ func TestWorktreesMouseFilterAndContinuation(t *testing.T) {
 		t.Fatal("fixture did not wrap row")
 	}
 	for _, region := range continuations {
-		m, _ = effortClick(m, region, true)
+		m, _ = clickFrameHit(m, region, true)
 		if s.confirm != nil || selectedWorktree(t, s).Selector != rows[1].Selector {
 			t.Fatal("continuation must select only")
 		}
@@ -129,17 +128,17 @@ func TestWorktreesMouseFilterAndContinuation(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.View().Content), "[esc Clear filter]") {
 		t.Fatal("filtered close mislabeled")
 	}
-	m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), false)
+	m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), false)
 	_ = m.View()
 	if !strings.Contains(stripANSIstr(m.View().Content), "[esc Back]") {
 		t.Fatal("confirmation back mislabeled")
 	}
-	m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), false)
+	m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), false)
 	if s.filter.Value() != "l" || s.confirm != nil {
 		t.Fatal("Back cleared filter")
 	}
 	_ = m.View()
-	m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
+	m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
 	if m.modal != s || s.filter.Value() != "" {
 		t.Fatal("Clear filter must not close")
 	}
@@ -147,7 +146,7 @@ func TestWorktreesMouseFilterAndContinuation(t *testing.T) {
 	if !strings.Contains(stripANSIstr(m.View().Content), "[esc Close]") {
 		t.Fatal("unfiltered Close missing")
 	}
-	m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
+	m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeBack, client.WorktreeSelector{}), true)
 	if m.modal != nil || !m.prompt.Focused() {
 		t.Fatal("Close must refocus")
 	}
@@ -172,7 +171,7 @@ func TestWorktreesMouseStaleHits(t *testing.T) {
 						if confirmation {
 							m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 						} else {
-							m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeRow, rows[1].Selector), false)
+							m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeRow, rows[1].Selector), false)
 						}
 					case "key":
 						m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
@@ -193,7 +192,7 @@ func TestWorktreesMouseStaleHits(t *testing.T) {
 					case "prepare":
 						(&m).prepareSurfaceInput()
 					case "compact":
-						m = effortOffer(m, 80, 1)
+						m = offerCardBody(m, 80, 1)
 						_ = m.View()
 					case "replace":
 						m.closeModal()
@@ -252,7 +251,7 @@ func TestWorktreesMouseFooterGeometryAndIsolation(t *testing.T) {
 			for _, end := range []bool{false, true} {
 				m, s := openedWorktrees(t, worktreeInventory(3))
 				m.deps.NoAltScreen = false
-				m = effortOffer(m, width, 20)
+				m = offerCardBody(m, width, 20)
 				if confirmation {
 					m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 				}
@@ -270,11 +269,7 @@ func TestWorktreesMouseFooterGeometryAndIsolation(t *testing.T) {
 					hit   renderedHitRegion
 					label string
 				}{{primary, "[enter Start session]"}, {back, backLabel}} {
-					x, y := m.metrics.localToGlobal(control.hit.rect.x0, control.hit.rect.y0)
-					line := strings.Split(stripANSIstr(view), "\n")[y]
-					if ansi.Cut(line, x, x+control.hit.rect.x1-control.hit.rect.x0) != control.label {
-						t.Fatal("hit must cover entire label including shortcut and brackets")
-					}
+					assertFrameHitLabel(t, view, *m.metrics, control.hit, control.label)
 					if !strings.Contains(view, m.deps.Theme.Style("viewport").Bold(true).Render(control.label)) {
 						t.Fatal("enabled button must use bold normal theme text")
 					}
@@ -297,7 +292,7 @@ func TestWorktreesMouseFooterGeometryAndIsolation(t *testing.T) {
 						t.Fatal("chrome/gap/padding acted")
 					}
 				}
-				m, _ = effortClick(m, primary, end)
+				m, _ = clickFrameHit(m, primary, end)
 				if confirmation {
 					if m.phase != phaseConnecting || m.modal != nil {
 						t.Fatal("confirmation primary edge did not submit")
@@ -358,7 +353,7 @@ func TestWorktreesMouseAvailability(t *testing.T) {
 					t.Fatal("no-mouse mode lost")
 				}
 				for _, action := range []worktreeAction{worktreeRow, worktreeStart, worktreeBack} {
-					m, _ = effortClick(m, worktreesMouseHit(t, m, action, rows[1].Selector), false)
+					m, _ = clickFrameHit(m, worktreesMouseHit(t, m, action, rows[1].Selector), false)
 				}
 				if m.modal != s || s.confirm != nil || s.list.Cursor() != 0 {
 					t.Fatal("no-mouse clicked through")
@@ -377,7 +372,7 @@ func TestWorktreesMouseAvailability(t *testing.T) {
 				if m.modal != s {
 					t.Fatal("disabled Close closed")
 				}
-				m = effortOffer(m, 80, 1)
+				m = offerCardBody(m, 80, 1)
 				compact := stripANSIstr(m.View().Content)
 				if !s.compact || len(m.hits.frame) != 0 || strings.Contains(compact, "esc close") || !strings.Contains(compact, "terminal too small") {
 					t.Fatal("compact advertised disabled Close")
@@ -391,13 +386,13 @@ func TestWorktreesMouseCompactAndOptionalHelp(t *testing.T) {
 	m, s := openedWorktrees(t, worktreeInventory(40))
 	m.deps.NoAltScreen = false
 	s.list.SetCursor(20)
-	m = effortOffer(m, 80, 5)
+	m = offerCardBody(m, 80, 5)
 	view := stripANSIstr(m.View().Content)
 	if s.compact || !strings.Contains(view, "worktree-20") || strings.Contains(view, "first") {
 		t.Fatal("optional help displaced useful body")
 	}
 	for _, offer := range [][2]int{{80, 3}, {12, 20}} {
-		m = effortOffer(m, offer[0], offer[1])
+		m = offerCardBody(m, offer[0], offer[1])
 		_ = m.View()
 		if !s.compact || len(m.hits.frame) != 0 {
 			t.Fatal("compact should have no hits")
@@ -407,7 +402,7 @@ func TestWorktreesMouseCompactAndOptionalHelp(t *testing.T) {
 			t.Fatal("compact input moved or activated")
 		}
 	}
-	m = effortOffer(m, 80, 20)
+	m = offerCardBody(m, 80, 20)
 	_ = m.View()
 	if s.compact || selectedWorktree(t, s).Selector != worktreeInventory(40)[20].Selector {
 		t.Fatal("restoration lost selection")
@@ -435,7 +430,7 @@ func TestWorktreesMouseRetainsRootValidation(t *testing.T) {
 				conv.createErr = errors.New("stale selector")
 			}
 			_ = m.View()
-			m, cmd := effortClick(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), false)
+			m, cmd := clickFrameHit(m, worktreesMouseHit(t, m, worktreeStart, client.WorktreeSelector{}), false)
 			if state == "selector" {
 				if m.modal != s || s.confirm != nil || s.err == nil || cmd != nil {
 					t.Fatal("missing selector escaped local validation")
@@ -460,15 +455,15 @@ func TestWorktreesMouseGoldens(t *testing.T) {
 				rows = nil
 			}
 			m, s := openedWorktrees(t, rows)
-			m = effortOffer(m, 80, 18)
+			m = offerCardBody(m, 80, 18)
 			if strings.HasPrefix(state, "confirmation") {
 				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			}
 			if strings.Contains(state, "wrapped") {
-				m = effortOffer(m, 26, 18)
+				m = offerCardBody(m, 26, 18)
 			}
 			if state == "compact" {
-				m = effortOffer(m, 80, 3)
+				m = offerCardBody(m, 80, 3)
 			}
 			if state == "loading" {
 				_ = s.listCmd()
@@ -495,7 +490,7 @@ func TestWorktreesMouseRefreshAndPartialRows(t *testing.T) {
 	rows[1].Label = strings.Repeat("wrapped worktree 界 ", 20)
 	m, s := openedWorktrees(t, rows)
 	m.deps.NoAltScreen = false
-	m = effortOffer(m, 26, 14)
+	m = offerCardBody(m, 26, 14)
 	_ = m.View()
 	oldRow := worktreesMouseHit(t, m, worktreeRow, rows[0].Selector).id
 	// A foreign owner/request cannot change discovery or invalidate current controls.
@@ -512,7 +507,7 @@ func TestWorktreesMouseRefreshAndPartialRows(t *testing.T) {
 		t.Fatal("stale row retargeted after refresh")
 	}
 	_ = m.View()
-	m, _ = effortClick(m, worktreesMouseHit(t, m, worktreeRow, rows[1].Selector), false)
+	m, _ = clickFrameHit(m, worktreesMouseHit(t, m, worktreeRow, rows[1].Selector), false)
 	_ = m.View()
 	// Scroll into the oversized item's physical continuations, without selecting.
 	for range 3 {
@@ -525,7 +520,7 @@ func TestWorktreesMouseRefreshAndPartialRows(t *testing.T) {
 	}
 	row := worktreesMouseHit(t, m, worktreeRow, rows[1].Selector)
 	for range 2 {
-		m, _ = effortClick(m, row, false)
+		m, _ = clickFrameHit(m, row, false)
 		if s.confirm != nil || selectedWorktree(t, s).Selector != rows[1].Selector {
 			t.Fatal("partial continuation activated or selected wrong selector")
 		}

@@ -16,14 +16,14 @@ import (
 func connectMouseHit(t *testing.T, m Model, action connectMouseAction, id string) renderedHitRegion {
 	t.Helper()
 	s := m.modal.(*connectState)
-	for _, region := range m.hits.frame {
+	hit, ok := currentFrameHit(m, func(region renderedHitRegion) bool {
 		target, ok := s.hitTargets[region.id]
-		if ok && target.action == action && (action != connectRow || target.id == id) {
-			return region
-		}
+		return ok && target.action == action && (action != connectRow || target.id == id)
+	})
+	if !ok {
+		t.Fatalf("missing connect hit in %d current-frame regions: action=%d id=%s", len(m.hits.frame), action, id)
 	}
-	t.Fatalf("missing connect hit: action=%d id=%s", action, id)
-	return renderedHitRegion{}
+	return hit
 }
 
 func connectMouseModel(targets []ConnectTarget, reason client.AuthReason, failed, resume string) Model {
@@ -59,7 +59,7 @@ func TestConnectMouseActionsAndRecovery(t *testing.T) {
 						}
 					}
 					_ = m.View()
-					m, _ = effortClick(m, connectMouseHit(t, m, connectRow, id), true)
+					m, _ = clickFrameHit(m, connectMouseHit(t, m, connectRow, id), true)
 					if s.list.CursorID() != id || s.confirm != nil || m.connectIntent != nil {
 						t.Fatal("row must select only")
 					}
@@ -69,7 +69,7 @@ func TestConnectMouseActionsAndRecovery(t *testing.T) {
 							t.Fatal("action lost configured shortcut or operation label")
 						}
 						if pointer {
-							updated, cmd := effortClick(m, connectMouseHit(t, m, connectPrimary, ""), true)
+							updated, cmd := clickFrameHit(m, connectMouseHit(t, m, connectPrimary, ""), true)
 							m = updated
 							return cmd
 						}
@@ -82,7 +82,7 @@ func TestConnectMouseActionsAndRecovery(t *testing.T) {
 					}
 					_ = m.View()
 					old := connectMouseHit(t, m, connectPrimary, "").id
-					m, _ = effortClick(m, connectMouseHit(t, m, connectBack, ""), false)
+					m, _ = clickFrameHit(m, connectMouseHit(t, m, connectBack, ""), false)
 					if s.confirm != nil || s.list.CursorID() != id || m.modal != s {
 						t.Fatal("Back lost picker selection")
 					}
@@ -112,7 +112,7 @@ func TestConnectMouseActionsAndRecovery(t *testing.T) {
 
 func TestConnectMouseContinuationSelectOnly(t *testing.T) {
 	targets := []ConnectTarget{{Target: "first"}, {Target: "second", Issuer: strings.Repeat("issuer 界 ", 8), ClientID: "public"}}
-	m := effortOffer(connectMouseModel(targets, "", "", ""), 30, 26)
+	m := offerCardBody(connectMouseModel(targets, "", "", ""), 30, 26)
 	s := m.modal.(*connectState)
 	for repeat := range 3 {
 		_ = m.View()
@@ -127,7 +127,7 @@ func TestConnectMouseContinuationSelectOnly(t *testing.T) {
 		}
 		for i := range rows {
 			_ = m.View()
-			m, _ = effortClick(m, rows[i], repeat%2 == 0)
+			m, _ = clickFrameHit(m, rows[i], repeat%2 == 0)
 			if s.list.CursorID() != "target:second" || s.confirm != nil || m.connectIntent != nil {
 				t.Fatal("first/repeated/continuation click activated or selected wrong target")
 			}
@@ -136,7 +136,7 @@ func TestConnectMouseContinuationSelectOnly(t *testing.T) {
 }
 
 func TestConnectMouseWheelOffscreenAndBack(t *testing.T) {
-	m := effortOffer(connectMouseModel(connectInventory(30), "", "", ""), 64, 12)
+	m := offerCardBody(connectMouseModel(connectInventory(30), "", "", ""), 64, 12)
 	s := m.modal.(*connectState)
 	before := m.vp.YOffset()
 	for range 10 {
@@ -147,13 +147,13 @@ func TestConnectMouseWheelOffscreenAndBack(t *testing.T) {
 		t.Fatal("wheel must browse without selecting or leaking")
 	}
 	offset := s.list.Offset()
-	m, _ = effortClick(m, connectMouseHit(t, m, connectPrimary, ""), false)
+	m, _ = clickFrameHit(m, connectMouseHit(t, m, connectPrimary, ""), false)
 	if s.confirm == nil || s.confirm.Target != "remote-00:443" {
 		t.Fatal("primary did not confirm offscreen selection")
 	}
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	_ = m.View()
-	m, _ = effortClick(m, connectMouseHit(t, m, connectBack, ""), true)
+	m, _ = clickFrameHit(m, connectMouseHit(t, m, connectBack, ""), true)
 	_ = m.View()
 	if s.confirm != nil || s.list.Offset() != offset || m.vp.YOffset() != before {
 		t.Fatal("confirmation wheel or Back changed window")
@@ -181,7 +181,7 @@ func TestConnectMouseStaleControls(t *testing.T) {
 						if confirmation {
 							m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 						} else {
-							m, _ = effortClick(m, connectMouseHit(t, m, connectRow, "target:second"), false)
+							m, _ = clickFrameHit(m, connectMouseHit(t, m, connectRow, "target:second"), false)
 						}
 					case "key":
 						m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
@@ -192,7 +192,7 @@ func TestConnectMouseStaleControls(t *testing.T) {
 					case "prepare":
 						(&m).prepareSurfaceInput()
 					case "compact":
-						m = effortOffer(m, 80, 1)
+						m = offerCardBody(m, 80, 1)
 						_ = m.View()
 					case "replace":
 						m.closeModal()
@@ -245,7 +245,7 @@ func TestConnectMouseGeometryAndStyles(t *testing.T) {
 	for _, width := range []int{24, 80} {
 		for _, confirmation := range []bool{false, true} {
 			for _, end := range []bool{false, true} {
-				m := effortOffer(connectMouseModel([]ConnectTarget{{Target: "first"}, {Target: "second"}}, "", "", ""), width, 20)
+				m := offerCardBody(connectMouseModel([]ConnectTarget{{Target: "first"}, {Target: "second"}}, "", "", ""), width, 20)
 				s := m.modal.(*connectState)
 				if confirmation {
 					m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -264,11 +264,7 @@ func TestConnectMouseGeometryAndStyles(t *testing.T) {
 					hit   renderedHitRegion
 					label string
 				}{{primary, "[enter connect]"}, {back, backLabel}} {
-					x, y := m.metrics.localToGlobal(control.hit.rect.x0, control.hit.rect.y0)
-					line := strings.Split(stripANSIstr(view), "\n")[y]
-					if ansi.Cut(line, x, x+control.hit.rect.x1-control.hit.rect.x0) != control.label {
-						t.Fatal("hit must cover full bracketed shortcut label")
-					}
+					assertFrameHitLabel(t, view, *m.metrics, control.hit, control.label)
 					if !strings.Contains(view, m.deps.Theme.Style("viewport").Bold(true).Render(control.label)) {
 						t.Fatal("enabled control must use bold normal theme style")
 					}
@@ -285,7 +281,7 @@ func TestConnectMouseGeometryAndStyles(t *testing.T) {
 						t.Fatal("gap/chrome/border/padding acted")
 					}
 				}
-				m, cmd := effortClick(m, primary, end)
+				m, cmd := clickFrameHit(m, primary, end)
 				if confirmation {
 					if cmd == nil || m.connectIntent == nil || m.modal != nil {
 						t.Fatal("confirmation edge did not submit")
@@ -340,7 +336,7 @@ func TestConnectMouseAvailability(t *testing.T) {
 					t.Fatal("no-mouse mode lost")
 				}
 				for _, action := range []connectMouseAction{connectRow, connectPrimary, connectBack} {
-					m, _ = effortClick(m, connectMouseHit(t, m, action, "add"), false)
+					m, _ = clickFrameHit(m, connectMouseHit(t, m, action, "add"), false)
 				}
 				if s.confirm != nil || s.list.Cursor() != 0 || m.modal != s {
 					t.Fatal("no-mouse click acted")
@@ -356,7 +352,7 @@ func TestConnectMouseAvailability(t *testing.T) {
 				if m.modal != s || strings.Contains(stripANSIstr(view.Content), "Close]") {
 					t.Fatal("disabled Close acted or advertised")
 				}
-				m = effortOffer(m, 80, 1)
+				m = offerCardBody(m, 80, 1)
 				if view := stripANSIstr(m.View().Content); !s.compact || len(m.hits.frame) != 0 || !strings.Contains(view, "terminal too small") {
 					t.Fatal("compact advertises disabled Close")
 				}
@@ -366,14 +362,14 @@ func TestConnectMouseAvailability(t *testing.T) {
 }
 
 func TestConnectMouseCompactAndOptionalHelp(t *testing.T) {
-	m := effortOffer(connectMouseModel(connectInventory(30), "", "", ""), 80, 3)
+	m := offerCardBody(connectMouseModel(connectInventory(30), "", "", ""), 80, 3)
 	s := m.modal.(*connectState)
 	s.list.SetCursor(5)
 	if view := stripANSIstr(m.View().Content); s.compact || !strings.Contains(view, "remote-05") || strings.Contains(view, "first/last") {
 		t.Fatal("optional help displaced body")
 	}
 	for _, offer := range [][2]int{{80, 1}, {12, 20}} {
-		m = effortOffer(m, offer[0], offer[1])
+		m = offerCardBody(m, offer[0], offer[1])
 		_ = m.View()
 		if !s.compact || len(m.hits.frame) != 0 {
 			t.Fatal("compact exposes hits")
@@ -383,7 +379,7 @@ func TestConnectMouseCompactAndOptionalHelp(t *testing.T) {
 			t.Fatal("compact input moved or activated")
 		}
 	}
-	m = effortOffer(m, 80, 20)
+	m = offerCardBody(m, 80, 20)
 	_ = m.View()
 	if s.compact || s.list.Cursor() != 5 {
 		t.Fatal("restoration lost selection")
@@ -392,7 +388,7 @@ func TestConnectMouseCompactAndOptionalHelp(t *testing.T) {
 }
 
 func TestConnectMousePartialContinuationAndInertIndicators(t *testing.T) {
-	m := effortOffer(connectMouseModel([]ConnectTarget{{Target: "first"}, {Target: "before"}, {Target: "second", Issuer: strings.Repeat("issuer 界 ", 80)}, {Target: "third"}}, "", "", ""), 30, 10)
+	m := offerCardBody(connectMouseModel([]ConnectTarget{{Target: "first"}, {Target: "before"}, {Target: "second", Issuer: strings.Repeat("issuer 界 ", 80)}, {Target: "third"}}, "", "", ""), 30, 10)
 	s := m.modal.(*connectState)
 	_ = m.View()
 	for range 6 {
@@ -410,7 +406,7 @@ func TestConnectMousePartialContinuationAndInertIndicators(t *testing.T) {
 			t.Fatal("indicator or trailing row padding selected")
 		}
 	}
-	m, _ = effortClick(m, hit, true)
+	m, _ = clickFrameHit(m, hit, true)
 	if s.list.CursorID() != "target:second" || s.confirm != nil || m.connectIntent != nil {
 		t.Fatal("partial continuation must select by stable identity only")
 	}
@@ -434,7 +430,7 @@ func TestConnectMouseRefreshAndLateReceipts(t *testing.T) {
 		t.Fatal("refresh lost stable selection or reused old controls")
 	}
 	_ = m.View()
-	m, _ = effortClick(m, connectMouseHit(t, m, connectRow, "target:second"), false)
+	m, _ = clickFrameHit(m, connectMouseHit(t, m, connectRow, "target:second"), false)
 	if s.list.CursorID() != "target:second" || s.list.Cursor() != 0 || s.confirm != nil {
 		t.Fatal("fresh reordered row used old index or activated")
 	}
@@ -496,7 +492,7 @@ func TestConnectMouseCompactConfirmationBack(t *testing.T) {
 	s := m.modal.(*connectState)
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	pending := *s.confirm
-	m = effortOffer(m, 80, 1)
+	m = offerCardBody(m, 80, 1)
 	if view := stripANSIstr(m.View().Content); !s.compact || len(m.hits.frame) != 0 || !strings.Contains(view, "esc back") {
 		t.Fatal("compact confirmation must advertise Back without active controls")
 	}
@@ -515,7 +511,7 @@ func TestConnectMouseGoldens(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			m := connectMouseModel([]ConnectTarget{{Target: "remote.example:443", Issuer: "https://issuer.example", ClientID: "public-client", Audience: "mecatui"}, {Target: "other.example:443", Issuer: "https://issuer.example", ClientID: "public-client", Audience: "api"}}, "", "", "")
 			s := m.modal.(*connectState)
-			m = effortOffer(m, 80, 18)
+			m = offerCardBody(m, 80, 18)
 			if state == "recovery_confirmation" {
 				s.reason, s.failedTarget, s.resumeSessionID = client.AuthCredentialCleanup, "remote.example:443", "resume-1"
 			}
@@ -523,7 +519,7 @@ func TestConnectMouseGoldens(t *testing.T) {
 				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			}
 			if strings.Contains(state, "wrapped") {
-				m = effortOffer(m, 24, 18)
+				m = offerCardBody(m, 24, 18)
 			}
 			if state == "loading" {
 				_ = s.listCmd()
@@ -537,7 +533,7 @@ func TestConnectMouseGoldens(t *testing.T) {
 				m = applyAll(m, connectTargetsMsg{owner: s, request: s.request, err: errors.New("offline")})
 			}
 			if state == "compact" {
-				m = effortOffer(m, 80, 1)
+				m = offerCardBody(m, 80, 1)
 			}
 			m = goldenStatusFrame(t, m)
 			_ = m.View()

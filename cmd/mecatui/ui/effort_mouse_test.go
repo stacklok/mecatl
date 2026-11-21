@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -13,24 +12,14 @@ import (
 func effortMouseHit(t *testing.T, m Model, apply, closeAction bool, tier string) renderedHitRegion {
 	t.Helper()
 	s := m.modal.(*effortState)
-	for _, region := range m.hits.frame {
-		target := s.hitTargets[region.id]
-		if target.apply == apply && target.close == closeAction && (tier == "" || target.tier == tier) {
-			return region
-		}
+	hit, ok := currentFrameHit(m, func(region renderedHitRegion) bool {
+		target, ok := s.hitTargets[region.id]
+		return ok && target.apply == apply && target.close == closeAction && (tier == "" || target.tier == tier)
+	})
+	if !ok {
+		t.Fatalf("missing effort hit in %d current-frame regions: apply=%v close=%v tier=%s", len(m.hits.frame), apply, closeAction, tier)
 	}
-	t.Fatalf("missing effort hit: apply=%v close=%v tier=%s", apply, closeAction, tier)
-	return renderedHitRegion{}
-}
-
-func effortClick(m Model, hit renderedHitRegion, end bool) (Model, tea.Cmd) {
-	x := hit.rect.x0
-	if end {
-		x = hit.rect.x1 - 1
-	}
-	x, y := m.metrics.localToGlobal(x, hit.rect.y0)
-	updated, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
-	return updated.(Model), cmd
+	return hit
 }
 
 func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T) {
@@ -46,7 +35,7 @@ func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T)
 					choose = navigationTestKey("a")
 				}
 				updated, _ := m.runEffort()
-				m = effortOffer(updated.(Model), 100, 5)
+				m = offerCardBody(updated.(Model), 100, 5)
 				s := m.modal.(*effortState)
 				view := stripANSIstr(m.View().Content)
 				if remap && (!strings.Contains(view, "[a Apply]") || !strings.Contains(view, "[c Close]")) {
@@ -68,7 +57,7 @@ func TestEffortMouseApplyMatchesKeyboardAndKeepsOffscreenSelection(t *testing.T)
 				old := effortMouseHit(t, m, true, false, "").id
 				var cmd tea.Cmd
 				if pointer {
-					m, cmd = effortClick(m, effortMouseHit(t, m, true, false, ""), remap)
+					m, cmd = clickFrameHit(m, effortMouseHit(t, m, true, false, ""), remap)
 				} else {
 					updated, cmd = m.Update(choose)
 					m = updated.(Model)
@@ -104,7 +93,7 @@ func TestEffortMouseStaleFramesAndGuards(t *testing.T) {
 			closeID := effortMouseHit(t, m, false, true, "").id
 			switch state {
 			case "row":
-				m, _ = effortClick(m, effortMouseHit(t, m, false, false, "high"), false)
+				m, _ = clickFrameHit(m, effortMouseHit(t, m, false, false, "high"), false)
 			case "keyboard":
 				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			case "cursor-only":
@@ -112,7 +101,7 @@ func TestEffortMouseStaleFramesAndGuards(t *testing.T) {
 			case "resize":
 				m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 30})
 			case "compact":
-				m = effortOffer(m, 100, 2)
+				m = offerCardBody(m, 100, 2)
 				_ = m.View()
 			case "prepare":
 				(&m).prepareSurfaceInput()
@@ -151,7 +140,7 @@ func TestEffortMouseFooterGeometryAndIsolation(t *testing.T) {
 		for _, end := range []bool{false, true} {
 			m, s := openedEffort(t, "medium", false)
 			m.deps.NoAltScreen = false
-			m = effortOffer(m, width, 30)
+			m = offerCardBody(m, width, 30)
 			view := m.View().Content
 			if s.compact {
 				t.Fatal("useful narrow geometry became compact")
@@ -165,12 +154,8 @@ func TestEffortMouseFooterGeometryAndIsolation(t *testing.T) {
 				hit   renderedHitRegion
 				label string
 			}{{apply, "[enter Apply]"}, {closeHit, "[esc Close]"}} {
-				x, y := m.metrics.localToGlobal(item.hit.rect.x0, item.hit.rect.y0)
-				row := strings.Split(stripANSIstr(view), "\n")[y]
-				if ansi.Cut(row, x, x+item.hit.rect.x1-item.hit.rect.x0) != item.label {
-					t.Fatal("hit does not match whole bracketed label")
-				}
-				x, y = m.metrics.localToGlobal(item.hit.rect.x1, item.hit.rect.y0)
+				assertFrameHitLabel(t, view, *m.metrics, item.hit, item.label)
+				x, y := m.metrics.localToGlobal(item.hit.rect.x1, item.hit.rect.y0)
 				updated, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 				m = updated.(Model)
 				if cmd != nil || m.modal != s {
@@ -182,7 +167,7 @@ func TestEffortMouseFooterGeometryAndIsolation(t *testing.T) {
 					t.Fatal("control/help styles lost")
 				}
 			}
-			m, _ = effortClick(m, closeHit, end)
+			m, _ = clickFrameHit(m, closeHit, end)
 			if m.modal != nil || !m.prompt.Focused() {
 				t.Fatal("whole Close label must close/refocus")
 			}
@@ -211,9 +196,9 @@ func TestEffortMouseFooterGeometryAndIsolation(t *testing.T) {
 			}
 		} else {
 			hit := effortMouseHit(t, m, true, false, "")
-			m, _ = effortClick(m, hit, false)
+			m, _ = clickFrameHit(m, hit, false)
 			row := effortMouseHit(t, m, false, false, "high")
-			m, _ = effortClick(m, row, false)
+			m, _ = clickFrameHit(m, row, false)
 			if view.MouseMode != tea.MouseModeNone || s.list.CursorID() != "auto" || m.modal != s {
 				t.Fatal("no-mouse input acted")
 			}
@@ -251,7 +236,7 @@ func TestEffortMouseDisabledClose(t *testing.T) {
 		t.Fatal("disabled Close responded to its shortcut")
 	}
 	_ = m.View()
-	m, cmd = effortClick(m, effortMouseHit(t, m, true, false, ""), false)
+	m, cmd = clickFrameHit(m, effortMouseHit(t, m, true, false, ""), false)
 	if m.modal != nil || m.phase != phaseConnecting || cmd == nil {
 		t.Fatal("disabling Close also disabled Apply")
 	}
@@ -260,12 +245,12 @@ func TestEffortMouseDisabledClose(t *testing.T) {
 func TestEffortMouseCompactRestorationAndOptionalHelp(t *testing.T) {
 	m, s := openedEffort(t, "max", false)
 	m.deps.NoAltScreen = false
-	m = effortOffer(m, 100, 3)
+	m = offerCardBody(m, 100, 3)
 	view := stripANSIstr(m.View().Content)
 	if s.compact || !strings.Contains(view, "max") || strings.Contains(view, "first/last") {
 		t.Fatal("optional help displaced useful body")
 	}
-	m = effortOffer(m, 100, 2)
+	m = offerCardBody(m, 100, 2)
 	_ = m.View()
 	if !s.compact || len(m.hits.frame) != 0 {
 		t.Fatal("genuine compact must have no hits")
@@ -274,7 +259,7 @@ func TestEffortMouseCompactRestorationAndOptionalHelp(t *testing.T) {
 	if s.list.CursorID() != "max" {
 		t.Fatal("compact input moved cursor")
 	}
-	m = effortOffer(m, 100, 20)
+	m = offerCardBody(m, 100, 20)
 	_ = m.View()
 	if s.compact || s.list.CursorID() != "max" {
 		t.Fatal("restoration lost selected tier")
@@ -286,7 +271,7 @@ func TestEffortMouseInertChromeAndClippedRows(t *testing.T) {
 	for _, width := range []int{18, 100} {
 		m, s := openedEffort(t, "medium", false)
 		m.deps.NoAltScreen = false
-		m = effortOffer(m, width, 20)
+		m = offerCardBody(m, width, 20)
 		_ = m.View()
 		row := effortMouseHit(t, m, false, false, "low")
 		// The row's right padding and the card's border/padding are not row targets.
@@ -301,7 +286,7 @@ func TestEffortMouseInertChromeAndClippedRows(t *testing.T) {
 				t.Fatal("inert card chrome selected or activated")
 			}
 		}
-		m, _ = effortClick(m, effortMouseHit(t, m, false, false, "auto"), true)
+		m, _ = clickFrameHit(m, effortMouseHit(t, m, false, false, "auto"), true)
 		_ = m.View()
 		if s.list.CursorID() != "auto" {
 			t.Fatal("clipped row did not select by tier")
@@ -315,7 +300,7 @@ func TestEffortMouseInertChromeAndClippedRows(t *testing.T) {
 		if count != 1 {
 			t.Fatal("clipped auto row fabricated continuations")
 		}
-		m = effortOffer(m, 100, 5)
+		m = offerCardBody(m, 100, 5)
 		_ = m.View()
 		// Capacity-one overflow belongs to the title, never the tier beneath it.
 		x, y := m.metrics.localToGlobal(0, 0)
@@ -349,7 +334,7 @@ func TestEffortKeyboardSharesLiveRootGuards(t *testing.T) {
 
 func TestEffortPickerWrappedGolden(t *testing.T) {
 	m, _ := openedEffort(t, "medium", false)
-	m = effortOffer(m, 18, 18)
+	m = offerCardBody(m, 18, 18)
 	m = goldenStatusFrame(t, m)
 	_ = m.View()
 	apply, closeHit := effortMouseHit(t, m, true, false, ""), effortMouseHit(t, m, false, true, "")

@@ -184,12 +184,7 @@ func (s *connectState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	} else {
 		s.targets = append([]ConnectTarget(nil), result.targets...)
 		s.syncItems()
-		for i, item := range s.items {
-			if item.ID == "target:"+s.failedTarget {
-				s.list.SetCursor(i)
-				break
-			}
-		}
+		s.list.SelectID("target:" + s.failedTarget)
 	}
 	return nil, true, false
 }
@@ -211,12 +206,7 @@ func (s *connectState) handleHit(hit surfaceHitMsg) bool {
 	if s.loading || s.listFailed || s.confirm != nil {
 		return false
 	}
-	for i, item := range s.items {
-		if item.ID == target.id {
-			s.list.SetCursor(i)
-			break
-		}
-	}
+	s.list.SelectID(target.id)
 	return false
 }
 

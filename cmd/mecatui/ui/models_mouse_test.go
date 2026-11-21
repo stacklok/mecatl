@@ -24,25 +24,27 @@ func modelsMouseModel(t *testing.T, inventory []client.ModelInfo) Model {
 func modelsMouseControl(t *testing.T, m Model, primary bool) renderedHitRegion {
 	t.Helper()
 	s := modelsSurface(t, m)
-	for _, hit := range m.hits.frame {
-		if target, ok := s.hitControls[hit.id]; ok && target.selectModel == primary {
-			return hit
-		}
+	hit, ok := currentFrameHit(m, func(region renderedHitRegion) bool {
+		target, ok := s.hitControls[region.id]
+		return ok && target.selectModel == primary
+	})
+	if !ok {
+		t.Fatalf("missing models control in %d current-frame regions: primary=%v", len(m.hits.frame), primary)
 	}
-	t.Fatalf("missing models control primary=%v", primary)
-	return renderedHitRegion{}
+	return hit
 }
 
 func modelsMouseRow(t *testing.T, m Model, id string) renderedHitRegion {
 	t.Helper()
 	s := modelsSurface(t, m)
-	for _, hit := range m.hits.frame {
-		if s.hitItems[hit.id] == id {
-			return hit
-		}
+	hit, ok := currentFrameHit(m, func(region renderedHitRegion) bool {
+		target, ok := s.hitItems[region.id]
+		return ok && target == id
+	})
+	if !ok {
+		t.Fatalf("missing model row in %d current-frame regions: %q", len(m.hits.frame), id)
 	}
-	t.Fatalf("missing model row %q", id)
-	return renderedHitRegion{}
+	return hit
 }
 
 func modelsMouseInventory(n int) []client.ModelInfo {
@@ -69,7 +71,7 @@ func TestModelsMouseUseMatchesKeysAndOffscreenSelection(t *testing.T) {
 					s = modelsSurface(t, m)
 					choose = navigationTestKey("a")
 				}
-				m = effortOffer(m, 80, 15)
+				m = offerCardBody(m, 80, 15)
 				view := stripANSIstr(m.View().Content)
 				if remap && (!strings.Contains(view, "[a Use model]") || !strings.Contains(view, "[c Close]")) {
 					t.Fatal("controls lost configured shortcuts")
@@ -86,7 +88,7 @@ func TestModelsMouseUseMatchesKeysAndOffscreenSelection(t *testing.T) {
 				old := modelsMouseControl(t, m, true).id
 				var cmd tea.Cmd
 				if pointer {
-					m, cmd = effortClick(m, modelsMouseControl(t, m, true), remap)
+					m, cmd = clickFrameHit(m, modelsMouseControl(t, m, true), remap)
 				} else {
 					updated, c := m.Update(choose)
 					m, cmd = updated.(Model), c
@@ -113,7 +115,7 @@ func TestModelsMouseUseMatchesKeysAndOffscreenSelection(t *testing.T) {
 func TestModelsMouseRowsAndContinuationsRemainSelectOnly(t *testing.T) {
 	inventory := modelsMouseInventory(3)
 	inventory[1].DisplayName = strings.Repeat("wrapped model 界 ", 12)
-	m := effortOffer(modelsMouseModel(t, inventory), 30, 25)
+	m := offerCardBody(modelsMouseModel(t, inventory), 30, 25)
 	s := modelsSurface(t, m)
 	for repeat := range 3 {
 		_ = m.View()
@@ -128,14 +130,14 @@ func TestModelsMouseRowsAndContinuationsRemainSelectOnly(t *testing.T) {
 		}
 		for _, row := range rows {
 			_ = m.View()
-			m, _ = effortClick(m, row, repeat%2 == 0)
+			m, _ = clickFrameHit(m, row, repeat%2 == 0)
 			if s.list.CursorID() != modelIdentity(inventory[1]) || m.modal != s || m.phase != phaseIdle || !m.createModelSelection.IsZero() {
 				t.Fatal("first/repeated/continuation row click must only select")
 			}
 		}
 	}
 	_ = m.View()
-	m, _ = effortClick(m, modelsMouseControl(t, m, true), false)
+	m, _ = clickFrameHit(m, modelsMouseControl(t, m, true), false)
 	if m.createModelSelection.ModelID != inventory[1].ID || m.modal != nil {
 		t.Fatal("explicit action did not use clicked model")
 	}
@@ -158,7 +160,7 @@ func TestModelsMouseClearAndCloseKeyParity(t *testing.T) {
 				t.Fatalf("missing state-correct %s", label)
 			}
 			if pointer {
-				m, _ = effortClick(m, modelsMouseControl(t, m, false), step == 0)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, false), step == 0)
 			} else {
 				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			}
@@ -188,7 +190,7 @@ func TestModelsMouseStaleControls(t *testing.T) {
 				old := modelsMouseControl(t, m, primary).id
 				switch change {
 				case "row":
-					m, _ = effortClick(m, modelsMouseRow(t, m, modelIdentity(s.filtered[1])), false)
+					m, _ = clickFrameHit(m, modelsMouseRow(t, m, modelIdentity(s.filtered[1])), false)
 				case "key":
 					m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
 				case "cursor":
@@ -213,7 +215,7 @@ func TestModelsMouseStaleControls(t *testing.T) {
 				case "prepare":
 					(&m).prepareSurfaceInput()
 				case "compact":
-					m = effortOffer(m, 80, 1)
+					m = offerCardBody(m, 80, 1)
 					_ = m.View()
 				case "replace":
 					m.closeModal()
@@ -243,7 +245,7 @@ func TestModelsMouseGeometryStyleAndIsolation(t *testing.T) {
 				if filtered {
 					m = typeFilter(t, m, "model")
 				}
-				m = effortOffer(m, width, 30)
+				m = offerCardBody(m, width, 30)
 				s := modelsSurface(t, m)
 				view := m.View().Content
 				primary, back := modelsMouseControl(t, m, true), modelsMouseControl(t, m, false)
@@ -258,12 +260,11 @@ func TestModelsMouseGeometryStyleAndIsolation(t *testing.T) {
 					hit   renderedHitRegion
 					label string
 				}{{primary, "[enter Use model]"}, {back, backLabel}} {
-					x, y := m.metrics.localToGlobal(control.hit.rect.x0, control.hit.rect.y0)
-					line := strings.Split(stripANSIstr(view), "\n")[y]
-					if ansi.Cut(line, x, x+control.hit.rect.x1-control.hit.rect.x0) != control.label || !strings.Contains(view, m.deps.Theme.Style("viewport").Bold(true).Render(control.label)) {
+					assertFrameHitLabel(t, view, *m.metrics, control.hit, control.label)
+					if !strings.Contains(view, m.deps.Theme.Style("viewport").Bold(true).Render(control.label)) {
 						t.Fatal("full label hit/style differs from rendered button")
 					}
-					x, y = m.metrics.localToGlobal(control.hit.rect.x1, control.hit.rect.y0)
+					x, y := m.metrics.localToGlobal(control.hit.rect.x1, control.hit.rect.y0)
 					updated, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 					m = updated.(Model)
 					if cmd != nil || m.modal != s || s.filter.Value() != map[bool]string{false: "", true: "model"}[filtered] {
@@ -277,7 +278,7 @@ func TestModelsMouseGeometryStyleAndIsolation(t *testing.T) {
 					t.Fatal("duplicate action hints")
 				}
 				_ = m.View()
-				m, _ = effortClick(m, modelsMouseControl(t, m, false), end)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, false), end)
 				if filtered && (m.modal != s || s.filter.Value() != "") || !filtered && m.modal != nil {
 					t.Fatal("button edge did not share close/filter behavior")
 				}
@@ -287,7 +288,7 @@ func TestModelsMouseGeometryStyleAndIsolation(t *testing.T) {
 }
 
 func TestModelsMouseCompactPreservesBrowsingAndDropsOptionalHelp(t *testing.T) {
-	m := effortOffer(modelsMouseModel(t, modelsMouseInventory(40)), 80, 12)
+	m := offerCardBody(modelsMouseModel(t, modelsMouseInventory(40)), 80, 12)
 	s := modelsSurface(t, m)
 	s.list.SetCursor(20)
 	view := stripANSIstr(m.View().Content)
@@ -295,18 +296,18 @@ func TestModelsMouseCompactPreservesBrowsingAndDropsOptionalHelp(t *testing.T) {
 		t.Fatalf("optional help must yield before useful body and controls: budget=%d\n%s", s.rowBudget, view)
 	}
 	selected, offset := s.list.CursorID(), s.list.Offset()
-	m = effortOffer(m, 80, 1)
+	m = offerCardBody(m, 80, 1)
 	_ = m.View()
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome}, tea.MouseWheelMsg{Button: tea.MouseWheelUp}, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if s.rowBudget != 0 || s.list.CursorID() != selected || s.list.Offset() != offset || m.modal != s {
 		t.Fatal("compact input changed browsing state or activated")
 	}
-	m = effortOffer(m, 80, 12)
+	m = offerCardBody(m, 80, 12)
 	_ = m.View()
 	if s.rowBudget == 0 || s.list.CursorID() != selected {
 		t.Fatal("compact restoration lost selection")
 	}
-	m, _ = effortClick(m, modelsMouseControl(t, m, true), true)
+	m, _ = clickFrameHit(m, modelsMouseControl(t, m, true), true)
 	if m.modal != nil || m.createModelSelection.ModelID != "model-20" {
 		t.Fatal("restored primary must apply the preserved selection")
 	}
@@ -334,7 +335,7 @@ func TestModelsMouseAvailabilityBindingsAndCompact(t *testing.T) {
 			case "no-mouse":
 				m.deps.NoMouse = true
 			case "compact":
-				m = effortOffer(m, 80, 1)
+				m = offerCardBody(m, 80, 1)
 			}
 			_ = m.View()
 			if state == "compact" {
@@ -359,9 +360,9 @@ func TestModelsMouseAvailabilityBindingsAndCompact(t *testing.T) {
 				return
 			}
 			if state == "no-mouse" {
-				m, _ = effortClick(m, modelsMouseControl(t, m, true), false)
-				m, _ = effortClick(m, modelsMouseControl(t, m, false), true)
-				m, _ = effortClick(m, modelsMouseRow(t, m, modelIdentity(s.filtered[1])), false)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, true), false)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, false), true)
+				m, _ = clickFrameHit(m, modelsMouseRow(t, m, modelIdentity(s.filtered[1])), false)
 				if m.modal != s || s.list.CursorID() != modelIdentity(s.filtered[0]) || m.View().MouseMode != tea.MouseModeNone {
 					t.Fatal("no-mouse pointer input acted")
 				}
@@ -377,14 +378,14 @@ func TestModelsMouseAvailabilityBindingsAndCompact(t *testing.T) {
 				t.Fatal("unavailable key action applied")
 			}
 			if state == "compact" {
-				m = effortOffer(m, 80, 20)
+				m = offerCardBody(m, 80, 20)
 				_ = m.View()
 				if s.rowBudget == 0 || s.list.CursorID() != modelIdentity(s.filtered[0]) {
 					t.Fatal("compact restoration lost selection")
 				}
 			} else {
 				_ = m.View()
-				m, _ = effortClick(m, modelsMouseControl(t, m, false), true)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, false), true)
 				if state == "nomatch" && (m.modal != s || s.filter.Value() != "") || state != "nomatch" && m.modal != nil {
 					t.Fatal("availability Close/Clear filter failed")
 				}
@@ -406,7 +407,7 @@ func TestModelsMouseStaleRows(t *testing.T) {
 			old := modelsMouseRow(t, m, modelIdentity(inventory[2])).id
 			switch change {
 			case "row":
-				m, _ = effortClick(m, modelsMouseRow(t, m, modelIdentity(inventory[1])), false)
+				m, _ = clickFrameHit(m, modelsMouseRow(t, m, modelIdentity(inventory[1])), false)
 			case "key":
 				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
 			case "filter":
@@ -428,7 +429,7 @@ func TestModelsMouseStaleRows(t *testing.T) {
 			case "wheel":
 				m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 			case "clear":
-				m, _ = effortClick(m, modelsMouseControl(t, m, false), false)
+				m, _ = clickFrameHit(m, modelsMouseControl(t, m, false), false)
 			}
 			selected := s.list.CursorID()
 			updated, cmd := m.Update(surfaceHitMsg{ID: old})
@@ -467,7 +468,7 @@ func TestModelsMouseUntrustedChromeGeometry(t *testing.T) {
 			if field != "error" {
 				m = applyAll(m, client.ModelsMsg{RequestToken: s.requestToken, Models: inventory, Statuses: []client.ProviderStatus{status}})
 			}
-			m = effortOffer(m, 100, 35)
+			m = offerCardBody(m, 100, 35)
 			view := stripANSIstr(m.View().Content)
 			primary := field != "error"
 			label := "[enter Use model]"
@@ -576,9 +577,9 @@ func TestModelsMouseAdditionalGoldens(t *testing.T) {
 			switch state {
 			case "wrapped":
 				m = typeFilter(t, m, "model")
-				m = effortOffer(m, 24, 20)
+				m = offerCardBody(m, 24, 20)
 			case "compact":
-				m = effortOffer(m, 80, 1)
+				m = offerCardBody(m, 80, 1)
 			case "loading":
 				s.loading = true
 				s.filtered = nil
