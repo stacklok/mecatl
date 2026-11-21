@@ -444845,6 +444845,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795249027451,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73a03d88f098c1a2708f6397ed4de43f8244190b",
+          "message": "refactor(mcpbroker): carry the output schema and a token value through Gateway.ListTools (#2932)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-21T16:56:32+01:00",
+          "tree_id": "04b89a71b929ef77a9057e748a59be0658db4497",
+          "url": "https://github.com/stacklok/mecatl/commit/73a03d88f098c1a2708f6397ed4de43f8244190b"
+        },
+        "date": 1795277291331,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -579175,6 +579214,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795277288061,
+  "lastUpdate": 1795277291930,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
