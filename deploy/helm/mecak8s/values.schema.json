@@ -69,7 +69,7 @@
       "if": {"required": ["enabled"], "properties": {"enabled": {"const": true}}},
       "then": {
         "required": ["trustDomain", "audience", "keys"],
-        "properties": {"keys": {"required": ["agentIssuer", "brokerClient", "as1Signing"]}}
+        "properties": {"keys": {"required": ["agentIssuer"]}}
       },
       "properties": {
         "enabled": {"type": "boolean"},

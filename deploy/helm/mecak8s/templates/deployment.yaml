@@ -423,7 +423,8 @@ spec:
           projected:
             defaultMode: 0440
             sources:
-              {{- range $dir, $ref := dict "agent-issuer" .keys.agentIssuer "broker-client" .keys.brokerClient "broker-client-key-set" .keys.brokerClient.keySet "as1-signing" .keys.as1Signing }}
+              {{- $brokerClient := .keys.brokerClient | default dict }}
+              {{- range $dir, $ref := dict "agent-issuer" .keys.agentIssuer "broker-client" $brokerClient "broker-client-key-set" ($brokerClient.keySet | default dict) "as1-signing" (.keys.as1Signing | default dict) }}
               {{- if $ref.secretName }}
               - secret:
                   name: {{ $ref.secretName }}
