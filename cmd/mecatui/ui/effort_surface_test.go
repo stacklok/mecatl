@@ -28,13 +28,6 @@ func openedEffort(t *testing.T, current string, warning bool) (Model, *effortSta
 	return m, s
 }
 
-func effortOffer(m Model, width, height int) Model {
-	style := m.deps.Theme.Style("askCard")
-	m = applyAll(m, tea.WindowSizeMsg{Width: width + style.GetHorizontalFrameSize(), Height: 100})
-	above, below := m.chrome()
-	return applyAll(m, tea.WindowSizeMsg{Width: m.width, Height: height + style.GetVerticalFrameSize() + sumHeight(above) + sumHeight(below)})
-}
-
 func checkEffortBodyFits(t *testing.T, m Model) string {
 	t.Helper()
 	body := m.renderBody()
@@ -65,7 +58,7 @@ func TestEffortSurfacePreferredCardStaysStableWhileNavigating(t *testing.T) {
 				if warning {
 					height++
 				}
-				m = effortOffer(m, 200, height)
+				m = offerCardBody(m, 200, height)
 				out := checkEffortBodyFits(t, m)
 				bounds := m.metrics.outerBounds
 				want := [2]int{bounds.x1 - bounds.x0, bounds.y1 - bounds.y0}
@@ -193,7 +186,7 @@ func TestEffortSurfaceLongCapturedHintsCapAndResize(t *testing.T) {
 		}
 	}
 
-	m = effortOffer(m, 200, offerHeight)
+	m = offerCardBody(m, 200, offerHeight)
 	checkLongHint("wide")
 	wideBounds := m.metrics.outerBounds
 	wideHeight := wideBounds.y1 - wideBounds.y0
@@ -201,7 +194,7 @@ func TestEffortSurfaceLongCapturedHintsCapAndResize(t *testing.T) {
 		t.Fatalf("wide long-hint card bounds = %+v, want %d-cell cap", wideBounds, preferred)
 	}
 
-	m = effortOffer(m, 32, offerHeight)
+	m = offerCardBody(m, 32, offerHeight)
 	checkLongHint("narrow")
 	narrowBounds := m.metrics.outerBounds
 	if got, want := narrowBounds.x1-narrowBounds.x0, min(preferred, m.width); got != want {
@@ -224,7 +217,7 @@ func TestEffortSurfaceLongCapturedHintsCapAndResize(t *testing.T) {
 		}
 	}
 
-	m = effortOffer(m, 200, offerHeight)
+	m = offerCardBody(m, 200, offerHeight)
 	checkLongHint("wide after resize")
 	if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != preferred || bounds.y1-bounds.y0 != wideHeight {
 		t.Fatalf("wide resize did not restore %d×%d card: %+v", preferred, wideHeight, bounds)
@@ -236,7 +229,7 @@ func TestEffortSurfaceMeasuredGeometry(t *testing.T) {
 		for _, dim := range [][2]int{{100, 20}, {32, 20}, {24, 30}, {200, 20}, {100, 7}, {100, 6}, {100, 5}, {5, 40}, {3, 80}} {
 			t.Run(fmt.Sprintf("warning=%v/%dx%d", warning, dim[0], dim[1]), func(t *testing.T) {
 				m, s := openedEffort(t, "max", warning)
-				m = effortOffer(m, dim[0], dim[1])
+				m = offerCardBody(m, dim[0], dim[1])
 				out := checkEffortBodyFits(t, m)
 				if s.compact {
 					if dim[0] >= 24 && dim[1] >= 6 {
@@ -268,7 +261,7 @@ func TestEffortSurfaceExactlyOneRow(t *testing.T) {
 	for _, tier := range []string{"auto", "medium", "max"} {
 		t.Run(tier, func(t *testing.T) {
 			m, s := openedEffort(t, effortValue(tier), false)
-			m = effortOffer(m, 100, 5) // title + three footer rows + exactly one tier
+			m = offerCardBody(m, 100, 5) // title + three footer rows + exactly one tier
 			out := checkEffortBodyFits(t, m)
 			if s.compact || s.list.Height() != 1 || !strings.Contains(out, "▶● "+tier) || !strings.Contains(out, "more") {
 				t.Fatalf("one-row reveal lost tier/overflow: compact=%v height=%d\n%s", s.compact, s.list.Height(), out)
@@ -296,7 +289,7 @@ func TestEffortSurfaceExactlyOneRow(t *testing.T) {
 			}
 
 			m, s = openedEffort(t, effortValue(tier), false)
-			m = effortOffer(m, 100, 5)
+			m = offerCardBody(m, 100, 5)
 			_ = checkEffortBodyFits(t, m)
 			mm, _ = m.Update(tea.MouseWheelMsg{Button: wheel})
 			m = mm.(Model)
@@ -313,7 +306,7 @@ func TestEffortSurfaceRemappedNavigationAndWheelIsolation(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	m.keys = navigationTestKeys()
 	mm, _ := m.runEffort()
-	m = effortOffer(mm.(Model), 100, 7)
+	m = offerCardBody(mm.(Model), 100, 7)
 	s := m.modal.(*effortState)
 	out := checkEffortBodyFits(t, m)
 	for _, hint := range []string{"u/d move", "p/n page", "t/b first/last"} {
@@ -350,7 +343,7 @@ func TestEffortSurfaceRemappedNavigationAndWheelIsolation(t *testing.T) {
 
 func TestEffortSurfaceCapturedInputsAndFreshReopen(t *testing.T) {
 	m, s := openedEffort(t, "medium", true)
-	m = effortOffer(m, 100, 20)
+	m = offerCardBody(m, 100, 20)
 	m.keys = navigationTestKeys()
 	m.resolvedSessionModel.ReasoningEffort = "max"
 	m.modelCatalog.models[0].Reasoning = true
@@ -389,7 +382,7 @@ func TestEffortSurfaceWheelDoesNotScrollHiddenTranscript(t *testing.T) {
 	for _, geometry := range []string{"normal", "one-row", "compact", "zero-width", "zero-height"} {
 		t.Run(geometry, func(t *testing.T) {
 			m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-			m = effortOffer(m, 100, 20)
+			m = offerCardBody(m, 100, 20)
 			m.conv.addUser("scrollable source")
 			m.conv.startAssistant()
 			m.conv.appendAssistant(strings.Repeat("underlying conversation\n\n", 100))
@@ -408,9 +401,9 @@ func TestEffortSurfaceWheelDoesNotScrollHiddenTranscript(t *testing.T) {
 			s := m.modal.(*effortState)
 			switch geometry {
 			case "one-row":
-				m = effortOffer(m, 100, 5)
+				m = offerCardBody(m, 100, 5)
 			case "compact":
-				m = effortOffer(m, 100, 4)
+				m = offerCardBody(m, 100, 4)
 			case "zero-width":
 				m = applyAll(m, tea.WindowSizeMsg{Width: 0, Height: 30})
 			case "zero-height":
@@ -435,11 +428,11 @@ func TestEffortSurfaceResizeRevealsSelection(t *testing.T) {
 	for _, transition := range []string{"wide", "compact", "zero-width", "zero-height"} {
 		t.Run(transition, func(t *testing.T) {
 			m, s := openedEffort(t, "max", false)
-			m = effortOffer(m, 100, 20)
+			m = offerCardBody(m, 100, 20)
 			_ = checkEffortBodyFits(t, m)
 			switch transition {
 			case "compact":
-				m = effortOffer(m, 100, 4)
+				m = offerCardBody(m, 100, 4)
 				_ = m.View()
 			case "zero-width":
 				m = applyAll(m, tea.WindowSizeMsg{Width: 0, Height: 20})
@@ -448,7 +441,7 @@ func TestEffortSurfaceResizeRevealsSelection(t *testing.T) {
 				m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 0})
 				_ = m.View()
 			}
-			m = effortOffer(m, 100, 5)
+			m = offerCardBody(m, 100, 5)
 			out := checkEffortBodyFits(t, m)
 			if s.list.Height() != 1 || s.list.CursorID() != "max" || !strings.Contains(out, "▶● max") {
 				t.Fatalf("changed offer must reveal selected max in sole row: %s", out)
@@ -474,7 +467,7 @@ func TestEffortSurfaceZeroAndCompactInvalidateActivation(t *testing.T) {
 			if offer[0] == 0 || offer[1] == 0 {
 				m = applyAll(m, tea.WindowSizeMsg{Width: offer[0], Height: offer[1]})
 			} else {
-				m = effortOffer(m, offer[0], offer[1])
+				m = offerCardBody(m, offer[0], offer[1])
 			}
 			// No intervening View: Model must invalidate stale usable geometry itself.
 			for _, msg := range []tea.Msg{tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyHome}, tea.MouseWheelMsg{Button: tea.MouseWheelUp}} {
@@ -492,7 +485,7 @@ func TestEffortSurfaceZeroAndCompactInvalidateActivation(t *testing.T) {
 			} else {
 				checkEffortBodyFits(t, m)
 			}
-			m = effortOffer(m, 100, 20)
+			m = offerCardBody(m, 100, 20)
 			m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 			if s.compact || s.list.CursorID() != "auto" {
 				t.Fatal("restored offer did not enable keyboard")
@@ -500,7 +493,7 @@ func TestEffortSurfaceZeroAndCompactInvalidateActivation(t *testing.T) {
 			if offer[0] == 0 || offer[1] == 0 {
 				m = applyAll(m, tea.WindowSizeMsg{Width: offer[0], Height: offer[1]})
 			} else {
-				m = effortOffer(m, offer[0], offer[1])
+				m = offerCardBody(m, offer[0], offer[1])
 			}
 			m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			if m.modal != nil || !m.prompt.Focused() {
@@ -532,7 +525,7 @@ func TestEffortSurfaceSubsetWheelWindowSurvivesRender(t *testing.T) {
 	for capacity := 2; capacity <= 5; capacity++ {
 		t.Run(fmt.Sprint(capacity), func(t *testing.T) {
 			m, s := openedEffort(t, "auto", false)
-			m = effortOffer(m, 100, capacity+4)
+			m = offerCardBody(m, 100, capacity+4)
 			_ = checkEffortBodyFits(t, m)
 			before := m.vp.YOffset()
 			for _, button := range []tea.MouseButton{tea.MouseWheelDown, tea.MouseWheelDown, tea.MouseWheelDown, tea.MouseWheelDown, tea.MouseWheelUp, tea.MouseWheelUp} {
@@ -547,7 +540,7 @@ func TestEffortSurfaceSubsetWheelWindowSurvivesRender(t *testing.T) {
 			if out := checkEffortBodyFits(t, m); !strings.Contains(out, "▶  max") {
 				t.Fatal("keyboard did not reveal max")
 			}
-			m = effortOffer(m, 32, 20)
+			m = offerCardBody(m, 32, 20)
 			m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 			if out := checkEffortBodyFits(t, m); !strings.Contains(out, "▶● auto") {
 				t.Fatal("navigation did not reveal after reflow")

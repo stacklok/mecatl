@@ -1,0 +1,14 @@
+# What an upgrade with `helm upgrade --reuse-values` leaves a broker release
+# that names only the agent issuer key: the previous release's values plus the
+# overrides on the command line, with none of the newer chart's defaults. The
+# nulls remove the brokerClient and as1Signing defaults the same way.
+identityBroker:
+  enabled: true
+  trustDomain: agents.example.com
+  audience: https://broker.example.com
+  keys:
+    agentIssuer:
+      secretName: ib-agent
+      key: key.pem
+    brokerClient: null
+    as1Signing: null

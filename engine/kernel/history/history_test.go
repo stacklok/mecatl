@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
@@ -18,18 +19,18 @@ import (
 // Missing hooks panic so unexpected reads or hidden write retries fail the test.
 type scriptedBackend struct {
 	history.Backend
-	observe func(context.Context, history.HistoryID, int64) (history.Observation, error)
-	append  func(context.Context, history.HistoryID, history.CommitRef, history.ByteCommit) (history.Observation, error)
-	read    func(context.Context, history.HistoryID, history.ByteReadRequest) ([]history.ByteCommit, error)
+	observe func(context.Context, resourceid.ID, int64) (history.Observation, error)
+	append  func(context.Context, resourceid.ID, history.CommitRef, history.ByteCommit) (history.Observation, error)
+	read    func(context.Context, resourceid.ID, history.ByteReadRequest) ([]history.ByteCommit, error)
 }
 
-func (s scriptedBackend) Observe(ctx context.Context, id history.HistoryID, n int64) (history.Observation, error) {
+func (s scriptedBackend) Observe(ctx context.Context, id resourceid.ID, n int64) (history.Observation, error) {
 	return s.observe(ctx, id, n)
 }
-func (s scriptedBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (s scriptedBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	return s.append(ctx, id, expected, c)
 }
-func (s scriptedBackend) Read(ctx context.Context, id history.HistoryID, r history.ByteReadRequest) ([]history.ByteCommit, error) {
+func (s scriptedBackend) Read(ctx context.Context, id resourceid.ID, r history.ByteReadRequest) ([]history.ByteCommit, error) {
 	return s.read(ctx, id, r)
 }
 
@@ -47,7 +48,7 @@ func newHistory(t *testing.T, b history.Backend, p history.Policy) *history.Hist
 	return h
 }
 
-func dto(id history.HistoryID, parent history.CommitRef, payload string) format.Commit {
+func dto(id resourceid.ID, parent history.CommitRef, payload string) format.Commit {
 	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: parent.Sequence + 1,
 		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 1, Payload: []byte(payload)}}}
 	if parent.Sequence == 0 {
@@ -68,7 +69,7 @@ func byteCommit(t *testing.T, c format.Commit) history.ByteCommit {
 }
 
 func TestIdentifyIsLocalCanonicalAndTracksMutation(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := dto(id, history.CommitRef{}, "\x00\xffopaque")
 	h := newHistory(t, scriptedBackend{}, corePolicy()) // Any backend call panics.
 	r1, err := h.Identify(id, root)
@@ -87,7 +88,7 @@ func TestIdentifyIsLocalCanonicalAndTracksMutation(t *testing.T) {
 			t.Fatalf("repeated Identify = %+v, %v", again, err)
 		}
 		writes := 0
-		submitter := newHistory(t, scriptedBackend{append: func(_ context.Context, gotID history.HistoryID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
+		submitter := newHistory(t, scriptedBackend{append: func(_ context.Context, gotID resourceid.ID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
 			writes++
 			wantParent := history.CommitRef{}
 			if c.Sequence > 1 {
@@ -110,38 +111,38 @@ func TestIdentifyIsLocalCanonicalAndTracksMutation(t *testing.T) {
 	}
 	// A successor's scope is not in its envelope; local identity cannot prove
 	// membership in a stored history, and must not query it.
-	otherScope, err := h.Identify(history.NewHistoryID(), second)
+	otherScope, err := h.Identify(resourceid.New("FOO"), second)
 	if err != nil || otherScope != byteCommit(t, second).Ref {
 		t.Fatalf("successor scope = %+v, %v", otherScope, err)
 	}
 }
 
 func TestIdentifyAndAppendRejectInputsWithoutBackendCalls(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	for _, test := range []struct {
 		name   string
-		mutate func(*history.HistoryID, *format.Commit, *history.Policy)
+		mutate func(*resourceid.ID, *format.Commit, *history.Policy)
 	}{
-		{"missing-scope", func(id *history.HistoryID, _ *format.Commit, _ *history.Policy) { *id = history.HistoryID{} }},
-		{"foreign-root", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) {
-			c.HistoryID = new(history.NewHistoryID())
+		{"missing-scope", func(id *resourceid.ID, _ *format.Commit, _ *history.Policy) { *id = resourceid.ID{} }},
+		{"foreign-root", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) {
+			c.HistoryID = new(resourceid.New("FOO"))
 		}},
-		{"missing-dto", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { *c = format.Commit{} }},
-		{"missing-sequence", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Sequence = 0 }},
-		{"negative-sequence", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Sequence = -1 }},
-		{"missing-records", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Records = nil }},
-		{"invalid-record", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.Records[0].KindVersion = 0 }},
-		{"version", func(_ *history.HistoryID, c *format.Commit, _ *history.Policy) { c.FormatVersion = 2 }},
-		{"commit-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxBytes = 1 }},
-		{"record-count-limit", func(_ *history.HistoryID, c *format.Commit, p *history.Policy) {
+		{"missing-dto", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { *c = format.Commit{} }},
+		{"missing-sequence", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { c.Sequence = 0 }},
+		{"negative-sequence", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { c.Sequence = -1 }},
+		{"missing-records", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { c.Records = nil }},
+		{"invalid-record", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { c.Records[0].KindVersion = 0 }},
+		{"version", func(_ *resourceid.ID, c *format.Commit, _ *history.Policy) { c.FormatVersion = 2 }},
+		{"commit-byte-limit", func(_ *resourceid.ID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxBytes = 1 }},
+		{"record-count-limit", func(_ *resourceid.ID, c *format.Commit, p *history.Policy) {
 			c.Records = append(c.Records, c.Records[0])
 			p.CommitLimits.MaxArrayElements = 1
 		}},
-		{"kind-byte-limit", func(_ *history.HistoryID, c *format.Commit, p *history.Policy) {
+		{"kind-byte-limit", func(_ *resourceid.ID, c *format.Commit, p *history.Policy) {
 			c.Records[0].Kind = "opaque-kind-longer-than-history"
 			p.CommitLimits.MaxStringBytes = len(c.Records[0].Kind) - 1
 		}},
-		{"payload-byte-limit", func(_ *history.HistoryID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 1 }},
+		{"payload-byte-limit", func(_ *resourceid.ID, _ *format.Commit, p *history.Policy) { p.CommitLimits.MaxByteStringBytes = 1 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			scope, c, p := id, dto(id, history.CommitRef{}, "root"), corePolicy()
@@ -164,7 +165,7 @@ func TestIdentifyAndAppendRejectInputsWithoutBackendCalls(t *testing.T) {
 }
 
 func TestReadCancellationAfterBackendReturn(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := byteCommit(t, dto(id, history.CommitRef{}, "root"))
 	for _, empty := range []bool{false, true} {
 		for _, canceled := range []bool{false, true} {
@@ -178,7 +179,7 @@ func TestReadCancellationAfterBackendReturn(t *testing.T) {
 					commits = nil
 				}
 				calls := 0
-				h := newHistory(t, scriptedBackend{read: func(ctx context.Context, _ history.HistoryID, _ history.ByteReadRequest) ([]history.ByteCommit, error) {
+				h := newHistory(t, scriptedBackend{read: func(ctx context.Context, _ resourceid.ID, _ history.ByteReadRequest) ([]history.ByteCommit, error) {
 					calls++
 					if err := ctx.Err(); err != nil {
 						t.Fatalf("canceled before backend read: %v", err)
@@ -210,10 +211,10 @@ func TestReadCancellationAfterBackendReturn(t *testing.T) {
 }
 
 func TestReadRejectsCorruptBackendResults(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := byteCommit(t, dto(id, history.CommitRef{}, "root"))
 	second := byteCommit(t, dto(id, root.Ref, "second"))
-	foreign := byteCommit(t, dto(history.NewHistoryID(), history.CommitRef{}, "foreign"))
+	foreign := byteCommit(t, dto(resourceid.New("FOO"), history.CommitRef{}, "foreign"))
 	wrongParent := byteCommit(t, dto(id, foreign.Ref, "wrong parent"))
 	third := byteCommit(t, dto(id, second.Ref, "third"))
 	for _, test := range []struct {
@@ -303,7 +304,7 @@ func TestReadRejectsCorruptBackendResults(t *testing.T) {
 				{Ref: second.Ref, Bytes: append([]byte(nil), second.Bytes...)},
 			}
 			test.mutate(&b, &r, &p)
-			h := newHistory(t, scriptedBackend{read: func(_ context.Context, gotID history.HistoryID, got history.ByteReadRequest) ([]history.ByteCommit, error) {
+			h := newHistory(t, scriptedBackend{read: func(_ context.Context, gotID resourceid.ID, got history.ByteReadRequest) ([]history.ByteCommit, error) {
 				if gotID != id || got.ReadRequest != r || got.MaxBytes != p.MaxPageBytes || got.MaxCommitBytes != p.CommitLimits.MaxBytes {
 					t.Fatal("core did not pass read bounds")
 				}
@@ -318,12 +319,12 @@ func TestReadRejectsCorruptBackendResults(t *testing.T) {
 }
 
 func TestReadValidatesAvailableBoundariesWithoutGenesisScan(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := byteCommit(t, dto(id, history.CommitRef{}, "root"))
 	second := byteCommit(t, dto(id, root.Ref, "second"))
 	third := byteCommit(t, dto(id, second.Ref, "third"))
 	calls := 0
-	h := newHistory(t, scriptedBackend{read: func(_ context.Context, _ history.HistoryID, r history.ByteReadRequest) ([]history.ByteCommit, error) {
+	h := newHistory(t, scriptedBackend{read: func(_ context.Context, _ resourceid.ID, r history.ByteReadRequest) ([]history.ByteCommit, error) {
 		calls++
 		if r.After != root.Ref || r.Through != third.Ref {
 			t.Fatal("unexpected read")
@@ -337,7 +338,7 @@ func TestReadValidatesAvailableBoundariesWithoutGenesisScan(t *testing.T) {
 }
 
 func TestAppendCASAdjudicationNeverRetriesWrites(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	rootDTO := dto(id, history.CommitRef{}, "root")
 	root := byteCommit(t, rootDTO)
 	other := byteCommit(t, dto(id, history.CommitRef{}, "competing"))
@@ -365,12 +366,12 @@ func TestAppendCASAdjudicationNeverRetriesWrites(t *testing.T) {
 			defer cancel()
 			reads, writes := 0, 0
 			h := newHistory(t, scriptedBackend{
-				observe: func(context.Context, history.HistoryID, int64) (history.Observation, error) {
+				observe: func(context.Context, resourceid.ID, int64) (history.Observation, error) {
 					reads++
 					t.Fatal("Append must not observe before CAS")
 					return history.Observation{}, nil
 				},
-				append: func(_ context.Context, gotID history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+				append: func(_ context.Context, gotID resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 					writes++
 					if writes != 1 || gotID != id || expected != (history.CommitRef{}) || c.Ref != root.Ref || !reflect.DeepEqual(c.Bytes, root.Bytes) {
 						t.Fatal("unexpected CAS write")
@@ -395,7 +396,7 @@ func TestAppendCASAdjudicationNeverRetriesWrites(t *testing.T) {
 }
 
 func TestAppendSuccessorCASAllowsSpeculativeExpectedHeads(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := byteCommit(t, dto(id, history.CommitRef{}, "root")).Ref
 	other := byteCommit(t, dto(id, history.CommitRef{}, "other root")).Ref
 	second := byteCommit(t, dto(id, root, "second")).Ref
@@ -415,7 +416,7 @@ func TestAppendSuccessorCASAllowsSpeculativeExpectedHeads(t *testing.T) {
 			proposal := byteCommit(t, c).Ref
 			writes := 0
 			h := newHistory(t, scriptedBackend{
-				append: func(_ context.Context, gotID history.HistoryID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
+				append: func(_ context.Context, gotID resourceid.ID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
 					writes++
 					if writes != 1 || gotID != id || expected != test.parent || got.Ref != proposal {
 						t.Fatal("wrong CAS proposal or expected parent")
@@ -439,12 +440,12 @@ func TestAppendSuccessorCASAllowsSpeculativeExpectedHeads(t *testing.T) {
 }
 
 func TestDuplicateAcceptanceSurvivesLateCancellation(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	c := dto(id, history.CommitRef{}, "root")
 	ref := byteCommit(t, c).Ref
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h := newHistory(t, scriptedBackend{append: func(context.Context, history.HistoryID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
+	h := newHistory(t, scriptedBackend{append: func(context.Context, resourceid.ID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
 		cancel()
 		return history.Observation{Head: ref, Commit: ref}, nil
 	}}, corePolicy())
@@ -455,7 +456,7 @@ func TestDuplicateAcceptanceSurvivesLateCancellation(t *testing.T) {
 }
 
 func TestObservationCorruptionAndErrors(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	c := dto(id, history.CommitRef{}, "root")
 	ref := byteCommit(t, c).Ref
 	other := byteCommit(t, dto(id, history.CommitRef{}, "other")).Ref
@@ -468,8 +469,8 @@ func TestObservationCorruptionAndErrors(t *testing.T) {
 		{Head: ref, Commit: history.CommitRef{Sequence: 2, CID: ref.CID}},
 	} {
 		h := newHistory(t, scriptedBackend{
-			observe: func(context.Context, history.HistoryID, int64) (history.Observation, error) { return o, nil },
-			append: func(context.Context, history.HistoryID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
+			observe: func(context.Context, resourceid.ID, int64) (history.Observation, error) { return o, nil },
+			append: func(context.Context, resourceid.ID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
 				return o, nil
 			},
 		}, corePolicy())
@@ -484,13 +485,13 @@ func TestObservationCorruptionAndErrors(t *testing.T) {
 	}
 	errBackend := errors.New("backend failure")
 	h := newHistory(t, scriptedBackend{
-		observe: func(context.Context, history.HistoryID, int64) (history.Observation, error) {
+		observe: func(context.Context, resourceid.ID, int64) (history.Observation, error) {
 			return history.Observation{Head: ref, Commit: ref}, errBackend
 		},
-		append: func(context.Context, history.HistoryID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
+		append: func(context.Context, resourceid.ID, history.CommitRef, history.ByteCommit) (history.Observation, error) {
 			return history.Observation{Head: ref, Commit: ref}, errBackend
 		},
-		read: func(context.Context, history.HistoryID, history.ByteReadRequest) ([]history.ByteCommit, error) {
+		read: func(context.Context, resourceid.ID, history.ByteReadRequest) ([]history.ByteCommit, error) {
 			return []history.ByteCommit{{Ref: ref, Bytes: []byte{1}}}, errBackend
 		},
 	}, corePolicy())
@@ -509,7 +510,7 @@ func TestObservationCorruptionAndErrors(t *testing.T) {
 }
 
 func TestMaxSequenceDoesNotWrap(t *testing.T) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root := byteCommit(t, dto(id, history.CommitRef{}, "root")).Ref
 	for _, sequence := range []int64{2, math.MaxInt64} {
 		c := dto(id, root, "proposal")
@@ -518,7 +519,7 @@ func TestMaxSequenceDoesNotWrap(t *testing.T) {
 		p := corePolicy()
 		p.RetryWindow = math.MaxInt64
 		writes := 0
-		h := newHistory(t, scriptedBackend{append: func(_ context.Context, _ history.HistoryID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
+		h := newHistory(t, scriptedBackend{append: func(_ context.Context, _ resourceid.ID, expected history.CommitRef, got history.ByteCommit) (history.Observation, error) {
 			writes++
 			if expected != (history.CommitRef{Sequence: sequence - 1, CID: *c.Parent}) || got.Ref != proposal {
 				t.Fatal("wrong expected parent or proposal")

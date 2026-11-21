@@ -9,7 +9,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: b810502949e67679cb0ea9781ecaffe3acd0384ae11b11aebf3701bdb3951a78.
+// Selected view layouts, source policy and documentation fingerprint: 6fd52722eaeff50a89f773d8a6d63ab60edf7b4668ec16305cd38d6745fbb9ce.
 // Backing contract for AttributedInputView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -396,7 +396,7 @@ func (v ContentSourceView) WorkspaceFile() (WorkspaceFileSourceView, bool) {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // Created is the empty creation payload. Its zero value is locally valid; the
-// history identity is carried only by the root history envelope.
+// Session identity is carried only by the root history envelope.
 var _ = (*struct{})((*dtogenType0.Created)(nil))
 
 // MutableClone returns a deeply detached mutable copy of the backing DTO payload.
@@ -795,7 +795,7 @@ func (v MediaView) ProviderName() string {
 // References grant no access or dereference authority.
 //
 // ProviderScope is the required provider storage namespace, empty otherwise.
-// It is not the session's history or run scope.
+// It is not the Session or run scope.
 func (v MediaView) ProviderScope() string {
 	if v.value == nil {
 		return *new(string)
@@ -899,8 +899,8 @@ func (v MediaView) Title() string {
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 var _ = (*struct {
 	Route    string                    "cbor:\"r\""
 	API      string                    "cbor:\"a\""
@@ -927,8 +927,8 @@ func (v ModelBindingView) MutableClone() dtogenType0.ModelBinding {
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 //
 // Route is a required nonempty exact UTF-8 logical provider/route name interpreted
 // relative to the preparing harness's configuration, not a global provider
@@ -949,8 +949,8 @@ func (v ModelBindingView) Route() string {
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 //
 // API is the required nonempty exact UTF-8 declared API name, not a compatibility
 // assertion. Validate checks syntax only, without provider interpretation.
@@ -970,8 +970,8 @@ func (v ModelBindingView) API() string {
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 //
 // Model is the required nonempty exact UTF-8 declared model name, not an observed
 // upstream model identity. Loading does not resolve or verify it.
@@ -991,8 +991,8 @@ func (v ModelBindingView) Model() string {
 // ModelBinding retains declared logical preparation choices, not observed upstream
 // identity or compatibility. Settings retains explicit prepared typed controls,
 // never inherited defaults or credentials. Assignment shares Settings pointers;
-// Clone detaches them. Zero is invalid. History identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Clone detaches them. Zero is invalid. Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 //
 // Settings is required explicit prepared controls. Nil members intentionally
 // omit controls, not inherit defaults. Codec traversal validates children.
@@ -1850,7 +1850,7 @@ func (v ResponseItemView) Call() (RequestedCallDataView, bool) {
 // not a producer, file, or provider message role. Nil and empty Blocks are
 // equivalent explicit empty replacements; a single empty block is distinct and
 // still needs a key and provenance. Assignment shares Blocks and children;
-// Clone detaches them. History scope comes from the enclosing envelope.
+// Clone detaches them. Session scope comes from the root history envelope.
 var _ = (*struct {
 	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
 })((*dtogenType0.RootInstructions)(nil))
@@ -1876,14 +1876,14 @@ func (v RootInstructionsView) MutableClone() dtogenType0.RootInstructions {
 // not a producer, file, or provider message role. Nil and empty Blocks are
 // equivalent explicit empty replacements; a single empty block is distinct and
 // still needs a key and provenance. Assignment shares Blocks and children;
-// Clone detaches them. History scope comes from the enclosing envelope.
+// Clone detaches them. Session scope comes from the root history envelope.
 //
 // Blocks preserves instruction contribution order and boundaries, including
 // duplicate contents and empty blocks, but never duplicate keys within this
 // whole replacement. Slice order, not keys, determines order; this is not a
 // patch API. Nil and empty explicitly clear root instructions.
-// Codec traversal validates children; history identity is omitted here and
-// restored from the enclosing envelope at the domain conversion boundary.
+// Codec traversal validates children; Session identity is omitted here and
+// restored from the root history envelope at the domain conversion boundary.
 func (v RootInstructionsView) Blocks() dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView] {
 	if v.value == nil {
 		return dtogenViews.SliceView[dtogenType0.InstructionBlock, InstructionBlockView]{}
@@ -2056,8 +2056,8 @@ func (v SourceHeadView) Sequence() int64 {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
 // Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
-// Tools and schema bytes; Clone detaches them. History identity is omitted here
-// and restored from the enclosing envelope at the domain conversion boundary.
+// Tools and schema bytes; Clone detaches them. Session identity is omitted here
+// and restored from the root history envelope at the domain conversion boundary.
 var _ = (*struct {
 	Tools []dtogenType0.ToolDefinition "cbor:\"t\""
 })((*dtogenType0.ToolCatalog)(nil))
@@ -2080,8 +2080,8 @@ func (v ToolCatalogView) MutableClone() dtogenType0.ToolCatalog {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
 // Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
-// Tools and schema bytes; Clone detaches them. History identity is omitted here
-// and restored from the enclosing envelope at the domain conversion boundary.
+// Tools and schema bytes; Clone detaches them. Session identity is omitted here
+// and restored from the root history envelope at the domain conversion boundary.
 //
 // Tools preserves advertised order. Names must be unique within this replacement
 // (checked locally); codec traversal validates each definition. Nil and empty
@@ -2181,7 +2181,7 @@ func (v ToolDefinitionView) ArgumentSchema() dtogenViews.Bytes {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -2216,7 +2216,7 @@ func (v ToolDispositionView) MutableClone() dtogenType0.ToolDisposition {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -2240,7 +2240,7 @@ func (v ToolDispositionView) Returned() (ToolReturnedView, bool) {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -2264,7 +2264,7 @@ func (v ToolDispositionView) NotInvoked() (ToolNotInvokedView, bool) {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -2288,7 +2288,7 @@ func (v ToolDispositionView) Indeterminate() (ToolIndeterminateView, bool) {
 // Source contract (DTO semantics, not a mutable accessor):
 // ToolDisposition retains exactly one outcome fact for a requested call, not an
 // execution mechanism. Assignment shares nested storage; Clone detaches it.
-// Zero is invalid; history scope is omitted. Reload grants no execution authority.
+// Zero is invalid; Session scope is omitted. Reload grants no execution authority.
 //
 // Aggregate obligations (not implemented by this DTO): Returned requires accepted
 // commitment and settled prerequisites; Indeterminate requires accepted commitment
@@ -2465,7 +2465,7 @@ func (v ToolIndeterminateView) Output() ToolOutputView {
 // or lease and proves no dispatch. Typed ancillary records may later retain those
 // observations or execution provenance when producers establish their semantics
 // and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
-// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// Session scope is omitted. The authoring contract supplies a full RequestedCallID
 // separately with all three destination fields zero; Validate instead checks
 // persisted positive components, not aggregate admission.
 var _ = (*struct {
@@ -2500,7 +2500,7 @@ func (v ToolInvocationView) MutableClone() dtogenType0.ToolInvocation {
 // or lease and proves no dispatch. Typed ancillary records may later retain those
 // observations or execution provenance when producers establish their semantics
 // and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
-// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// Session scope is omitted. The authoring contract supplies a full RequestedCallID
 // separately with all three destination fields zero; Validate instead checks
 // persisted positive components, not aggregate admission.
 //
@@ -2525,7 +2525,7 @@ func (v ToolInvocationView) Name() string {
 // or lease and proves no dispatch. Typed ancillary records may later retain those
 // observations or execution provenance when producers establish their semantics
 // and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
-// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// Session scope is omitted. The authoring contract supplies a full RequestedCallID
 // separately with all three destination fields zero; Validate instead checks
 // persisted positive components, not aggregate admission.
 //
@@ -3169,7 +3169,7 @@ func (v UsageCountersView) Reasoning() (int64, bool) {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // UsageDefinition is immutable first-record metadata. Correlations omit enclosing
-// history scope and assert association, not unique ownership or complete coverage.
+// Session scope and assert association, not unique ownership or complete coverage.
 // Assignment shares optional components; Clone detaches them. Zero is invalid.
 var _ = (*struct {
 	Purpose   string  "cbor:\"p\""
@@ -3194,7 +3194,7 @@ func (v UsageDefinitionView) MutableClone() dtogenType0.UsageDefinition {
 //
 // Source contract (DTO semantics, not a mutable accessor):
 // UsageDefinition is immutable first-record metadata. Correlations omit enclosing
-// history scope and assert association, not unique ownership or complete coverage.
+// Session scope and assert association, not unique ownership or complete coverage.
 // Assignment shares optional components; Clone detaches them. Zero is invalid.
 //
 // Purpose is required nonempty exact UTF-8, open beyond the established
@@ -3311,7 +3311,7 @@ func (v UsageReportView) Raw() (OpaqueProviderDataView, bool) {
 // Backing contract for UsageView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Usage is one complete accounting report for a Session-scoped identity. Its zero
 // Go value is invalid because it lacks a positive ID and a valid report state.
 // Explicitly reported zero token counts are valid and distinct from absent counts.
 // The first record alone carries Definition and must be active; later records omit
@@ -3342,7 +3342,7 @@ func (v UsageView) MutableClone() dtogenType0.Usage {
 // Access neither freezes nor synchronizes backing.
 //
 // Source contract (DTO semantics, not a mutable accessor):
-// Usage is one complete accounting report for a history-scoped identity. Its zero
+// Usage is one complete accounting report for a Session-scoped identity. Its zero
 // Go value is invalid because it lacks a positive ID and a valid report state.
 // Explicitly reported zero token counts are valid and distinct from absent counts.
 // The first record alone carries Definition and must be active; later records omit
@@ -3413,8 +3413,8 @@ func (v UserInputView) Parts() dtogenViews.SliceView[dtogenType0.ContentPart, Co
 // Dynamically triggered guidance enters chronological EffectiveInput with
 // attribution rather than retroactively replacing this standing value. Latest
 // replacement wins across runs; nil and empty Blocks explicitly clear it.
-// Assignment shares Blocks and children; Clone detaches them. History scope
-// comes from the envelope.
+// Assignment shares Blocks and children; Clone detaches them. Session scope
+// comes from the root history envelope.
 var _ = (*struct {
 	Blocks []dtogenType0.InstructionBlock "cbor:\"b\""
 })((*dtogenType0.UserInstructions)(nil))
@@ -3442,8 +3442,8 @@ func (v UserInstructionsView) MutableClone() dtogenType0.UserInstructions {
 // Dynamically triggered guidance enters chronological EffectiveInput with
 // attribution rather than retroactively replacing this standing value. Latest
 // replacement wins across runs; nil and empty Blocks explicitly clear it.
-// Assignment shares Blocks and children; Clone detaches them. History scope
-// comes from the envelope.
+// Assignment shares Blocks and children; Clone detaches them. Session scope
+// comes from the root history envelope.
 //
 // Blocks preserves prepared contribution order and boundaries, including
 // duplicate contents and empty blocks, but never duplicate keys within this

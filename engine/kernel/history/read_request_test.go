@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 )
@@ -21,7 +22,7 @@ func TestReadRequestValidate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	other := byteCommit(t, dto(history.NewHistoryID(), history.CommitRef{}, "other")).Ref
+	other := byteCommit(t, dto(resourceid.New("FOO"), history.CommitRef{}, "other")).Ref
 	for name, request := range map[string]history.ReadRequest{
 		"negative after":             {After: history.CommitRef{Sequence: -1, CID: valid.Through.CID}, Through: valid.Through, MaxCommits: 1},
 		"after through":              {After: commitRef(t, 2), Through: valid.Through, MaxCommits: 1},

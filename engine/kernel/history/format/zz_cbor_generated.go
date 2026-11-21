@@ -5,9 +5,9 @@ package format
 import (
 	dtogenFmt "fmt"
 	dtogenCBOR "github.com/jcalabro/atmos/cbor"
+	dtogenType2 "github.com/stacklok/mecatl/engine/id"
 	dtogenCodec "github.com/stacklok/mecatl/engine/kernel/codec"
 	dtogenType3 "github.com/stacklok/mecatl/engine/kernel/contentid"
-	dtogenType2 "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 // dtogen groups this output's stateless helpers; policy stays per call.
@@ -345,51 +345,51 @@ func (h dtogen) read2(r *dtogenCodec.Reader, d, cap int) (v uint64, err error) {
 	return uint64(x), nil
 }
 
-// Helpers 3: *id.HistoryID.
-func (h dtogen) clone3(v *dtogenType2.HistoryID) *dtogenType2.HistoryID {
+// Helpers 3: *id.ID.
+func (h dtogen) clone3(v *dtogenType2.ID) *dtogenType2.ID {
 	if v == nil {
 		return nil
 	}
 	x := h.clone4(*v)
-	return (*dtogenType2.HistoryID)(&x)
+	return (*dtogenType2.ID)(&x)
 }
-func (h dtogen) equal3(v, w *dtogenType2.HistoryID) bool {
+func (h dtogen) equal3(v, w *dtogenType2.ID) bool {
 	if v == nil || w == nil {
 		return v == nil && w == nil
 	}
 	return h.equal4(*v, *w)
 }
-func (h dtogen) check3(v *dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check3(v *dtogenType2.ID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	if v == nil {
 		return dtogenCodec.ErrInvalidData
 	}
 	return h.check4(*v, b, d, cap)
 }
-func (h dtogen) append3(out []byte, v *dtogenType2.HistoryID) []byte {
+func (h dtogen) append3(out []byte, v *dtogenType2.ID) []byte {
 	return h.append4(out, *v)
 }
-func (h dtogen) read3(r *dtogenCodec.Reader, d, cap int) (v *dtogenType2.HistoryID, err error) {
+func (h dtogen) read3(r *dtogenCodec.Reader, d, cap int) (v *dtogenType2.ID, err error) {
 	x, err := h.read4(r, d, cap)
 	if err != nil {
 		return v, err
 	}
-	return (*dtogenType2.HistoryID)(&x), nil
+	return (*dtogenType2.ID)(&x), nil
 }
 
-// Helpers 4: id.HistoryID.
-func (h dtogen) clone4(v dtogenType2.HistoryID) dtogenType2.HistoryID {
+// Helpers 4: id.ID.
+func (h dtogen) clone4(v dtogenType2.ID) dtogenType2.ID {
 	return v.Clone()
 }
-func (h dtogen) equal4(v, w dtogenType2.HistoryID) bool {
+func (h dtogen) equal4(v, w dtogenType2.ID) bool {
 	return v.Equal(w)
 }
-func (h dtogen) check4(v dtogenType2.HistoryID, b *dtogenCodec.Budget, d, cap int) (err error) {
+func (h dtogen) check4(v dtogenType2.ID, b *dtogenCodec.Budget, d, cap int) (err error) {
 	return v.CheckCBOR(b, d, cap)
 }
-func (h dtogen) append4(out []byte, v dtogenType2.HistoryID) []byte {
+func (h dtogen) append4(out []byte, v dtogenType2.ID) []byte {
 	return v.AppendCBOR(out)
 }
-func (h dtogen) read4(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.HistoryID, err error) {
+func (h dtogen) read4(r *dtogenCodec.Reader, d, cap int) (v dtogenType2.ID, err error) {
 	err = v.ReadCBOR(r, d, cap)
 	return v, err
 }

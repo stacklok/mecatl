@@ -36,8 +36,8 @@ func (v ToolDefinition) Validate() error {
 
 // ToolCatalog is a complete session-scoped ordered advertised catalog replacement.
 // Nil and empty Tools are equivalent explicit empty replacements. Assignment shares
-// Tools and schema bytes; Clone detaches them. History identity is omitted here
-// and restored from the enclosing envelope at the domain conversion boundary.
+// Tools and schema bytes; Clone detaches them. Session identity is omitted here
+// and restored from the root history envelope at the domain conversion boundary.
 //
 //dtogen:validate validateLocal
 //dtogen:include

@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
@@ -118,12 +117,7 @@ func (s *effortState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 			s.apply()
 		}
 	} else {
-		for i, tier := range effortTiers {
-			if tier == target.tier {
-				s.list.SetCursor(i)
-				break
-			}
-		}
+		s.list.SelectID(target.tier)
 	}
 	return nil, true, false
 }
@@ -265,37 +259,13 @@ type effortControl struct {
 }
 
 func (s *effortState) footerControls(width int) ([]string, []effortControl) {
-	var lines []string
-	var controls []effortControl
-	for _, action := range []struct {
-		hint, name     string
-		enabled, close bool
-	}{
-		{s.deps.marks.choose, "Apply", s.deps.keys.Choose.Enabled(), false},
-		{s.deps.marks.closeOnly, "Close", s.deps.keys.Close.Enabled(), true},
-	} {
-		if !action.enabled {
-			continue
-		}
-		label := "[" + terminaltext.SanitizeSingleLine(action.hint) + " " + action.name + "]"
-		w := ansi.StringWidth(label)
-		if w > width {
-			return nil, nil
-		}
-		x := 0
-		if len(lines) > 0 {
-			x = ansi.StringWidth(lines[len(lines)-1]) + 1
-		}
-		if len(lines) == 0 || x+w > width {
-			lines = append(lines, "")
-			x = 0
-		}
-		y := len(lines) - 1
-		if x > 0 {
-			lines[y] += " "
-		}
-		lines[y] += s.deps.theme.Style("viewport").Bold(true).Render(label)
-		controls = append(controls, effortControl{rect: cellRect{x0: x, x1: x + w, y0: y, y1: y + 1}, close: action.close})
+	lines, rendered := renderFooterControls(s.deps.theme, width, []footerControlSpec{
+		{hint: s.deps.marks.choose, label: "Apply", enabled: s.deps.keys.Choose.Enabled()},
+		{hint: s.deps.marks.closeOnly, label: footerCloseLabel, enabled: s.deps.keys.Close.Enabled()},
+	})
+	controls := make([]effortControl, len(rendered))
+	for i, control := range rendered {
+		controls[i] = effortControl{rect: control.rect, close: control.index == 1}
 	}
 	return lines, controls
 }

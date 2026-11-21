@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 	var zero session.Snapshot
-	if zero.HistoryID() != (historyid.HistoryID{}) || zero.Head() != (history.CommitRef{}) || zero.Created() || zero.ActiveRun() != (session.RunID{}) || zero.RunCount() != 0 || zero.RecordCount() != 0 {
+	if zero.SessionID() != (sessionid.SessionID{}) || zero.Head() != (history.CommitRef{}) || zero.Created() || zero.ActiveRun() != (session.RunID{}) || zero.RunCount() != 0 || zero.RecordCount() != 0 {
 		t.Fatal("zero snapshot")
 	}
 	var run session.RunView
@@ -32,7 +32,7 @@ func TestSnapshotZeroKindsAndIndexBounds(t *testing.T) {
 		if c != (i == 0) || st != (i == 1 || i == 4) || u != (i == 2) || in != (i == 3) {
 			t.Fatal("wrong-kind access indistinguishable")
 		}
-		if c && created.HistoryID() != v.HistoryID() {
+		if c && created.SessionID() != v.SessionID() {
 			t.Fatal("created scope")
 		}
 		if st {

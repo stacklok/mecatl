@@ -85,12 +85,10 @@ builds:
       - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=v{{ .Version }}
       - -X github.com/stacklok/mecatl/internal/adapter/productmetrics.bakedKey={{ .Env.MECATL_METRICS_INGEST_KEY }}
 
-# NOTE: no `gomod:` block, deliberately. `gomod.proxy` defaults to false; setting
-# it true would make GoReleaser fetch github.com/stacklok/mecatl/engine from
-# proxy.golang.org, where it does not exist as a published version — the root
-# module reaches it via `replace ... => ./engine`. That is a total release
-# failure, not a degradation. The go.work workspace is used as-is, exactly as
-# `task build` uses it; GOWORK must be left alone.
+# NOTE: no `gomod:` block, deliberately. Release builds use this checkout's
+# `go.work`, as `task build` does, so sibling modules compile together from the
+# release source. A `gomod.proxy` build would resolve published requirements
+# instead of that candidate; leave GOWORK unchanged.
 
 archives:
   # ONE archive per platform carrying BOTH binaries. `ids` selects BUILD ids and

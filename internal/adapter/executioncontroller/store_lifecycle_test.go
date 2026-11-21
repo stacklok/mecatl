@@ -168,23 +168,6 @@ func TestRunClaimIsEnvironmentWideAndExact(t *testing.T) {
 	}
 }
 
-func TestExpiredClaimWithActiveOperationCannotBeReplaced(t *testing.T) {
-	now := time.Now().UTC()
-	env := lifecycleEnvironment(now)
-	statusMap, _, _ := unstructured.NestedMap(env.Object, "status")
-	statusMap["epoch"] = int64(4)
-	statusMap["activeRun"] = map[string]any{"bindingID": "source", "runID": "old", "claimID": "old-claim", "operationID": "old-acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(4), "grantGeneration": int64(1), "expiresAt": now.Add(-time.Minute).Format(time.RFC3339Nano)}
-	statusMap["activeOperation"] = map[string]any{"id": "still-running", "claimID": "old-claim", "runID": "old", "epoch": int64(4)}
-	env.Object["status"] = statusMap
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
-	_, err := store.AcquireRun(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "source", "new", "new-op", time.Minute)
-	var controlled *executionenv.Error
-	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeFenceUnknown {
-		t.Fatalf("error=%v", err)
-	}
-}
-
 func TestExactReferenceIntentLookupIsNotTruncatedByGlobalLimit(t *testing.T) {
 	now := time.Now().UTC()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
@@ -306,22 +289,27 @@ func TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient(t *testing
 
 func TestReserveSuccessorReclaimsOnlyExpiredUnfencedRun(t *testing.T) {
 	for _, tc := range []struct {
-		name            string
-		expires         string
-		activeOperation bool
-		wantSuccess     bool
+		name        string
+		expires     string
+		fenced      bool
+		wantSuccess bool
 	}{
 		{"unexpired", time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano), false, false},
 		{"malformed expiry", "invalid", false, false},
-		{"expired with operation", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), true, false},
+		{
+			"expired and fenced",
+			time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano),
+			true,
+			false,
+		},
 		{"expired and quiescent", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := lifecycleEnvironment(time.Now().UTC())
 			status := env.Object["status"].(map[string]any)
 			status["activeRun"] = map[string]any{"bindingID": "source", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": tc.expires}
-			if tc.activeOperation {
-				status["activeOperation"] = map[string]any{"id": "running"}
+			if tc.fenced {
+				status["fenceState"] = "FenceUnknown"
 			}
 			before := env.DeepCopy()
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)

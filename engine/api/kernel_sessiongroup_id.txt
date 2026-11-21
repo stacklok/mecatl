@@ -1,0 +1,10 @@
+    method func (*GroupID).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
+    method func (GroupID).AppendCBOR(dst []byte) []byte
+    method func (GroupID).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
+    method func (GroupID).Clone() GroupID
+    method func (GroupID).Equal(other GroupID) bool
+    method func (GroupID).ResourceID() id.ID
+    method func (GroupID).String() string
+func NewGroupID() GroupID
+func ParseGroupID(s string) (GroupID, error)
+type GroupID struct{}

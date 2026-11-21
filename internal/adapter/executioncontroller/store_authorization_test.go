@@ -113,8 +113,7 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 				}
 			}
 			dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			executor := newLeaseBlockingExecutor()
-			executor.unblock()
+			executor := &recordingTransport{}
 			store := NewStore(dynamic, "ns", testProfiles(), executor).WithSecurityManager(manager)
 			server := grpc.NewServer(grpc.Creds(credentials.NewTLS(manager.TLSConfig())))
 			executionv1.RegisterExecutionProviderServiceServer(server, NewHandler(HandlerConfig{Security: manager}, store))
@@ -153,15 +152,8 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 			if status.Code(err) != tc.want {
 				t.Fatalf("file authorization: got %v, want %v", err, tc.want)
 			}
-			select {
-			case <-executor.started:
-				if tc.want != codes.OK {
-					t.Fatal("invalid request reached executor dispatch")
-				}
-			default:
-				if tc.want == codes.OK {
-					t.Fatal("authorized request did not dispatch")
-				}
+			if dispatched := executor.calls() != 0; dispatched != (tc.want == codes.OK) {
+				t.Fatalf("dispatched=%t for want %v", dispatched, tc.want)
 			}
 			if tc.want == codes.OK {
 				if string(response.GetData()) != "ok" || string(response.GetVersion()) != "v1" {

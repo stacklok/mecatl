@@ -58,6 +58,7 @@ concurrency:
 env:
   GOTOOLCHAIN: local
   GOFLAGS: -mod=readonly
+  GOWORK: ${{ github.workspace }}/go.work
 
 jobs:
   live-hypervisor:
@@ -188,7 +189,7 @@ jobs:
       - name: Compile runtime, production daemon, and tagged E2E
         run: |
           cd environment/microvm
-          GOWORK=off go test ./...
+          go test ./...
           cd ../..
           go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'
 
@@ -218,8 +219,8 @@ jobs:
       - name: Run nested module unit/race coverage and compile tagged E2E
         run: |
           cd environment/microvm
-          GOWORK=off go test -race ./...
-          GOWORK=off go build ./cmd/mecatl-microvmd
+          go test -race ./...
+          go build ./cmd/mecatl-microvmd
           cd ../..
           go test -race ./internal/adapter/microvm ./internal/adapter/microvmmanager
           go test -tags=microvm_e2e ./internal/adapter/microvm -run '^$'

@@ -107,8 +107,10 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		return fmt.Errorf("load executor client certificate: %w", err)
 	}
 	diagnostics := slogdiag.New(os.Stderr, true, port.LevelInfo)
-	podexec := executioncontroller.NewPodExecutor(cfg, kube, namespace)
-	store := executioncontroller.NewStore(dyn, namespace, templates, podexec).WithKubeClient(kube).WithSecurityManager(security)
+	transport := executioncontroller.NewServerTransport(dialer.Connect)
+	store := executioncontroller.NewStore(dyn, namespace, templates, transport).
+		WithKubeClient(kube).
+		WithSecurityManager(security)
 	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates).
 		WithDiagnostics(diagnostics)
 	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{

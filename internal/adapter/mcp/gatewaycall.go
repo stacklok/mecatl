@@ -24,9 +24,15 @@ import (
 )
 
 const (
-	// gatewayProtocolVersion keeps the plain initialize handshake and a
-	// stateful session: from 2026-07-28 the SDK may probe server/discover and
-	// run sessionless.
+	// gatewayProtocolVersion is the newest MCP revision the gateway paths
+	// speak; the SDK sends initialize with it and accepts an older answer.
+	// Calls depend on it: on 2026-07-28 the SDK probes server/discover and
+	// runs sessionless, and the vMCP answers a call needing URL elicitation
+	// with an "input_required" result rather than error -32042, which
+	// classify would take as completed. The session-not-found rejection
+	// assumes a session, and on 2026-07-28 closing the request's stream, not
+	// notifications/cancelled, cancels a call. Listings use the same revision
+	// so one gateway sees one protocol. Moving to 2026-07-28 is #2917.
 	gatewayProtocolVersion = "2025-11-25"
 	gatewayMetaOperation   = "dev.mecatl/operation"
 	gatewayMetaAttempt     = "dev.mecatl/attempt"
@@ -367,6 +373,14 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 // roundTripOther sends a request other than the tools/call and notes a
 // refusing answer to the handshake.
 func (w *gatewayWire) roundTripOther(out *http.Request, method string) (*http.Response, error) {
+	w.mu.Lock()
+	cancelHandshake := method == "notifications/cancelled" && !w.callStarted
+	w.mu.Unlock()
+	if cancelHandshake {
+		// Initialize must not be cancelled. The SDK sends this notification
+		// on a detached context; waiting for it can stall failed-handshake cleanup.
+		return nil, errGatewayRefused
+	}
 	resp, err := w.base.RoundTrip(out)
 	if method == "notifications/cancelled" {
 		w.cancelOnce.Do(func() { close(w.cancelled) })

@@ -13,7 +13,7 @@ import (
 
 func TestSessionRecordTimestampsAndSampling(t *testing.T) {
 	h := newSessionHistory(t)
-	scope := testHistoryID(t)
+	scope := testSessionID(t)
 	calls := 0
 	// Include epoch, negative readings and backwards jumps. The commit time is
 	// earlier than several records; metadata never imposes temporal ordering.
@@ -80,7 +80,7 @@ func TestSessionRecordTimestampsAndSampling(t *testing.T) {
 	if calls != before+1 {
 		t.Fatalf("submission/reservation sampled %d times", calls-before)
 	}
-	page, err := h.Read(t.Context(), scope, history.ReadRequest{Through: ref, MaxCommits: 1})
+	page, err := h.Read(t.Context(), scope.ResourceID(), history.ReadRequest{Through: ref, MaxCommits: 1})
 	interactionCheck(t, err)
 	stored := page.Commits[0].Commit
 	if stored.Timestamp != -20 || stored.InstanceID != 7 {
@@ -141,7 +141,7 @@ func TestSessionRecordTimestampsAndSampling(t *testing.T) {
 	}
 	requestPage := history.ReadRequest{Through: ref, MaxCommits: 1}
 	for requestPage.After != ref {
-		page, err := h.Read(t.Context(), scope, requestPage)
+		page, err := h.Read(t.Context(), scope.ResourceID(), requestPage)
 		interactionCheck(t, err)
 		for _, c := range page.Commits {
 			if c.Ref.Sequence == 1 {
@@ -179,9 +179,9 @@ func TestSessionValidationFailuresDoNotSample(t *testing.T) {
 		{"copied handle", copied.Create, ErrBatch},
 		{"duplicate creation", b.Create, ErrTransition},
 		{"active start", func() error { _, err := b.StartRun(); return err }, ErrTransition},
-		{"invalid scope", func() error { return b.ReplaceRootInstructions(history.HistoryID{}, RootInstructions{}) }, codec.ErrInvalidData},
+		{"invalid scope", func() error { return b.ReplaceRootInstructions(SessionID{}, RootInstructions{}) }, codec.ErrInvalidData},
 		{"synthesized ID", func() error { _, err := b.AddUserInput(s.Snapshot().ActiveRun(), UserInput{ID: 1}); return err }, codec.ErrInvalidData},
-		{"payload", func() error { return b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{}) }, codec.ErrInvalidData},
+		{"payload", func() error { return b.ReplaceModelBinding(s.Snapshot().SessionID(), ModelBinding{}) }, codec.ErrInvalidData},
 		{"usage report", func() error { _, err := b.AddUsage(nil, nil, "auxiliary", UsageReport{}); return err }, codec.ErrInvalidData},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

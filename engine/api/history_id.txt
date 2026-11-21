@@ -1,9 +1,0 @@
-    method func (*HistoryID).ReadCBOR(r *codec.Reader, depth int, fieldMax int) error
-    method func (HistoryID).AppendCBOR(dst []byte) []byte
-    method func (HistoryID).CheckCBOR(b *codec.Budget, depth int, fieldMax int) error
-    method func (HistoryID).Clone() HistoryID
-    method func (HistoryID).Equal(other HistoryID) bool
-    method func (HistoryID).String() string
-func NewHistoryID() HistoryID
-func ParseHistoryID(s string) (HistoryID, error)
-type HistoryID struct{}

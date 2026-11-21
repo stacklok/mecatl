@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,13 +83,32 @@ func (s *Store) validateRunClaim(
 			Message: "run binding is not ready",
 		}
 	}
-	if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+	if !s.clientPolicyCurrent(ctx, client, o) {
 		return nil, &executionenv.Error{
 			Code:    executionenv.CodeNotReady,
 			Message: "client policy is unavailable or revoked",
 		}
 	}
 	return o, nil
+}
+
+func (s *Store) clientPolicyCurrent(
+	ctx context.Context,
+	client string,
+	o *unstructured.Unstructured,
+) bool {
+	if s.security == nil {
+		return true
+	}
+	chain, _, err := clientCertificates(ctx)
+	if err != nil {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	id, policy, err := s.security.authorize(checkCtx, chain)
+	return err == nil && id == client && policy.MayAttestOwner &&
+		slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID"))
 }
 
 func activeRunFrom(o *unstructured.Unstructured) (executionenv.RunClaim, string, time.Time, bool) {
@@ -126,7 +146,7 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if s.profiles.isRevoked(o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
 		}
-		if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+		if !s.clientPolicyCurrent(ctx, client, o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
 		}
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
@@ -153,12 +173,6 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 			if s.now().Before(expires) {
 				return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment has an active run"}
 			}
-			if textNested(o.Object, "status", "activeOperation", "id") != "" {
-				return &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "expired run still has an active operation"}
-			}
-		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" {
-			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment has an active operation"}
 		}
 		epoch, ok := epochValue(o)
 		if !ok || epoch >= math.MaxInt64 {
@@ -243,7 +257,7 @@ func (s *Store) RenewRun(ctx context.Context, ref executionenv.EnvironmentRef, c
 		if s.profiles.isRevoked(o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
 		}
-		if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+		if !s.clientPolicyCurrent(ctx, client, o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
 		}
 		cur, _, expiry, ok := activeRunFrom(o)
@@ -290,9 +304,6 @@ func (s *Store) ReleaseRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		}
 		if cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}
-		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" {
-			return &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "run has an active operation"}
 		}
 		unstructured.RemoveNestedField(o.Object, "status", "activeRun")
 		return nil

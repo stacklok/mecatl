@@ -16,14 +16,14 @@ import (
 // or lease and proves no dispatch. Typed ancillary records may later retain those
 // observations or execution provenance when producers establish their semantics
 // and placement. Assignment shares mutable storage; Clone detaches it. Zero is invalid.
-// History scope is omitted. The authoring contract supplies a full RequestedCallID
+// Session scope is omitted. The authoring contract supplies a full RequestedCallID
 // separately with all three destination fields zero; Validate instead checks
 // persisted positive components, not aggregate admission.
 //
 //dtogen:include
 //dtogen:validate validateLocal
 type ToolInvocation struct {
-	// RunID is the required positive run component within the enclosing history.
+	// RunID is the required positive Session-relative run component.
 	RunID uint64 `cbor:"r" view:"-"`
 	// RequestID is the required positive request component within RunID.
 	RequestID uint64 `cbor:"q" view:"-"`

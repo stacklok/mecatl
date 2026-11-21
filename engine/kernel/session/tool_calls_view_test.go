@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	"github.com/stacklok/mecatl/engine/kernel/value"
 )
 
@@ -17,7 +17,7 @@ func toolCallViewSession(t testing.TB) *Session {
 	t.Helper()
 	limits := codec.Limits{MaxBytes: 8 << 20, MaxStringBytes: 1 << 20, MaxByteStringBytes: 1 << 20,
 		MaxArrayElements: 16384, MaxMapPairs: 128, MaxDepth: 32, MaxNodes: 1 << 20, MaxCollectionElements: 1 << 20}
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	interactionCheck(t, err)
 	config := testConfigFor(Policy{PayloadLimits: limits, CommitLimits: limits,
 		MaxRecordsPerCommit: 1024, SoftMaxRetainedRecords: 32768, MaxRetainedRecords: 32768,
@@ -145,7 +145,7 @@ func TestRunToolCallsAcrossResponses(t *testing.T) {
 				})
 				toolCallViewResponse(t, s, 1, 5, 7) // Must not enter the past run's collection.
 			}
-			loaded, err := Load(t.Context(), s.history, run.HistoryID(), testConfigFor(s.policy))
+			loaded, err := Load(t.Context(), s.history, run.SessionID(), testConfigFor(s.policy))
 			interactionCheck(t, err)
 			for seam, inspected := range map[string]*Session{"Submit": s, "Load": loaded} {
 				t.Run(seam, func(t *testing.T) {
@@ -236,11 +236,11 @@ func TestToolCallsZeroAndScopedLookup(t *testing.T) {
 	s := toolCallViewSession(t)
 	ids := toolCallViewResponse(t, s, 2, 3, 5)
 	collection := s.Snapshot().RunAt(0).ToolCalls()
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	interactionCheck(t, err)
 	for _, edit := range []func(*RequestedCallID){
 		func(id *RequestedCallID) { *id = RequestedCallID{} },
-		func(id *RequestedCallID) { id.requestID.runID.historyID = foreign },
+		func(id *RequestedCallID) { id.requestID.runID.sessionID = foreign },
 		func(id *RequestedCallID) { id.requestID.runID.ordinal++ },
 		func(id *RequestedCallID) { id.requestID.requestOrdinal++ },
 		func(id *RequestedCallID) { id.ordinal = 3 },
@@ -361,7 +361,7 @@ func TestToolCallsSubmitLoadRetainsRichFacts(t *testing.T) {
 	_, err = s.SubmitCommit(t.Context(), b)
 	interactionCheck(t, err)
 
-	loaded, err := Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+	loaded, err := Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
 	for seam, inspected := range map[string]*Session{"Submit": s, "Load": loaded} {
 		t.Run(seam, func(t *testing.T) {

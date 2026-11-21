@@ -46,9 +46,9 @@ func completePayloadViewFixture(t *testing.T, count, field, sibling int) (map[st
 	want.rootInstructions.Blocks = append(want.rootInstructions.Blocks, session.InstructionBlock{Key: "harness/empty", Source: session.ContentSource{Description: "empty"}})
 	want.effective.Inputs = append(want.effective.Inputs, session.InputItem{Inline: &session.AttributedInput{Actor: "empty", Purpose: session.PromptInstructions, Source: session.ContentSource{Description: "empty"}}})
 	want.binding = session.ModelBinding{Route: strings.Repeat("r", sibling), API: "api", Model: "model", Settings: session.ModelSettings{ReasoningEffort: new(strings.Repeat("v", field))}}
-	mustBatch(t, b.ReplaceRootInstructions(want.run.HistoryID(), want.rootInstructions))
-	mustBatch(t, b.ReplaceToolCatalog(want.run.HistoryID(), want.catalog))
-	mustBatch(t, b.ReplaceModelBinding(want.run.HistoryID(), want.binding))
+	mustBatch(t, b.ReplaceRootInstructions(want.run.SessionID(), want.rootInstructions))
+	mustBatch(t, b.ReplaceToolCatalog(want.run.SessionID(), want.catalog))
+	mustBatch(t, b.ReplaceModelBinding(want.run.SessionID(), want.binding))
 	mustBatch(t, b.AddEffectiveInput(want.run, want.effective))
 	submitBatch(t, s, b)
 	return iteratorSessions(t, h, s, policy), want
@@ -121,8 +121,8 @@ func traverseCompletePayloadViews(snap session.Snapshot, inputs views.SliceView[
 	catalog, catalogOK := snap.RecordAt(4).ToolCatalog()
 	binding, bindingOK := snap.RecordAt(5).ModelBinding()
 	effective, effectiveOK := snap.RecordAt(6).EffectiveInput()
-	if !createdOK || !startedOK || !inputOK || !instructionsOK || !catalogOK || !bindingOK || !effectiveOK || created.HistoryID() != want.run.HistoryID() || started.ID() != want.run || input.ID() != want.input ||
-		instructions.HistoryID() != want.run.HistoryID() || catalog.HistoryID() != want.run.HistoryID() || binding.HistoryID() != want.run.HistoryID() || effective.RunID() != want.run {
+	if !createdOK || !startedOK || !inputOK || !instructionsOK || !catalogOK || !bindingOK || !effectiveOK || created.SessionID() != want.run.SessionID() || started.ID() != want.run || input.ID() != want.input ||
+		instructions.SessionID() != want.run.SessionID() || catalog.SessionID() != want.run.SessionID() || binding.SessionID() != want.run.SessionID() || effective.RunID() != want.run {
 		panic("root scope/presence")
 	}
 	leafBytes := inspectPayloadParts(input.Parts(), want.parts)

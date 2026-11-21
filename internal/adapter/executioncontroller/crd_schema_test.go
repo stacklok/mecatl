@@ -83,6 +83,9 @@ func TestExecutionEnvironmentSchemaAdmission(t *testing.T) {
 		{"old-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(1) }, false},
 		{"unknown-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = int64(3) }, false},
 		{"malformed-status", func(o map[string]any) { o["status"].(map[string]any)["schemaVersion"] = "2" }, false},
+		{"legacy-operation-lease", func(o map[string]any) {
+			o["status"].(map[string]any)["activeOperation"] = legacyOperationLease()
+		}, true},
 		{"server-certificate-pin", func(o map[string]any) {
 			o["status"].(map[string]any)["serverCertificate"] = serverCertificateStatus("pod-uid")
 		}, true},
@@ -128,7 +131,6 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		"pvc":        map[string]any{"name": "pvc", "uid": "pvc-uid"}, "pod": map[string]any{"name": "pod", "uid": "pod-uid"},
 		"activeRun":          map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "clientHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "epoch": int64(3), "grantGeneration": int64(4), "expiresAt": "2026-09-17T00:01:00Z"},
 		"renewReceipts":      []any{map[string]any{"operationID": "renew", "fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "expiresAt": "2026-09-17T00:01:00Z"}},
-		"activeOperation":    map[string]any{"id": "file", "operation": "file.read", "startedAt": "2026-09-17T00:00:00Z", "claimID": "claim", "runID": "run", "epoch": int64(3), "holderID": "holder", "renewedAt": "2026-09-17T00:00:01Z", "expiresAt": "2026-09-17T00:01:00Z"},
 		"lifecycleOperation": map[string]any{"id": "life", "type": "ReplaceExecutor", "phase": "Quiescing", "expectedEpoch": int64(3), "expectedPodUID": "pod-uid", "expectedPVCUID": "pvc-uid", "createdAt": "2026-09-17T00:00:00Z"},
 		"terminationProof":   map[string]any{"operationID": "life", "podUID": "pod-uid", "pvcUID": "pvc-uid", "epoch": int64(3), "podPhase": "Failed", "observedAt": "2026-09-17T00:00:00Z"},
 		"serverCertificate":  serverCertificateStatus("pod-uid"),
@@ -147,7 +149,6 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		{"status", "pod"},
 		{"status", "activeRun", "grantGeneration"},
 		{"status", "renewReceipts"},
-		{"status", "activeOperation"},
 		{"status", "lifecycleOperation"},
 		{"status", "terminationProof"},
 		{"status", "serverCertificate", "podUID"},
@@ -156,6 +157,42 @@ func TestExecutionEnvironmentCRDPreservesControllerStatus(t *testing.T) {
 		if _, found, err := unstructured.NestedFieldNoCopy(obj, path...); err != nil || !found {
 			t.Fatalf("CRD pruning removed controller field %v (found=%t err=%v)", path, found, err)
 		}
+	}
+}
+
+func legacyOperationLease() map[string]any {
+	return map[string]any{
+		"id": "file", "operation": "file.read", "startedAt": "2026-09-17T00:00:00Z",
+		"claimID": "claim", "runID": "run", "epoch": int64(3), "holderID": "holder",
+		"renewedAt": "2026-09-17T00:00:01Z", "expiresAt": "2026-09-17T00:01:00Z",
+	}
+}
+
+func TestExecutionEnvironmentCRDPrunesLegacyOperationLease(t *testing.T) {
+	crd, _ := loadExecutionEnvironmentCRD(t)
+	var internal apiextensions.JSONSchemaProps
+	err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(
+		crd.Spec.Versions[0].Schema.OpenAPIV3Schema,
+		&internal,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	structural, err := schema.NewStructural(&internal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := map[string]any{"status": map[string]any{
+		"fenceState":      "Healthy",
+		"activeOperation": legacyOperationLease(),
+	}}
+	pruning.Prune(obj, structural, true)
+	if _, found, _ := unstructured.NestedFieldNoCopy(obj, "status", "activeOperation"); found {
+		t.Fatal("CRD kept the removed operation lease")
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(obj, "status", "fenceState"); !found {
+		t.Fatal("pruning the lease removed other status")
 	}
 }
 

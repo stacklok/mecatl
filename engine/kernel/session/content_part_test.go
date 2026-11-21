@@ -98,7 +98,7 @@ func TestContentSourceAndAttributedOwnedValues(t *testing.T) {
 	if pc.Equal(p) || pc.Validate() != nil {
 		t.Fatal("inline clone aliases")
 	}
-	id := allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1)
+	id := allocatedInput(t, allocatedRun(t, testSessionID(t), 1), 1)
 	ref := session.InputItem{UserInputID: new(id.RunRelative())}
 	rc := ref.Clone()
 	*ref.UserInputID = 0

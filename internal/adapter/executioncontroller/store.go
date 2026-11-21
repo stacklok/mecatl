@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"time"
 
@@ -32,16 +31,19 @@ const (
 	maxReferences              = 64
 	environmentNotFoundMessage = "environment not found"
 	currentSchemaVersion       = int64(2)
-	operationLeaseTTL          = 30 * time.Second
 	transitioningMessage       = "environment is transitioning"
 	templateRevokedMessage     = "execution template revoked or missing"
 	operationIDField           = "operationID"
 	activeDesired              = "Active"
 )
 
-// ExecutorTransport dispatches one request to a fixed workload helper.
+// ExecutorTransport performs one authorized request on the executor at route.
 type ExecutorTransport interface {
-	Execute(context.Context, string, executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error)
+	Execute(
+		ctx context.Context,
+		route ExecutorRoute,
+		req executionenv.ExecutorRequest,
+	) (executionenv.ExecutorResponse, error)
 }
 
 // Store persists authorization and fencing state in ExecutionEnvironment status.
@@ -52,18 +54,18 @@ type Store struct {
 	kube      kubernetes.Interface
 	security  *SecurityManager
 	namespace string
-	holderID  string
 	now       func() time.Time
-	opTTL     time.Duration
 }
 
 // NewStore constructs a namespace-scoped execution state store.
 func NewStore(client dynamic.Interface, namespace string, profiles *Profiles, executor ExecutorTransport) *Store {
-	holder, err := randomID()
-	if err != nil {
-		holder = "unavailable"
+	return &Store{
+		resources: client.Resource(ExecutionEnvironmentGVR).Namespace(namespace),
+		profiles:  profiles,
+		executor:  executor,
+		namespace: namespace,
+		now:       func() time.Time { return time.Now().UTC() },
 	}
-	return &Store{resources: client.Resource(ExecutionEnvironmentGVR).Namespace(namespace), profiles: profiles, executor: executor, namespace: namespace, holderID: holder, now: func() time.Time { return time.Now().UTC() }, opTTL: 30 * time.Second}
 }
 
 // WithKubeClient enables provider-owned executor and retained-volume lifecycle operations.
@@ -503,25 +505,36 @@ func (s *Store) ReleaseReference(ctx context.Context, ref executionenv.Environme
 	})
 }
 
-// File performs one claimed and fenced filesystem operation.
+// File performs one authorized filesystem operation on the session's executor.
 func (s *Store) File(ctx context.Context, client, owner string, q executionenv.FileRequest) (executionenv.FileResponse, error) {
 	req := executionenv.ExecutorRequest{Operation: q.Operation, Path: q.Path, Destination: q.Destination, Pattern: q.Pattern, Data: q.Data, Version: q.Version, Limit: q.Limit}
-	resp, err := s.execute(ctx, client, owner, q.Context, req)
+	capability := executionenv.CapabilityFilesystem
+	resp, err := s.execute(ctx, client, owner, q.Context, capability, req)
 	return resp.FileResponse, err
 }
 
-// StartCommand performs one claimed foreground command through terminal receipt.
+// StartCommand runs one authorized foreground command to its result.
 func (s *Store) StartCommand(ctx context.Context, client, owner string, q executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
 	id, err := randomID()
 	if err != nil {
 		return executionenv.CommandStartResponse{}, err
 	}
-	resp, err := s.execute(ctx, client, owner, q.Context, executionenv.ExecutorRequest{Operation: executionenv.OpCommandStart, Command: q.Command, CommandID: id, TimeoutMillis: q.TimeoutMillis})
+	req := executionenv.ExecutorRequest{
+		Operation:     executionenv.OpCommandStart,
+		Command:       q.Command,
+		CommandID:     id,
+		TimeoutMillis: q.TimeoutMillis,
+	}
+	capability := executionenv.CapabilityForegroundCommand
+	resp, err := s.execute(ctx, client, owner, q.Context, capability, req)
 	if err != nil {
 		return executionenv.CommandStartResponse{}, err
 	}
 	if resp.Command == nil {
-		return executionenv.CommandStartResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "executor returned no terminal command receipt"}
+		return executionenv.CommandStartResponse{}, &executionenv.Error{
+			Code:    executionenv.CodeFenceUnknown,
+			Message: "executor returned no command result",
+		}
 	}
 	return executionenv.CommandStartResponse{CommandID: id, State: resp.Command.State, Result: *resp.Command}, nil
 }
@@ -535,143 +548,65 @@ func (*Store) CommandStatus(context.Context, string, string, executionenv.Comman
 func (*Store) CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
 	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "no active foreground stream is attached; external fencing is required"}
 }
-func (s *Store) execute(ctx context.Context, client, owner string, rc executionenv.RequestContext, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) { //nolint:gocyclo // Atomic claim, dispatch, and fencing remain one auditable transaction.
-	if rc.Epoch == 0 || rc.Epoch > math.MaxInt64 || rc.GrantGeneration == 0 || rc.GrantGeneration > math.MaxInt64 {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "invalid execution epoch or grant generation"}
-	}
-	epochStatus := int64(rc.Epoch) //nolint:gosec // bounded above by MaxInt64.
+
+// execute authorizes from a read of the environment and writes nothing to it.
+func (s *Store) execute(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+	capability string,
+	req executionenv.ExecutorRequest,
+) (executionenv.ExecutorResponse, error) {
 	if s.executor == nil {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeNotReady, Message: "executor transport unavailable", Retryable: true}
+		return executionenv.ExecutorResponse{}, &executionenv.Error{
+			Code:      executionenv.CodeNotReady,
+			Message:   "executor transport unavailable",
+			Retryable: true,
+		}
 	}
-	opID, err := randomID()
+	route, err := s.ExecutorRoute(ctx, client, owner, rc, capability)
 	if err != nil {
 		return executionenv.ExecutorResponse{}, err
 	}
-	var pod string
-	var maxFileBytes, maxCommandBytes int64
-	err = s.retryUpdateStatusRaw(ctx, rc.Environment.ID, func(o *unstructured.Unstructured) error {
-		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
-			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+	if int64(len(req.Data)) > route.MaxFileBytes ||
+		int64(len(req.Command)) > route.MaxCommandBytes {
+		return executionenv.ExecutorResponse{}, &executionenv.Error{
+			Code:    executionenv.CodeResourceExhausted,
+			Message: "operation exceeds profile bounds",
 		}
-		if err := requireCurrentSchema(o); err != nil {
-			return err
-		}
-		if s.profiles.isRevoked(o) {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
-		}
-		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
-		}
-		profile, ok := s.profiles.forEnvironment(o)
-		if !ok {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment profile is unavailable"}
-		}
-		maxFileBytes, maxCommandBytes = profile.Spec.MaxFileBytes, profile.Spec.MaxCommandBytes
-		if int64(len(req.Data)) > maxFileBytes || int64(len(req.Command)) > maxCommandBytes {
-			return &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "operation exceeds profile bounds"}
-		}
-		if req.Operation == executionenv.OpCommandStart {
-			maxMillis := profile.Spec.MaxCommandDuration.Milliseconds()
-			if req.TimeoutMillis <= 0 {
-				req.TimeoutMillis = maxMillis
-			} else if req.TimeoutMillis > maxMillis {
-				return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "command timeout exceeds profile bound"}
+	}
+	if req.Operation == executionenv.OpCommandStart {
+		maxMillis := route.MaxCommandDuration.Milliseconds()
+		if req.TimeoutMillis <= 0 {
+			req.TimeoutMillis = maxMillis
+		} else if req.TimeoutMillis > maxMillis {
+			return executionenv.ExecutorResponse{}, &executionenv.Error{
+				Code:    executionenv.CodeInvalidArgument,
+				Message: "command timeout exceeds profile bound",
 			}
 		}
-		refs, refsErr := referenceRecords(o)
-		if refsErr != nil {
-			return refsErr
-		}
-		claim, _, expiry, claimOK := activeRunFrom(o)
-		if !publishedReference(refs, rc.BindingID) {
-			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
-		}
-		if !claimOK || !s.now().Before(expiry) || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
-			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim is not current"}
-		}
-		if textNested(o.Object, "spec", "revision") != rc.Environment.Revision || !epochMatches(o, rc.Epoch) || textNested(o.Object, "spec", "desired") != "Active" || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment is not ready at requested epoch"}
-		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" {
-			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment already has an active operation", Retryable: true}
-		}
-		pod = textNested(o.Object, "status", "pod", "name")
-		if pod == "" {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "executor pod is unavailable", Retryable: true}
-		}
-		now := s.now()
-		return unstructured.SetNestedMap(o.Object, map[string]any{"id": opID, "operation": string(req.Operation), "startedAt": now.Format(time.RFC3339Nano), "claimID": rc.ClaimID, "runID": rc.RunID, "epoch": epochStatus, "holderID": s.holderID, "renewedAt": now.Format(time.RFC3339Nano), "expiresAt": now.Add(s.opTTL).Format(time.RFC3339Nano)}, "status", "activeOperation")
-	})
+	}
+	resp, err := s.executor.Execute(ctx, route, req)
 	if err != nil {
 		return executionenv.ExecutorResponse{}, err
 	}
-	authority := operationLeaseAuthority{
-		environment: rc.Environment.ID, revision: rc.Environment.Revision, operationID: opID,
-		bindingID: rc.BindingID, runID: rc.RunID, claimID: rc.ClaimID,
-		client: client, owner: owner, epoch: rc.Epoch, grantGeneration: rc.GrantGeneration,
-	}
-	current, err := s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
-	if err != nil || !operationLeaseCurrent(current, authority, s.holderID, s.now()) || !s.operationAuthorityCurrent(current, authority) || !s.operationPolicyCurrent(ctx, authority, current) {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation identity changed before executor dispatch"}
-	}
-	opCtx, stopExecution := context.WithCancel(ctx)
-	leaseDone := make(chan error, 1)
-	go func() {
-		leaseErr := s.renewOperationLease(opCtx, authority)
-		if leaseErr != nil {
-			stopExecution()
+	if int64(len(resp.Data)) > route.MaxFileBytes ||
+		commandOutputBytes(resp) > route.MaxCommandBytes {
+		return executionenv.ExecutorResponse{}, &executionenv.Error{
+			Code:    executionenv.CodeResourceExhausted,
+			Message: "executor response exceeds profile bound",
 		}
-		leaseDone <- leaseErr
-	}()
-	resp, dispatchErr := s.executor.Execute(opCtx, pod, req)
-	stopExecution()
-	leaseErr := <-leaseDone
-	authorityLost := leaseErr != nil
-	if authorityLost {
-		fenceErr := &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation lease renewal failed"}
-		if dispatchErr != nil {
-			dispatchErr = errors.Join(fenceErr, dispatchErr)
-		} else {
-			dispatchErr = fenceErr
-		}
-	}
-	if dispatchErr == nil && (int64(len(resp.Data)) > maxFileBytes || resp.Command != nil && int64(len(resp.Command.Stdout)+len(resp.Command.Stderr)) > maxCommandBytes) {
-		dispatchErr = &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "executor response exceeds profile bound"}
-	}
-	var controlledErr *executionenv.Error
-	controlledTerminal := !authorityLost && errors.As(dispatchErr, &controlledErr) && controlledErr.Code != executionenv.CodeFenceUnknown
-	terminal := !authorityLost && (controlledTerminal || dispatchErr == nil && (req.Operation != executionenv.OpCommandStart || resp.Command != nil && resp.Command.TerminalReceipt != ""))
-	completionAuthorityLost := false
-	finishErr := s.retryUpdateStatus(context.WithoutCancel(ctx), rc.Environment.ID, func(o *unstructured.Unstructured) error {
-		if !operationMatches(o, authority, s.holderID) {
-			return &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation ownership changed before completion"}
-		}
-		if terminal && operationLeaseCurrent(o, authority, s.holderID, s.now()) && s.operationAuthorityCurrent(o, authority) && s.operationPolicyCurrent(context.WithoutCancel(ctx), authority, o) {
-			unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
-			return nil
-		}
-		if terminal {
-			completionAuthorityLost = true
-		}
-		return unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
-	})
-	if finishErr != nil {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "could not persist terminal operation state"}
-	}
-	if completionAuthorityLost {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "operation authority changed before completion"}
-	}
-	if controlledTerminal {
-		return executionenv.ExecutorResponse{}, controlledErr
-	}
-	if !terminal {
-		if authorityLost {
-			return executionenv.ExecutorResponse{}, dispatchErr
-		}
-		return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "executor termination is unconfirmed; environment fenced", Retryable: false}
 	}
 	return resp, nil
 }
+func commandOutputBytes(resp executionenv.ExecutorResponse) int64 {
+	if resp.Command == nil {
+		return 0
+	}
+	return int64(len(resp.Command.Stdout) + len(resp.Command.Stderr))
+}
+
 func (s *Store) retryUpdateStatus(ctx context.Context, name string, mutate func(*unstructured.Unstructured) error) error {
 	return s.retryUpdateStatusRaw(ctx, name, func(o *unstructured.Unstructured) error {
 		if err := requireCurrentSchema(o); err != nil {

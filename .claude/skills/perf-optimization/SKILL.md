@@ -34,10 +34,11 @@ the `perf-mcp-interpretation` skill instead — different tool, different signal
   re-run on an engine package must do the same: `cd engine && go test -bench=… ./agent/`
   (an explicit `./engine/agent/` path also resolves via the committed `go.work`, but the
   `./...` wildcard does **not** cross the module boundary).
-- `task perf:scenarios` — five whole-loop scenarios. Four live in
-  `perf/scenarios/` (single-session-long, team-fanout, background-subagents,
-  compaction-cycle); the fifth (tui-scrollback) lives in `cmd/mecatui/ui/`, and the
-  task runs **both** packages — so `go test ./perf/scenarios/` alone gives only four.
+- `task perf:scenarios` — four whole-loop scenarios in `perf/scenarios/`
+  (single-session-long, team-fanout, background-subagents, compaction-cycle) plus
+  the mecatui render benches `BenchmarkScrollbackView` and
+  `BenchmarkSpinnerTickVPView` in `cmd/mecatui/ui/`. The task runs both packages,
+  so `go test ./perf/scenarios/` alone gives only the four scenarios.
   `BENCHCOUNT` default 6. `MECATL_PERF_JSON=.scratch/x.json` writes the KPI JSON.
 - Both are deterministic and offline — never reach for a live model/network.
 - **PGO/bench captures over `engine/` packages depend on the active `go.work`** (the committed

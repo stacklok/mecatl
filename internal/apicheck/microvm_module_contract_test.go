@@ -14,11 +14,6 @@ import (
 // must remain usable without resolving or linking the microVM runtime.
 func TestMicroVMDependenciesStayOutOfEngineAndRoot(t *testing.T) {
 	repo := repoRoot(t)
-	microvmMod := filepath.Join(repo, "environment", "microvm", "go.mod")
-	mustContain(t, microvmMod, "module github.com/stacklok/mecatl/environment/microvm")
-	mustContain(t, microvmMod, "github.com/stacklok/go-microvm v0.0.41")
-	mustContain(t, filepath.Join(repo, "go.work"), "use ./environment/microvm")
-
 	for _, path := range []string{
 		filepath.Join(repo, "go.mod"),
 		filepath.Join(repo, "engine", "go.mod"),
@@ -37,20 +32,26 @@ func TestMicroVMDependenciesStayOutOfEngineAndRoot(t *testing.T) {
 	assertGoListExcludes(t, filepath.Join(repo, "engine"), "./...")
 }
 
-func TestMicroVMRuntime_StandardBinariesDoNotLinkLibkrun(t *testing.T) {
+func TestMicroVMRuntimeBuildsWithCheckoutWorkspace(t *testing.T) {
 	repo := repoRoot(t)
 	microvm := filepath.Join(repo, "environment", "microvm")
 	for _, target := range []string{"./cmd/mecatl-microvmd", "./cmd/mecatl-guest-agent"} {
 		outputPath := filepath.Join(t.TempDir(), filepath.Base(target))
-		cmd := exec.Command("go", "build", "-o", outputPath, target)
-		cmd.Dir = microvm
-		cmd.Env = append(os.Environ(), "GOWORK=off")
+		cmd := checkoutGoCommand(repo, microvm, "build", "-o", outputPath, target)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("build microVM target %s: %v\n%s", target, err, output)
 		}
 	}
-	assertGoListExcludes(t, repo, "./cmd/mecated", "./cmd/mecademo", "./cmd/mecatequi", "./cmd/mecak8s", "./cmd/mecatui")
-	assertGoListExcludes(t, filepath.Join(repo, "engine"), "./...")
+}
+
+// These cross-module contracts inspect current checkout binaries, including when
+// the outer test uses a per-module candidate manifest with GOWORK=off. That
+// manifest belongs only to the outer module, not to the nested build targets.
+func checkoutGoCommand(repo, dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK="+filepath.Join(repo, "go.work"))
+	return cmd
 }
 
 func repoRoot(t *testing.T) string {
@@ -60,17 +61,6 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
-}
-
-func mustContain(t *testing.T, path, want string) {
-	t.Helper()
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	if !bytes.Contains(contents, []byte(want)) {
-		t.Fatalf("%s does not contain %q", path, want)
-	}
 }
 
 func mustNotContainAny(t *testing.T, path string, forbidden ...string) {
@@ -111,8 +101,7 @@ func assertProductionImportsExclude(t *testing.T, root, excluded string) {
 
 func assertGoListExcludes(t *testing.T, dir string, patterns ...string) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"list", "-deps"}, patterns...)...)
-	cmd.Dir = dir
+	cmd := checkoutGoCommand(repoRoot(t), dir, append([]string{"list", "-deps"}, patterns...)...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps %s: %v\n%s", strings.Join(patterns, " "), err, output)

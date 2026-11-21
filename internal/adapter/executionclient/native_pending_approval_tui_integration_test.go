@@ -213,6 +213,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
 				"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": string(sessionID), "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 			}}
+			pinFakeExecutor(envObj)
 			if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(ctx, envObj, metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}

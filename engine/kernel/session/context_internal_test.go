@@ -15,8 +15,8 @@ import (
 
 func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 	s, limits := internalFixture(t)
-	scope := s.Snapshot().HistoryID()
-	input := UserInputID{runID: RunID{historyID: scope, ordinal: 1}, ordinal: 1}
+	scope := s.Snapshot().SessionID()
+	input := UserInputID{runID: RunID{sessionID: scope, ordinal: 1}, ordinal: 1}
 	// All values are allocated before measuring construction. Rejected collection
 	// lengths must not allocate DTO slices, or parse their deliberately invalid JSON.
 	parts := make([]ContentPart, limits.MaxArrayElements+1)
@@ -95,8 +95,8 @@ func TestRichConstructorsBudgetBeforeConversion(t *testing.T) {
 
 func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 	s, limits := internalFixture(t)
-	scope := s.Snapshot().HistoryID()
-	input := UserInputID{runID: RunID{historyID: scope, ordinal: 1}, ordinal: 1}
+	scope := s.Snapshot().SessionID()
+	input := UserInputID{runID: RunID{sessionID: scope, ordinal: 1}, ordinal: 1}
 	content := []ContentPart{{Text: new(" exact ")}, {Media: &Media{Kind: MediaKindDocument, MIMEType: "raw", Source: MediaSourceInline, InlineData: []byte{0xff, 0}}}}
 	source := ContentSource{Description: "adopted", WorkspaceFile: &WorkspaceFileSource{Path: "AGENTS.md"}}
 	authored := identifiedInput{ID: input, UserInput: UserInput{Parts: content}}
@@ -266,7 +266,7 @@ func TestNewRecordMaterializationAndGeneratedLimitsAgree(t *testing.T) {
 
 func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 	s, limits := internalFixture(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b, err := s.BeginCommit()
 	if err != nil {
 		t.Fatal(err)
@@ -329,13 +329,13 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 		t.Fatal("failed final source published selections/counters/storage")
 	}
 	iv, ok := old.RootInstructions()
-	if !ok || iv.HistoryID() != scope || iv.Blocks().Len() != 1 || iv.Blocks().At(0).Parts().Len() != 0 || iv.Blocks().At(0).Source().Description() != "root" {
+	if !ok || iv.SessionID() != scope || iv.Blocks().Len() != 1 || iv.Blocks().At(0).Parts().Len() != 0 || iv.Blocks().At(0).Source().Description() != "root" {
 		t.Fatal("old selection changed")
 	}
-	if tv, ok := s.Snapshot().ToolCatalog(); !ok || tv.HistoryID() != scope || tv.Tools().Len() != 1 || tv.Tools().At(0).Name() != "original" || string(tv.Tools().At(0).ArgumentSchema().Copy()) != "true" {
+	if tv, ok := s.Snapshot().ToolCatalog(); !ok || tv.SessionID() != scope || tv.Tools().Len() != 1 || tv.Tools().At(0).Name() != "original" || string(tv.Tools().At(0).ArgumentSchema().Copy()) != "true" {
 		t.Fatal("catalog partially published")
 	}
-	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.HistoryID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || func() bool { effort, ok := mv.Settings().ReasoningEffort(); return !ok || effort != "original" }() {
+	if mv, ok := s.Snapshot().ModelBinding(); !ok || mv.SessionID() != scope || mv.Route() != "original" || mv.API() != "a" || mv.Model() != "m" || func() bool { effort, ok := mv.Settings().ReasoningEffort(); return !ok || effort != "original" }() {
 		t.Fatal("binding partially published")
 	}
 	user, err := makeInputRecord(identifiedInput{ID: input}, limits)
@@ -380,20 +380,20 @@ func TestContextApplyStagesSelectionsAndSourceBounds(t *testing.T) {
 				// same malformed/unknown final record after a real verified read,
 				// returning nil rather than a partially reconstructed Session.
 				h := internalTestHistory(t, limits)
-				page, err := s.history.Read(context.Background(), scope, history.ReadRequest{Through: old.Head(), MaxCommits: 1})
+				page, err := s.history.Read(context.Background(), scope.ResourceID(), history.ReadRequest{Through: old.Head(), MaxCommits: 1})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := h.Append(context.Background(), scope, page.Commits[0].Commit); err != nil {
+				if _, err := h.Append(context.Background(), scope.ResourceID(), page.Commits[0].Commit); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := h.Append(context.Background(), scope, external); err != nil {
+				if _, err := h.Append(context.Background(), scope.ResourceID(), external); err != nil {
 					t.Fatal(err)
 				}
 				if loaded, err := Load(context.Background(), h, scope, testConfigFor(s.policy)); loaded != nil || !errors.Is(err, wantErr) {
 					t.Fatalf("malformed/unknown Load: %v, %v", loaded, err)
 				}
-				if head, err := h.Head(context.Background(), scope); err != nil || head != accepted.Ref {
+				if head, err := h.Head(context.Background(), scope.ResourceID()); err != nil || head != accepted.Ref {
 					t.Fatal("failed replay appended or changed history")
 				}
 			})

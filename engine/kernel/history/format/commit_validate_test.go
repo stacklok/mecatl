@@ -5,16 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 // validRoot is a deterministic public-seam fixture with an opaque payload.
 func validRoot(t testing.TB) format.Commit {
 	t.Helper()
-	h, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	h, err := resourceid.Parse("HST1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestCommitValidate(t *testing.T) {
 		func(c *format.Commit) { c.Sequence = -1 },
 		func(c *format.Commit) { c.Sequence = 2 },
 		func(c *format.Commit) { c.HistoryID = nil },
-		func(c *format.Commit) { c.HistoryID = new(historyid.HistoryID) },
+		func(c *format.Commit) { c.HistoryID = new(resourceid.ID) },
 		func(c *format.Commit) { c.Parent = &parent },
 		func(c *format.Commit) { c.HistoryID = nil; c.Parent = new(contentid.CID); c.Sequence = 2 },
 		func(c *format.Commit) { c.Records = nil },

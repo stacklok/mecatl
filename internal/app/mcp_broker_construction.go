@@ -74,10 +74,11 @@ type mcpBrokerParts struct {
 // mcpBrokerIdentity is what the identity broker gives the MCP broker; the
 // zero value is no identity broker.
 type mcpBrokerIdentity struct {
-	// clientKeySet is the broker client's public JWK Set. With a protected
-	// route, the bundled process registers the broker client with it at its
-	// authorization server, which becomes AS-2. Empty sets up no AS-2.
-	clientKeySet []byte
+	// clientKeySetFile is the path of the broker client's public JWK Set, the
+	// identity broker's operator file. With a protected route, the bundled
+	// process registers the broker client with it at its authorization
+	// server, which becomes AS-2. Empty sets up no AS-2.
+	clientKeySetFile string
 	// as1Issuer is AS-1's issuer, which AS-2's must differ from; empty when
 	// the identity broker has no AS-1.
 	as1Issuer string
@@ -180,8 +181,8 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
 	config := toolHiveBrokerConfig(declaration.Routes, declaration.CallbackURL, occupied, authRedisClient, cfg.diag())
-	if len(identity.clientKeySet) != 0 {
-		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySet: identity.clientKeySet}
+	if identity.clientKeySetFile != "" {
+		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: identity.clientKeySetFile}
 	}
 	config.AS2Trust = cfg.IdentityBrokerAS2Trust
 	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {

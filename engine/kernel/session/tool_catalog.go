@@ -3,12 +3,12 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ToolCatalog is the canonical ordered advertised catalog replacement, not
-// executable behavior. ReplaceToolCatalog takes history scope separately.
+// executable behavior. ReplaceToolCatalog takes Session scope separately.
 // Assignment shares storage; Clone detaches it. Nil and empty explicitly clear it.
 type ToolCatalog = sessionformat.ToolCatalog
 
@@ -35,13 +35,13 @@ func newToolCatalogRecord(v ToolCatalog, limits codec.Limits) (*materializedReco
 }
 
 // ToolCatalogView retains immutable accepted or proposed backing storage, including its
-// record. Capture and navigation cost O(1); zero has no history or definitions.
+// record. Capture and navigation cost O(1); zero has no Session scope or definitions.
 //
 //dtogen:include
 type ToolCatalogView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ToolCatalog
 }
 
-// HistoryID returns the retained scope, or zero for zero.
-func (v ToolCatalogView) HistoryID() historyid.HistoryID { return v.scope }
+// SessionID returns the retained scope, or zero for zero.
+func (v ToolCatalogView) SessionID() sessionid.SessionID { return v.scope }

@@ -37,7 +37,7 @@ func newIteratorSession(t testing.TB) (*history.History, *session.Session, sessi
 func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.Session {
 	t.Helper()
 	h, s, p := newIteratorSession(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	for i := 1; i < count; i++ {
@@ -86,7 +86,7 @@ func iteratorFixture(t testing.TB, count, payloadBytes int) map[string]*session.
 // admission seams. These fixtures contain at most two commits.
 func iteratorSessions(t testing.TB, h *history.History, s *session.Session, p session.Policy) map[string]*session.Session {
 	t.Helper()
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	loaded, err := session.Load(context.Background(), h, scope, testConfigFor(p))
 	mustBatch(t, err)
 	return map[string]*session.Session{"Submit": s, "Load": loaded}
@@ -268,7 +268,7 @@ func TestViewIteratorsContract(t *testing.T) {
 		for seam, s := range iteratorFixture(t, count, 32) {
 			t.Run(strconv.Itoa(count)+"/"+seam, func(t *testing.T) {
 				v := iteratorViewSet(t, s)
-				if v.rootInstructions.HistoryID() != v.snapshot.HistoryID() || v.catalog.HistoryID() != v.snapshot.HistoryID() || v.effective.RunID() != v.run.ID() {
+				if v.rootInstructions.SessionID() != v.snapshot.SessionID() || v.catalog.SessionID() != v.snapshot.SessionID() || v.effective.RunID() != v.run.ID() {
 					t.Fatal("fixture must retain accepted roots, including explicit emptiness")
 				}
 				if count == 0 && (v.block.Source().Description() != "empty" || v.inline.Actor() != "empty" || v.user.ID() == (session.UserInputID{})) {
@@ -305,8 +305,8 @@ func TestViewIteratorsPinnedConcurrentReaders(t *testing.T) {
 				b := beginBatch(t, s)
 				_, err := b.AddUserInput(old.run.ID(), session.UserInput{Parts: byteParts([]byte("later"))})
 				mustBatch(t, err)
-				mustBatch(t, b.ReplaceRootInstructions(old.snapshot.HistoryID(), session.RootInstructions{}))
-				mustBatch(t, b.ReplaceToolCatalog(old.snapshot.HistoryID(), session.ToolCatalog{}))
+				mustBatch(t, b.ReplaceRootInstructions(old.snapshot.SessionID(), session.RootInstructions{}))
+				mustBatch(t, b.ReplaceToolCatalog(old.snapshot.SessionID(), session.ToolCatalog{}))
 				mustBatch(t, b.AddEffectiveInput(old.run.ID(), session.EffectiveInput{}))
 				submitBatch(t, s, b)
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -227,76 +228,170 @@ func TestAllocationNameExcludesMutableProfile(t *testing.T) {
 	}
 }
 
+type recordingTransport struct {
+	mu      sync.Mutex
+	routes  []ExecutorRoute
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (e *recordingTransport) Execute(
+	ctx context.Context,
+	route ExecutorRoute,
+	req executionenv.ExecutorRequest,
+) (executionenv.ExecutorResponse, error) {
+	e.mu.Lock()
+	e.routes = append(e.routes, route)
+	e.mu.Unlock()
+	if e.entered != nil {
+		e.entered <- struct{}{}
+	}
+	if e.gate != nil {
+		select {
+		case <-e.gate:
+		case <-ctx.Done():
+			return executionenv.ExecutorResponse{}, ctx.Err()
+		}
+	}
+	if req.Operation == executionenv.OpCommandStart {
+		return executionenv.ExecutorResponse{Command: &executionenv.CommandStatusResponse{
+			CommandID: req.CommandID,
+			State:     executionenv.CommandSucceeded,
+		}}, nil
+	}
+	return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{
+		Data:    []byte("ok"),
+		Version: "v1",
+	}}, nil
+}
+
+func (e *recordingTransport) calls() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.routes)
+}
+
 type terminalErrorExecutor struct{ called int }
 
-type blockingExecutor struct {
-	started chan struct{}
-	release chan struct{}
-}
-
-func (e *blockingExecutor) Execute(context.Context, string, executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
-	close(e.started)
-	<-e.release
-	return executionenv.ExecutorResponse{}, nil
-}
-
-func (e *terminalErrorExecutor) Execute(context.Context, string, executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
+func (e *terminalErrorExecutor) Execute(
+	context.Context,
+	ExecutorRoute,
+	executionenv.ExecutorRequest,
+) (executionenv.ExecutorResponse, error) {
 	e.called++
-	return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "path not found"}
-}
-func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	exec := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
-	s := NewStore(client, "ns", testProfiles(), exec)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := s.StartCommand(ctx, "client", "owner", executionenv.CommandStartRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 1, GrantGeneration: 1}, Command: "sleep 10"})
-		done <- err
-	}()
-	<-exec.started
-	cancel()
-	active, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(context.Background(), "env", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if textNested(active.Object, "status", "activeOperation", "id") == "" {
-		t.Fatal("active operation was released while executor was still live")
-	}
-	close(exec.release)
-	var pe *executionenv.Error
-	if err := <-done; !errors.As(err, &pe) || pe.Code != executionenv.CodeFenceUnknown {
-		t.Fatalf("completion error=%v", err)
-	}
-	fenced, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(context.Background(), "env", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if textNested(fenced.Object, "status", "activeOperation", "id") == "" || textNested(fenced.Object, "status", "fenceState") != "FenceUnknown" {
-		t.Fatalf("uncertain operation identity was not retained: status=%v", fenced.Object["status"])
-	}
-	_, err = s.Attach(context.Background(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", "binding")
-	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotReady {
-		t.Fatalf("attach after fencing error=%v", err)
+	return executionenv.ExecutorResponse{}, &executionenv.Error{
+		Code:    executionenv.CodeNotFound,
+		Message: "path not found",
 	}
 }
 
-func TestControlledExecutorErrorClearsOperationWithoutFencing(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+func runFixtureContext() executionenv.RequestContext {
+	return executionenv.RequestContext{
+		Environment:     executionenv.EnvironmentRef{ID: "env", Revision: "rev"},
+		BindingID:       "binding",
+		RunID:           "run",
+		ClaimID:         "claim",
+		Epoch:           1,
+		GrantGeneration: 1,
+	}
+}
+
+func requireOnlyReads(t *testing.T, client *dynamicfake.FakeDynamicClient) {
+	t.Helper()
+	for _, action := range client.Actions() {
+		if action.GetVerb() != "get" {
+			t.Fatalf("tool call wrote the environment: %s %s",
+				action.GetVerb(), action.GetSubresource())
+		}
+	}
+}
+
+func TestToolCallsWriteNoEnvironmentStatus(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
+	exec := &recordingTransport{}
+	s := NewStore(client, "ns", testProfiles(), exec)
+	file, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
+		Context:   runFixtureContext(),
+		Operation: executionenv.OpFileRead,
+		Path:      "main.go",
+	})
+	if err != nil || string(file.Data) != "ok" {
+		t.Fatalf("file=%v err=%v", file, err)
+	}
+	command, err := s.StartCommand(t.Context(), "client", "owner", executionenv.CommandStartRequest{
+		Context: runFixtureContext(),
+		Command: "true",
+	})
+	if err != nil || command.State != executionenv.CommandSucceeded {
+		t.Fatalf("command=%v err=%v", command, err)
+	}
+	requireOnlyReads(t, client)
+	want := ExecutorPin{PodName: "pod", PodUID: "pod-uid", Fingerprint: fixtureFingerprint}
+	if exec.calls() != 2 || exec.routes[0].Pin != want || exec.routes[1].MaxCommandDuration <= 0 {
+		t.Fatalf("routes=%+v", exec.routes)
+	}
+}
+
+func TestConcurrentReadsOnOneEnvironment(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
+	exec := &recordingTransport{entered: make(chan struct{}, 2), gate: make(chan struct{})}
+	s := NewStore(client, "ns", testProfiles(), exec)
+	done := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
+				Context:   runFixtureContext(),
+				Operation: executionenv.OpFileRead,
+				Path:      "main.go",
+			})
+			done <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-exec.entered:
+		case err := <-done:
+			t.Fatalf("read refused while another was in flight: %v", err)
+		}
+	}
+	close(exec.gate)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireOnlyReads(t, client)
+}
+
+func TestControlledExecutorErrorLeavesEnvironmentHealthy(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
 	exec := &terminalErrorExecutor{}
 	s := NewStore(client, "ns", testProfiles(), exec)
-	_, err := s.File(context.Background(), "client", "owner", executionenv.FileRequest{Context: executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 1, GrantGeneration: 1}, Operation: executionenv.OpFileRead, Path: "missing"})
+	_, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
+		Context:   runFixtureContext(),
+		Operation: executionenv.OpFileRead,
+		Path:      "missing",
+	})
 	var pe *executionenv.Error
-	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotFound {
-		t.Fatalf("error=%v", err)
+	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotFound || exec.called != 1 {
+		t.Fatalf("error=%v calls=%d", err, exec.called)
 	}
-	got, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(context.Background(), "env", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if exec.called != 1 || textNested(got.Object, "status", "activeOperation", "id") != "" || textNested(got.Object, "status", "fenceState") != "Healthy" {
-		t.Fatalf("status=%v calls=%d", got.Object["status"], exec.called)
+	requireOnlyReads(t, client)
+}
+
+func TestToolCallRefusesUnadmittedCapabilityBeforeDispatch(t *testing.T) {
+	env := runFixtureEnvironment(1, 1)
+	filesOnly := []string{"filesystem"}
+	_ = unstructured.SetNestedStringSlice(env.Object, filesOnly, "spec", admittedCapabilitiesField)
+	exec := &recordingTransport{}
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	s := NewStore(client, "ns", testProfiles(), exec)
+	_, err := s.StartCommand(t.Context(), "client", "owner", executionenv.CommandStartRequest{
+		Context: runFixtureContext(),
+		Command: "true",
+	})
+	var pe *executionenv.Error
+	if !errors.As(err, &pe) || pe.Code != executionenv.CodePermissionDenied || exec.calls() != 0 {
+		t.Fatalf("error=%v calls=%d", err, exec.calls())
 	}
 }

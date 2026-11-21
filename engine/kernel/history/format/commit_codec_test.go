@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 )
 
 func testLimits() codec.Limits {
@@ -22,7 +22,8 @@ func testLimits() codec.Limits {
 		MaxMapPairs: 8, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 }
 
-// wireFixtures are literal canonical bytes, independent of codec append helpers.
+// wireFixtures are literal DRISL-CBOR bytes, independent of codec append helpers.
+// They qualify the emitted profile's canonical map ordering and Tag 42 CID links.
 func wireFixtures(t testing.TB) (root, successor []byte) {
 	t.Helper()
 	records := "\x61r\x81\xa4\x61k\x61x\x61p\x42\xff\x00\x61t\x20\x61v\x01"
@@ -35,6 +36,19 @@ func wireFixtures(t testing.TB) (root, successor []byte) {
 	successor = append(successor, records...)
 	successor = append(successor, "\x61s\x02\x61t\x21\x61v\x01"...)
 	return root, successor
+}
+
+// maxIntegerWire is a literal DRISL-CBOR successor with its sequence and record
+// version at math.MaxInt64. It remains independent of codec append helpers.
+func maxIntegerWire(t testing.TB) []byte {
+	t.Helper()
+	link, err := hex.DecodeString("0001711220e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := append([]byte("\xa6\x61i\x01\x61p\xd8\x2a\x58\x25"), link...)
+	wire = append(wire, "\x61r\x81\xa4\x61k\x61x\x61p\x42\xff\x00\x61t\x20\x61v\x1b\x7f\xff\xff\xff\xff\xff\xff\xff"...)
+	return append(wire, "\x61s\x1b\x7f\xff\xff\xff\xff\xff\xff\xff\x61t\x21\x61v\x01"...)
 }
 
 // assertContentCID independently builds the fixed binary profile using stdlib SHA.
@@ -53,9 +67,39 @@ func successorOf(c format.Commit, parent contentid.CID, sequence int64) format.C
 	return c
 }
 
-func TestCodecGoldens(t *testing.T) {
+func TestRootCodecGenericResourceIdentity(t *testing.T) {
+	rootWire, _ := wireFixtures(t)
+	for _, kind := range []string{"FOO", "SES", "IOO"} {
+		t.Run(kind, func(t *testing.T) {
+			text := kind + "1111111111111111111111"
+			id, err := resourceid.Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := validRoot(t)
+			root.HistoryID = &id
+			if err := root.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			wire := replaceWire(t, rootWire, "HST1111111111111111111111", text)
+			encoded, err := codec.Encode(root, testLimits())
+			if err != nil || !bytes.Equal(encoded, wire) {
+				t.Fatalf("generic root encoding: %x, %v", encoded, err)
+			}
+			decoded, err := codec.Decode[format.Commit](wire, testLimits())
+			if err != nil || !decoded.Equal(root) || decoded.HistoryID == nil || *decoded.HistoryID != id {
+				t.Fatalf("generic root decoding: %+v, %v", decoded, err)
+			}
+		})
+	}
+}
+
+func TestDRISLProfileGoldens(t *testing.T) {
 	rootWire, successorWire := wireFixtures(t)
+	maxIntegersWire := maxIntegerWire(t)
 	root := validRoot(t)
+	maxIntegers := successorOf(root, contentid.Sum(nil), math.MaxInt64)
+	maxIntegers.Records[0].KindVersion = math.MaxInt64
 	for _, fixture := range []struct {
 		name   string
 		commit format.Commit
@@ -63,7 +107,8 @@ func TestCodecGoldens(t *testing.T) {
 		cid    string
 	}{
 		{"root", root, rootWire, "bafyreid73f2xbvil2ai2j6kjnm62px5tyukt7yzvwhwavkm6zbxlvi3fv4"},
-		{"successor", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreibf3l4c2hnprpoguyob3yiuatjvhpeba2g7r5jujzth25ib72dh6e"},
+		{"successor-cid-link", successorOf(root, contentid.Sum(nil), 2), successorWire, "bafyreibf3l4c2hnprpoguyob3yiuatjvhpeba2g7r5jujzth25ib72dh6e"},
+		{"max-int64", maxIntegers, maxIntegersWire, "bafyreiakawql2t436dbmz3h76iafg4p3synohea3aliby4xh557a5p3mwm"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			data, err := codec.Encode(fixture.commit, testLimits())
@@ -103,7 +148,7 @@ func TestCodecIdentityAndOpaquePayloads(t *testing.T) {
 		"instance":         func(c *format.Commit) { c.InstanceID++ },
 		"record timestamp": func(c *format.Commit) { c.Records[0].Timestamp++ },
 		"history": func(c *format.Commit) {
-			h, _ := historyid.ParseHistoryID("HST2222222222222222222222")
+			h, _ := resourceid.Parse("HST2222222222222222222222")
 			c.HistoryID = &h
 		},
 		"parent":   func(c *format.Commit) { *c = successorOf(*c, contentid.Sum(nil), 2) },
@@ -181,7 +226,7 @@ func TestCodecOwnership(t *testing.T) {
 	}
 	wireBefore := bytes.Clone(data)
 	c.Records[0].Payload[0], c.Records[0].Kind = 5, "changed"
-	*c.HistoryID = historyid.HistoryID{}
+	*c.HistoryID = resourceid.ID{}
 	sourceAfterMutation := c.Clone()
 	if !bytes.Equal(data, wireBefore) {
 		t.Fatal("encoder borrowed DTO storage")
@@ -200,7 +245,7 @@ func TestCodecOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoded.Records[0].Payload[0], decoded.Records[0].Kind = 10, "other"
-	*decoded.HistoryID = historyid.HistoryID{}
+	*decoded.HistoryID = resourceid.ID{}
 	if !bytes.Equal(input, wireBefore) || !c.Equal(sourceAfterMutation) {
 		t.Fatal("mutation crossed operation ownership")
 	}
@@ -229,7 +274,7 @@ func TestCodecRejectsInvalidDTO(t *testing.T) {
 		func(c *format.Commit) { c.Sequence = 2 },
 		func(c *format.Commit) { c.Records = nil },
 		func(c *format.Commit) { c.HistoryID = nil },
-		func(c *format.Commit) { c.HistoryID = new(historyid.HistoryID) },
+		func(c *format.Commit) { c.HistoryID = new(resourceid.ID) },
 		func(c *format.Commit) { c.Parent = new(contentid.Sum(nil)) },
 		func(c *format.Commit) { c.HistoryID = nil; c.Parent = new(contentid.CID); c.Sequence = 2 },
 		func(c *format.Commit) { c.Records[0].Kind = "" },

@@ -7,7 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func testLimits() codec.Limits {
@@ -15,9 +15,9 @@ func testLimits() codec.Limits {
 		MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 }
 
-func testHistoryID(t testing.TB) historyid.HistoryID {
+func testSessionID(t testing.TB) sessionid.SessionID {
 	t.Helper()
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func recordFixtures(t testing.TB) []struct {
 	make func(codec.Limits) (*materializedRecord, error)
 } {
 	t.Helper()
-	h := testHistoryID(t)
+	h := testSessionID(t)
 	return []struct {
 		kind string
 		wire []byte
@@ -44,7 +44,7 @@ func recordFixtures(t testing.TB) []struct {
 			return makeInputRecord(identifiedInput{ID: allocatedInput(t, allocatedRun(t, h, 1), 1), UserInput: UserInput{Parts: []ContentPart{{Text: new("x")}}}}, l)
 		}},
 		{"session.run_started", []byte("\xa1\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
-			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2).HistoryRelative()}, l)
+			return newRunStartedRecord(RunStarted{ID: allocatedRun(t, h, 2).SessionRelative()}, l)
 		}},
 		{"session.run_ended", []byte("\xa2\x61e\x6binterrupted\x61r\x02"), func(l codec.Limits) (*materializedRecord, error) {
 			return newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, allocatedRun(t, h, 2), l)
@@ -59,7 +59,7 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes.Contains(test.wire, []byte(testHistoryID(t).String())) {
+			if bytes.Contains(test.wire, []byte(testSessionID(t).String())) {
 				t.Fatal("payload repeats history identity")
 			}
 			version := int64(1)
@@ -83,7 +83,7 @@ func TestRecordSchemasAndOwnership(t *testing.T) {
 				t.Fatal("Format exposed private storage")
 			}
 			// Reuse existing envelope codecs, rather than inventing a session envelope.
-			commit := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(testHistoryID(t)), Sequence: 1, Records: []format.Record{r.format()}}
+			commit := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(testSessionID(t).ResourceID()), Sequence: 1, Records: []format.Record{r.format()}}
 			wire, err := codec.Encode(commit, testLimits())
 			if err != nil {
 				t.Fatal(err)

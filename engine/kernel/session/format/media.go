@@ -52,7 +52,7 @@ type Media struct {
 	// ProviderName is the required logical provider for provider media, empty otherwise.
 	ProviderName string `cbor:"p"`
 	// ProviderScope is the required provider storage namespace, empty otherwise.
-	// It is not the session's history or run scope.
+	// It is not the Session or run scope.
 	ProviderScope string `cbor:"o"`
 	// ProviderReferenceID is required within the provider scope, empty otherwise.
 	ProviderReferenceID string `cbor:"r"`

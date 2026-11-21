@@ -53,7 +53,7 @@ func TestUsageUncertainAcceptanceFreezesExactReplacement(t *testing.T) {
 			if !ok || !usage.Report().MutableClone().Equal(want) {
 				t.Fatal("frozen capture changed")
 			}
-			loaded, err := session.Load(t.Context(), h, before.HistoryID(), testConfigFor(sessionPolicy()))
+			loaded, err := session.Load(t.Context(), h, before.SessionID(), testConfigFor(sessionPolicy()))
 			mustBatch(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("retry replay changed accounting")
@@ -61,7 +61,7 @@ func TestUsageUncertainAcceptanceFreezesExactReplacement(t *testing.T) {
 			b = beginBatch(t, loaded)
 			last, err := b.AddUsage(nil, nil, "after retry", session.UsageReport{State: session.UsageReportActive})
 			mustBatch(t, err)
-			if next.HistoryRelative() != 2 || last.HistoryRelative() != 3 {
+			if next.SessionRelative() != 2 || last.SessionRelative() != 3 {
 				t.Fatal("retry double-consumed identity")
 			}
 			submitBatch(t, loaded, b)
@@ -77,7 +77,7 @@ func TestUsageConflictDoesNotPublishOrMerge(t *testing.T) {
 	id, err := b.AddUsage(nil, nil, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive})
 	mustBatch(t, err)
 	submitBatch(t, s, b)
-	other, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(sessionPolicy()))
+	other, err := session.Load(t.Context(), h, s.Snapshot().SessionID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	before := other.Snapshot()
 	winner := beginBatch(t, s)
@@ -96,7 +96,7 @@ func TestUsageConflictDoesNotPublishOrMerge(t *testing.T) {
 	if _, err := other.BeginCommit(); !errors.Is(err, session.ErrReloadRequired) {
 		t.Fatal("conflicting owner reused")
 	}
-	loaded, err := session.Load(t.Context(), h, before.HistoryID(), testConfigFor(sessionPolicy()))
+	loaded, err := session.Load(t.Context(), h, before.SessionID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	if loaded.Snapshot().Head() != head || !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 		t.Fatal("fresh load merged losing usage")
@@ -104,7 +104,7 @@ func TestUsageConflictDoesNotPublishOrMerge(t *testing.T) {
 	b = beginBatch(t, loaded)
 	next, err := b.AddUsage(nil, nil, "winner", session.UsageReport{State: session.UsageReportActive})
 	mustBatch(t, err)
-	if next.HistoryRelative() != 2 {
+	if next.SessionRelative() != 2 {
 		t.Fatal("losing allocation consumed identity")
 	}
 	submitBatch(t, loaded, b)

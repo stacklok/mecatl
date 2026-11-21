@@ -3,15 +3,15 @@ package session
 import (
 	"iter"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // RunView is an immutable run handle pinned to its originating snapshot bounds.
 // Zero has no identity or records. Copying and positional record access cost O(1).
 type RunView struct {
 	id      RunID
-	scope   historyid.HistoryID
+	scope   sessionid.SessionID
 	records []*materializedRecord
 }
 
@@ -72,6 +72,6 @@ func (v RunView) ToolCalls() ToolCallsView {
 }
 
 // RecordAt returns a fact in this run's chronological span, not an ownership
-// filter: history-scoped context can appear here and survive this run. Out-of-range
+// filter: Session-scoped context can appear here and survive this run. Out-of-range
 // indices panic.
 func (v RunView) RecordAt(i int) RecordView { return RecordView{scope: v.scope, record: v.records[i]} }

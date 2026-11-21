@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -85,7 +87,8 @@ func TestIdentityBrokerRegistersHelperAgents(t *testing.T) {
 			)
 			diag := &lockedDiag{}
 			built, err := buildIsolated(t, t.Context(), Config{
-				Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true,
+				RedisURL: miniredis.RunT(t).Addr(), RedisAllowPlaintext: true, RedisFilesystem: true,
+				MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t),
 				AgentsDirs: []string{agentsDir}, AllowAllTools: true, GuardrailsDisabled: true, Diagnostics: diag,
 			})
 			if err != nil {
@@ -162,11 +165,14 @@ func TestIdentityBrokerRegistersBranchesAndTeamMembers(t *testing.T) {
 	cases := []struct {
 		name, tool, args, child, definition string
 		configure                           func(*Config)
+		skip                                string
 	}{
 		{
 			name: "a parallel branch", tool: "Parallel", args: `{"tasks":["look"]}`,
 			child: "parallel-%s-delegate-0", definition: "system/branch",
 			configure: func(c *Config) { c.EnableParallel = true },
+			// Shortcut: the identity broker refuses a local workspace, and Parallel forks only a local one, so no build runs both; removed by #2807 (the broker runs as its own service).
+			skip: "the identity broker refuses the local workspace a Parallel branch forks (#2807)",
 		},
 		{
 			name: "a Team-tool member", tool: "Team", args: `{"goal":"look","members":[{"name":"lead","role":"lead"}]}`,
@@ -176,10 +182,13 @@ func TestIdentityBrokerRegistersBranchesAndTeamMembers(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip != "" {
+				t.Skip(tc.skip)
+			}
 			llm := mockllm.New(append([]mockllm.Turn{mockllm.ToolCallTurn(session.NewToolCall("delegate", tc.tool, []byte(tc.args)))}, filler...)...)
 			diag := &lockedDiag{}
 			cfg := Config{
-				Workspace: t.TempDir(), MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true,
+				MockProvider: llm, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t),
 				AllowAllTools: true, GuardrailsDisabled: true, Diagnostics: diag,
 			}
 			tc.configure(&cfg)

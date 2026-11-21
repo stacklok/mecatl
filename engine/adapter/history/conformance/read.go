@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
@@ -59,7 +60,7 @@ func readBoundaries(t *testing.T, factory Factory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, foreignID := history.NewHistoryID(), history.NewHistoryID()
+	id, foreignID := resourceid.New("FOO"), resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "root")
 	second, r2 := encoded(t, id, r1, "second")
 	third, r3 := encoded(t, id, r2, "third")
@@ -109,7 +110,7 @@ func readBoundaries(t *testing.T, factory Factory) {
 func stablePagination(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
 	ctx := context.Background()
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "\x00opaque\xff")
 	second, r2 := encoded(t, id, r1, "second")
 	third, r3 := encoded(t, id, r2, "third")
@@ -158,7 +159,7 @@ func stablePagination(t *testing.T, factory historyFactory) {
 }
 
 func pageHintDoesNotRaisePolicy(t *testing.T, factory historyFactory) {
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	b, ref := encoded(t, id, history.CommitRef{}, "opaque")
 	p := policy()
 	p.MaxPageBytes = encodedLen(t, b) - 1
@@ -190,7 +191,7 @@ func misalignedReadPolicy(t *testing.T, factory Factory) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			id := history.NewHistoryID()
+			id := resourceid.New("FOO")
 			c, _ := encoded(t, id, history.CommitRef{}, "read bounds")
 			c.Records[0].Kind = "opaque-kind-longer-than-history"
 			c.Records = append(c.Records, c.Records[0].Clone())
@@ -240,7 +241,7 @@ func independentInstancePolicies(t *testing.T, factory Factory) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "root")
 	second, r2 := encoded(t, id, r1, "second")
 	third, r3 := encoded(t, id, r2, "third")

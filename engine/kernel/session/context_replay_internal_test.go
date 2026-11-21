@@ -12,7 +12,7 @@ import (
 
 func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 	s, _ := internalFixture(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b, err := s.BeginCommit()
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestContextHardOnlyReplayDetachedOracle(t *testing.T) {
 			if !reflect.DeepEqual(before, detachedSessionState(loaded.state)) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
 				t.Fatal("hard rejection changed complete loaded/original state")
 			}
-			if head, err := s.history.Head(context.Background(), scope); err != nil || head != before.view.head {
+			if head, err := s.history.Head(context.Background(), scope.ResourceID()); err != nil || head != before.view.head {
 				t.Fatal("replay or rejected cleanup appended")
 			}
 		})

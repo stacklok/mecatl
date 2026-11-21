@@ -54,8 +54,8 @@ func TestConstructCoalescesWithinContentSequences(t *testing.T) {
 			source := session.ContentSource{Description: "prepared test content"}
 			blocks := []session.InstructionBlock{{Key: "first", Parts: parts(), Source: source}, {Key: "second", Parts: parts(), Source: source}}
 			f := newConstructionFixture(t)
-			requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: blocks}))
-			requireConstruction(t, f.b.ReplaceUserInstructions(f.run.HistoryID(), session.UserInstructions{Blocks: blocks}))
+			requireConstruction(t, f.b.ReplaceRootInstructions(f.run.SessionID(), session.RootInstructions{Blocks: blocks}))
+			requireConstruction(t, f.b.ReplaceUserInstructions(f.run.SessionID(), session.UserInstructions{Blocks: blocks}))
 			inputParts := append(parts(), media)
 			inputParts = append(inputParts, parts()...)
 			input, err := f.b.AddUserInput(f.run, session.UserInput{Parts: inputParts})
@@ -103,7 +103,7 @@ func TestConstructCoalescesWithinContentSequences(t *testing.T) {
 			id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: built.Recipe()})
 			requireConstruction(t, err)
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+			loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 			requireConstruction(t, err)
 			rebuilt, err := Reconstruct(loaded.Snapshot(), id, testLimits())
 			requireConstruction(t, err)

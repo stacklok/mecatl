@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -858,7 +860,7 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 // issue for another audience.
 func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 	studio := as1server.PublicClient{ID: "studio", RedirectURIs: []string{"http://127.0.0.1:18474/callback"}}
-	otherKeys := otherKeySet(t)
+	otherKeys := otherKeySetFile(t)
 	tests := []struct {
 		name string
 		edit func(*as1server.Config, *as1server.DelegateClient)
@@ -909,7 +911,7 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 			name: "a failed client assertion: invalid_client is a configuration fault",
 			edit: func(_ *as1server.Config, d *as1server.DelegateClient) {
 				// AS-1 knows the delegate by another key than the broker's.
-				d.KeySet = otherKeys
+				d.KeySetFile = otherKeys
 			},
 			token:   func(t *testing.T, f *openFixture) identitybroker.Token { return f.token(t, identityharness.Alice) },
 			as1Code: "invalid_client",
@@ -950,8 +952,9 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 	})
 }
 
-// otherKeySet is the JWK Set of a fresh key that is not the broker's.
-func otherKeySet(t *testing.T) []byte {
+// otherKeySetFile writes the key set of a key the broker does not hold and
+// returns its path.
+func otherKeySetFile(t *testing.T) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -965,7 +968,11 @@ func otherKeySet(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return set
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(path, set, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestSessionCloseDiscardsTheRefreshToken(t *testing.T) {

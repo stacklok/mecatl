@@ -1,12 +1,21 @@
 package history
 
-import "context"
+import (
+	"context"
 
-// Backend stores bytes for independent linear histories. Implementations guarantee
-// atomic expected-head appends, durable acceptance according to their storage
-// contract, and coherent indexed observations. They do not decode commits or
-// classify retries. All errors return zero results; an error may leave acceptance
-// unknown. A known acceptance must not be masked by late cancellation.
+	resourceid "github.com/stacklok/mecatl/engine/id"
+)
+
+// Backend stores bytes for independent linear histories. Every ByteCommit passed to
+// Append contains one complete item in the DASL DRISL-CBOR profile:
+// https://dasl.ing/drisl.html. This is a caller guarantee supplied by History,
+// not a parser requirement: implementations may retain the exact opaque bytes
+// without validating their payload schema, ancestry, or content identity. Backend
+// implementations guarantee atomic expected-head appends, durable acceptance
+// according to their storage contract, and coherent indexed observations. They do
+// not decode commits or classify retries. All errors return zero results; an error
+// may leave acceptance unknown. A known acceptance must not be masked by late
+// cancellation.
 // Expected-head checks serialize appends; this contract does not yet provide
 // writer ownership acquisition or fencing.
 //
@@ -18,7 +27,7 @@ type Backend interface {
 	// Observe returns the head and the accepted reference at sequence from one
 	// observation. An unknown history returns a zero Observation, not ErrNotFound.
 	// Sequence zero requests only the head; a future ordinal has a zero Commit.
-	Observe(context.Context, HistoryID, int64) (Observation, error)
+	Observe(context.Context, resourceid.ID, int64) (Observation, error)
 	// Append atomically accepts commit only if the current head equals expected
 	// (zero means absent). The reference must be the next ordinal after expected;
 	// expected may be speculative and need not have been observed or accepted.
@@ -27,7 +36,7 @@ type Backend interface {
 	// New acceptance returns Head=Commit=commit.Ref. A failed CAS returns the
 	// current head and occupied submitted ordinal, if any, with Head unequal to
 	// expected (not necessarily higher). It never retries the write.
-	Append(context.Context, HistoryID, CommitRef, ByteCommit) (Observation, error)
+	Append(context.Context, resourceid.ID, CommitRef, ByteCommit) (Observation, error)
 	// Read verifies both nonzero indexed boundaries in this history in one
 	// coherent read, even at EOF or when returning only a prefix, and returns
 	// whole commits in contiguous ordinal order, ignoring retry windows.
@@ -35,7 +44,7 @@ type Backend interface {
 	// An oversized first commit returns PageTooSmallError; a commit exceeding
 	// MaxCommitBytes fails without fetching its bytes. Successful empty results
 	// are allowed only at the endpoint.
-	Read(context.Context, HistoryID, ByteReadRequest) ([]ByteCommit, error)
+	Read(context.Context, resourceid.ID, ByteReadRequest) ([]ByteCommit, error)
 }
 
 // Observation is coherent head and ordinal evidence. Head is zero only for an
@@ -64,12 +73,16 @@ func (o Observation) validate(sequence int64) error {
 	return nil
 }
 
-// ByteCommit associates independently owned canonical bytes with their index.
+// ByteCommit associates an indexed identity with canonical bytes. Bytes contains
+// one complete DRISL-CBOR item; arbitrary byte-string contents within that item are
+// legal. The caller keeps input bytes stable until the call returns. On acceptance,
+// Backend retains byte-identical, independently owned bytes. A ByteCommit returned
+// by Read likewise owns byte-identical storage independent of Backend and callers.
 // History verifies the bytes against Ref; Backend treats their encoding as opaque.
 type ByteCommit struct {
 	// Ref is the indexed identity, not a claim trusted by the codec.
 	Ref CommitRef
-	// Bytes owns the complete canonical encoding; backends treat it as opaque.
+	// Bytes contains the complete canonical DRISL-CBOR item.
 	Bytes []byte
 }
 

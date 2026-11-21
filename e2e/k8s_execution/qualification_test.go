@@ -346,7 +346,7 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 			t.Fatal("negative control has no retained workspace")
 		}
 		pod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "execution.mecatl.dev/environment="+ref.ID, "-o", "jsonpath={.items[0].metadata.name}")
-		// Seed independently of the intentionally broken executor protocol.
+		// Seed independently of the intentionally misconfigured executor.
 		runKubectl(t, ctx, kubeconfig, "exec", "-n", namespace, pod, "--", "/bin/sh", "-c", "printf 'retained-negative-control\\n' > /workspace/qualification-sentinel")
 		claim, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: ready.Environment, Owner: owner, BindingID: sessionID, RunID: "incompatible-qualification", OperationID: "incompatible-qualification", TTL: time.Minute})
 		if err != nil {
@@ -354,15 +354,22 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 		}
 		rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: sessionID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
 		result, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "/usr/local/bin/mecatl-operator-utility && printf 'corrupted\\n' > qualification-sentinel", TimeoutMillis: 30000})
-		if !isRemoteCode(err, executionenv.CodeFenceUnknown) || result.State == executionenv.CommandSucceeded {
-			t.Fatalf("incompatible derivative qualified: state=%s code=%s", result.State, remoteErrorCode(err))
+		if !isRemoteCode(err, executionenv.CodeNotReady) ||
+			result.State == executionenv.CommandSucceeded {
+			t.Fatalf("executor without Commands ran a command: state=%s code=%s",
+				result.State, remoteErrorCode(err))
 		}
-		if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "qualification-sentinel"}); !isRemoteCode(err, executionenv.CodeNotReady) {
-			t.Fatalf("incompatible executor remained usable: %s", remoteErrorCode(err))
+		read, err := client.File(ctx, executionenv.FileRequest{
+			Context:   rc,
+			Operation: executionenv.OpFileRead,
+			Path:      "qualification-sentinel",
+		})
+		if err != nil || string(read.Data) != "retained-negative-control\n" {
+			t.Fatalf("Files service lost the retained workspace: %s", remoteErrorCode(err))
 		}
 		after := readExecutionStatus(t, ctx, kubeconfig, ref.ID)
-		if after.FenceState != "FenceUnknown" || after.PVCUID != before.PVCUID || after.PodUID != before.PodUID {
-			t.Fatal("negative qualification failed to fence and retain the exact workspace")
+		if after.PVCUID != before.PVCUID || after.PodUID != before.PodUID {
+			t.Fatal("negative qualification did not retain the exact workspace")
 		}
 		if uid := kubeValue(t, ctx, kubeconfig, "get", "pvc", "-n", namespace, "-l", "execution.mecatl.dev/environment="+ref.ID, "-o", "jsonpath={.items[0].metadata.uid}"); uid != before.PVCUID {
 			t.Fatal("negative qualification replaced or deleted the retained PVC")

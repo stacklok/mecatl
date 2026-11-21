@@ -396,7 +396,8 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
 Revoke an environment using its durable `grantGeneration` fence (the wire name),
 not a signed grant. Supply the current generation and a stable operation ID. The
 response returns the new generation; retrying the identical request returns the
-same receipt. Earlier operations cannot renew after this CAS succeeds.
+same receipt. After this CAS succeeds, the provider refuses new calls under the
+earlier generation; calls already in progress are not stopped.
 
 ```sh
 grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
@@ -405,11 +406,12 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
   "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment
 ```
 
-Foreground command cancellation is cooperative and bounded. The helper attempts
-to terminate the command process group and reports a terminal receipt. If it
-cannot prove termination, the environment is fenced instead of admitting more
-work. There is no detached command status or cancellation API for this
-deployment.
+Foreground command cancellation is cooperative and bounded. The executor kills
+the command's process group and reports the result. If it cannot confirm that
+every process the command started has ended, the call fails with
+`FailedPrecondition` and the provider does not fence the environment; verify
+termination or fence the environment externally before you continue. There is
+no detached command status or cancellation API for this deployment.
 
 ## Recover a fenced environment
 

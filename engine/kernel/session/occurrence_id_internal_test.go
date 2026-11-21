@@ -14,16 +14,16 @@ import (
 
 func TestOccurrenceIDLocalValidation(t *testing.T) {
 	s, _ := internalFixture(t)
-	run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}
+	run := RunID{sessionID: s.Snapshot().SessionID(), ordinal: 1}
 	request := ModelRequestID{runID: run, requestOrdinal: 1}
 	for name, value := range map[string]interface{ Validate() error }{
 		"zero run":            RunID{},
-		"unallocated run":     RunID{historyID: run.historyID},
+		"unallocated run":     RunID{sessionID: run.sessionID},
 		"unscoped run":        RunID{ordinal: 1},
 		"zero input":          UserInputID{},
 		"unallocated input":   UserInputID{runID: run},
 		"unscoped input":      UserInputID{ordinal: 1},
-		"invalid input run":   UserInputID{runID: RunID{historyID: run.historyID}, ordinal: 1},
+		"invalid input run":   UserInputID{runID: RunID{sessionID: run.sessionID}, ordinal: 1},
 		"zero request":        ModelRequestID{},
 		"unallocated request": ModelRequestID{runID: run},
 		"unscoped request":    ModelRequestID{requestOrdinal: 1},
@@ -122,12 +122,12 @@ func TestEffectiveInputExtremeReferenceAllPaths(t *testing.T) {
 						if path == "apply" {
 							err = s.apply(c)
 						} else {
-							result, appendErr := s.history.Append(context.Background(), run.historyID, c.Commit)
+							result, appendErr := s.history.Append(context.Background(), run.sessionID.ResourceID(), c.Commit)
 							interactionCheck(t, appendErr)
 							if result.Status != history.StatusAccepted {
 								t.Fatal("history rejected locally valid extreme reference")
 							}
-							loaded, loadErr := Load(context.Background(), s.history, run.historyID, testConfigFor(s.policy))
+							loaded, loadErr := Load(context.Background(), s.history, run.sessionID, testConfigFor(s.policy))
 							err = loadErr
 							if loaded != nil {
 								t.Fatal("failed replay returned a session")

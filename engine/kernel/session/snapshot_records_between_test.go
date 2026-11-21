@@ -98,7 +98,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 	backend := mem.New()
 	h := newLifecycleHistory(t, backend)
 	s := boundSession(t, h, sessionPolicy())
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
@@ -162,7 +162,7 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 						switch i {
 						case 0:
 							v, ok := record.Created()
-							if !ok || v.HistoryID() != scope {
+							if !ok || v.SessionID() != scope {
 								t.Fatal("created scope")
 							}
 						case 1, 8:
@@ -194,18 +194,18 @@ func TestSnapshotRecordsBetweenSubmitLoadAndBorrowing(t *testing.T) {
 							}
 						case 3, 4:
 							v, ok := record.RootInstructions()
-							if !ok || v.HistoryID() != scope || !instructionsMatch(v, []session.RootInstructions{instructions, {}}[i-3]) {
+							if !ok || v.SessionID() != scope || !instructionsMatch(v, []session.RootInstructions{instructions, {}}[i-3]) {
 								t.Fatal("intermediate replacement lost")
 							}
 						case 5:
 							v, ok := record.ToolCatalog()
-							if !ok || v.HistoryID() != scope || v.Tools().Len() != 2 {
+							if !ok || v.SessionID() != scope || v.Tools().Len() != 2 {
 								t.Fatal("catalog scope")
 							}
 							clear(v.Tools().At(0).ArgumentSchema().Copy())
 						case 6:
 							v, ok := record.ModelBinding()
-							if !ok || v.HistoryID() != scope || v.Model() != "model" {
+							if !ok || v.SessionID() != scope || v.Model() != "model" {
 								t.Fatal("binding scope")
 							}
 							if _, present := v.Settings().ReasoningEffort(); present {

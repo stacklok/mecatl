@@ -48,7 +48,7 @@ func TestModelInteractionUnknownAcceptanceFreezesExactProposal(t *testing.T) {
 			b := beginBatch(t, s)
 			mustBatch(t, b.Create())
 			run := batchRun(t, b)
-			mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+			mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 			submitBatch(t, s, b)
 			head := s.Snapshot().Head()
 			b = beginBatch(t, s)
@@ -373,7 +373,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+				mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 				submitBatch(t, s, b)
 				id := addInteractionRequest(t, s, run, nil, nil)
 				var usage *session.UsageReport
@@ -399,7 +399,7 @@ func TestInteractionNestedAggregatePresence(t *testing.T) {
 					mustBatch(t, err)
 				}
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
+				loaded, err := session.Load(t.Context(), h, s.Snapshot().SessionID(), testConfigFor(p))
 				mustBatch(t, err)
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
@@ -482,7 +482,7 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 				b := beginBatch(t, s)
 				mustBatch(t, b.Create())
 				run := batchRun(t, b)
-				mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
+				mustBatch(t, b.ReplaceModelBinding(run.SessionID(), session.ModelBinding{Route: "r", API: "a", Model: "m"}))
 				submitBatch(t, s, b)
 				id := addInteractionRequest(t, s, run, nil, nil)
 				raw := &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 3, Data: input}
@@ -501,7 +501,7 @@ func TestInteractionEmptyOpaqueProviderDataPresenceAcrossSubmitAndLoad(t *testin
 				_, err := b.AddUsage(nil, &id, session.UsagePurposeMain, session.UsageReport{State: session.UsageReportActive, Raw: raw})
 				mustBatch(t, err)
 				submitBatch(t, s, b)
-				loaded, err := session.Load(t.Context(), h, s.Snapshot().HistoryID(), testConfigFor(p))
+				loaded, err := session.Load(t.Context(), h, s.Snapshot().SessionID(), testConfigFor(p))
 				mustBatch(t, err)
 				for seam, s := range map[string]*session.Session{"Submit": s, "Load": loaded} {
 					t.Run(seam, func(t *testing.T) {
@@ -581,7 +581,7 @@ func TestModelInteractionZeroViews(t *testing.T) {
 
 func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	h, s, p := newIteratorSession(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	// All reusable context is legal in create/idle batches, not just active runs.
@@ -665,7 +665,7 @@ func TestModelInteractionAcceptedViewsAndReplay(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(100, func() {
 		r, ok := accepted.RecordAt(10).ModelResponse()
-		if !ok || r.Items().Len() != 5 || r.CallCount() != 2 || r.CallAt(0).ID() != view.CallAt(0).ID() || r.CallAt(0).ID().RequestID() != second || r.CallAt(0).ID().RequestID().RunID().HistoryID() != scope || r.Items().At(0) != view.Items().At(0) {
+		if !ok || r.Items().Len() != 5 || r.CallCount() != 2 || r.CallAt(0).ID() != view.CallAt(0).ID() || r.CallAt(0).ID().RequestID() != second || r.CallAt(0).ID().RequestID().RunID().SessionID() != scope || r.Items().At(0) != view.Items().At(0) {
 			panic("direct response navigation")
 		}
 		c, ok := r.Items().At(0).Content()

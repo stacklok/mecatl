@@ -151,6 +151,16 @@ func (l *List) SetCursor(index int) {
 	l.revealCursor(l.layout())
 }
 
+// SelectID selects the first item with ID and reveals it.
+func (l *List) SelectID(id string) bool {
+	index := l.itemIndex(id)
+	if index < 0 {
+		return false
+	}
+	l.SetCursor(index)
+	return true
+}
+
 // Scroll moves the list viewport without changing the selection.
 func (l *List) Scroll(move Move) {
 	layout := l.layout()

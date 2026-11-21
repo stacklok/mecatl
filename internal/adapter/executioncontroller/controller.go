@@ -190,7 +190,12 @@ func reconcileInputsEqual(oldEnv, newEnv *unstructured.Unstructured) bool {
 		!reflect.DeepEqual(oldEnv.GetFinalizers(), newEnv.GetFinalizers()) {
 		return false
 	}
-	for _, path := range [][]string{{"spec"}, {statusField, "activeOperation"}, {statusField, "lifecycleOperation"}, {statusField, "references"}, {statusField, "fenceState"}} {
+	for _, path := range [][]string{
+		{"spec"},
+		{statusField, "lifecycleOperation"},
+		{statusField, "references"},
+		{statusField, "fenceState"},
+	} {
 		oldValue, _, _ := unstructured.NestedFieldNoCopy(oldEnv.Object, path...)
 		newValue, _, _ := unstructured.NestedFieldNoCopy(newEnv.Object, path...)
 		if !reflect.DeepEqual(oldValue, newValue) {
@@ -252,14 +257,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	}
 	if requireCurrentSchema(env) != nil {
 		return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported"))
-	}
-	if expires := textNested(env.Object, "status", "activeOperation", "expiresAt"); expires != "" {
-		deadline, parseErr := time.Parse(time.RFC3339Nano, expires)
-		now := r.now()
-		if parseErr != nil || !now.Before(deadline) {
-			return errors.Join(stopErr, r.setExpiredOperationFence(ctx, env))
-		}
-		r.queue.AddAfter(name, deadline.Sub(now))
 	}
 	if revoked {
 		if stopErr != nil {
@@ -655,25 +652,6 @@ func (r *Reconciler) updateRuntimeStatus(ctx context.Context, env *unstructured.
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pod.Name, "uid": string(pod.UID)}, "status", "pod")
 		_ = unstructured.SetNestedField(o.Object, o.GetGeneration(), "status", "observedGeneration")
 		setConditionObject(o, "Ready", ready, "Reconciled", map[bool]string{true: "PVC and executor Pod are ready", false: "waiting for executor Pod readiness"}[ready])
-		return nil
-	})
-}
-func (r *Reconciler) setExpiredOperationFence(ctx context.Context, env *unstructured.Unstructured) error {
-	observed, found, err := unstructured.NestedMap(env.Object, "status", "activeOperation")
-	if err != nil || !found {
-		return lifecycleConflict()
-	}
-	return r.updateStatus(ctx, env, func(o *unstructured.Unstructured) error {
-		current, present, parseErr := unstructured.NestedMap(o.Object, "status", "activeOperation")
-		if parseErr != nil || !present || !reflect.DeepEqual(current, observed) || !runtimeObservationMatches(o, env) {
-			return lifecycleConflict()
-		}
-		deadline, parseErr := time.Parse(time.RFC3339Nano, text(current, "expiresAt"))
-		if parseErr == nil && r.now().Before(deadline) {
-			return lifecycleConflict()
-		}
-		_ = unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
-		setConditionObject(o, "Ready", false, "FenceUnknown", "operation holder lease expired; operation identity retained for recovery")
 		return nil
 	})
 }

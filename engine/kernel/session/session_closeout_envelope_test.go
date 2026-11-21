@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -21,7 +22,7 @@ type closeoutEnvelopeBackend struct {
 	appends int
 }
 
-func (b *closeoutEnvelopeBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (b *closeoutEnvelopeBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	b.appends++
 	return b.Backend.Append(ctx, id, expected, c)
 }
@@ -36,7 +37,7 @@ func closeoutWidthPrefix(t *testing.T) (*Session, *closeoutEnvelopeBackend) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(h, fixture.Snapshot().HistoryID(), testConfigFor(fixture.policy))
+	s, err := New(h, fixture.Snapshot().SessionID(), testConfigFor(fixture.policy))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +74,9 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 		for _, path := range []string{"prepare", "submit", "apply"} {
 			t.Run(map[bool]string{false: "one byte short", true: "exact fit"}[exact]+"/"+path, func(t *testing.T) {
 				prefix, backend := closeoutWidthPrefix(t)
-				id := prefix.Snapshot().HistoryID()
-				run := RunID{historyID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
-				start, err := newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, prefix.policy.PayloadLimits)
+				id := prefix.Snapshot().SessionID()
+				run := RunID{sessionID: id, ordinal: uint64(prefix.Snapshot().RunCount()) + 1}
+				start, err := newRunStartedRecord(RunStarted{ID: run.SessionRelative()}, prefix.policy.PayloadLimits)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -177,7 +178,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 				case "apply":
 					// Accepted replay checks its own envelope, not hypothetical closeout.
 					want = nil
-					result, appendErr := h.Append(context.Background(), id, candidate.commit)
+					result, appendErr := h.Append(context.Background(), id.ResourceID(), candidate.commit)
 					if appendErr != nil || result.Status != history.StatusAccepted || result.Proposal != candidate.ref {
 						t.Fatalf("asserted acceptance: %v", appendErr)
 					}
@@ -216,7 +217,7 @@ func TestSessionFutureCloseoutEnvelopeSequenceWidth(t *testing.T) {
 					if backend.appends != attempts {
 						t.Fatal("prepare performed I/O")
 					}
-					result, err := h.Append(context.Background(), id, candidate.commit)
+					result, err := h.Append(context.Background(), id.ResourceID(), candidate.commit)
 					if err != nil || result.Status != history.StatusAccepted {
 						t.Fatalf("accept prepared: %v", err)
 					}

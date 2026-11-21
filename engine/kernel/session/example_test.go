@@ -8,8 +8,8 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func ExampleSession() {
@@ -21,7 +21,7 @@ func ExampleSession() {
 		fmt.Println(err)
 		return
 	}
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -163,7 +163,7 @@ func ExampleSession() {
 		return
 	}
 	v = loaded.Snapshot()
-	fmt.Printf("loaded %s head=%d runs=%d active matches=%t\n", v.HistoryID(), v.Head().Sequence, v.RunCount(), v.ActiveRun() == successor)
+	fmt.Printf("loaded %s head=%d runs=%d active matches=%t\n", v.SessionID(), v.Head().Sequence, v.RunCount(), v.ActiveRun() == successor)
 	accepted, ok := v.UserInputByID(second)
 	if !ok {
 		fmt.Println("missing successor input")
@@ -181,7 +181,7 @@ func ExampleSession() {
 	// prepared purpose=context; original="first"
 	// interrupted head=2 idle=true
 	// successor owner matches=true; distinct run=true
-	// loaded HST1111111111111111111111 head=3 runs=2 active matches=true
+	// loaded SES1111111111111111111111 head=3 runs=2 active matches=true
 	// successor owns input=true: second
 	// old snapshot head=1 active matches=true
 }

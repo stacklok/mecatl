@@ -39,7 +39,11 @@ type recordingExecutor struct {
 	release    <-chan struct{}
 }
 
-func (e *recordingExecutor) Execute(ctx context.Context, _ string, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
+func (e *recordingExecutor) Execute(
+	ctx context.Context,
+	_ executioncontroller.ExecutorRoute,
+	req executionenv.ExecutorRequest,
+) (executionenv.ExecutorResponse, error) {
 	e.mu.Lock()
 	e.operations = append(e.operations, req.Operation)
 	e.mu.Unlock()
@@ -67,6 +71,22 @@ func (e *recordingExecutor) Execute(ctx context.Context, _ string, req execution
 	}
 }
 
+var fakeExecutorFingerprint = strings.Repeat("ab", 32)
+
+// fakeExecutorStatus pins the fake executor so the provider routes tool calls to it.
+var fakeExecutorStatus = `"pod":{"name":"executor","uid":"pod-uid"},` +
+	`"serverCertificate":{"secretName":"executor-tls","podUID":"pod-uid",` +
+	`"fingerprint":"` + fakeExecutorFingerprint + `"}`
+
+func pinFakeExecutor(env *unstructured.Unstructured) {
+	_ = unstructured.SetNestedField(env.Object, "pod-uid", "status", "pod", "uid")
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{
+		"secretName":  "executor-tls",
+		"podUID":      "pod-uid",
+		"fingerprint": fakeExecutorFingerprint,
+	}, "status", "serverCertificate")
+}
+
 func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T) {
 	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
@@ -86,6 +106,7 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 		"spec":   map[string]any{"schemaVersion": int64(2), "revision": "rev-1", "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": "service-session", "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
 		"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": "service-session", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 	}}
+	pinFakeExecutor(envObj)
 	if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(t.Context(), envObj, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,6 @@
 package executionexecutor
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,13 +31,6 @@ var commandEnv = []string{
 // killChild is replaced by tests that simulate a process surviving SIGKILL.
 var killChild = func(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }
 
-type commandResult struct {
-	stdout    []byte
-	stderr    []byte
-	exitCode  int
-	truncated bool
-}
-
 // shellPath is a variable so tests can simulate a missing shell.
 var shellPath = "/bin/sh"
 
@@ -50,21 +42,6 @@ func EnableCommandExecution() error {
 	}
 	subreaperEnabled.Store(true)
 	return nil
-}
-
-func runIsolatedCommand(ctx context.Context, dir, command string, outputLimit int) (commandResult, bool, error) {
-	if !subreaperEnabled.Load() {
-		return commandResult{}, false, errors.New("command execution requires the dedicated subreaper helper")
-	}
-	var stdout, stderr boundedWriter
-	stdout.limit = outputLimit
-	stderr.limit = outputLimit
-	code, proven, err := runShell(ctx, dir, command, &stdout, &stderr, nil)
-	result := commandResult{
-		stdout: stdout.Bytes(), stderr: stderr.Bytes(), exitCode: code,
-		truncated: stdout.truncated || stderr.truncated,
-	}
-	return result, proven, err
 }
 
 // runShell runs command in this dedicated subreaper process and kills every
@@ -172,25 +149,3 @@ func exitCode(err error) int {
 	}
 	return -1
 }
-
-type boundedWriter struct {
-	buf       bytes.Buffer
-	limit     int
-	truncated bool
-}
-
-func (w *boundedWriter) Write(p []byte) (int, error) {
-	original := len(p)
-	if remaining := w.limit - w.buf.Len(); remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
-			w.truncated = true
-		}
-		_, _ = w.buf.Write(p)
-	} else if original > 0 {
-		w.truncated = true
-	}
-	return original, nil
-}
-
-func (w *boundedWriter) Bytes() []byte { return append([]byte(nil), w.buf.Bytes()...) }

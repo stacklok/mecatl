@@ -18,7 +18,7 @@ func (v RootInstructions) validateLocal() error { return validateInstructionKeys
 // not a producer, file, or provider message role. Nil and empty Blocks are
 // equivalent explicit empty replacements; a single empty block is distinct and
 // still needs a key and provenance. Assignment shares Blocks and children;
-// Clone detaches them. History scope comes from the enclosing envelope.
+// Clone detaches them. Session scope comes from the root history envelope.
 //
 //dtogen:validate validateLocal
 //dtogen:include
@@ -27,7 +27,7 @@ type RootInstructions struct {
 	// duplicate contents and empty blocks, but never duplicate keys within this
 	// whole replacement. Slice order, not keys, determines order; this is not a
 	// patch API. Nil and empty explicitly clear root instructions.
-	// Codec traversal validates children; history identity is omitted here and
-	// restored from the enclosing envelope at the domain conversion boundary.
+	// Codec traversal validates children; Session identity is omitted here and
+	// restored from the root history envelope at the domain conversion boundary.
 	Blocks []InstructionBlock `cbor:"b"`
 }

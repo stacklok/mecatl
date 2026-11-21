@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -56,8 +58,8 @@ func TestIdentityBrokerOwnsSessionsAgainstRealAS1(t *testing.T) {
 		issuer: a.Issuer(), audience: as1servertest.Audience, caFile: h.WriteCACert(t, t.TempDir()),
 		clientIDs: as1servertest.PublicClientID + "," + studio.ID,
 	}, &app.IdentityBrokerAS1{
-		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(), ClientKey: a.Key,
-	}, nil, nil)
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(),
+	}, identityBrokerServeOptions{clientKey: a.Key})
 
 	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice}).Value()
 	bob := a.SignIn(t, as1servertest.SignIn{User: identityharness.Bob}).Value()
@@ -546,9 +548,9 @@ func TestIdentityBrokerGatewayCallRenewsAnExpiredCredential(t *testing.T) {
 	}
 }
 
-// brokerTrustDomain is the identity broker's interim agent trust domain, the
-// act.iss of every ID-JAG AS-1 issues for its agents.
-const brokerTrustDomain = "agents.mecatl.invalid"
+// brokerTrustDomain is the agent trust domain of the identity broker's test
+// configuration file, the act.iss of every ID-JAG AS-1 issues for its agents.
+const brokerTrustDomain = brokerconfigtest.TrustDomain
 
 // gatewayGrantLifetime is the lifetime of the broker's grants at the gateway
 // tests' AS-1: long enough that a test can move the broker's clock past an
@@ -653,19 +655,23 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 	api, built := serveIdentityBroker(t, identityBrokerAS1Tokens{
 		issuer: a.Issuer(), audience: as1servertest.Audience, caFile: caFile, clientIDs: as1servertest.PublicClientID,
 	}, &app.IdentityBrokerAS1{
-		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: as1HTTP, ClientKey: a.Key, ActorTokens: a.Server,
+		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: as1HTTP, ActorTokens: a.Server,
 		// The broker's client assertions stay on wall time, which AS-1 checks
 		// them against.
 		Now: func() time.Time { return time.Now().Add(time.Duration(gw.clockOffset.Load())) },
-	}, append([]string{"--permission-config", settings}, extraArgs...), func(cfg *app.Config) {
-		cfg.IdentityBrokerGatewayServers = []string{"calendar"}
-		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-			Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile,
-			Subjects: []string{as1servertest.Subject(t, alice)},
-		})
-		if edit != nil {
-			edit(cfg)
-		}
+	}, identityBrokerServeOptions{
+		clientKey: a.Key,
+		args:      append([]string{"--permission-config", settings}, extraArgs...),
+		edit: func(cfg *app.Config) {
+			cfg.IdentityBrokerGatewayServers = []string{"calendar"}
+			cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
+				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile,
+				Subjects: []string{as1servertest.Subject(t, alice)},
+			})
+			if edit != nil {
+				edit(cfg)
+			}
+		},
 	})
 	gw.api, gw.built, gw.as1, gw.alice = api, built, faults, alice.Value()
 	return gw
@@ -992,18 +998,31 @@ type identityBrokerAS1Tokens struct {
 	issuer, audience, caFile, clientIDs string
 }
 
+// identityBrokerServeOptions are serveIdentityBroker's optional settings.
+type identityBrokerServeOptions struct {
+	// clientKey is the broker client key, the key the AS-1 registered; nil
+	// generates one.
+	clientKey *ecdsa.PrivateKey
+	// args are further flags.
+	args []string
+	// edit, when set, changes the application configuration before the
+	// build.
+	edit func(*app.Config)
+}
+
 // serveIdentityBroker builds and serves mecak8s with the identity broker on,
 // accepting access tokens with sub_id owners from the AS-1 that tokens
-// describes, and its session open converting at as1. No flag sets AS-1's
-// endpoints yet (#2490), so the test points the broker at as1 directly.
-// extraArgs are further flags, and edit, when set, changes the application
-// configuration before the build. It returns the HTTP API's base URL and the
-// built application; both stop when t ends.
-func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1, extraArgs []string, edit func(*app.Config)) (string, *app.Built) {
+// describes, and its session open converting at as1, authenticating with
+// opts.clientKey. No flag sets AS-1's endpoints yet (#2490), so the test
+// points the broker at as1 directly. It returns the HTTP API's base URL and
+// the built application; both stop when t ends.
+func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1, opts identityBrokerServeOptions) (string, *app.Built) {
 	t.Helper()
+	brokerFile := brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: opts.clientKey}).Path
 	cfg, err := parseFlags(append([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
+		"--identity-broker-config", brokerFile,
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", freeLoopbackPort(t),
@@ -1015,7 +1034,7 @@ func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.
 		"--oidc-ca-cert-file", tokens.caFile,
 		"--oidc-owner-identity=sub_id",
 		"--oidc-accepted-client-ids", tokens.clientIDs,
-	}, extraArgs...))
+	}, opts.args...))
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -1028,8 +1047,8 @@ func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.
 	cfg.diagnostics = port.NopDiagnostics{}
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	appCfg.IdentityBrokerAS1 = as1
-	if edit != nil {
-		edit(&appCfg)
+	if opts.edit != nil {
+		opts.edit(&appCfg)
 	}
 	built, err := buildIsolated(t, context.Background(), appCfg)
 	if err != nil {

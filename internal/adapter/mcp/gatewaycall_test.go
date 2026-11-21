@@ -371,6 +371,100 @@ func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
 	}
 }
 
+type gatewayRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f gatewayRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestGatewayHandshakeCancellationDoesNotBlockClose(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	initializeStarted := make(chan struct{})
+	cancelStarted := make(chan struct{})
+	release := make(chan struct{})
+	var cancellationSent atomic.Bool
+	req.HTTPClient = &http.Client{Transport: gatewayRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var msg struct{ Method string }
+		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+			return nil, err
+		}
+		if msg.Method == "initialize" {
+			close(initializeStarted)
+		} else {
+			cancellationSent.Store(true)
+		}
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-release:
+			return nil, context.Canceled
+		}
+	})}
+	wire := newGatewayWire(req)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, nil)
+	client.AddSendingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+			res, err := next(ctx, method, req)
+			if method == "initialize" {
+				// Force the SDK's detached cancellation notification to enter
+				// Notify before Connect closes the failed session.
+				select {
+				case <-cancelStarted:
+				case <-release:
+				}
+			}
+			return res, err
+		}
+	})
+	transport := &mcpsdk.StreamableClientTransport{
+		Endpoint: req.Endpoint,
+		HTTPClient: &http.Client{Transport: gatewayRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var msg struct{ Method string }
+			if err := json.Unmarshal(body, &msg); err != nil {
+				return nil, err
+			}
+			if msg.Method == "notifications/cancelled" {
+				close(cancelStarted)
+			}
+			return wire.RoundTrip(r)
+		})},
+		MaxRetries: -1, DisableStandaloneSSE: true,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	finished := make(chan struct{})
+	var connectErr error
+	go func() {
+		defer close(finished)
+		_, connectErr = client.Connect(ctx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		close(release)
+		<-finished
+	})
+	select {
+	case <-initializeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("initialize did not reach the transport")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("failed-handshake cleanup waited for a detached cancellation notification")
+	}
+	if !errors.Is(connectErr, context.Canceled) {
+		t.Fatalf("Connect error = %v, want cancellation", connectErr)
+	}
+	if cancellationSent.Load() {
+		t.Fatal("sent a cancellation notification for initialize")
+	}
+}
+
 func TestSendGatewayCallLargeResultIsCompleted(t *testing.T) {
 	f := newGatewayFixture(t)
 	f.g.PadResults("github", maxObservedReplyBytes+1)

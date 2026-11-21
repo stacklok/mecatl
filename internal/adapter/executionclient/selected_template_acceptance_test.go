@@ -27,7 +27,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/executionenv"
-	"github.com/stacklok/mecatl/internal/executionexecutor"
 )
 
 // Keep admission and reference mutations real; control only readiness and lost
@@ -67,7 +66,9 @@ func (b *selectedTemplateBackend) EnsurePendingOwnedRevision(
 	if err != nil {
 		return allocation, err
 	}
-	patch := []byte(`{"status":{"pod":{"name":"executor"},"pvc":{"name":"retained-workspace","uid":"retained-uid"},"conditions":[{"type":"Ready","status":"True"}]}}`)
+	patch := []byte(`{"status":{` + fakeExecutorStatus +
+		`,"pvc":{"name":"retained-workspace","uid":"retained-uid"}` +
+		`,"conditions":[{"type":"Ready","status":"True"}]}}`)
 	if _, err := b.dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Patch(ctx, allocation.Environment.ID, types.MergePatchType, patch, metav1.PatchOptions{}, "status"); err != nil {
 		return executioncontroller.Allocation{}, err
 	}
@@ -176,12 +177,6 @@ func TestSelectedTemplateListThenDeprecationRejectsAtAllocationSeam(t *testing.T
 	}
 }
 
-type selectedTemplateExecutor struct{ *executionexecutor.Executor }
-
-func (e selectedTemplateExecutor) Execute(ctx context.Context, _ string, q executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
-	return e.Executor.Execute(ctx, q)
-}
-
 func TestSelectedTemplateAmbiguousPublicationRetainsReferenceAndRecovers(t *testing.T) {
 	for _, shared := range []bool{true, false} {
 		for _, failure := range []string{"session_published", "commit_pending", "commit_published"} {
@@ -192,12 +187,12 @@ func TestSelectedTemplateAmbiguousPublicationRetainsReferenceAndRecovers(t *test
 				if err := os.WriteFile(filepath.Join(workspace, "sentinel"), []byte("retained workspace\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				executor, err := executionexecutor.New(workspace, executionexecutor.Limits{})
-				if err != nil {
-					t.Fatal(err)
+				executor := osfsExecutorTransport(t, workspace)
+				backend := &selectedTemplateBackend{
+					Store:         executioncontroller.NewStore(dyn, "ns", profiles, executor),
+					dyn:           dyn,
+					publishCommit: failure == "commit_published",
 				}
-				defer executor.Close()
-				backend := &selectedTemplateBackend{Store: executioncontroller.NewStore(dyn, "ns", profiles, selectedTemplateExecutor{executor}), dyn: dyn, publishCommit: failure == "commit_published"}
 				backend.admission.Store(backend.Store)
 				backend.loseCommit.Store(failure != "session_published")
 				fixture := startFixture(t, backend, nil)

@@ -27,8 +27,8 @@ const (
 //dtogen:validate validateLocal
 type InputItem struct {
 	// UserInputID optionally references a whole submission by its required positive
-	// ordinal. The enclosing EffectiveInput supplies run scope, and its history
-	// envelope supplies history scope; conversion restores both. Inline must be nil.
+	// ordinal. The enclosing EffectiveInput supplies run scope, and its root history
+	// envelope supplies Session scope; conversion restores both. Inline must be nil.
 	// Validate checks positivity/exclusivity, not earlier same-run membership.
 	UserInputID *uint64 `cbor:"u,omitempty" view:"manual"`
 	// Inline optionally retains attributed content, including an empty contribution.
@@ -111,15 +111,15 @@ func (v AttributedInput) validateLocal() error {
 //dtogen:validate validateLocal
 //dtogen:include
 type EffectiveInput struct {
-	// RunID is the required one-based owning run ordinal within the enclosing
-	// history. Conversion restores history scope from the envelope. Validate checks
-	// positivity only; the aggregate checks active-run admission and references.
+	// RunID is the required one-based Session-relative owning run ordinal.
+	// Conversion restores Session scope from the root history envelope. Validate
+	// checks positivity only; the aggregate checks active-run admission and references.
 	RunID uint64 `cbor:"r" view:"manual"`
 	// Inputs preserves contribution order, boundaries and duplicates. Nil and empty
 	// are equivalent valid empty increments, not clearing or replacement operations.
 	// Codec traversal validates children; the aggregate checks that user references
 	// name earlier submissions (including earlier same-batch facts) in the same
-	// active run and history.
+	// active run and Session.
 	Inputs []InputItem `cbor:"i" view:"manual"`
 }
 

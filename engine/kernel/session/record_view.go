@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // RecordView is an immutable accepted or proposed fact, not acceptance proof.
@@ -13,7 +13,7 @@ import (
 // Zero has no kind; all typed accesses
 // return false. Wrong-kind access is distinct from a valid zero-field Created DTO.
 type RecordView struct {
-	scope  historyid.HistoryID
+	scope  sessionid.SessionID
 	record *materializedRecord
 }
 
@@ -57,7 +57,7 @@ func (v RecordView) Commit() (CommitMetadata, bool) {
 }
 
 // MutableClone returns a deeply detached mutable copy of the record DTO, retaining
-// its timestamp but not enclosing history scope or accepted commit metadata.
+// its timestamp but not enclosing Session scope or accepted commit metadata.
 // A zero view returns a zero DTO. Mutating the result cannot change accepted
 // backing or other clones.
 func (v RecordView) MutableClone() format.Record {

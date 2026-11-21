@@ -212,7 +212,7 @@ func TestIdentityBrokerWithRemoteExecutionKeepsTheRemoteShell(t *testing.T) {
 	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), remotePermissionRunner{memfs.NewCommandRunner(), "/workspace"})
 	var captured port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req })}, mockllm.TextTurn("done"))
-	built, err := buildIsolated(t, t.Context(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Shell: "", IdentityBroker: true, NoSoul: true, SchedulerEnabled: false})
+	built, err := buildIsolated(t, t.Context(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Shell: "", IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t), NoSoul: true, SchedulerEnabled: false})
 	if err != nil {
 		t.Fatalf("Build with remote execution and an empty shell: %v", err)
 	}

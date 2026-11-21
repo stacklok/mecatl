@@ -58,7 +58,7 @@ For the **`v1-` execution-template contract**, preserve these runtime requiremen
 
 | Requirement | Downstream image contract |
 | --- | --- |
-| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider API version is `execution-grpc/1`; the private executor stdin/stdout JSON protocol has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
+| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider API version is `execution-grpc/1`; the provider calls the executor's private gRPC server, which has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
 | Identity | The Pod runs as UID **65532**, GID **65532**, with filesystem group **65532**. Added programs must be executable by that identity without privilege escalation or Linux capabilities. |
 | Startup | The provider overrides the image entrypoint and runs `/mecatl-executor serve` as the container's main process, listening on TCP port 7443. Kubernetes restarts the container in the same Pod if the server exits. Keep `/bin/sh`; foreground commands use it. |
 | Writable paths | `/workspace` is the retained workspace PVC; `/tmp` is a size-bounded ephemeral `emptyDir`. The image root filesystem is read-only. Put caches and generated files on those writable mounts, and install utilities into the image at build time. Image contents under the mount points are hidden by the mounts. |
@@ -653,7 +653,7 @@ uninstall preserve committed workspace data. Retirement requires no live
 references and a terminal executor, and retains the PVC until an explicit
 storage-deletion operation succeeds.
 
-A missing executor or lost terminal receipt moves the environment to
+A missing executor moves the environment to
 `FenceUnknown` and requires external operator fencing. The built-in recovery RPC
 accepts only a still-observable Pod in `Succeeded` or `Failed` phase with every
 container terminated and the exact PVC still present. If that proof is missing,

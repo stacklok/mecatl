@@ -8,9 +8,9 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func assertReconstructed(t *testing.T, snapshot session.Snapshot, id session.ModelRequestID, want Request) {
@@ -34,7 +34,7 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 	for _, position := range []string{"genesis", "beginning", "middle"} {
 		t.Run(position, func(t *testing.T) {
 			f := newConstructionFixture(t)
-			scope := f.run.HistoryID()
+			scope := f.run.SessionID()
 			requireConstruction(t, f.b.ReplaceRootInstructions(scope, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("original root")}}))
 			requireConstruction(t, f.b.ReplaceUserInstructions(scope, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("original prefix")}}))
 			requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "original input")}}))
@@ -103,7 +103,7 @@ func TestReconstructOriginalPrefixAndRun(t *testing.T) {
 
 func TestResumeUserInstructionsSelectiveRefresh(t *testing.T) {
 	f := newConstructionFixture(t)
-	scope := f.run.HistoryID()
+	scope := f.run.SessionID()
 	root := session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root contract")}}
 	project := session.InstructionBlock{
 		Key: "workspace/root-guidance", Parts: append(textParts("retained project guidance"), session.ContentPart{Media: &session.Media{
@@ -193,7 +193,7 @@ func TestReconstructSameCommitOutcomeAndPrivateReplay(t *testing.T) {
 	f.submit()
 	requireConstruction(t, f.b.AddModelResponse(firstID, session.ModelResponse{Terminal: session.ResponseTerminalNormal, Private: &session.OpaqueProviderData{Producer: "producer", Format: "format", Version: 1, Data: []byte{0xff, 0, 7}}}))
 	// Private matching uses the first request's binding, not this new one.
-	requireConstruction(t, f.b.ReplaceModelBinding(f.run.HistoryID(), session.ModelBinding{Route: "next", API: "next API", Model: "next model"}))
+	requireConstruction(t, f.b.ReplaceModelBinding(f.run.SessionID(), session.ModelBinding{Route: "next", API: "next API", Model: "next model"}))
 	parameters := format.ParametersV1{PrivateReplay: []format.PrivateReplaySelector{{SourceAPI: "api", SourceModel: "model", Producer: "producer", Format: "format", Version: 1}}}
 	capture = f.view()
 	built, err := Construct(capture, parameters, testLimits())
@@ -204,7 +204,7 @@ func TestReconstructSameCommitOutcomeAndPrivateReplay(t *testing.T) {
 	if built.Request().Conversation().Len() != 1 {
 		t.Fatal("selected private-only assistant message was lost")
 	}
-	loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+	loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 	requireConstruction(t, err)
 	assertReconstructed(t, loaded.Snapshot(), id, built.Request())
 }
@@ -256,7 +256,7 @@ func TestReconstructRejectsRetainedRecipe(t *testing.T) {
 			id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: recipe})
 			requireConstruction(t, err)
 			f.submit()
-			loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+			loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 			requireConstruction(t, err)
 			for _, snapshot := range []session.Snapshot{f.s.Snapshot(), loaded.Snapshot()} {
 				assertReconstructionFailure(t, snapshot, id, testLimits(), tc.want)
@@ -281,7 +281,7 @@ func TestReconstructIdentityAndLimits(t *testing.T) {
 	missing, err := session.NewModelRequestID(f.run, 999)
 	requireConstruction(t, err)
 	assertReconstructionFailure(t, f.s.Snapshot(), missing, testLimits(), session.ErrIdentity)
-	foreignHistory, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreignHistory, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	requireConstruction(t, err)
 	foreignRun, err := session.NewRunID(foreignHistory, 1)
 	requireConstruction(t, err)
@@ -307,12 +307,12 @@ func TestReconstructIdentityAndLimits(t *testing.T) {
 func TestReconstructCIDIgnoresHistoryRouteAndIrrelevantSelectors(t *testing.T) {
 	var requests []Request
 	var recipes []session.ConstructionRecipe
-	for i, textID := range []string{"HST1111111111111111111111", "HST2222222222222222222222"} {
+	for i, textID := range []string{"SES1111111111111111111111", "SES2222222222222222222222"} {
 		f := newConstructionFixture(t)
 		if i != 0 {
 			// Independent accepted history, not a relabeled Source or request DTO.
 			requireConstruction(t, f.b.Discard())
-			scope, err := historyid.ParseHistoryID(textID)
+			scope, err := sessionid.ParseSessionID(textID)
 			requireConstruction(t, err)
 			f.s, err = session.New(f.h, scope, testConfigFor(f.policy))
 			requireConstruction(t, err)
@@ -334,7 +334,7 @@ func TestReconstructCIDIgnoresHistoryRouteAndIrrelevantSelectors(t *testing.T) {
 		id, err := f.b.AddModelRequest(f.run, capture, session.ModelRequest{Recipe: recipe})
 		requireConstruction(t, err)
 		f.submit()
-		loaded, err := session.Load(t.Context(), f.h, f.run.HistoryID(), testConfigFor(f.policy))
+		loaded, err := session.Load(t.Context(), f.h, f.run.SessionID(), testConfigFor(f.policy))
 		requireConstruction(t, err)
 		got, err := Reconstruct(loaded.Snapshot(), id, testLimits())
 		requireConstruction(t, err)

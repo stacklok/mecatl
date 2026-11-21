@@ -69,24 +69,21 @@ before reviewing:
 
 1. **`CLAUDE.md` and parent CLAUDE.md files** — project rules,
    stated architectural decisions, naming conventions.
-2. **`docs/design/`, `docs/architecture/`, `docs/principles*.md`**
-   — explicit architectural commitments. Violations of stated
-   principles are findings; violations of unstated personal
+2. **`docs/architecture/` and `docs/READING.md`** — explicit
+   architectural commitments and their rationale. Violations of
+   stated principles are findings; violations of unstated personal
    preferences are not.
-3. **`docs/adr/`** — Architectural Decision Records. ADRs lock
-   in past decisions and their reasons; a change that contradicts
-   an ADR needs explicit acknowledgement.
-4. **`CONTEXT.md`, `CONTEXT-MAP.md`, `UBIQUITOUS_LANGUAGE.md`** —
+3. **`CONTEXT.md`, `CONTEXT-MAP.md`, `UBIQUITOUS_LANGUAGE.md`** —
    the project's domain dictionary. Names in the diff should
    match the dictionary; names that don't are either missing
    concepts or mis-named concepts.
-5. **`.claude/rules/*.md`** — house style for layering, modules,
+4. **`.claude/rules/*.md`** — house style for layering, modules,
    testing.
-6. **The module structure** — `internal/`, `pkg/`, `src/`,
+5. **The module structure** — `internal/`, `pkg/`, `src/`,
    `lib/`, `app/`, `apps/`, `services/`. Get a mental map of
    where things live before evaluating where a new thing should
    live.
-7. **Existing tests** — they reveal the seams the team already
+6. **Existing tests** — they reveal the seams the team already
    committed to. A function with no test seam usually wants one.
 
 If the diff explicitly references an ADR or a principle, re-read
@@ -366,9 +363,8 @@ Or "the new module compiles without importing the old one."
   differently.
 - **"This should be configurable"** when there's no second
   caller asking for the variation.
-- **the downstream consumer / project-specific architecture concerns** when a
-  project-specific architect agent exists (e.g.
-  `frontdoor-architect`, `go-architect`) — defer to that
+- **Project-specific architecture concerns** when a
+  project-specific architect agent exists — defer to that
   agent's surface and only weigh in on the cross-cutting
   language-agnostic axis.
 - **Anything tooling enforces** (lint rules, type checker,
@@ -393,17 +389,10 @@ decisions — not individual findings.
 
 ## When to defer
 
-- **Project-specific architects** (e.g. `frontdoor-architect`,
-  `ui-architect`, `openai-responses-translator-expert`,
-  `protobuf-grpc-architect`, `vercel-ai-sdk-architect`) — they
-  carry domain-specific invariants and ADR knowledge this
-  generalist agent doesn't. Defer the domain-loaded surface to
+- **Project-specific architect agents**, when the project has
+  them — they carry domain-specific invariants this generalist
+  agent doesn't. Defer the domain-loaded surface to
   them; weigh in on the cross-cutting axis only.
-- **`go-architect`** — for Go-specific idiom (accept interfaces /
-  return structs, embedding vs composition, zero-value design,
-  package layout conventions). Compose: software-architect for
-  the cross-language design, go-architect for the Go-specific
-  layer.
 - **`code-duplication-reviewer`** — for the specific question
   "should this be extracted?" and the mechanics of extraction.
   Software-architect frames duplication as a missing concept;

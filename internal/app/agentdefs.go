@@ -823,10 +823,12 @@ func preloadedSkillBodies(def agents.AgentDef, idx skillIndex) (bodies []string,
 }
 
 // defMCPTools resolves a def's mcpServers into the tools to add to its engine's
-// catalog, the tool NAMES (so the read-only backstop can exempt them), and a Close
+// catalog, minus each tool its disallowedTools names, with their NAMES, and a Close
 // that tears down any INLINE managers this def connected (nil when the def opened no
 // inline server). It is the SINGLE place both call sites (Subagent path and team-member
-// path) resolve per-agent MCP, so reference/inline semantics cannot drift.
+// path) resolve per-agent MCP, so reference/inline semantics and exclusions cannot
+// drift: a team member's authority is its parent's, so for a member this filter is
+// the only place the definition's exclusions apply.
 //
 //   - REFERENCE entries (URL empty) take the named server's tools out of mainMgr —
 //     NO new connection, so they contribute nothing to Close. An unknown reference is
@@ -896,10 +898,15 @@ func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, m
 		}
 	}
 
+	var kept []tool.Tool
 	for _, t := range mcpTools {
+		if defDisallowsTool(def, t.Spec().Name) {
+			continue // explicit exclusion, silently honoured like core tools.
+		}
+		kept = append(kept, t)
 		names = append(names, t.Spec().Name)
 	}
-	return mcpTools, names, resourceCapabilities, closeFn
+	return kept, names, resourceCapabilities, closeFn
 }
 
 // mainServerTools returns the named main server's tools and true on a hit, or nil,
@@ -1203,9 +1210,6 @@ func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDe
 	mcpEntry := classification(server.KindDerived,
 		"agent-definition MCP tools are scoped to this already authorized specialist child")
 	for _, mt := range mcpTools {
-		if defDisallowsTool(def, mt.Spec().Name) {
-			continue // explicit exclusion, silently honoured like core tools.
-		}
 		if err := classified.register(mt, mcpEntry); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def MCP tool registration failed; skipped",
 				"agent", def.Name, "tool", mt.Spec().Name, "err", err)

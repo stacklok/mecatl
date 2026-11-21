@@ -1,18 +1,21 @@
 # mecatl model router config format
 
-The operator-tier `~/.config/mecatl/settings.yaml` `models:` subtree. Operator-tier
-ONLY — a project-tier `models:` block is ignored with a WARN unless an operator
-allowlist exists (Phase 4).
+The operator-tier `~/.config/mecatl/settings.yaml` `models:` subtree. Project-tier
+`models:` blocks are always ignored.
 
 ## Complete schema
 
 ```yaml
 # ~/.config/mecatl/settings.yaml
 models:
+  default_provider: <provider>   # provider for scalar aliases, slots, and routes
+
   aliases:                 # short names → concrete ids (the spine everything else references)
-    <alias>: <provider/model-id>
+    <alias>: <model-id>                                # scalar: uses default_provider
+    <alias>: {provider: <provider>, model: <model-id>} # provider-aware alias
 
   default: <provider/model-id>    # the session model
+  subagent: <selector>            # default for unpinned delegated work; --subagent-model wins
 
   slots:                   # route housekeeping + plan-mode to a cheaper/stronger model
     compaction: <selector>        # the compaction tier-4 summary call
@@ -20,6 +23,7 @@ models:
     guardrail: <selector>         # the LLM content checker
     plan: <selector>              # plan-mode turns swap to this model (opusplan pattern)
     router: <selector>            # the semantic subagent model-router classifier
+    title: <selector>             # session title generation; unset/unresolvable disables it
 
   router:                  # pick a subagent's model per task (the taxonomy enables it)
     # disabled: true             # optional kill-switch: keep the taxonomy but turn routing off
@@ -30,15 +34,14 @@ models:
         description: <one-line summary the classifier reads>
         model: <selector>         # alias / slot / concrete id
 
-  allowlist:               # optional: operator cap for project-tier overrides (Phase 4)
-    - <alias or concrete id>
 ```
 
 ## Key rules
 
-- **Provider is FIXED per session.** All aliases/slots/categories pick a MODEL
-  within the session's provider — never switch providers. Point every alias at a
-  model id on the SAME provider (e.g., all OpenRouter ids, or all Anthropic ids).
+- **Providers.** Scalar aliases use `models.default_provider` (or the session's
+  provider). An object alias `{provider, model}` pins its own provider and can
+  serve a new session's default or a routed delegation. Plan mode stays on the
+  session's persisted provider.
 - **`<selector>`** everywhere is an alias name OR a concrete id, resolved through
   the alias map (`lookupModelAlias`). Using aliases (not raw ids) in categories is
   the idiomatic pattern.
@@ -62,6 +65,8 @@ models:
   upper bound.
 
 ## Worked example (OpenRouter, cost-tiered)
+
+Model ids are illustrative; verify current ids in Step 2.
 
 ```yaml
 models:

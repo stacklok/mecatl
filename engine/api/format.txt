@@ -10,5 +10,5 @@
     method func (Record).Clone() Record
     method func (Record).Equal(other Record) bool
     method func (Record).Validate() error
-type Commit struct{FormatVersion int64 "cbor:\"v\""; Timestamp int64 "cbor:\"t\""; InstanceID uint64 "cbor:\"i\""; HistoryID *id.HistoryID "cbor:\"h,omitempty\""; Parent *contentid.CID "cbor:\"p,omitempty\""; Sequence int64 "cbor:\"s\""; Records []Record "cbor:\"r\""}
+type Commit struct{FormatVersion int64 "cbor:\"v\""; Timestamp int64 "cbor:\"t\""; InstanceID uint64 "cbor:\"i\""; HistoryID *id.ID "cbor:\"h,omitempty\""; Parent *contentid.CID "cbor:\"p,omitempty\""; Sequence int64 "cbor:\"s\""; Records []Record "cbor:\"r\""}
 type Record struct{Timestamp int64 "cbor:\"t\""; Kind string "cbor:\"k\""; KindVersion int64 "cbor:\"v\""; Payload []byte "cbor:\"p\""}

@@ -2,14 +2,20 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 )
@@ -142,5 +148,59 @@ func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 				t.Errorf("%s lacks gateway tool %s, which the built-in ceiling allows", name, tn)
 			}
 		}
+	}
+}
+
+// countingGatewayTool is a fakeGatewayTool that counts its executions.
+type countingGatewayTool struct {
+	fakeGatewayTool
+	calls *atomic.Int32
+}
+
+func (c countingGatewayTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	c.calls.Add(1)
+	return session.ToolResult{CallID: call.ID, Content: "ok"}, nil
+}
+
+// TestNamedMemberGetsItsDefinitionsGatewayTools drives a real team member
+// running a named definition through the member factory with the session's
+// gateway tools (#2842): it gets the tools of the server its definition
+// references, minus the one it excludes, and the excluded tool never runs.
+// The broker's own end-to-end tests cannot start a team member running a
+// named definition: that needs a workspace, which the broker allows only
+// with Kubernetes execution.
+func TestNamedMemberGetsItsDefinitionsGatewayTools(t *testing.T) {
+	var lookups, echoes atomic.Int32
+	cfg := Config{Workspace: t.TempDir(), Model: "m"}
+	cfg.helperTools = []tool.Tool{
+		countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &lookups},
+		countingGatewayTool{fakeGatewayTool{"calendar", "echo"}, &echoes},
+	}
+	def := agents.AgentDef{
+		Name:            "no-echo",
+		Description:     "member whose definition excludes the gateway's echo tool",
+		Tools:           []string{"Read"},
+		DisallowedTools: []string{"mcp__calendar__echo"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "calendar"}},
+	}
+	tm := team.New("t")
+	lookupCall := session.ToolCall{ID: "c0", Name: "mcp__calendar__lookup", Args: json.RawMessage(`{}`)}
+	echoCall := session.ToolCall{ID: "c1", Name: "mcp__calendar__echo", Args: json.RawMessage(`{}`)}
+	prov := mockllm.New(mockllm.ToolCallTurn(lookupCall), mockllm.ToolCallTurn(echoCall), mockllm.TextTurn("done"))
+	factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), regOf(def), nil, nil, false, nil)
+	sup := newTestSupervisor(tm, memEnvironment("/ws"),
+		func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+			return factory(tm, spec, routedModel)
+		})
+	if err := sup.AddMember(context.Background(), agent.MemberSpec{Name: "no-echo", AgentType: "no-echo", InitialPrompt: "go"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	var events []agent.TeamEvent
+	sup.Run(context.Background(), func(ev agent.TeamEvent) { events = append(events, ev) })
+	if !sawToolDispatched(events, "no-echo", "mcp__calendar__lookup") || lookups.Load() != 1 {
+		t.Fatalf("the member's gateway tool ran %d times, want once", lookups.Load())
+	}
+	if sawToolDispatched(events, "no-echo", "mcp__calendar__echo") || echoes.Load() != 0 {
+		t.Fatalf("the member ran a gateway tool its definition excludes %d times", echoes.Load())
 	}
 }

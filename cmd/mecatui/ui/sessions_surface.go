@@ -966,12 +966,7 @@ func (s *sessionsState) selectSessionID(id string) {
 	if s.list == nil || id == "" {
 		return
 	}
-	for i := range s.filtered {
-		if s.filtered[i].ID == id {
-			s.list.SetCursor(i)
-			return
-		}
-	}
+	s.list.SelectID(id)
 }
 
 func (s *sessionsState) beginPage(cursor string) tea.Cmd {

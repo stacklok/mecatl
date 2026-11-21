@@ -49,7 +49,7 @@ func TestCommitDecodeMalformed(t *testing.T) {
 		"null history":                  replaceWire(t, root, history, "\xf6"),
 		"empty history":                 replaceWire(t, root, history, "\x60"),
 		"invalid history":               replaceWire(t, root, "HST1111111111111111111111", "HST0000000000000000000000"),
-		"nonhistory ID":                 replaceWire(t, root, "HST1111111111111111111111", "SES1111111111111111111111"),
+		"invalid resource prefix":       replaceWire(t, root, "HST1111111111111111111111", "Ses1111111111111111111111"),
 		"invalid history UTF8":          replaceWire(t, root, "HST1111111111111111111111", "\xffST1111111111111111111111"),
 		"bytes history":                 replaceWire(t, root, "\x78\x19HST", "\x58\x19HST"),
 		"nonminimal history length":     replaceWire(t, root, "\x78\x19HST", "\x79\x00\x19HST"),

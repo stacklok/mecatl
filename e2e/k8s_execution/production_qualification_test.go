@@ -19,8 +19,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
@@ -1006,7 +1004,7 @@ type executionStatus struct {
 	SpecSchema, StatusSchema           int
 	Epoch                              uint64
 	PodUID, PVCUID                     string
-	ActiveOperationID, FenceState      string
+	FenceState                         string
 	ActiveGrantGeneration              uint64
 	Ready, Retired, ExecutorTerminated bool
 	ReadyReason                        string
@@ -1066,7 +1064,19 @@ func readExecutionStatus(t *testing.T, ctx context.Context, kubeconfig, name str
 		}
 		return ""
 	}
-	return executionStatus{SpecSchema: int(number("spec", "schemaVersion")), StatusSchema: int(number("status", "schemaVersion")), Epoch: number("status", "epoch"), PodUID: text("status", "pod", "uid"), PVCUID: text("status", "pvc", "uid"), ActiveOperationID: text("status", "activeOperation", "id"), FenceState: text("status", "fenceState"), ActiveGrantGeneration: number("status", "activeRun", "grantGeneration"), Ready: condition("Ready"), Retired: condition("Retired"), ExecutorTerminated: condition("ExecutorTerminated"), ReadyReason: conditionReason("Ready")}
+	return executionStatus{
+		SpecSchema:            int(number("spec", "schemaVersion")),
+		StatusSchema:          int(number("status", "schemaVersion")),
+		Epoch:                 number("status", "epoch"),
+		PodUID:                text("status", "pod", "uid"),
+		PVCUID:                text("status", "pvc", "uid"),
+		FenceState:            text("status", "fenceState"),
+		ActiveGrantGeneration: number("status", "activeRun", "grantGeneration"),
+		Ready:                 condition("Ready"),
+		Retired:               condition("Retired"),
+		ExecutorTerminated:    condition("ExecutorTerminated"),
+		ReadyReason:           conditionReason("Ready"),
+	}
 }
 
 func waitExecutionStatus(t *testing.T, ctx context.Context, kubeconfig, name string, accept func(executionStatus) bool) executionStatus {
@@ -1080,28 +1090,43 @@ func waitExecutionStatus(t *testing.T, ctx context.Context, kubeconfig, name str
 		}
 		time.Sleep(time.Second)
 	}
-	t.Fatalf("execution status did not reach required lifecycle state: environment=%q ready=%t ready_reason=%q fence_state=%q active_operation=%t", name, last.Ready, last.ReadyReason, last.FenceState, last.ActiveOperationID != "")
+	t.Fatalf("execution status did not reach required lifecycle state: "+
+		"environment=%q ready=%t ready_reason=%q fence_state=%q",
+		name, last.Ready, last.ReadyReason, last.FenceState)
 	return executionStatus{}
 }
 
-func waitActiveOperationOrCommandError(t *testing.T, ctx context.Context, kubeconfig, name string, commandDone <-chan error) {
+// waitWorkspaceFileOrCommandError waits until a running command has created path.
+func waitWorkspaceFileOrCommandError(
+	t *testing.T,
+	ctx context.Context,
+	kubeconfig string,
+	environmentID string,
+	path string,
+	commandDone <-chan error,
+) {
 	t.Helper()
 	deadline := time.NewTimer(4 * time.Minute)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	selector := "execution.mecatl.dev/environment=" + environmentID
 	for {
 		select {
 		case err := <-commandDone:
-			t.Fatalf("command ended before active-operation publication: code=%s", remoteErrorCode(err))
+			t.Fatalf("command ended before it was observed running: code=%s", remoteErrorCode(err))
 		case <-ticker.C:
-			if readExecutionStatus(t, ctx, kubeconfig, name).ActiveOperationID != "" {
+			pod := kubeValue(t, ctx, kubeconfig, "get", "pod", "-n", namespace, "-l", selector,
+				"-o", "jsonpath={.items[0].metadata.name}")
+			check := command(ctx, kubeconfig, "exec", "-n", namespace, pod, "--",
+				"cat", "/workspace/"+path)
+			if pod != "" && check.Run() == nil {
 				return
 			}
 		case <-deadline.C:
-			t.Fatal("active-operation publication timed out while command remained in flight")
+			t.Fatal("command was not observed running before the deadline")
 		case <-ctx.Done():
-			t.Fatal("active-operation publication context ended")
+			t.Fatal("command observation context ended")
 		}
 	}
 }
@@ -1122,100 +1147,6 @@ func waitResourceAbsent(t *testing.T, ctx context.Context, kubeconfig, resource,
 func kubeValue(t *testing.T, ctx context.Context, kubeconfig string, args ...string) string {
 	t.Helper()
 	return strings.TrimSpace(string(runKubectl(t, ctx, kubeconfig, args...)))
-}
-
-func TestKindExecutionProductionHolderLossFencesActiveOperation(t *testing.T) {
-	state, kubeconfig, ctx, cancel := requireProduction(t)
-	defer cancel()
-	replicas, replicaUIDs := productionReplicaClients(t, ctx, state, kubeconfig)
-	holderClient, survivingClient := replicas[0], replicas[1]
-	owner, binding, attached := createProductionEnvironment(t, ctx, holderClient, "holder-loss")
-	rc, _ := acquireRun(t, ctx, holderClient, owner, binding, attached, "holder-loss-run")
-	initial := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-
-	var providers corev1.PodList
-	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "app.kubernetes.io/name=mecatl-execution", "-o", "json"), &providers); err != nil || len(providers.Items) != 2 {
-		t.Fatal("holder-loss proof requires two provider replicas")
-	}
-	holderPod := ""
-	for i := range providers.Items {
-		if string(providers.Items[i].UID) == replicaUIDs[0] {
-			holderPod = providers.Items[i].Name
-		}
-	}
-	if holderPod == "" {
-		t.Fatalf("holder replica UID %s no longer identifies a provider Pod", replicaUIDs[0])
-	}
-
-	commandDone := make(chan error, 1)
-	go func() {
-		_, commandErr := holderClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: `i=0; trap '' HUP TERM; while [ $i -lt 90 ]; do i=$((i+1)); printf '%s\n' "$i" > holder-loss-nonce; sleep 1; done`, TimeoutMillis: 110000})
-		commandDone <- commandErr
-	}()
-	waitActiveOperationOrCommandError(t, ctx, kubeconfig, attached.Environment.ID, commandDone)
-	runKubectl(t, ctx, kubeconfig, "delete", "pod/"+holderPod, "-n", namespace, "--wait=true", "--timeout=90s")
-	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=180s")
-
-	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "second-writer", Data: []byte("must-not-run")}); err == nil {
-		t.Fatal("surviving replica admitted an overlapping writer after holder loss")
-	}
-	if _, err := survivingClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: "overlap-run", OperationID: "overlap-run-acquire", TTL: time.Minute}); err == nil {
-		t.Fatal("surviving replica admitted a new run while old operation ownership was unresolved")
-	}
-	fenced := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool {
-		return s.FenceState == "FenceUnknown" && s.ActiveOperationID != "" && !s.Ready
-	})
-	if fenced.ReadyReason != "FenceUnknown" {
-		t.Fatalf("holder loss reason=%q, want bounded FenceUnknown", fenced.ReadyReason)
-	}
-	select {
-	case <-commandDone:
-	case <-time.After(5 * time.Second):
-		// A disconnected exec stream is permitted to remain locally blocked; the
-		// durable operation identity above, not RPC completion, is the proof.
-	}
-
-	// Exec disconnect cancellation kills the command process group and reaped
-	// descendants, so a child timer cannot reliably terminate PID 1. Only after
-	// proving unresolved ownership above, ask the kubelet to stop this exact Pod.
-	contextName := os.Getenv("MECATL_KUBE_CONTEXT")
-	if contextName == "" {
-		t.Fatal("explicit fixture Kubernetes context required")
-	}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{CurrentContext: contextName}).ClientConfig()
-	if err != nil {
-		t.Fatal("load explicit fixture Kubernetes configuration")
-	}
-	config.Timeout = 15 * time.Second
-	kube, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		t.Fatal("construct fixture Kubernetes client")
-	}
-	envUID := kubeValue(t, ctx, kubeconfig, "get", "executionenvironment", attached.Environment.ID, "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-	if err := terminateOwnedExecutor(ctx, kube, attached.Environment.ID, envUID, initial.PodUID); err != nil {
-		t.Fatal("exact owned executor termination request failed")
-	}
-	waitExecutorTerminal(ctx, t, kubeconfig, attached.Environment.ID, initial.PodUID)
-	recovery := executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: initial.PVCUID, OperationID: "recover-holder-loss"}
-	if err := survivingClient.RecoverEnvironment(ctx, recovery); err != nil {
-		t.Fatalf("recover exact terminal executor: %v", err)
-	}
-	if err := survivingClient.ReplaceExecutor(ctx, executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: initial.PVCUID, OperationID: "replace-holder-loss"}); err != nil {
-		t.Fatalf("replace recovered executor: %v", err)
-	}
-	replaced := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool { return s.Ready && s.PodUID != "" && s.PodUID != initial.PodUID })
-	if replaced.PVCUID != initial.PVCUID {
-		t.Fatal("holder-loss recovery replaced the retained workspace")
-	}
-	reattached := waitReady(t, ctx, survivingClient, owner, binding, attached.Environment)
-	verify, release := acquireRun(t, ctx, survivingClient, owner, binding, reattached, "holder-loss-verify")
-	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "holder-loss-nonce"}); err != nil {
-		t.Fatalf("post-recovery sentinel unavailable: %v", err)
-	}
-	if _, err := survivingClient.File(ctx, executionenv.FileRequest{Context: verify, Operation: executionenv.OpFileRead, Path: "second-writer"}); err == nil {
-		t.Fatal("denied overlapping writer nevertheless reached the executor")
-	}
-	release()
 }
 
 func waitExecutorTerminal(ctx context.Context, t *testing.T, kubeconfig, environmentID, podUID string) {

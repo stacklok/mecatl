@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestModelInteractionValuesCloneAndRelativeReferences(t *testing.T) {
-	run := allocatedRun(t, testHistoryID(t), 1)
+	run := allocatedRun(t, testSessionID(t), 1)
 	request := session.ModelRequest{RunID: 1, ID: 2, Source: &session.SourceHead{Sequence: 1, CID: contentid.Sum([]byte("head"))}, Recipe: session.ConstructionRecipe{Algorithm: "example/v1", Version: 1, Parameters: []byte{}, Check: []byte("check")}}
 	mustBatch(t, request.Validate())
 	requestCopy := request.Clone()
@@ -18,7 +18,7 @@ func TestModelInteractionValuesCloneAndRelativeReferences(t *testing.T) {
 	if requestCopy.Recipe.Check[0] != 'c' {
 		t.Fatal("request clone shares check bytes")
 	}
-	requestCopy.RetryOf = new(allocatedRequest(t, allocatedRun(t, historyid.NewHistoryID(), 2), 1).RunRelative())
+	requestCopy.RetryOf = new(allocatedRequest(t, allocatedRun(t, sessionid.NewSessionID(), 2), 1).RunRelative())
 	mustBatch(t, requestCopy.Validate()) // Numeric references carry no origin proof.
 	if *requestCopy.RetryOf != allocatedRequest(t, run, 1).RunRelative() {
 		t.Fatal("relative reference changed")
@@ -72,10 +72,10 @@ func TestModelRequestCanonicalValueAndOwnership(t *testing.T) {
 }
 
 func TestRunEndedEqualUsesRelativeCaptureRequest(t *testing.T) {
-	run := allocatedRun(t, testHistoryID(t), 1)
+	run := allocatedRun(t, testSessionID(t), 1)
 	ending := session.RunEnded{RunID: 1, Reason: session.RunEndedCaptureFailed, Capture: &session.CaptureFailureEvidence{RequestID: allocatedRequest(t, run, 1).RunRelative()}}
 	other := ending.Clone()
-	other.Capture.RequestID = allocatedRequest(t, allocatedRun(t, historyid.NewHistoryID(), 2), 1).RunRelative()
+	other.Capture.RequestID = allocatedRequest(t, allocatedRun(t, sessionid.NewSessionID(), 2), 1).RunRelative()
 	if !ending.Equal(other) || !other.Equal(ending) {
 		t.Fatal("relative equality depends on discarded origin")
 	}

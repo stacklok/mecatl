@@ -296,7 +296,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_ModelsFitsOfferedGeometry(t *testi
 		s := boundedScenarioModelsState(t, 3)
 		s.filtered[0].DisplayName = strings.Repeat("oversized ", 20)
 		s.catalog.models = s.filtered
-		prefix, suffix := modelsFixedLines(*s, "")
+		prefix, suffix := modelsFixedLines(*s)
 		_, _ = s.Render(24, len(prefix)+len(suffix)+3)
 		s.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 		view := s.list.View()
@@ -586,7 +586,17 @@ func TestMecatuiBoundedScrollCursor_Scenario3_ModelClickSelectsEnterActivates(t 
 	if got := modelsSurface(t, m).list.Cursor(); got != 0 {
 		t.Fatalf("marker-cell click selected %d, want first model", got)
 	}
-	continuation := second[len(second)-1]
+	// A consumed frame cannot serve another row hit until View publishes a new one.
+	_ = m.View()
+	var continuation renderedHitRegion
+	for _, region := range m.hits.frame {
+		if s.hitItems[region.id] == secondIdentity {
+			continuation = region
+		}
+	}
+	if continuation.id == 0 {
+		t.Fatal("new frame lost wrapped model continuation")
+	}
 	beforeClickOffset := s.list.Offset()
 	globalX, globalY = m.metrics.localToGlobal(continuation.rect.x0+1, continuation.rect.y0)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: globalX, Y: globalY})

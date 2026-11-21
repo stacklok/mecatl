@@ -13,11 +13,11 @@
     method func (*SessionCommit).Create() error
     method func (*SessionCommit).Discard() error
     method func (*SessionCommit).EndRun(reason RunEndedReason) error
-    method func (*SessionCommit).ReplaceModelBinding(scope id.HistoryID, v ModelBinding) error
-    method func (*SessionCommit).ReplaceRootInstructions(scope id.HistoryID, v RootInstructions) error
-    method func (*SessionCommit).ReplaceToolCatalog(scope id.HistoryID, v ToolCatalog) error
+    method func (*SessionCommit).ReplaceModelBinding(scope id.SessionID, v ModelBinding) error
+    method func (*SessionCommit).ReplaceRootInstructions(scope id.SessionID, v RootInstructions) error
+    method func (*SessionCommit).ReplaceToolCatalog(scope id.SessionID, v ToolCatalog) error
     method func (*SessionCommit).ReplaceUsage(id UsageID, report UsageReport) error
-    method func (*SessionCommit).ReplaceUserInstructions(scope id.HistoryID, v UserInstructions) error
+    method func (*SessionCommit).ReplaceUserInstructions(scope id.SessionID, v UserInstructions) error
     method func (*SessionCommit).StartRun() (RunID, error)
     method func (*SessionCommit).View() (CommitView, error)
     method func (AttributedInputView).Actor() format.Actor
@@ -32,10 +32,10 @@
     method func (CommitMetadata).Ref() history.CommitRef
     method func (CommitMetadata).Timestamp() time.Time
     method func (CommitView).ActiveRun() RunID
-    method func (CommitView).HistoryID() id.HistoryID
     method func (CommitView).RecordAt(i int) RecordView
     method func (CommitView).RecordCount() int
     method func (CommitView).Records() iter.Seq[RecordView]
+    method func (CommitView).SessionID() id.SessionID
     method func (ConstructionRecipeView).Algorithm() string
     method func (ConstructionRecipeView).Check() views.Bytes
     method func (ConstructionRecipeView).MutableClone() format.ConstructionRecipe
@@ -47,8 +47,8 @@
     method func (ContentSourceView).Description() string
     method func (ContentSourceView).MutableClone() format.ContentSource
     method func (ContentSourceView).WorkspaceFile() (WorkspaceFileSourceView, bool)
-    method func (CreatedView).HistoryID() id.HistoryID
     method func (CreatedView).MutableClone() format.Created
+    method func (CreatedView).SessionID() id.SessionID
     method func (EffectiveInputView).Inputs() views.SliceView[format.InputItem, InputItemView]
     method func (EffectiveInputView).MutableClone() format.EffectiveInput
     method func (EffectiveInputView).RunID() RunID
@@ -77,10 +77,10 @@
     method func (MediaView).Source() format.MediaSourceKind
     method func (MediaView).Title() string
     method func (ModelBindingView).API() string
-    method func (ModelBindingView).HistoryID() id.HistoryID
     method func (ModelBindingView).Model() string
     method func (ModelBindingView).MutableClone() format.ModelBinding
     method func (ModelBindingView).Route() string
+    method func (ModelBindingView).SessionID() id.SessionID
     method func (ModelBindingView).Settings() ModelSettingsView
     method func (ModelRequestID).Equal(other ModelRequestID) bool
     method func (ModelRequestID).RunID() RunID
@@ -153,8 +153,8 @@
     method func (ResponseItemView).Content() (ResponseContentView, bool)
     method func (ResponseItemView).MutableClone() format.ResponseItem
     method func (RootInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
-    method func (RootInstructionsView).HistoryID() id.HistoryID
     method func (RootInstructionsView).MutableClone() format.RootInstructions
+    method func (RootInstructionsView).SessionID() id.SessionID
     method func (RunEndedView).BulkToolCloseout() bool
     method func (RunEndedView).Capture() (CaptureFailureEvidenceView, bool)
     method func (RunEndedView).Explanation() (string, bool)
@@ -162,8 +162,8 @@
     method func (RunEndedView).Reason() format.RunEndedReason
     method func (RunEndedView).RunID() RunID
     method func (RunID).Equal(other RunID) bool
-    method func (RunID).HistoryID() id.HistoryID
-    method func (RunID).HistoryRelative() uint64
+    method func (RunID).SessionID() id.SessionID
+    method func (RunID).SessionRelative() uint64
     method func (RunID).Validate() error
     method func (RunStartedView).ID() RunID
     method func (RunStartedView).MutableClone() format.RunStarted
@@ -175,7 +175,6 @@
     method func (Snapshot).ActiveRun() RunID
     method func (Snapshot).Created() bool
     method func (Snapshot).Head() history.CommitRef
-    method func (Snapshot).HistoryID() id.HistoryID
     method func (Snapshot).ModelBinding() (ModelBindingView, bool)
     method func (Snapshot).RecordAt(i int) RecordView
     method func (Snapshot).RecordCount() int
@@ -185,6 +184,7 @@
     method func (Snapshot).RunAt(i int) RunView
     method func (Snapshot).RunCount() int
     method func (Snapshot).Runs() iter.Seq[RunView]
+    method func (Snapshot).SessionID() id.SessionID
     method func (Snapshot).ToolCatalog() (ToolCatalogView, bool)
     method func (Snapshot).Usages() UsageEntriesView
     method func (Snapshot).UserInputByID(id UserInputID) (UserInputView, bool)
@@ -201,8 +201,8 @@
     method func (ToolCallsView).At(i int) ToolCallView
     method func (ToolCallsView).ByID(id RequestedCallID) (ToolCallView, bool)
     method func (ToolCallsView).Len() int
-    method func (ToolCatalogView).HistoryID() id.HistoryID
     method func (ToolCatalogView).MutableClone() format.ToolCatalog
+    method func (ToolCatalogView).SessionID() id.SessionID
     method func (ToolCatalogView).Tools() views.SliceView[format.ToolDefinition, ToolDefinitionView]
     method func (ToolDefinitionView).ArgumentSchema() views.Bytes
     method func (ToolDefinitionView).Description() string
@@ -269,8 +269,8 @@
     method func (UsageEntryView).ID() UsageID
     method func (UsageEntryView).Report() UsageReportView
     method func (UsageID).Equal(other UsageID) bool
-    method func (UsageID).HistoryID() id.HistoryID
-    method func (UsageID).HistoryRelative() uint64
+    method func (UsageID).SessionID() id.SessionID
+    method func (UsageID).SessionRelative() uint64
     method func (UsageID).Validate() error
     method func (UsageReportView).Buckets() views.SliceView[format.UsageBucket, UsageBucketView]
     method func (UsageReportView).MutableClone() format.UsageReport
@@ -288,8 +288,8 @@
     method func (UserInputView).MutableClone() format.UserInput
     method func (UserInputView).Parts() views.SliceView[format.ContentPart, ContentPartView]
     method func (UserInstructionsView).Blocks() views.SliceView[format.InstructionBlock, InstructionBlockView]
-    method func (UserInstructionsView).HistoryID() id.HistoryID
     method func (UserInstructionsView).MutableClone() format.UserInstructions
+    method func (UserInstructionsView).SessionID() id.SessionID
     method func (WorkspaceFileSourceView).MutableClone() format.WorkspaceFileSource
     method func (WorkspaceFileSourceView).Path() string
 const InvocationFailureLocal InvocationFailureClass = "local"
@@ -341,13 +341,15 @@ const ToolSettlementReturned ToolSettlementCategory = 1
 const UsagePurposeMain untyped string = "main"
 const UsageReportActive format.UsageReportState = "active"
 const UsageReportWithdrawn format.UsageReportState = "withdrawn"
-func Load(ctx context.Context, h *history.History, id id.HistoryID, config Config) (*Session, error)
-func New(h *history.History, id id.HistoryID, config Config) (*Session, error)
+func Load(ctx context.Context, h *history.History, id id.SessionID, config Config) (*Session, error)
+func New(h *history.History, id id.SessionID, config Config) (*Session, error)
 func NewModelRequestID(runID RunID, component uint64) (ModelRequestID, error)
 func NewRequestedCallID(requestID ModelRequestID, component uint64) (RequestedCallID, error)
-func NewRunID(historyID id.HistoryID, component uint64) (RunID, error)
-func NewUsageID(historyID id.HistoryID, component uint64) (UsageID, error)
+func NewRunID(sessionID id.SessionID, component uint64) (RunID, error)
+func NewSessionID() SessionID
+func NewUsageID(sessionID id.SessionID, component uint64) (UsageID, error)
 func NewUserInputID(runID RunID, component uint64) (UserInputID, error)
+func ParseSessionID(s string) (SessionID, error)
 type Actor = format.Actor
 type AttributedInput = format.AttributedInput
 type AttributedInputView struct{}
@@ -414,6 +416,7 @@ type RunStartedView struct{}
 type RunView struct{}
 type Session struct{}
 type SessionCommit struct{}
+type SessionID = id.SessionID
 type Snapshot struct{}
 type SourceHead = format.SourceHead
 type SourceHeadView struct{}

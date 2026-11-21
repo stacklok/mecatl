@@ -85,7 +85,6 @@ func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kin
 
 func lifecycleAdmissionBlocked(o *unstructured.Unstructured, q adminLifecycleRequest, expiredRun bool) bool {
 	return textNested(o.Object, "status", "activeRun", "claimID") != "" && !expiredRun ||
-		textNested(o.Object, "status", "activeOperation", "id") != "" ||
 		textNested(o.Object, "status", "fenceState") != fenceHealthy ||
 		!conditionTrue(o, "Ready") && !exactTerminationProofMatches(o, q)
 }
@@ -140,7 +139,8 @@ func (s *Store) persistObservedTerminalProof(ctx context.Context, q adminLifecyc
 		return nil
 	}
 	expiredRun := expiredLifecycleClaimMatches(o, q, s.now())
-	if textNested(o.Object, "status", "activeRun", "claimID") != "" && !expiredRun || textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+	if textNested(o.Object, "status", "activeRun", "claimID") != "" && !expiredRun ||
+		textNested(o.Object, "status", "fenceState") != fenceHealthy {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}
 	}
 	if exactTerminationProofMatches(o, q) {
@@ -166,7 +166,8 @@ func (s *Store) persistObservedTerminalProof(ctx context.Context, q adminLifecyc
 			return nil
 		}
 		expiredRun := expiredLifecycleClaimMatches(current, q, s.now())
-		if textNested(current.Object, "status", "activeRun", "claimID") != "" && !expiredRun || textNested(current.Object, "status", "activeOperation", "id") != "" || textNested(current.Object, "status", "fenceState") != fenceHealthy {
+		if textNested(current.Object, "status", "activeRun", "claimID") != "" && !expiredRun ||
+			textNested(current.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}
 		}
 		if exactTerminationProofMatches(current, q) {
@@ -255,7 +256,6 @@ func (s *Store) RecoverEnvironment(ctx context.Context, q adminLifecycleRequest)
 		if err := unstructured.SetNestedMap(o.Object, proof, "status", "terminationProof"); err != nil {
 			return err
 		}
-		unstructured.RemoveNestedField(o.Object, "status", "activeOperation")
 		unstructured.RemoveNestedField(o.Object, "status", "activeRun")
 		return unstructured.SetNestedField(o.Object, fenceHealthy, "status", "fenceState")
 	})
@@ -327,7 +327,9 @@ func (s *Store) DeleteRetiredEnvironment(ctx context.Context, q adminLifecycleRe
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "another lifecycle operation is active"}
 		}
 		refs, err := referenceRecords(o)
-		if err != nil || len(refs) != 0 || textNested(o.Object, "status", "activeRun", "claimID") != "" || textNested(o.Object, "status", "activeOperation", "id") != "" || !conditionTrue(o, "Retired") || !conditionTrue(o, "ExecutorTerminated") {
+		if err != nil || len(refs) != 0 ||
+			textNested(o.Object, "status", "activeRun", "claimID") != "" ||
+			!conditionTrue(o, "Retired") || !conditionTrue(o, "ExecutorTerminated") {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not safely retained and unreferenced"}
 		}
 		return unstructured.SetNestedMap(o.Object, map[string]any{"id": q.OperationID, "type": deleteRetiredEnvironment, "phase": "DeletingPVC", "expectedPVCUID": q.ExpectedPVCUID, "createdAt": s.now().Format(time.RFC3339Nano)}, "status", "lifecycleOperation")

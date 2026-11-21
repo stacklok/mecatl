@@ -29,14 +29,26 @@ oidc:
   ownerIdentity: sub_id
 identityBroker:
   enabled: true
+  trustDomain: agents.example.com
+  audience: https://mecatl.example.com/identity-broker
+  keys:
+    agentIssuer:
+      secretName: identity-broker-agent-issuer
+      key: key.pem
+    brokerClient:
+      secretName: identity-broker-client
+      key: key.pem
+      keySet:
+        secretName: identity-broker-client
+        key: jwks.json
+    as1Signing:
+      secretName: as1-signing-key
+      key: signing-key.pem
   # Required with as1.issuer: Entra ID gives each application its own sub.
   subjectClaim: oid
   as1:
     issuer: https://mecatl.example.com/as1
     tuiClientID: mecatui
-    signingKey:
-      secretName: as1-signing-key
-      key: signing-key.pem
     upstream:
       issuer: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0
       clientID: 11111111-1111-1111-1111-111111111111

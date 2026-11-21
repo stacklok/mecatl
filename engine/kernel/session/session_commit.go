@@ -7,7 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ErrBatch identifies an invalid, closed, frozen or already occupied batch slot.
@@ -43,7 +43,7 @@ var ErrAcceptedApply = errors.New("session commit accepted but local application
 // bounded local DTO copy receives persisted identity; caller backing is not mutated.
 // AddUserInput and AddModelRequest instead require the exact active run first,
 // returning ErrTransition on mismatch. Other additions return codec.ErrInvalidData
-// for invalid top-level identities and ErrIdentity for valid foreign histories,
+// for invalid top-level identities and ErrIdentity for valid foreign Session IDs,
 // even when their payload is malformed or oversized.
 // Complete submission checks commit/cumulative limits and closeout room. Zero is unusable.
 type SessionCommit struct { //nolint:revive // Explicit name distinguishes a provisional session batch from history.Commit.
@@ -113,7 +113,7 @@ func (b *SessionCommit) add(r *materializedRecord, err error) error {
 		return codec.ErrLimitExceeded
 	}
 	candidate := b.admission
-	if err := candidate.admit(b.owner.state.view.historyID, r); err != nil {
+	if err := candidate.admit(b.owner.state.view.sessionID, r); err != nil {
 		return err
 	}
 	timestamp, err := b.owner.config.timestamp()
@@ -171,7 +171,7 @@ func (b *SessionCommit) AddEffectiveInput(run RunID, v EffectiveInput) error {
 	if err := run.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if run.historyID != b.owner.state.view.historyID {
+	if run.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 {
@@ -180,70 +180,70 @@ func (b *SessionCommit) AddEffectiveInput(run RunID, v EffectiveInput) error {
 	return b.add(newEffectiveInputRecord(v, run, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceUserInstructions adds a complete history-scoped prepared user-guidance
+// ReplaceUserInstructions adds a complete Session-scoped prepared user-guidance
 // replacement after creation, including while idle. It survives run boundaries
 // independently of RootInstructions; empty Blocks explicitly clear it. Failure
 // changes nothing.
-func (b *SessionCommit) ReplaceUserInstructions(scope historyid.HistoryID, v UserInstructions) error {
+func (b *SessionCommit) ReplaceUserInstructions(scope sessionid.SessionID, v UserInstructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(scope); err != nil {
+	if err := validateSessionID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if scope != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	return b.add(newUserInstructionsRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceRootInstructions adds a complete history-scoped harness root-contract
+// ReplaceRootInstructions adds a complete Session-scoped harness root-contract
 // replacement after creation, including while idle. Applicability survives runs;
 // failure changes nothing.
-func (b *SessionCommit) ReplaceRootInstructions(scope historyid.HistoryID, v RootInstructions) error {
+func (b *SessionCommit) ReplaceRootInstructions(scope sessionid.SessionID, v RootInstructions) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(scope); err != nil {
+	if err := validateSessionID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if scope != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	return b.add(newRootInstructionsRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceToolCatalog adds a complete history-scoped advertised catalog replacement.
+// ReplaceToolCatalog adds a complete Session-scoped advertised catalog replacement.
 // Creation is required, not an active run; failure preserves earlier additions.
-func (b *SessionCommit) ReplaceToolCatalog(scope historyid.HistoryID, v ToolCatalog) error {
+func (b *SessionCommit) ReplaceToolCatalog(scope sessionid.SessionID, v ToolCatalog) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(scope); err != nil {
+	if err := validateSessionID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if scope != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	return b.add(newToolCatalogRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// ReplaceModelBinding adds complete history-scoped preparation choices after
+// ReplaceModelBinding adds complete Session-scoped preparation choices after
 // creation, including while idle. It performs no resolution; failure changes nothing.
-func (b *SessionCommit) ReplaceModelBinding(scope historyid.HistoryID, v ModelBinding) error {
+func (b *SessionCommit) ReplaceModelBinding(scope sessionid.SessionID, v ModelBinding) error {
 	if err := b.check(true); err != nil {
 		return err
 	}
-	if err := validateHistoryID(scope); err != nil {
+	if err := validateSessionID(scope); err != nil {
 		return codec.ErrInvalidData
 	}
-	if scope != b.owner.state.view.historyID {
+	if scope != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	return b.add(newModelBindingRecord(v, b.owner.policy.PayloadLimits))
 }
 
-// StartRun allocates a provisional history-scoped run identity. Input-free runs
+// StartRun allocates a provisional Session-scoped run identity. Input-free runs
 // are legal. Failed additions consume neither IDs nor batch space.
 func (b *SessionCommit) StartRun() (RunID, error) {
 	if err := b.check(true); err != nil {
@@ -254,7 +254,7 @@ func (b *SessionCommit) StartRun() (RunID, error) {
 	if err != nil {
 		return RunID{}, err
 	}
-	id := RunID{historyID: s.state.view.historyID, ordinal: ordinal}
+	id := RunID{sessionID: s.state.view.sessionID, ordinal: ordinal}
 	if err := b.add(newRunStartedRecord(RunStarted{ID: id.ordinal}, s.policy.PayloadLimits)); err != nil {
 		return RunID{}, err
 	}
@@ -273,7 +273,7 @@ func (b *SessionCommit) AddRunEnded(run RunID, v RunEnded) error {
 	if err := run.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if run.historyID != b.owner.state.view.historyID {
+	if run.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 {
@@ -339,7 +339,7 @@ func (b *SessionCommit) AddModelResponse(request ModelRequestID, v ModelResponse
 	if err := request.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if request.runID.historyID != b.owner.state.view.historyID {
+	if request.runID.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 || v.RequestID != 0 {
@@ -357,7 +357,7 @@ func (b *SessionCommit) AddInvocationFailure(request ModelRequestID, v Invocatio
 	if err := request.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if request.runID.historyID != b.owner.state.view.historyID {
+	if request.runID.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 || v.RequestID != 0 {
@@ -377,7 +377,7 @@ func (b *SessionCommit) AddToolInvocation(call RequestedCallID, v ToolInvocation
 	if err := call.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if call.requestID.runID.historyID != b.owner.state.view.historyID {
+	if call.requestID.runID.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 || v.RequestID != 0 || v.CallID != 0 {
@@ -397,7 +397,7 @@ func (b *SessionCommit) AddToolDisposition(call RequestedCallID, v ToolDispositi
 	if err := call.Validate(); err != nil {
 		return codec.ErrInvalidData
 	}
-	if call.requestID.runID.historyID != b.owner.state.view.historyID {
+	if call.requestID.runID.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	if v.RunID != 0 || v.RequestID != 0 || v.CallID != 0 {
@@ -473,7 +473,7 @@ func (s *Session) SubmitCommit(ctx context.Context, b *SessionCommit) (history.C
 		b.proposal = proposal
 	}
 	p := b.proposal
-	result, err := s.history.Append(ctx, s.state.view.historyID, p.commit)
+	result, err := s.history.Append(ctx, s.state.view.sessionID.ResourceID(), p.commit)
 	if err != nil {
 		return history.CommitRef{}, appendError{cause: err}
 	}

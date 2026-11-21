@@ -8,7 +8,7 @@ import (
 	dtogenViews "github.com/stacklok/mecatl/engine/kernel/views"
 )
 
-// Selected view layouts, source policy and documentation fingerprint: c5ddc9f40a4b9a93ba6353a09cda5e53b65934537b4ed80a0ffa98956e67eecb.
+// Selected view layouts, source policy and documentation fingerprint: ba3a2c062204979996a6c46ae97f3013c84ec193230269a7fbb4f112f00603da.
 // Backing contract for AssistantItemView.
 //
 // Source contract (DTO semantics, not a mutable accessor):
@@ -464,7 +464,7 @@ func (v MediaView) ProviderName() string {
 // References grant no access or dereference authority.
 //
 // ProviderScope is the required provider storage namespace, empty otherwise.
-// It is not the session's history or run scope.
+// It is not the Session or run scope.
 func (v MediaView) ProviderScope() string {
 	if v.value == nil {
 		return *new(string)

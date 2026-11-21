@@ -292,12 +292,56 @@ oidc:
 # in the process: add --no-shell to extraArgs, or --shell= with execution.enabled to
 # keep the remote Shell (redis.filesystem.enabled also has no shell). The chart
 # refuses to render without one of these rather than let the pod crash-loop.
+# enabled also refuses a workspace: the broker's key files are in the pod, where
+# sessions' file tools could read them. Use redis.filesystem.enabled or
+# execution.enabled to give sessions files.
 # enabled is the only way to turn the broker on: the chart refuses
 # --enable-identity-broker in extraArgs, which would skip the single replica and
 # Recreate rollout. With enabled, the chart also owns the other identity broker
 # flags and refuses them in extraArgs.
 identityBroker:
   enabled: false
+  # enabled also requires trustDomain, audience, and keys.agentIssuer, and renders
+  # them into the identity broker's configuration file (a ConfigMap, mounted
+  # read-only with --identity-broker-config). The keys stay in existing Secrets the
+  # chart never creates; it projects them read-only. The broker generates none of
+  # its own keys at startup, so they stay the same across a restart and the
+  # access tokens AS-1 issued before it keep verifying until they expire. The MCP
+  # gateway's embedded authorization server generates its signing key at each
+  # start, so the tokens it issued stop verifying. Broker sessions, agent
+  # registrations, and AS-1's refresh tokens are in memory and lost. The
+  # broker reads its keys only at startup: a configuration change rolls the
+  # pod, but after changing a key in a Secret, run
+  # `kubectl rollout restart deployment/<release>-mecak8s`.
+  # The agent trust domain, such as agents.example.com: the act.iss of every
+  # ID-JAG. Do not change it once agents act.
+  trustDomain: ""
+  # The broker audience every agent credential names, such as
+  # https://broker.example.com.
+  audience: ""
+  # One key per role; each is an existing Secret key. Never reuse a key for two
+  # roles: mecak8s refuses to start.
+  keys:
+    # PEM EC P-256 private key that signs agent credentials. Required.
+    agentIssuer:
+      secretName: ""
+      key: ""
+    # PEM EC P-256 private key the broker authenticates with at AS-1 and the
+    # MCP gateway, and keySet, its public JWK Set (RFC 7517), which must hold
+    # this key's public key under its RFC 7638 thumbprint kid. Required with
+    # as1.issuer. The key set may also hold the next key during a rotation.
+    brokerClient:
+      secretName: ""
+      key: ""
+      keySet:
+        secretName: ""
+        key: ""
+    # PEM private key (EC P-256 or RSA) AS-1 signs access tokens with; AS-1
+    # publishes its public key under <issuer>/.well-known/jwks.json. Required
+    # with as1.issuer, and allowed only with it.
+    as1Signing:
+      secretName: ""
+      key: ""
   # Upstream ID-token claim that names the company identity, required with
   # as1.issuer and allowed only with it. It must identify a user the same way in
   # every IdP application the identity broker uses: oid for Microsoft Entra ID,
@@ -318,12 +362,6 @@ identityBroker:
     issuer: ""
     # OAuth client ID of mecatui at AS-1 (a public client).
     tuiClientID: ""
-    # Optional existing Secret key holding AS-1's PEM signing key (EC P-256 or
-    # RSA), mounted read-only. Empty generates a key at startup, so access tokens
-    # stop verifying when the pod restarts.
-    signingKey:
-      secretName: ""
-      key: ""
     # The company identity provider. Register AS-1 there as a web application with
     # the redirect URI <issuer>/oauth/callback.
     upstream:

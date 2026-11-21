@@ -37,9 +37,9 @@ for the perturbing CPU tools only with a hypothesis to confirm.
    `isError` result saying to retry — wait, do not retry-spam.
 4. **Never ingest raw blobs.** `capture_cpu_profile` (with `include_raw_link`) and
    `capture_flight_recorder` return a **user-audience `resource_link`** to a
-   loopback `/debug/...` endpoint. That link now surfaces as a **TYPED BLOCK the
-   model can see** (URI + name + description) rather than a bare URI — but the
-   model still receives only the reduced summary, never the raw blob bytes. A human
+   loopback `/debug/...` endpoint. The link is a typed block (URI, name,
+   description); the model receives only the reduced summary, never the raw
+   blob bytes. A human
    downloads the linked artifact (with `go tool pprof` / `go tool trace`); if the
    link is `https://` the model MAY fetch it via the `FetchMcpResource` tool
    (SSRF-validated through `ValidateMediaURL`). The `perf://` resources on this
@@ -81,7 +81,7 @@ for the perturbing CPU tools only with a hypothesis to confirm.
 - `top_allocations{limit?}` — heap top-N + total_heap_bytes.
 - `list_slow_turns{threshold_ms?, limit?, cursor?, role?}` — cursor-paginated,
   newest first; each turn carries its bounded role family.
-- `capture_flight_recorder{}` — size + one-line summary + user link (needs `--flight-recorder`).
+- `capture_flight_recorder{}` — size + one-line summary + user link (on by default; unavailable with `--flight-recorder=false`).
 
 See [references/output-shapes.md](references/output-shapes.md) for the exact field
 names of every tool's output (FuncStat, AllocStat, SlowTurn, MetricSummaryEntry).

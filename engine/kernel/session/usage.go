@@ -3,13 +3,14 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
-// UsageDefinition is immutable first-record metadata with history-relative
-// correlation components. Assignment shares optional components; Clone detaches
-// them. Zero is invalid. UsageDefinitionView supplies scoped identities.
+// UsageDefinition is immutable first-record metadata with Session-relative run
+// and run-relative request correlation components. Assignment shares optional
+// components; Clone detaches them. Zero is invalid. UsageDefinitionView supplies
+// scoped identities.
 type UsageDefinition = sessionformat.UsageDefinition
 
 const (
@@ -17,9 +18,9 @@ const (
 	UsagePurposeMain = sessionformat.UsagePurposeMain
 )
 
-// AddUsage allocates a provisional history-wide identity with an active report.
+// AddUsage allocates a provisional Session-wide identity with an active report.
 // At most one correlation may be supplied; a request supplies its run.
-// Nil/nil denotes session-level work; non-nil IDs must be valid in this history.
+// Nil/nil denotes Session-level work; non-nil IDs must be valid in this Session.
 // Correlation must precede this addition in
 // accepted history or this batch, but need not be active or have an outcome.
 // Scope is checked before payloads. Failure returns zero and consumes nothing;
@@ -36,7 +37,7 @@ func (b *SessionCommit) AddUsage(run *RunID, request *ModelRequestID, purpose st
 		if request.Validate() != nil {
 			return UsageID{}, codec.ErrInvalidData
 		}
-		if request.runID.historyID != b.owner.state.view.historyID {
+		if request.runID.sessionID != b.owner.state.view.sessionID {
 			return UsageID{}, ErrIdentity
 		}
 		definition.RunID = new(request.runID.ordinal)
@@ -46,7 +47,7 @@ func (b *SessionCommit) AddUsage(run *RunID, request *ModelRequestID, purpose st
 		if run.Validate() != nil {
 			return UsageID{}, codec.ErrInvalidData
 		}
-		if run.historyID != b.owner.state.view.historyID {
+		if run.sessionID != b.owner.state.view.sessionID {
 			return UsageID{}, ErrIdentity
 		}
 		definition.RunID = new(run.ordinal)
@@ -55,7 +56,7 @@ func (b *SessionCommit) AddUsage(run *RunID, request *ModelRequestID, purpose st
 	if err != nil {
 		return UsageID{}, err
 	}
-	id := UsageID{historyID: b.owner.state.view.historyID, usageOrdinal: ordinal}
+	id := UsageID{sessionID: b.owner.state.view.sessionID, usageOrdinal: ordinal}
 	if err := b.add(newUsageRecord(sessionformat.Usage{ID: ordinal, Definition: &definition, Report: report}, b.owner.policy.PayloadLimits)); err != nil {
 		return UsageID{}, err
 	}
@@ -73,7 +74,7 @@ func (b *SessionCommit) ReplaceUsage(id UsageID, report UsageReport) error {
 	if id.Validate() != nil {
 		return codec.ErrInvalidData
 	}
-	if id.historyID != b.owner.state.view.historyID {
+	if id.sessionID != b.owner.state.view.sessionID {
 		return ErrIdentity
 	}
 	return b.add(newUsageRecord(sessionformat.Usage{ID: id.usageOrdinal, Report: report}, b.owner.policy.PayloadLimits))
@@ -159,14 +160,14 @@ func (a *admissionContext) admitUsage(v sessionformat.Usage) error {
 	return nil
 }
 
-// UsageView retains immutable record backing and enclosing history scope for its
+// UsageView retains immutable record backing and enclosing Session scope for its
 // lifetime. Zero has zero ID, no definition and an invalid zero report. Navigation
 // is O(1) without sibling clones; MutableClone detaches the payload, not enclosing
 // scope.
 //
 //dtogen:include
 type UsageView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.Usage
 }
 
@@ -175,10 +176,10 @@ func (v UsageView) ID() UsageID {
 	if v.value == nil {
 		return UsageID{}
 	}
-	return UsageID{historyID: v.scope, usageOrdinal: v.value.ID}
+	return UsageID{sessionID: v.scope, usageOrdinal: v.value.ID}
 }
 
-// Definition returns optional first-record metadata, preserving enclosing history
+// Definition returns optional first-record metadata, preserving enclosing Session
 // scope. Absence returns a zero view, false; no historical lookup is performed.
 func (v UsageView) Definition() (UsageDefinitionView, bool) {
 	if v.value == nil || v.value.Definition == nil {
@@ -187,14 +188,14 @@ func (v UsageView) Definition() (UsageDefinitionView, bool) {
 	return UsageDefinitionView{scope: v.scope, value: v.value.Definition}, true
 }
 
-// UsageDefinitionView retains immutable first-record metadata and history scope
+// UsageDefinitionView retains immutable first-record metadata and Session scope
 // for its lifetime. Zero returns empty scalars and absent correlations. Navigation
 // is O(1) without cloning siblings. MutableClone exports relative DTO components,
-// not the enclosing history scope.
+// not the enclosing Session scope.
 //
 //dtogen:include
 type UsageDefinitionView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.UsageDefinition
 }
 
@@ -204,7 +205,7 @@ func (v UsageDefinitionView) RunID() (RunID, bool) {
 	if v.value == nil || v.value.RunID == nil {
 		return RunID{}, false
 	}
-	return RunID{historyID: v.scope, ordinal: *v.value.RunID}, true
+	return RunID{sessionID: v.scope, ordinal: *v.value.RunID}, true
 }
 
 // RequestID returns optional fully scoped request correlation. Absence or a zero

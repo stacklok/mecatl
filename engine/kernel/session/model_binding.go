@@ -3,12 +3,12 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ModelBinding retains declared logical preparation choices, not observed upstream
-// identity. ReplaceModelBinding takes history scope separately. Assignment shares
+// identity. ReplaceModelBinding takes Session scope separately. Assignment shares
 // Settings pointers; Clone detaches them. Zero is invalid.
 type ModelBinding = sessionformat.ModelBinding
 
@@ -42,9 +42,9 @@ func newModelBindingRecord(v ModelBinding, limits codec.Limits) (*materializedRe
 //
 //dtogen:include
 type ModelBindingView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ModelBinding
 }
 
-// HistoryID returns retained scope, or zero for zero.
-func (v ModelBindingView) HistoryID() historyid.HistoryID { return v.scope }
+// SessionID returns retained scope, or zero for zero.
+func (v ModelBindingView) SessionID() sessionid.SessionID { return v.scope }

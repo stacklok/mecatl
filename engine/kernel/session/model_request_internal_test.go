@@ -43,7 +43,7 @@ func TestModelRequestCanonicalPayloadFailurePrecedence(t *testing.T) {
 		})
 	}
 	id, err := b.AddModelRequest(run, source, valid)
-	if err != nil || id != requestID(run.historyID, run.ordinal, 1) {
+	if err != nil || id != requestID(run.sessionID, run.ordinal, 1) {
 		t.Fatalf("failed additions consumed request identity: %v, %v", id, err)
 	}
 }

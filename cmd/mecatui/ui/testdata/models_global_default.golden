@@ -1,24 +1,24 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                     ┃
-┃  Models  (4)                                                                                        ┃
-┃  current: GPT-5 (server default)                                                                    ┃
-┃  > filter models…                                                                                   ┃
-┃                                                                                                     ┃
-┃  Switching models is expensive as it clears caches.                                                 ┃
-┃                                                                                                     ┃
-┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
-┃      openai · GPT-5 mini  reason 128K                                                               ┃
-┃      openai · text-embed                                                                            ┃
-┃    ★ openrouter · Claude  image input reason 1M                                                     ┃
-┃                                                                                                     ┃
-┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
-┃  ● current  ★ global default                                                                        ┃
-┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
-┃                                                                                                     ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                 ┃                                                               ┃
+                 ┃  Models  (4)                                                  ┃
+                 ┃  current: GPT-5 (server default)                              ┃
+                 ┃  > filter models…                                             ┃
+                 ┃                                                               ┃
+                 ┃  Switching models is expensive as it clears caches.           ┃
+                 ┃                                                               ┃
+                 ┃  ▶●  openai · GPT-5  image input reason 200K                  ┃
+                 ┃      openai · GPT-5 mini  reason 128K                         ┃
+                 ┃      openai · text-embed                                      ┃
+                 ┃    ★ openrouter · Claude  image input reason 1M               ┃
+                 ┃                                                               ┃
+                 ┃  [enter Use model] [esc Close]                                ┃
+                 ┃  type to filter · ↑/↓/pgup move · ctrl+g set global default   ┃
+                 ┃  ● current  ★ global default                                  ┃
+                 ┃  reason = emits reasoning · set its effort tier with /effort  ┃
+                 ┃                                                               ┃
+                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 │

@@ -3,6 +3,7 @@ package history
 import (
 	"context"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
@@ -42,7 +43,7 @@ func New(backend Backend, policy Policy) (*History, error) {
 
 // Head returns the accepted head, or ErrNotFound for an unknown history. Errors
 // return a zero reference. It does not scan or decode historical commits.
-func (h *History) Head(ctx context.Context, id HistoryID) (CommitRef, error) {
+func (h *History) Head(ctx context.Context, id resourceid.ID) (CommitRef, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return CommitRef{}, err
 	}
@@ -64,15 +65,15 @@ func (h *History) Head(ctx context.Context, id HistoryID) (CommitRef, error) {
 // claim. Errors return a zero reference. Keep mutable input stable during the
 // call, and unchanged until Append if both calls must identify the same proposal:
 // mutation changes identity. Identify does not freeze or retain the DTO.
-func (h *History) Identify(id HistoryID, commit format.Commit) (CommitRef, error) {
+func (h *History) Identify(id resourceid.ID, commit format.Commit) (CommitRef, error) {
 	_, ref, err := h.encode(id, commit)
 	return ref, err
 }
 
 // encode shares bounded canonical encoding and scope validation for local
 // identification and submission. Failures return no bytes or reference.
-func (h *History) encode(id HistoryID, commit format.Commit) ([]byte, CommitRef, error) {
-	if id == (HistoryID{}) {
+func (h *History) encode(id resourceid.ID, commit format.Commit) ([]byte, CommitRef, error) {
+	if id == (resourceid.ID{}) {
 		return nil, CommitRef{}, invalid("history ID must be set")
 	}
 	canonical, err := codec.Encode(commit, h.policy.CommitLimits)
@@ -92,7 +93,7 @@ func (h *History) encode(id HistoryID, commit format.Commit) ([]byte, CommitRef,
 // zero results even if the proposal was accepted. Retain Identify's reference
 // and an unchanged DTO before submission to Resolve an uncertain outcome with
 // a fresh context.
-func (h *History) Append(ctx context.Context, id HistoryID, commit format.Commit) (Resolution, error) {
+func (h *History) Append(ctx context.Context, id resourceid.ID, commit format.Commit) (Resolution, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return Resolution{}, err
 	}
@@ -129,7 +130,7 @@ func (h *History) Append(ctx context.Context, id HistoryID, commit format.Commit
 // Resolve observes a proposal and adjudicates acceptance within the retry window.
 // Unknown histories and future ordinals are StatusNotObserved, not final rejection.
 // Head, status, and retry-window classification belong to one observation.
-func (h *History) Resolve(ctx context.Context, id HistoryID, proposal CommitRef) (Resolution, error) {
+func (h *History) Resolve(ctx context.Context, id resourceid.ID, proposal CommitRef) (Resolution, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return Resolution{}, err
 	}
@@ -168,7 +169,7 @@ func (h *History) resolve(o Observation, proposal CommitRef) (Resolution, error)
 // request.After, including the upper identity when reached. Any malformed or
 // inconsistent result returns a zero page; it trusts the backend's coherent
 // validation of indexed request boundaries and does not scan from genesis.
-func (h *History) Read(ctx context.Context, id HistoryID, request ReadRequest) (Page, error) {
+func (h *History) Read(ctx context.Context, id resourceid.ID, request ReadRequest) (Page, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return Page{}, err
 	}
@@ -212,11 +213,11 @@ func (h *History) Read(ctx context.Context, id HistoryID, request ReadRequest) (
 }
 
 // checkScope validates the shared public operation boundary without leaking input.
-func checkScope(ctx context.Context, id HistoryID) error {
+func checkScope(ctx context.Context, id resourceid.ID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if id == (HistoryID{}) {
+	if id == (resourceid.ID{}) {
 		return invalid("history ID must be set")
 	}
 	return nil

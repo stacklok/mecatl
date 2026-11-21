@@ -13,7 +13,7 @@ import (
 
 func TestInstructionBlockKeySubmitLoadAndClone(t *testing.T) {
 	h, s, p := newIteratorSession(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	root := session.RootInstructions{Blocks: []session.InstructionBlock{
@@ -85,7 +85,7 @@ func TestInstructionBlockKeySubmitLoadAndClone(t *testing.T) {
 
 func TestInstructionBlockKeyAdmissionIsAtomic(t *testing.T) {
 	h, s, _ := newIteratorSession(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
 	submitBatch(t, s, b)

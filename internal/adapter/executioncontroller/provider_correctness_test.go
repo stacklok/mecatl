@@ -3,7 +3,6 @@ package executioncontroller
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,7 +20,7 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
-func TestRevokedCrashExpiresOperationAndStopsExecutor(t *testing.T) {
+func TestRevokedFencedEnvironmentStopsExecutor(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		name := "revoked"
 		if missing {
@@ -29,7 +28,7 @@ func TestRevokedCrashExpiresOperationAndStopsExecutor(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			env := lifecycleAdminEnvironment(2, []any{})
-			_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "crashed-operation", "claimID": "claim", "epoch": int64(4), "expiresAt": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)}, "status", "activeOperation")
+			_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 			profiles := testProfiles()
 			if missing {
 				delete(profiles.revisions["go"], profiles.defaultRevision["go"])
@@ -64,8 +63,9 @@ func TestRevokedCrashExpiresOperationAndStopsExecutor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "activeOperation", "id") != "crashed-operation" || conditionTrue(got, "Ready") {
-				t.Fatalf("crash fence lost identity: %v", got.Object["status"])
+			fence := textNested(got.Object, "status", "fenceState")
+			if fence != "FenceUnknown" || conditionTrue(got, "Ready") {
+				t.Fatalf("revocation cleared the fence: %v", got.Object["status"])
 			}
 			if retained, err := kube.CoreV1().Pods("ns").Get(t.Context(), "executor", metav1.GetOptions{}); err != nil || !contains(retained.Finalizers, executorFinalizer) || retained.DeletionTimestamp == nil || podTerminal(retained) {
 				t.Fatalf("nonterminal executor proof was lost: %v %v", retained, err)
@@ -79,18 +79,18 @@ func TestRevokedCrashExpiresOperationAndStopsExecutor(t *testing.T) {
 				t.Fatal("deleted Pod incorrectly proved termination")
 			}
 			got, _ = dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-			if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "activeOperation", "id") != "crashed-operation" {
+			if textNested(got.Object, "status", "fenceState") != "FenceUnknown" {
 				t.Fatalf("failed recovery changed fence: %v", got.Object["status"])
 			}
 		})
 	}
 }
 
-func TestRevokedCrashWithTerminalPodCanRecoverAndRetire(t *testing.T) {
+func TestRevokedFencedEnvironmentWithTerminalPodCanRecoverAndRetire(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{true: "missing", false: "revoked"}[missing], func(t *testing.T) {
 			env := lifecycleAdminEnvironment(2, []any{})
-			_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "crashed-operation", "claimID": "claim", "epoch": int64(4), "expiresAt": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)}, "status", "activeOperation")
+			_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 			profiles := testProfiles()
 			if missing {
 				delete(profiles.revisions["go"], profiles.defaultRevision["go"])
@@ -146,7 +146,8 @@ func TestRevokedCrashWithTerminalPodCanRecoverAndRetire(t *testing.T) {
 				t.Fatalf("terminal executor could not prove recovery: %v", err)
 			}
 			got, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-			if err != nil || textNested(got.Object, "status", "activeOperation", "id") != "" || textNested(got.Object, "status", "terminationProof", "podUID") != "pod-uid" {
+			proof := textNested(got.Object, "status", "terminationProof", "podUID")
+			if err != nil || proof != "pod-uid" {
 				t.Fatalf("recovery did not retain exact proof: %v %v", got, err)
 			}
 			q.OperationID = "retire-after-crash"
@@ -190,7 +191,7 @@ func TestRevokedCrashWithTerminalPodCanRecoverAndRetire(t *testing.T) {
 
 func TestMissingRevokedExecutorCannotProveTermination(t *testing.T) {
 	env := lifecycleAdminEnvironment(2, []any{})
-	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "crashed", "expiresAt": time.Now().Add(-time.Minute).Format(time.RFC3339Nano)}, "status", "activeOperation")
+	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	profiles := testProfiles()
 	profiles.eligibility["go"][profiles.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
@@ -210,72 +211,6 @@ func TestMissingRevokedExecutorCannotProveTermination(t *testing.T) {
 	}
 	if _, err := kube.CoreV1().PersistentVolumeClaims("ns").Get(t.Context(), "workspace", metav1.GetOptions{}); err != nil {
 		t.Fatalf("missing Pod triggered workspace deletion: %v", err)
-	}
-}
-
-func TestExpiredOperationFenceRevalidatesLeaseOnCASRetry(t *testing.T) {
-	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for _, changed := range []string{"renewed", "completed", "replaced"} {
-		t.Run(changed, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
-			_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "old", "expiresAt": fixed.Add(-time.Minute).Format(time.RFC3339Nano)}, "status", "activeOperation")
-			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			resources := client.Resource(ExecutionEnvironmentGVR).Namespace("ns")
-			r := NewReconciler(client, kubefake.NewSimpleClientset(), "ns", testProfiles())
-			r.now = func() time.Time { return fixed }
-			t.Cleanup(r.queue.ShutDown)
-			conflicted := false
-			client.PrependReactor("update", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				if action.GetSubresource() != "status" || conflicted {
-					return false, nil, nil
-				}
-				conflicted = true
-				obj, err := client.Tracker().Get(ExecutionEnvironmentGVR, "ns", "env")
-				if err != nil {
-					return true, nil, err
-				}
-				current := obj.(*unstructured.Unstructured)
-				switch changed {
-				case "renewed":
-					_ = unstructured.SetNestedField(current.Object, fixed.Add(time.Minute).Format(time.RFC3339Nano), "status", "activeOperation", "expiresAt")
-				case "completed":
-					unstructured.RemoveNestedField(current.Object, "status", "activeOperation")
-				case "replaced":
-					_ = unstructured.SetNestedField(current.Object, "new", "status", "activeOperation", "id")
-				}
-				if err := client.Tracker().Update(ExecutionEnvironmentGVR, current, "ns"); err != nil {
-					return true, nil, err
-				}
-				return true, nil, apierrors.NewConflict(ExecutionEnvironmentGVR.GroupResource(), "env", errors.New("concurrent holder update"))
-			})
-			if err := r.Reconcile(t.Context(), "env"); !codeIs(err, executionenv.CodeConflict) {
-				t.Fatalf("stale expiry did not conflict after %s: %v", changed, err)
-			}
-			if !conflicted {
-				t.Fatal("CAS conflict was not exercised")
-			}
-			got, err := resources.Get(t.Context(), "env", metav1.GetOptions{})
-			if err != nil || textNested(got.Object, "status", "fenceState") != fenceHealthy {
-				t.Fatalf("stale expiry fenced %s operation: %v %v", changed, got, err)
-			}
-		})
-	}
-}
-
-func TestExpiredOperationFenceCurrentAndMalformed(t *testing.T) {
-	for _, expiry := range []string{time.Now().Add(-time.Minute).Format(time.RFC3339Nano), "malformed"} {
-		env := lifecycleAdminEnvironment(2, []any{})
-		_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "current", "expiresAt": expiry}, "status", "activeOperation")
-		client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-		r := NewReconciler(client, kubefake.NewSimpleClientset(), "ns", testProfiles())
-		t.Cleanup(r.queue.ShutDown)
-		if err := r.Reconcile(t.Context(), "env"); err != nil {
-			t.Fatal(err)
-		}
-		got, err := client.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-		if err != nil || textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "activeOperation", "id") != "current" {
-			t.Fatalf("current expired/malformed lease was not fenced: %v %v", got, err)
-		}
 	}
 }
 

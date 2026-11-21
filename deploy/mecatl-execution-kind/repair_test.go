@@ -14,7 +14,6 @@ import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
-	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func scriptRange(t *testing.T, file, start, end string) string {
@@ -195,30 +194,30 @@ func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
 	}
 }
 
-func TestIncompatibleDerivativeProtocolFixture(t *testing.T) {
-	fixture, err := filepath.Abs("fixture/derivative/incompatible-protocol")
+func TestIncompatibleDerivativeFixtureDropsCommandsService(t *testing.T) {
+	script, err := os.ReadFile("fixture/derivative/incompatible-protocol")
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace := t.TempDir()
-	sentinel := filepath.Join(workspace, "sentinel")
-	if err := os.WriteFile(sentinel, []byte("retained\n"), 0o600); err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	server := filepath.Join(root, "server")
+	writeFixture(t, server, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", 0o700)
+	fixture := filepath.Join(root, "fixture")
+	const installed = "/usr/local/libexec/mecatl-executor-server"
+	if !strings.Contains(string(script), installed) {
+		t.Fatal("fixture no longer wraps the installed executor server")
 	}
-	cmd := exec.Command("sh", fixture)
-	cmd.Dir = workspace
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + workspace}
-	cmd.Stdin = strings.NewReader("{\"operation\":\"command.start\",\"command\":\"printf corrupted > sentinel\"}\n")
-	out, err := cmd.Output()
+	writeFixture(t, fixture, strings.ReplaceAll(string(script), installed, server), 0o700)
+	out, err := exec.Command("sh", fixture, "serve", "-listen=:1", "-files", "-commands",
+		"-max-file-bytes=1").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var envelope executionenv.ExecutorEnvelope
-	if err := executionenv.DecodeStrict(out, &envelope); err == nil {
-		t.Fatalf("negative fixture produced compatible protocol: %s", out)
+	if got := string(out); got != "serve\n-listen=:1\n-files\n-max-file-bytes=1\n" {
+		t.Fatalf("server arguments=%q", got)
 	}
-	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "retained\n" {
-		t.Fatal("negative fixture executed the request")
+	if exec.Command("sh", fixture).Run() == nil {
+		t.Fatal("fixture accepted a mode other than serve")
 	}
 }
 
