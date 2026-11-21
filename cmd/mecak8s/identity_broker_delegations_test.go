@@ -2,18 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"iter"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mockscript"
@@ -53,8 +49,8 @@ func (l *lateScript) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2
 	return inner.Stream(ctx, req)
 }
 
-// delegationServe is mecak8s serving the gateway with parallel branches and
-// teams on, one session Alice created, and the mock model's script file.
+// delegationServe is mecak8s serving the gateway with teams on, one session
+// Alice created, and the mock model's script file.
 type delegationServe struct {
 	*gatewayServe
 	diag    *gatewayCallDiagnostics
@@ -66,8 +62,12 @@ func serveDelegations(t *testing.T) *delegationServe {
 	t.Helper()
 	d := &delegationServe{diag: &gatewayCallDiagnostics{}, script: filepath.Join(t.TempDir(), "script.json")}
 	model := newLateScript(d.script)
+	// No workspace: the broker refuses one on this process's filesystem, so
+	// parallel branches and API-created teams, which need one, run only with
+	// Kubernetes execution, which this suite cannot start. They report their
+	// delegations through the same RegisterHelper path these tests drive.
 	d.gatewayServe = serveGatewayIdentityBroker(t, notesRoute(t),
-		[]string{"--enable-parallel", "--enable-teams", "--workspace", t.TempDir()},
+		[]string{"--enable-teams"},
 		func(cfg *app.Config) {
 			cfg.MockProvider = model
 			cfg.Diagnostics = d.diag
@@ -124,17 +124,6 @@ func (d *delegationServe) wantHelperGatewayCalls(t *testing.T, minHelperCalls in
 	}
 }
 
-// TestIdentityBrokerParallelBranchGatewayCall pins that a parallel branch's
-// gateway call passes the broker's run checks under its reported delegation.
-func TestIdentityBrokerParallelBranchGatewayCall(t *testing.T) {
-	d := serveDelegations(t)
-	d.writeScript(t, gatewayTurn("main-call"),
-		`{"tool_calls":[{"id":"fan-out","name":"Parallel","args":{"tasks":["call the calendar"]}}]}`,
-		gatewayTurn("branch-call"))
-	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
-	d.wantHelperGatewayCalls(t, 1)
-}
-
 // TestIdentityBrokerTeamMemberGatewayCall pins that a member of a team the
 // Team tool starts makes gateway calls under its reported delegation. The
 // members are generic: a member running a named definition gets no gateway
@@ -145,47 +134,6 @@ func TestIdentityBrokerTeamMemberGatewayCall(t *testing.T) {
 		`{"tool_calls":[{"id":"team","name":"Team","args":{"goal":"call the calendar","members":[{"name":"lead","role":"lead"},{"name":"rev","role":"review"}]}}]}`,
 		gatewayTurn("member-call-1"), scriptText, gatewayTurn("member-call-2"), scriptText)
 	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
-	d.wantHelperGatewayCalls(t, 1)
-}
-
-// TestIdentityBrokerAPITeamMemberGatewayCall pins that a member of a team
-// the API creates and runs makes gateway calls under a delegation from the
-// RunTeam call's run of the root's main agent.
-func TestIdentityBrokerAPITeamMemberGatewayCall(t *testing.T) {
-	d := serveDelegations(t)
-	d.writeScript(t, gatewayTurn("main-call"), scriptText,
-		gatewayTurn("member-call-1"), scriptText, gatewayTurn("member-call-2"), scriptText)
-	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
-
-	status, body := apiCall(t, http.MethodPost, d.api+"/v1/teams", d.alice,
-		`{"session_id":"`+d.session+`","name":"calendar","goal":"call the calendar","members":[`+
-			`{"name":"lead","lead":true,"initial_prompt":"call the calendar"},{"name":"worker","initial_prompt":"call the calendar"}]}`)
-	if status != http.StatusCreated && status != http.StatusOK {
-		t.Fatalf("create team: status %d: %s", status, body)
-	}
-	var team struct {
-		ID string `json:"team_id"`
-	}
-	if err := json.Unmarshal([]byte(body), &team); err != nil || team.ID == "" {
-		t.Fatalf("create team response %s: %v", body, err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.api+"/v1/teams/"+team.ID+"/run", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+d.alice)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("run team: %v", err)
-	}
-	raw, err := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"quiescent":true`) {
-		t.Fatalf("run team: status %d, %v: %s", resp.StatusCode, err, raw)
-	}
 	d.wantHelperGatewayCalls(t, 1)
 }
 
