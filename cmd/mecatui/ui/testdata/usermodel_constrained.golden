@@ -1,0 +1,26 @@
+ session sess-test-00
+────────────────────────
+┏━━━━━━━━━━━━━━━━━━━━━━┓
+┃                      ┃
+┃  Saved memory        ┃
+┃  2 facts · 64 bytes  ┃
+┃   · sha:abc123def45  ┃
+┃  6                   ┃
+┃  ▶ name              ┃
+┃    │ the operator's  ┃
+┃    │  name           ┃
+┃  [enter Inspect]     ┃
+┃  [esc Close]         ┃
+┃  ↑/↓ select · the a  ┃
+┃  gent saves and upd  ┃
+┃  ates these facts    ┃
+┃                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━┛
+
+│
+│ Ask mecatl to do
+│ something…  (enter to
+│ send · shift+enter
+────────────────────────
+ connected
+? help · / commands · ctrl+c quit

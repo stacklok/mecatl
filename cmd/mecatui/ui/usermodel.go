@@ -37,6 +37,14 @@ type userModelState struct {
 	compact     bool     // view cache: refreshed from every Render offer
 	listWidth   int      // view cache: preserves list anchors across model refreshes
 	detailLines []string // view cache: wrapped again on every Render
+	hitTargets  map[HitID]userModelHit
+}
+
+type userModelHit struct {
+	key            string
+	inspect, close bool
+	view           userModelView
+	selected       string
 }
 
 func (m Model) openUserModel() (tea.Model, tea.Cmd) {
@@ -53,23 +61,58 @@ func (m Model) openUserModel() (tea.Model, tea.Cmd) {
 
 func (*userModelState) modalMaxOuterWidth() int { return 128 }
 func (s *userModelState) modalFrame() bool      { return !s.compact }
-func (*userModelState) Close()                  {}
+func (s *userModelState) Close()                { s.hitTargets = nil }
+
+func (s *userModelState) closeOrBack() bool {
+	if !s.deps.keys.Close.Enabled() {
+		return false
+	}
+	if s.compact || s.view != userModelDetail {
+		return true
+	}
+	s.generation++
+	s.view = userModelPanel
+	s.detail = nil
+	s.requestKey = ""
+	s.loading = false
+	s.err = nil
+	return false
+}
+
+func (s *userModelState) inspectAvailable() bool {
+	if s.view != userModelPanel || s.loading || s.list == nil || s.detailer == nil || !s.deps.keys.Choose.Enabled() {
+		return false
+	}
+	selected := s.list.CursorID()
+	if selected == "" {
+		return false
+	}
+	for _, entry := range s.model.Entries {
+		if entry.Key == selected {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *userModelState) canInspect() bool { return !s.compact && s.inspectAvailable() }
+
+func (s *userModelState) inspect() tea.Cmd {
+	if !s.canInspect() {
+		return nil
+	}
+	selected := s.list.CursorID()
+	s.generation++
+	s.requestKey = selected
+	s.loading = true
+	s.err = nil
+	return client.GetUserModelEntryCmdTagged(s.deps.ctx, s.detailer, selected, s.generation)
+}
 
 func (s *userModelState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	s.hitTargets = nil
 	if key.Matches(msg, s.deps.keys.Close) {
-		if s.compact {
-			return nil, true, true
-		}
-		if s.view == userModelDetail {
-			s.generation++
-			s.view = userModelPanel
-			s.detail = nil
-			s.requestKey = ""
-			s.loading = false
-			s.err = nil
-			return nil, true, false
-		}
-		return nil, true, true
+		return nil, true, s.closeOrBack()
 	}
 	if s.compact {
 		return nil, true, false
@@ -90,21 +133,14 @@ func (s *userModelState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		s.list.Move(move)
 		return nil, true, false
 	}
-	if key.Matches(msg, s.deps.keys.Choose) && !s.loading && s.list != nil && len(s.model.Entries) > 0 && s.detailer != nil {
-		selected := s.list.CursorID()
-		if selected == "" {
-			return nil, true, false
-		}
-		s.generation++
-		s.requestKey = selected
-		s.loading = true
-		s.err = nil
-		return client.GetUserModelEntryCmdTagged(s.deps.ctx, s.detailer, selected, s.generation), true, false
+	if key.Matches(msg, s.deps.keys.Choose) {
+		return s.inspect(), true, false
 	}
 	return nil, true, false
 }
 
 func (s *userModelState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	s.hitTargets = nil
 	if s.compact {
 		return nil, true
 	}
@@ -121,7 +157,32 @@ func (s *userModelState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
+func (s *userModelState) handleHit(hit surfaceHitMsg) (tea.Cmd, bool, bool) {
+	target, current := s.hitTargets[hit.ID]
+	s.hitTargets = nil
+	if !current || s.compact || target.view != s.view {
+		return nil, true, false
+	}
+	if target.key != "" {
+		if s.view == userModelPanel && !s.loading && s.err == nil && s.list != nil {
+			s.list.SelectID(target.key)
+		}
+		return nil, true, false
+	}
+	if target.close {
+		return nil, true, s.closeOrBack()
+	}
+	if target.inspect && s.list != nil && target.selected == s.list.CursorID() {
+		return s.inspect(), true, false
+	}
+	return nil, true, false
+}
+
 func (s *userModelState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	if hit, ok := msg.(surfaceHitMsg); ok {
+		return s.handleHit(hit)
+	}
+	s.hitTargets = nil
 	switch um := msg.(type) {
 	case client.UserModelMsg:
 		if um.Generation != s.generation || s.requestKey != "" || s.view != userModelPanel {
@@ -162,6 +223,7 @@ func (s *userModelState) setModel(model client.UserModel) {
 }
 
 const (
+	userModelBackLabel         = "Back"
 	userModelDescriptionMarker = "\x1b[8m"
 	userModelDescriptionRail   = "│ "
 )
@@ -235,68 +297,111 @@ func (s *userModelState) contentRowsFit(width, height, titleLines, metaLines, fo
 
 func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
 	s.compact = true
+	s.hitTargets = nil
 	if width <= 0 || height <= 0 {
 		return "", nil
 	}
 	th := s.deps.theme
 	title := "Saved memory"
-	footer := "↑/↓ select · enter inspect · the agent saves and updates these facts · " + s.deps.marks.closeOnly + " close"
+	help := "↑/↓ select · the agent saves and updates these facts"
 	if s.view == userModelDetail {
 		title = "User model detail"
-		footer = s.deps.marks.scroll + " scroll · read-only · ask the agent to remove or restore this saved fact · " + s.deps.marks.closeOnly + " back"
+		help = s.deps.marks.scroll + " scroll · read-only · ask the agent to remove or restore this saved fact"
 	}
 	titleLines := skillsTextLines(th.Style("askTitle"), title, width)
-	footerLines := skillsTextLines(th.Style("muted"), footer, width)
 	meta := []string(nil)
 	if s.view == userModelPanel && !s.loading && s.err == nil && len(s.model.Entries) > 0 {
 		meta = skillsTextLines(th.Style("muted"), renderUserModelMeta(s.model), width)
 	}
-	rows, fits := s.contentRowsFit(width, height, len(titleLines), len(meta), len(footerLines))
-	if !fits {
+	inspectEnabled := s.inspectAvailable()
+	closeLabel := footerCloseLabel
+	if s.view == userModelDetail {
+		closeLabel = userModelBackLabel
+	}
+	footer, controls := renderFooterControls(th, width, []footerControlSpec{
+		{hint: s.deps.marks.choose, label: "Inspect", enabled: s.view == userModelPanel && inspectEnabled},
+		{hint: s.deps.marks.closeOnly, label: closeLabel, enabled: s.deps.keys.Close.Enabled()},
+	})
+	footer = append(footer, skillsTextLines(th.Style("muted"), help, width)...)
+	rows, fits := s.contentRowsFit(width, height, len(titleLines), len(meta), len(footer))
+	if !fits || len(controls) == 0 && (inspectEnabled || s.deps.keys.Close.Enabled()) {
+		if !s.deps.keys.Close.Enabled() {
+			return boundedDisplayLine(th.Style("muted").Render("terminal too small"), width), nil
+		}
 		return renderSkillsCompact(th, s.deps.marks, width), nil
 	}
 	s.compact = false
-	var body []string
-	if s.view == userModelPanel {
-		if s.loading || s.err != nil || len(s.model.Entries) == 0 {
-			text := userModelEmptyCopy(s.deps.caps)
-			style := th.Style("muted")
-			if s.loading {
-				text = "loading…"
-			}
-			if s.err != nil {
-				text = "get user model: " + terminaltext.Sanitize(s.err.Error())
-				style = th.Style("errorText")
-			}
-			v := s.viewport
-			v.SetGeometry(width, rows, 0, bounded.Wrap)
-			body = v.View([]string{style.Render(text)}).Rows
-		} else {
-			s.list.SetGeometry(width, rows, 1, bounded.Wrap)
-			view := s.list.ViewWithIndicators(rows, s.list.RevealPending())
-			if view.Above > 0 {
-				body = append(body, th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)))
-			}
-			for _, row := range view.Rows {
-				body = append(body, s.renderListRow(row))
-			}
-			if view.Below > 0 {
-				body = append(body, th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)))
-			}
+	s.hitTargets = make(map[HitID]userModelHit)
+	body, regions := s.renderBody(width, rows, len(titleLines)+len(meta))
+	footerY := len(titleLines) + len(meta) + len(body)
+	selected := ""
+	if s.list != nil {
+		selected = s.list.CursorID()
+	}
+	for _, control := range controls {
+		if s.deps.hits == nil {
+			break
 		}
-	} else {
-		lines := s.detailContent(width)
-		s.viewport.SetGeometry(width, rows, 0, bounded.Wrap)
-		// Viewport wraps the caller's lines. Keep the physical line count in sync
-		// with navigation even when a terminal resize reflows the content.
-		s.detailLines = lines
-		v := s.viewport.View(lines)
-		body = v.Rows
+		rect := control.rect
+		rect.y0 += footerY
+		rect.y1 += footerY
+		target := userModelHit{view: s.view, selected: selected}
+		if control.index == 0 && s.view == userModelPanel {
+			target.inspect = true
+		} else {
+			target.close = true
+		}
+		id := s.deps.hits.allocate()
+		s.hitTargets[id] = target
+		regions = append(regions, ClickableRegion{rect: rect, hit: id})
 	}
 	result := append(titleLines, meta...)
 	result = append(result, body...)
-	result = append(result, footerLines...)
-	return strings.Join(result, "\n"), nil
+	result = append(result, footer...)
+	return strings.Join(result, "\n"), regions
+}
+
+func (s *userModelState) renderBody(width, rows, top int) ([]string, []ClickableRegion) {
+	th := s.deps.theme
+	if s.view == userModelDetail {
+		s.detailLines = s.detailContent(width)
+		s.viewport.SetGeometry(width, rows, 0, bounded.Wrap)
+		return s.viewport.View(s.detailLines).Rows, nil
+	}
+	if s.loading || s.err != nil || len(s.model.Entries) == 0 {
+		text := userModelEmptyCopy(s.deps.caps)
+		style := th.Style("muted")
+		if s.loading {
+			text = "loading…"
+		}
+		if s.err != nil {
+			text = "get user model: " + terminaltext.Sanitize(s.err.Error())
+			style = th.Style("errorText")
+		}
+		s.viewport.SetGeometry(width, rows, 0, bounded.Wrap)
+		return s.viewport.View([]string{style.Render(text)}).Rows, nil
+	}
+	s.list.SetGeometry(width, rows, 1, bounded.Wrap)
+	view := s.list.ViewWithIndicators(rows, s.list.RevealPending())
+	var body []string
+	var regions []ClickableRegion
+	if view.Above > 0 {
+		body = append(body, th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)))
+	}
+	for _, row := range view.Rows {
+		line := s.renderListRow(row)
+		y := top + len(body)
+		body = append(body, line)
+		if lineWidth := ansi.StringWidth(line); lineWidth > 0 && s.deps.hits != nil {
+			id := s.deps.hits.allocate()
+			s.hitTargets[id] = userModelHit{key: row.ID, view: s.view}
+			regions = append(regions, ClickableRegion{rect: cellRect{x1: min(width, lineWidth), y0: y, y1: y + 1}, hit: id})
+		}
+	}
+	if view.Below > 0 {
+		body = append(body, th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)))
+	}
+	return body, regions
 }
 
 func (s *userModelState) renderListRow(row bounded.ListRow) string {

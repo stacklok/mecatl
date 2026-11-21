@@ -500,11 +500,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	if s.list.Offset() != bottomOffset || s.list.CursorID() != selected || m.vp.YOffset() != before {
 		t.Fatalf("inventory bottom wheel escaped modal: offset=%d selection=%q conversation=%d", s.list.Offset(), s.list.CursorID(), m.vp.YOffset())
 	}
-	for _, msg := range []tea.Msg{tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 10}, tea.MouseMotionMsg{Button: tea.MouseLeft, X: 7, Y: 11}, tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 7, Y: 11}} {
-		m = applyAll(m, msg)
-	}
+	m.deps.NoAltScreen = false
+	_ = m.View()
+	x, y := m.metrics.outerBounds.x0, m.metrics.outerBounds.y0
+	m = applyAll(m, tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, tea.MouseMotionMsg{Button: tea.MouseLeft, X: x, Y: y}, tea.MouseReleaseMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if m.sel.active || s.list.CursorID() != selected || s.view != userModelPanel {
-		t.Fatal("pointer selected or activated fact")
+		t.Fatal("border click selected or activated fact")
 	}
 	m = resize(m, 10, 12)
 	_ = (&m).renderModalSurface()

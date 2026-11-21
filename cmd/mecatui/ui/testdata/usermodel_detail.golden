@@ -1,0 +1,30 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  User model detail                                                                               ┃
+┃  name                                                                                            ┃
+┃                                                                                                  ┃
+┃  Alice                                                                                           ┃
+┃                                                                                                  ┃
+┃  Earlier versions: 1                                                                             ┃
+┃  v1 · active · 0001-01-01                                                                        ┃
+┃  [esc Back]                                                                                      ┃
+┃  pgup/pgdn scroll · read-only · ask the agent to remove or restore this saved fact               ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

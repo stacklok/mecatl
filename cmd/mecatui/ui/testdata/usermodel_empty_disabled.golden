@@ -5,13 +5,13 @@
 
 
 
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                  ┃
 ┃  Saved memory                                                                                    ┃
 ┃  Saved memory is not enabled on this server.                                                     ┃
 ┃  Start or connect to a server with memory enabled.                                               ┃
-┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close                ┃
+┃  [esc Close]                                                                                     ┃
+┃  ↑/↓ select · the agent saves and updates these facts                                            ┃
 ┃                                                                                                  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
