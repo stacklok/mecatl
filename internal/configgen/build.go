@@ -448,7 +448,8 @@ func reasoningEffortSubtree(docs Docs) *Subtree {
 		Tier: TierOperator,
 		Doc: "OPERATOR-TIER reasoning-effort scalar: \"\" / \"auto\" (unset — " +
 			"the provider default) / \"low\" / \"medium\" / \"high\" / \"xhigh\" / \"max\". " +
-			"OpenAI clamps xhigh/max down to high; Anthropic maps all five. A per-session " +
+			"Each request carries it only when its model accepts the level (models.effort_levels, " +
+			"the live listing, or the catalog decides); a model of unknown levels gets it. A per-session " +
 			"CreateSession.reasoning_effort out-ranks this default. A project-tier " +
 			"reasoning-effort: is IGNORED with a WARN (a project cannot raise the model's " +
 			"reasoning spend). Empty = keep the CLI/default (provider default).",

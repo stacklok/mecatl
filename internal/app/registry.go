@@ -243,17 +243,15 @@ type providerEntry struct {
 	// kept on the entry, NOT type-asserted from .provider, because openrouter and
 	// openai share the SAME openai.Provider adapter and only openrouter opts in.
 	lister modelLister
-	// remint RE-MINTS this entry's provider adapter with a different reasoning-
-	// effort token AND/OR a different per-session capability
-	// intersection (T7), returning a fresh resilience-wrapped port.LLMProvider.
-	// It captures the construction inputs (key/baseURL/resolvers/resilience
-	// config) so the per-session engine factory can build a same-provider adapter
-	// that carries the SESSION's effort + caps when EITHER differs from the
-	// operator-default model the entry's .provider was built with — the SAME
-	// factory discipline as the per-call model override (the factory owns adapter
-	// construction; effort and caps are never port.LLMRequest fields). The DEFAULT
-	// path never calls it (the shared .provider is reused byte-for-byte). effort is
-	// an ALREADY-CLAMPED neutral token ("" = unset, the provider default); caps is
+	// remint builds this entry's provider adapter for one reasoning-effort token
+	// and one capability intersection (T7), returning a fresh resilience-wrapped
+	// port.LLMProvider. It captures the construction inputs (key/baseURL/
+	// resolvers/resilience config); effort and caps are never port.LLMRequest
+	// fields. effortAdapters calls it once per (caps, effort) as requests need
+	// each level, and the per-session factory calls it when a session's
+	// capability intersection differs from defaultCaps. effort is the neutral
+	// token to send, already checked against the request's model by
+	// effortProvider ("" = unset, the provider default); caps is
 	// the composition-computed catalog ∩ adapter intersection for the session's
 	// resolved (provider, model). nil for the mock entry (it ignores effort/caps)
 	// and for a providerConstructor test seam that did not wire one.
@@ -288,13 +286,13 @@ type providerEntry struct {
 	// distinguish a local proxy failure from a direct gateway/OIDC failure.
 	// It is meaningful only when intentDriven is true for a ToolHive provider.
 	toolhiveMode toolhiveRoutingMode
-	// defaultEffort is the OPERATOR-DEFAULT reasoning-effort token
-	// (already normalised + per-provider clamped by operatorDefaultEffortFor) this
-	// entry was built with. Stamped by buildProviderRegistry's fixup loop
-	// BEFORE the T7 re-mint so remintEntry (the shared re-mint helper, issue
-	// #262 review finding 4) can re-derive an entry's caps WITHOUT threading
-	// cfg through to the runtime heal path (healDefaultModel runs long after
-	// Build, off the request path, and has no cfg in scope).
+	// defaultEffort is the normalised OPERATOR-DEFAULT reasoning-effort token the
+	// entry's shared .provider requests; each request sends it only when its model
+	// accepts it. Stamped by buildProviderRegistry's fixup loop BEFORE the T7
+	// re-mint so remintEntry (the shared re-mint helper, issue #262 review
+	// finding 4) can re-wrap an entry WITHOUT threading cfg through to the runtime
+	// heal path (healDefaultModel runs long after Build, off the request path, and
+	// has no cfg in scope).
 	defaultEffort string
 }
 
@@ -320,6 +318,11 @@ type providerRegistry struct {
 	// contextWindows is the operator-tier exact provider/model override map. It is
 	// immutable after Build and read by the picker projection as well as resolvers.
 	contextWindows map[string]map[string]int
+	// effortLevels is the operator-tier models.effort_levels map, immutable after
+	// Build, read by every effort decision through effortLevelsFor.
+	effortLevels map[string]map[string][]string
+	// diag narrates effort decisions made per request, long after Build.
+	diag port.Diagnostics
 	// promptCached answers ModelInfo.prompt_cached for a (provider, model) pair
 	// A CLOSURE over the build's Config so the picker projection
 	// reads the SAME resolution the adapters were constructed with, instead of
@@ -641,14 +644,17 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// entry.defaultEffort rather than re-deriving it from cfg, so the runtime
 	// heal path (healDefaultModel, reached long after Build with no cfg in
 	// scope) can share the exact same re-mint helper as the two build-time
-	// call sites.
+	// call sites. It is a REQUESTED level: each request sends it only when its
+	// model accepts it (effortProvider).
+	operatorEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
 	for id, entry := range entries {
-		entry.defaultEffort = operatorDefaultEffortFor(cfg, id)
+		entry.defaultEffort = operatorEffort
 		entries[id] = entry
 	}
 
 	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta,
-		contextWindows: cfg.contextWindows, contextWindowOverride: cfg.ContextWindowOverride}
+		contextWindows: cfg.contextWindows, contextWindowOverride: cfg.ContextWindowOverride,
+		effortLevels: cfg.effortLevels, diag: cfg.diag()}
 	// Bind the prompt-cache projection AFTER entries exist (it looks an entry up)
 	// and over THIS build's cfg, so --no-prompt-cache and the cache dialect
 	// precedence are read once, in one place.
@@ -698,6 +704,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		}
 		reg.remintEntry(id, model)
 	}
+	warnOperatorEffortNotAccepted(ctx, reg, operatorEffort)
 	// Build-time probe (issue #262, R1.2): only runs when the ToolHive family
 	// exists. It NEVER gates registration
 	// (already done above) — it drives the startup diagnostic, the initial
@@ -1042,7 +1049,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 	// store + catalog) — see buildProviderRegistry's post-assembly fixup. Until then
 	// the shared .provider is built with the adapter's static transmit caps (no Parts
 	// path fires pre-fixup since no tool produces Parts at build time).
-	llm := construct(operatorDefaultEffortFor(cfg, id), openaiStaticCaps)
+	llm := construct("", openaiStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,
@@ -1096,7 +1103,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, providerResilienceConfig(cfg, id))
 	}
-	llm := construct(operatorDefaultEffortFor(cfg, id), opencodeStaticCaps)
+	llm := construct("", opencodeStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,
@@ -1214,7 +1221,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 	// default-model capability intersection is stamped by buildProviderRegistry's
 	// post-assembly fixup (it needs the assembled registry + meta); until then the
 	// shared .provider carries the adapter's static transmit caps.
-	llm := construct(operatorDefaultEffortFor(cfg, id), anthropicStaticCaps)
+	llm := construct("", anthropicStaticCaps)
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM resilience enabled",
 		"provider", id,
 		"max_attempts", cfg.LLMMaxAttempts,

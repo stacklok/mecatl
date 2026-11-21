@@ -706,7 +706,7 @@ func guardrailsCheckerDeps(cfg Config, provReg *providerRegistry, provider port.
 	pc := promptConfig(modelCfgFor(cfg, resolved), cfg.gitStatus)
 	pc.Role = contextualReviewerSystemPrompt
 	providerModel := session.ProviderModelID{ProviderID: providerID, ModelID: resolved}
-	deps := childEngineDepsForProvider(cfg, "guardrail-reviewer", provider, providerModel, windowFn,
+	deps := childEngineDepsForProvider(cfg, "guardrail-reviewer", atAuto(provider), providerModel, windowFn,
 		tool.NewCatalog(), pc, nil)
 	deps.MaxNoProgressNudges = -1
 	deps.ToolReviewer = nil

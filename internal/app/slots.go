@@ -163,7 +163,10 @@ func resolveSlotTarget(cfg Config, slotName, contextualProvider string) (ModelTa
 	return target, true
 }
 
+// Every slot routes housekeeping, so the returned provider always sends no
+// reasoning effort (atAuto), whichever branch picks it.
 func resolveAuxiliarySlotTarget(cfg Config, reg *providerRegistry, slotName string, fallbackProvider port.LLMProvider, fallbackProviderID, fallbackModel string) (port.LLMProvider, string, string, bool) {
+	fallbackProvider = atAuto(fallbackProvider)
 	target, configured := resolveSlotTarget(cfg, slotName, fallbackProviderID)
 	if !configured {
 		return fallbackProvider, fallbackProviderID, fallbackModel, false
@@ -178,7 +181,7 @@ func resolveAuxiliarySlotTarget(cfg Config, reg *providerRegistry, slotName stri
 	if !ok || entry.provider == nil {
 		return fallbackProvider, fallbackProviderID, fallbackModel, false
 	}
-	return entry.provider, target.ProviderID, target.Model, true
+	return atAuto(entry.provider), target.ProviderID, target.Model, true
 }
 
 func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, configured bool) {

@@ -937,6 +937,7 @@ func buildConfiguredReflectionObserver(
 	if provider == nil || repository == nil {
 		return nil
 	}
+	provider = atAuto(provider) // reflection is housekeeping: no reasoning effort
 	model := providerModel.ModelID
 	if reflectionProvider, reflectionProviderID, selected, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotReflection, provider, providerModel.ProviderID, model); ok {
 		provider = reflectionProvider

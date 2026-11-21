@@ -90,7 +90,11 @@ func (r *providerRegistry) remintEntryCandidate(pid, model string, view *discove
 		return
 	}
 	caps := modelCapabilityCandidate(r, view, pid, model)
-	provider := entry.remint(entry.defaultEffort, caps)
+	var provider port.LLMProvider
+	if auto := entry.remint("", caps); auto != nil {
+		adapters := newEffortAdapters(auto, func(effort string) port.LLMProvider { return entry.remint(effort, caps) })
+		provider = r.newEffortProvider(entry, model, entry.defaultEffort, adapters)
+	}
 	r.entriesMu.Lock()
 	entry = r.entries[pid]
 	entry.provider, entry.defaultCaps = provider, caps

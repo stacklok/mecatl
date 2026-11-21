@@ -93,7 +93,7 @@ func TestAgentSuccessorAppliesFactoryRestrictionsAfterRestart(t *testing.T) {
 					})
 					res.BuiltForMode = session.ModePlan
 					res.Limits = &session.Limits{MaxTurns: 1, MaxToolCalls: 10}
-					res.ProviderID, res.ModelID, res.ReasoningEffort = "effective-provider", "raw/vendor:model@rev", "low"
+					res.ProviderID, res.ModelID, res.ReasoningEffort, res.RequestedReasoningEffort = "effective-provider", "raw/vendor:model@rev", "low", "low"
 					// A freshly resolved wider grant must never replace source authority.
 					res.Authority.CapabilitySet.Tools = []string{"Write", "outside"}
 					res.Authority.Ceiling.Tools = []string{"Write", "outside"}
@@ -179,7 +179,7 @@ func TestAgentRuntimeRebuildPreservesFixedConfiguration(t *testing.T) {
 				res := agentDefinitionEngineResult("reviewer")
 				res.RuntimeRevision = revision
 				res.Limits = &session.Limits{MaxTurns: 10}
-				res.ProviderID, res.ModelID, res.ReasoningEffort = "provider", "model", "low"
+				res.ProviderID, res.ModelID, res.ReasoningEffort, res.RequestedReasoningEffort = "provider", "model", "low", "low"
 				res.Close = func() error { closed[builtRevision]++; return nil }
 				if revision == 2 {
 					switch change {
@@ -192,7 +192,7 @@ func TestAgentRuntimeRebuildPreservesFixedConfiguration(t *testing.T) {
 					case "model":
 						res.ModelID = "different"
 					case "effort":
-						res.ReasoningEffort = "high"
+						res.ReasoningEffort, res.RequestedReasoningEffort = "high", "high"
 					}
 				}
 				return res, nil

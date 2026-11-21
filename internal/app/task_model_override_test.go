@@ -63,7 +63,7 @@ func TestBuildAgentModelEngineFactoryRebuildsDefScopeOnOverrideModel(t *testing.
 	agentReg := agents.NewRegistry([]agents.AgentDef{def})
 	cfg := Config{Model: "claude-default"}
 
-	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, providerAnthropic,
+	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, nil, providerAnthropic,
 		agentReg, nil, hookexec.New(nil), nil, nil)
 
 	// An empty agent or model is unroutable.
@@ -121,7 +121,7 @@ func TestBuildAgentModelEngineFactoryDeclinesInlineMCP(t *testing.T) {
 	agentReg := agents.NewRegistry([]agents.AgentDef{inlineDef, refDef})
 	cfg := Config{Model: "claude-default"}
 
-	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, providerAnthropic,
+	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, nil, providerAnthropic,
 		agentReg, nil, hookexec.New(nil), nil, nil)
 
 	// Inline MCP server ⇒ declined (the v1 scope limit).

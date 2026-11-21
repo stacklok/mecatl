@@ -658,10 +658,6 @@ func TestRegistryOpenCode(t *testing.T) {
 	if reg.defaultModel != "glm-5.2" {
 		t.Errorf("default model = %q, want glm-5.2", reg.defaultModel)
 	}
-	// No xhigh/max clamp for opencode (the endpoint accepts them; verified live).
-	if got, clamped := clampEffortForProvider(providerOpenCode, "xhigh"); got != "xhigh" || clamped {
-		t.Errorf("clampEffortForProvider(opencode, xhigh) = %q,%v; want xhigh,false (no clamp)", got, clamped)
-	}
 }
 
 func TestOpenCodeEntrySendsRequiredSessionHeader(t *testing.T) {
