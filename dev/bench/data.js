@@ -401712,6 +401712,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795277287402,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b6524a41bc351287eead4deacbb3a193c9d3823",
+          "message": "feat(identitybroker): start the broker from operator configuration and keys (#2875)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-11-21T16:51:51Z",
+          "tree_id": "932448067ac9557c0aa5343038e9ed669009c223",
+          "url": "https://github.com/stacklok/mecatl/commit/7b6524a41bc351287eead4deacbb3a193c9d3823"
+        },
+        "date": 1795280641846,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -579652,6 +579686,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795280638346,
+  "lastUpdate": 1795280642686,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
