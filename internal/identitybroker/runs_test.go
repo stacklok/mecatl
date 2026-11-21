@@ -213,6 +213,11 @@ func TestRunRecordsForgottenAtTheCap(t *testing.T) {
 	main := callRequest(f.s.ID, f.cred)
 	main.RunID, main.DelegationID = "R43", "D1"
 	f.wantRunDenied(t, main, "not reported for this run and agent")
+	// The forgotten run can still delegate: its kept delegation rebuilds it,
+	// as a call's would.
+	if err := report("D1a", "R43", f.child, "R49", f.main); err != nil {
+		t.Fatalf("a delegation from a run whose record was forgotten: %v", err)
+	}
 	if _, err := f.authorize(f.childCall("R43", "D1")); err != nil {
 		t.Fatalf("the delegated run after its record was forgotten: %v", err)
 	}

@@ -327,12 +327,14 @@ func (s *Service) registerIdentityAgent(ctx context.Context, sess *session.Sessi
 		if registered {
 			s.logIdentityBroker(ctx, "registered agent", host, brokerSession.ID)
 			// A reopened broker session also needs the tree's helpers, which
-			// keep their identities, registered again, parents first.
+			// keep their identities, registered again, parents first, each
+			// with its current delegation reported there. A helper that fails
+			// to move here moves, and reports, on its next lookup. With no
+			// reopen, nothing has moved and this does nothing.
 			if err := s.cfg.IdentityAgents.MoveHelpers(ctx, host); err != nil {
 				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker could not register every helper agent again",
 					"session", host, "broker_session", brokerSession.ID, "err", err.Error())
 			}
-			s.reportDelegationsAgain(ctx, host, brokerSession.ID)
 		}
 		return nil
 	case admitErr != nil:
@@ -620,39 +622,4 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 
 func (s *Service) logIdentityBroker(ctx context.Context, msg, host, brokerSession string) {
 	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, msg, "session", host, "broker_session", brokerSession)
-}
-
-// reportDelegationsAgain reports every delegation held for root's tree into
-// brokerSession, in the order they were first reported, so each delegating
-// run is recorded before the runs it delegated to: a reopened broker session
-// starts with no runs, and a moved helper's calls name its run and
-// delegation. A report into the session that already holds it succeeds
-// again. A helper or delegating agent not registered there, as one that
-// failed to move, is skipped; failures are logged, and the helper's gateway
-// calls are refused until its next delegation.
-func (s *Service) reportDelegationsAgain(ctx context.Context, root, brokerSession string) {
-	agents := s.cfg.IdentityAgents
-	var errs []error
-	for _, d := range agents.Delegations(root) {
-		receiving, ok := agents.Held(agentcredential.Key{RootSessionID: root, AgentSessionID: d.AgentSessionID})
-		if !ok || receiving.BrokerSessionID != brokerSession {
-			continue
-		}
-		delegating, ok := agents.Held(agentcredential.Key{RootSessionID: root, AgentSessionID: d.DelegatingAgentSession})
-		if !ok || delegating.BrokerSessionID != brokerSession {
-			continue
-		}
-		err := s.cfg.IdentityBroker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
-			SessionID:    brokerSession,
-			DelegationID: d.ID, DelegatingRun: d.DelegatingRun, DelegatingAgent: delegating.Agent,
-			ReceivingRun: d.Run.ID, ReceivingAgent: receiving.Agent, Owner: d.Run.Owner,
-		})
-		if err != nil {
-			errs = append(errs, fmt.Errorf("report delegation %s for helper %s: %w", d.ID, d.AgentSessionID, err))
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker could not report every helper delegation again",
-			"session", root, "broker_session", brokerSession, "err", err.Error())
-	}
 }

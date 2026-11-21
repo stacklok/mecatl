@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -156,8 +157,10 @@ func TestRegisterHelperDelegationRefusals(t *testing.T) {
 }
 
 // TestDelegationsAreReportedAgainInAReopenedBrokerSession pins that once a
-// root's broker session reopens, its run entry reports every held delegation
-// again into the new session, parents before the helpers they delegated to.
+// root's broker session reopens, its run entry moves each helper there and
+// reports its current delegation again, parents before the helpers they
+// delegated to. A delegation can be reported more than once, as part of a
+// later helper's chain; the broker accepts a repeat.
 func TestDelegationsAreReportedAgainInAReopenedBrokerSession(t *testing.T) {
 	f := newHelperFixture(t)
 	ctx := f.runContext(t, "run_root")
@@ -177,7 +180,7 @@ func TestDelegationsAreReportedAgainInAReopenedBrokerSession(t *testing.T) {
 	reopened := wantBrokerSession(t, f.broker, f.root)
 	var again []identitybroker.ReportDelegationRequest
 	for _, r := range f.broker.delegationRequests()[len(first):] {
-		if r.SessionID == reopened.ID {
+		if r.SessionID == reopened.ID && !slices.Contains(again, r) {
 			again = append(again, r)
 		}
 	}
@@ -196,6 +199,60 @@ func TestDelegationsAreReportedAgainInAReopenedBrokerSession(t *testing.T) {
 	repeat := again[1]
 	if err := f.broker.inner.ReportDelegation(t.Context(), repeat); err != nil {
 		t.Fatalf("repeat of a reported delegation: %v", err)
+	}
+	repeat.ReceivingRun = "run_other"
+	if err := f.broker.inner.ReportDelegation(t.Context(), repeat); !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {
+		t.Fatalf("a changed repeat = %v, want ALREADY_EXISTS", err)
+	}
+}
+
+// TestAHelperThatFailsToMoveReportsItsDelegationWhenItMoves pins that a
+// helper the reopen could not move, moved later by the MCP broker's lookup
+// before a gateway call, has its delegation reported into the new session
+// then, so the call's run checks out there.
+func TestAHelperThatFailsToMoveReportsItsDelegationWhenItMoves(t *testing.T) {
+	f := newHelperFixture(t)
+	if err := f.svc.RegisterHelper(f.runContext(t, "run_root"), newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{}); err != nil {
+		t.Fatalf("RegisterHelper: %v", err)
+	}
+	delegation, ok := f.svc.IdentityDelegationForTest(f.root.ID, "child-1")
+	if !ok {
+		t.Fatal("the helper holds no delegation")
+	}
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: f.main.SessionID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	f.broker.set(func(b *recordingBroker) { b.helperUnavailable = true })
+	if err := runToEnd(aliceContext(t), t, f.svc, f.root.ID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reopened := wantBrokerSession(t, f.broker, f.root)
+	reportedTo := func() bool {
+		for _, r := range f.broker.delegationRequests() {
+			if r.SessionID == reopened.ID && r.DelegationID == delegation.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if reportedTo() {
+		t.Fatal("the delegation of a helper that did not move was reported")
+	}
+
+	f.broker.set(func(b *recordingBroker) { b.helperUnavailable = false })
+	cred, err := f.svc.IdentityAgentLookupForTest(t.Context(), f.root.ID, "child-1")
+	if err != nil || cred.BrokerSessionID != reopened.ID {
+		t.Fatalf("lookup = %+v, %v; want the helper moved to %s", cred, err, reopened.ID)
+	}
+	if !reportedTo() {
+		t.Fatal("the moved helper's delegation was not reported into the new session")
+	}
+	// The broker recorded it: a changed repeat is refused.
+	var repeat identitybroker.ReportDelegationRequest
+	for _, r := range f.broker.delegationRequests() {
+		if r.SessionID == reopened.ID && r.DelegationID == delegation.ID {
+			repeat = r
+		}
 	}
 	repeat.ReceivingRun = "run_other"
 	if err := f.broker.inner.ReportDelegation(t.Context(), repeat); !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {

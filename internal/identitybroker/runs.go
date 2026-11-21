@@ -7,8 +7,11 @@ import (
 
 // maxRunsPerSession bounds how many run records, and how many delegation
 // records, a session keeps; the oldest is forgotten first. A forgotten root
-// run is recorded again on its next call; a forgotten delegated run's later
-// calls are refused until its delegation is reported again.
+// run is recorded again on its next call or report. A forgotten delegated run
+// is rebuilt from its delegation while that is kept; once both are
+// forgotten, the run's calls are refused.
+//
+// Shortcut: the design keeps run and delegation records for the session's life; these in-memory records are capped instead; removed by #2563 (durable records with a retention rule).
 const maxRunsPerSession = 4096
 
 // runRecord is a run the broker knows (design step (6), check 4): the agent
@@ -80,6 +83,17 @@ func (s *sessionRuns) addDelegation(id string, d delegationRecord) {
 	s.delegations[id] = d
 }
 
+// delegationTo returns the kept delegation whose receiving run is run, bound
+// to agent, and its ID.
+func (s *sessionRuns) delegationTo(run, agent string) (string, delegationRecord, bool) {
+	for id, d := range s.delegations {
+		if d.receivingRun == run && d.receivingAgent == agent {
+			return id, d, true
+		}
+	}
+	return "", delegationRecord{}, false
+}
+
 // ReportDelegation implements Core, with the checks of the design's
 // "Delegation report" in order. An accepted report records the delegation and
 // the receiving run, bound to the receiving agent and its owner, and records
@@ -99,23 +113,10 @@ func (b *Broker) ReportDelegation(_ context.Context, workload Workload, req Repo
 		return err
 	}
 	runs := t.runs.forLocked(s.ID)
-	// Check 3: the delegating run belongs to the session and is bound to the
-	// delegating agent; one the broker has not seen is recorded as a root
-	// run, which needs a root instance registered to the session.
-	delegating, known := runs.runs[req.DelegatingRun]
-	switch {
-	case known && delegating.agent != req.DelegatingAgent.Subject:
-		return deniedError("the delegating run is bound to another agent")
-	case known && delegating.delegationID != "":
-		if d, ok := runs.delegations[delegating.delegationID]; !ok || d.receivingRun != req.DelegatingRun {
-			return deniedError("the delegating run's own delegation was not reported for it")
-		}
-	case !known:
-		agent, ok := t.agents[req.DelegatingAgent.Subject]
-		if !ok || agent.sessionID != s.ID || !agent.parent.IsZero() {
-			return deniedError("a delegating run the broker has not seen must be a root run of a root instance registered to the session")
-		}
-		delegating = runRecord{agent: req.DelegatingAgent.Subject, owner: req.Owner}
+	// Check 3.
+	delegating, known, err := t.delegatingRunLocked(s, runs, req)
+	if err != nil {
+		return err
 	}
 	// Check 4: the receiving agent is registered to the session.
 	if agent, ok := t.agents[req.ReceivingAgent.Subject]; !ok || agent.sessionID != s.ID {
@@ -145,6 +146,41 @@ func (b *Broker) ReportDelegation(_ context.Context, workload Workload, req Repo
 	runs.addDelegation(req.DelegationID, d)
 	runs.addRun(req.ReceivingRun, runRecord{agent: req.ReceivingAgent.Subject, owner: req.Owner, delegationID: req.DelegationID})
 	return nil
+}
+
+// delegatingRunLocked is "Delegation report" check 3: the delegating run
+// belongs to s and is bound to the delegating agent. One the broker has not
+// seen is a delegated run whose record was forgotten, rebuilt from its kept
+// delegation as AuthorizeCall rebuilds it, or else a root run, which needs a
+// root instance registered to s and s's owner. It returns the delegating
+// run's record and whether runs holds it. The caller holds t.mu.
+func (t *sessionTable) delegatingRunLocked(s Session, runs *sessionRuns, req ReportDelegationRequest) (runRecord, bool, error) {
+	delegating, known := runs.runs[req.DelegatingRun]
+	switch {
+	case known && delegating.agent != req.DelegatingAgent.Subject:
+		return runRecord{}, true, deniedError("the delegating run is bound to another agent")
+	case known && delegating.delegationID != "":
+		if d, ok := runs.delegations[delegating.delegationID]; !ok || d.receivingRun != req.DelegatingRun {
+			return runRecord{}, true, deniedError("the delegating run's own delegation was not reported for it")
+		}
+	case known:
+	default:
+		if id, d, ok := runs.delegationTo(req.DelegatingRun, req.DelegatingAgent.Subject); ok {
+			return runRecord{agent: d.receivingAgent, owner: d.owner, delegationID: id}, false, nil
+		}
+		agent, ok := t.agents[req.DelegatingAgent.Subject]
+		if !ok || agent.sessionID != s.ID || !agent.parent.IsZero() {
+			return runRecord{}, false, deniedError("a delegating run the broker has not seen must be a root run of a root instance registered to the session")
+		}
+		// The owner a root run is recorded with is checked here, not only at
+		// its first call, so one inconsistent report cannot fix the wrong
+		// owner on it.
+		if req.Owner != s.Owner {
+			return runRecord{}, false, deniedError("a delegating root run's owner must be the broker session's owner")
+		}
+		delegating = runRecord{agent: req.DelegatingAgent.Subject, owner: req.Owner}
+	}
+	return delegating, known, nil
 }
 
 // checkRunLocked applies design step (6) checks 4 and 5 to a call in s by the

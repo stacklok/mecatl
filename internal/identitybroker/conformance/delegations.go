@@ -179,6 +179,15 @@ func runDelegations(t *testing.T, factory serviceFactory) {
 		f.wantRefused(t, "ReportDelegation changing a root run's owner", second)
 	})
 
+	t.Run("check 3: an unseen root run takes the session's owner", func(t *testing.T) {
+		f := newDelegationFixture(t, factory)
+		req := f.report()
+		req.Owner = bob
+		f.wantRefused(t, "ReportDelegation recording a root run for another owner", req)
+		// Nothing was recorded: the same root run delegates for alice.
+		f.mustReport(t, f.report())
+	})
+
 	t.Run("a receiving run cannot be delegated twice", func(t *testing.T) {
 		f := newDelegationFixture(t, factory)
 		f.mustReport(t, f.report())

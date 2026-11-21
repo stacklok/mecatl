@@ -61,8 +61,11 @@ const maxDelegationsPerRoot = 4096
 
 // SetDelegation records d as the current delegation of key's helper, once
 // the broker accepted it. It returns ErrNoCredential, recording nothing, when
-// no credential is held for key. The design gives a delegation no end, so
-// each is kept, and reported again after a reopen, until its root is dropped.
+// no credential is held for key. When the helper moves to another broker
+// session, its current delegation is reported there again, after the
+// delegations its delegating run descends from; the design gives a
+// delegation no end, so each is kept, to find those, until its root is
+// dropped.
 func (h *Holder) SetDelegation(key Key, d Delegation) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -83,7 +86,7 @@ func (h *Holder) SetDelegation(key Key, d Delegation) error {
 
 // ClearDelegation forgets the current delegation of key's helper, so its
 // gateway calls name no run until it is delegated again. Delegations already
-// recorded stay listed for reporting again.
+// recorded are kept for the chains of later ones.
 func (h *Holder) ClearDelegation(key Key) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
