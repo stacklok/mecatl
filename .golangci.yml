@@ -1085,6 +1085,7 @@ linters:
             - github.com/stacklok/mecatl/internal/identitybroker$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient$
+            - github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest$
             - github.com/stacklok/mecatl/internal/testutil/identityharness$
         # The identity harness stands in for the IdP and the gateway; it
         # never imports the code under test, so a broker bug cannot also bend
@@ -1129,7 +1130,8 @@ linters:
           deny:
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter
               desc: 'only internal/app wires the identity broker adapters; use the broker boundary instead'
-        # as1servertest is a test fixture; production code never imports it.
+        # as1servertest and brokerconfigtest are test fixtures; production code
+        # never imports them.
         internal-identitybroker-as1servertest-importers:
           list-mode: lax
           files:
@@ -1138,6 +1140,8 @@ linters:
             - '!$test'
           deny:
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest
+              desc: 'test fixture; production code never imports it'
+            - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest
               desc: 'test fixture; production code never imports it'
         # mcpbrokertest makes AS-2 trust AS-1 in tests; production code never
         # imports it.

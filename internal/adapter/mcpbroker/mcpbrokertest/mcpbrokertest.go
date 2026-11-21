@@ -5,6 +5,8 @@ package mcpbrokertest
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
@@ -33,12 +35,17 @@ func TrustAS1(trust AS1Trust) mcpbroker.AS2Trust {
 
 // StartAS2 starts an MCP broker process with one static protected upstream
 // and AS-2 set up for the broker client brokerClientID, whose public keys
-// are the JWK Set brokerKeySet, trusting trust's issuer. It
+// are the JWK Set brokerKeySet, which it writes to a file as an operator
+// would, trusting trust's issuer. It
 // closes the process when t ends. It sets an environment variable, so t must
 // not be parallel.
 func StartAS2(t testing.TB, brokerClientID string, brokerKeySet []byte, trust AS1Trust) *mcpbroker.Process {
 	t.Helper()
 	t.Setenv(clientSecretEnv, "construction-only-secret")
+	keySetFile := filepath.Join(t.TempDir(), "broker-client-jwks.json")
+	if err := os.WriteFile(keySetFile, brokerKeySet, 0o600); err != nil {
+		t.Fatalf("mcpbrokertest: write the broker key set: %v", err)
+	}
 	cfg := mcpbroker.ToolHiveConfig{
 		CallbackURL: CallbackURL,
 		Profiles: []mcpbroker.ToolHiveProfile{{
@@ -49,7 +56,7 @@ func StartAS2(t testing.TB, brokerClientID string, brokerKeySet []byte, trust AS
 			},
 			Static: []mcpbroker.StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
 		}},
-		BrokerClient: &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySet: brokerKeySet},
+		BrokerClient: &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
 		AS2Trust:     TrustAS1(trust),
 	}
 	process, err := mcpbroker.NewToolHiveProcess(t.Context(), cfg)

@@ -650,8 +650,8 @@ Usage: mecak8s [flags]
         Start the experimental agent identity broker, which gives each signed-in user's
         session a broker session. Supports a single replica only, requires no shell in
         this process (--no-shell, or --shell "" with Kubernetes execution, which keeps
-        the remote Shell), and blocks the tool calls of agent definitions that have
-        hooks
+        the remote Shell) and no --workspace, and blocks the tool calls of agent
+        definitions that have hooks
   --enable-parallel
         Enable the Parallel tool for isolated child branches
   --enable-teams
@@ -705,10 +705,9 @@ Usage: mecak8s [flags]
         sets --oidc-issuer, --oidc-client-id, and --oidc-accepted-client-ids when
         unset, and refuses other values. AS-1 keeps sign-ins and refresh tokens in
         memory. Empty does not host AS-1
-  --identity-broker-as1-signing-key-file string
-        PEM private key (EC P-256 or RSA) AS-1 signs access tokens with. Empty
-        generates a key at startup, so access tokens stop verifying when mecak8s
-        restarts
+  --identity-broker-as1-signing-key-file value
+        REMOVED: set AS-1's signing key (keys.as1_signing) in the --identity-broker-
+        config file. Any use fails startup
   --identity-broker-as1-tui-client-id string
         OAuth client ID of mecatui at AS-1, a public client. Required with --identity-
         broker-as1-issuer
@@ -731,6 +730,12 @@ Usage: mecak8s [flags]
   --identity-broker-as1-upstream-issuer string
         HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1.
         Required with --identity-broker-as1-issuer
+  --identity-broker-config string
+        JSON file the identity broker reads its configuration from: the agent trust
+        domain, the broker audience, and the paths of its keys (the agent issuer key,
+        and with --identity-broker-as1-issuer the broker client key, its public key
+        set, and AS-1's signing key). Required with, and only allowed with, --enable-
+        identity-broker
   --identity-broker-subject-claim string
         Upstream identity provider ID-token claim that names the company identity, the
         same for a user in every application: oid for Entra ID, whose sub differs per

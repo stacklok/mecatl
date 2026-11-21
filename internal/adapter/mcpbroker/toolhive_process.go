@@ -127,8 +127,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if client := config.BrokerClient; client != nil && (client.ID == "" || !hasKeys(client.KeySet)) {
-		return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set with at least one key", ErrInvalidCatalogue)
+	if client := config.BrokerClient; client != nil {
+		if client.ID == "" || client.KeySetFile == "" {
+			return nil, fmt.Errorf("%w: broker client needs an ID and a JWK Set file", ErrInvalidCatalogue)
+		}
+		if err := checkKeySetFile(client.KeySetFile); err != nil {
+			return nil, fmt.Errorf("%w: broker client: %w", ErrInvalidCatalogue, err)
+		}
 	}
 	diag := config.Diagnostics
 	if diag == nil {
@@ -231,15 +236,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
 		}
+		// Shortcut: the embedded authorization server sets no signing key and no HMAC secret, so ToolHive generates both at each start and the tokens, authorization codes, and refresh tokens they protect do not survive a restart; removed by #2538 (mecak8s supplies the signing key with the identity broker on) and #2869 (the HMAC secret).
 		runConfig := &authserver.RunConfig{
 			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
 		}
-		removeKeySet := func() {}
 		if as2 {
-			runConfig.InboundGrants, runConfig.TrustedIssuers, removeKeySet, err = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)
-			if err != nil {
-				return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
-			}
+			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)
 		}
 		client, err := registration.New(registration.Config{
 			ID:                      protectedTarget.clientID,
@@ -252,7 +254,6 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			Audience:                []string{resource},
 		})
 		if err != nil {
-			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: construct embedded authorization client: %w", err))
 		}
 		// A restart between a user starting an OAuth authorization and
@@ -282,11 +283,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		if err := authStore.RegisterClient(processCtx, client); err != nil {
 			closeLocalStore()
-			removeKeySet()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
-		removeKeySet()
 		if err != nil {
 			_ = authStore.Close()
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))

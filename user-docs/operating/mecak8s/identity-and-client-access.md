@@ -220,13 +220,25 @@ oidc:
   ownerIdentity: sub_id
 identityBroker:
   enabled: true
+  trustDomain: agents.example.com
+  audience: https://mecatl.example.com/identity-broker
+  keys:
+    agentIssuer:
+      secretName: mecak8s-identity-broker
+      key: agent-issuer.pem
+    brokerClient:
+      secretName: mecak8s-identity-broker
+      key: broker-client.pem
+      keySet:
+        secretName: mecak8s-identity-broker
+        key: broker-client-jwks.json
+    as1Signing:
+      secretName: mecak8s-as1
+      key: signing-key.pem
   subjectClaim: oid
   as1:
     issuer: https://mecatl.example.com/as1
     tuiClientID: mecatui
-    signingKey:
-      secretName: mecak8s-as1
-      key: signing-key.pem
     upstream:
       issuer: https://login.microsoftonline.com/<TENANT_ID>/v2.0
       clientID: <AS1_CLIENT_ID>
@@ -237,22 +249,147 @@ identityBroker:
 
 |Value|Flag|Meaning|
 |-|-|-|
-|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`. With protected MCP servers configured, turning it on or off changes the audience of the MCP gateway's tokens, so those servers must be [enrolled](/features/security-and-execution/mcp-oauth-and-credentials.md) again. Each session's main agent gets its own agent identity, and so does each [subagent, parallel branch, and team member](/features/agent-behavior/subagents-and-teams.md) it starts. Helpers that run no named agent can call the MCP gateway's tools under their own identity; a helper never gets another MCP broker tool, and one running a named agent gets none. The broker accepts only built-in agents or a [named agent](/features/agent-behavior/named-agents.md#choose-where-definitions-are-discovered) from a directory passed with `--agents-dir` in `extraArgs` and mounted with `extraVolumes` and `extraVolumeMounts`. A session that uses a named agent from any other location cannot run, a subagent or team member that names one cannot start, and a `--agents-dir` directory that does not exist stops startup. With an operator [`harness_context`](/operating/settings.md#select-harness-context-sources) policy, which can let another source win an agent name, only built-in agents can run.|
+|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `trustDomain`, `audience`, and `keys.agentIssuer` below. Also requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, an empty `workspace` (see [Keep the broker's keys out of sessions](#keep-the-brokers-keys-out-of-sessions)), and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`. With protected MCP servers configured, turning it on or off changes the audience of the MCP gateway's tokens, so those servers must be [enrolled](/features/security-and-execution/mcp-oauth-and-credentials.md) again. Each session's main agent gets its own agent identity, and so does each [subagent and team member](/features/agent-behavior/subagents-and-teams.md) it starts. Helpers that run no named agent can call the MCP gateway's tools under their own identity; a helper never gets another MCP broker tool, and one running a named agent gets none. The broker accepts only built-in agents or a [named agent](/features/agent-behavior/named-agents.md#choose-where-definitions-are-discovered) from a directory passed with `--agents-dir` in `extraArgs` and mounted with `extraVolumes` and `extraVolumeMounts`. A session that uses a named agent from any other location cannot run, a subagent or team member that names one cannot start, and a `--agents-dir` directory that does not exist stops startup. With an operator [`harness_context`](/operating/settings.md#select-harness-context-sources) policy, which can let another source win an agent name, only built-in agents can run.|
+|`identityBroker.trustDomain`|`--identity-broker-config`|The agent trust domain, such as `agents.example.com`. It names every agent the broker vouches for, so keep it once agents act.|
+|`identityBroker.audience`|`--identity-broker-config`|The broker audience every agent credential names.|
+|`identityBroker.keys.agentIssuer`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key that signs agent credentials.|
+|`identityBroker.keys.brokerClient`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key the broker authenticates with at AS-1. Its `keySet` names the Secret key holding the matching public JWK Set, whose `kid` is the key's RFC 7638 thumbprint. Required with `identityBroker.as1.issuer`.|
+|`identityBroker.keys.as1Signing`|`--identity-broker-config`|Secret key holding AS-1's PEM signing key (EC P-256 or RSA). Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`. AS-1 accepts only an absolute `http` or `https` URL with a host and no fragment as the audience, such as `https://mecatl.example.com/api`.|
 |`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
-|`identityBroker.as1.signingKey`|`--identity-broker-as1-signing-key-file`|_Optional._ Secret key holding AS-1's PEM signing key (EC P-256 or RSA).|
 |`identityBroker.as1.upstream.issuer`|`--identity-broker-as1-upstream-issuer`|The company IdP's HTTPS issuer URL.|
 |`identityBroker.as1.upstream.clientID`|`--identity-broker-as1-upstream-client-id`|AS-1's client ID at the company IdP.|
 |`identityBroker.as1.upstream.clientSecret`|`--identity-broker-as1-upstream-client-secret-file`|_Optional._ Secret key holding AS-1's client secret at the company IdP. Without it, AS-1 is a public client there.|
 |`identityBroker.as1.upstream.caSecret`|`--identity-broker-as1-upstream-ca-file`|_Optional._ Secret key holding a PEM CA bundle AS-1 trusts for the company IdP's certificate, beside the system roots. It does not admit a private address. Required with `identityBroker.as1.upstream.allowPrivateAddresses`.|
 |`identityBroker.as1.upstream.allowPrivateAddresses`|`--identity-broker-as1-upstream-allow-private-addresses`|_Optional._ Lets AS-1 reach a company IdP at a private or link-local address, such as an in-cluster Service. It applies to every request AS-1 makes to the company IdP, including discovery, the endpoints discovery returns, and redirects, not just the issuer host. Requires `identityBroker.as1.upstream.caSecret`.|
 
-Create the Secret before installing; the chart mounts each key read-only. Leave
+Create the Secrets before installing; the chart mounts each key read-only and
+writes the trust domain, audience, and key paths to the identity broker's
+configuration file, a ConfigMap. `mecak8s` refuses to start when a required key
+is missing, when one key serves two roles, or when the key set lacks the broker
+client's public key under its `kid`; the
+[configuration file](#identity-broker-configuration-file) section lists every
+rule.
+
+The Deployment rolls out with `Recreate`, so the running pod stops before the
+new one starts. A Secret or key that does not exist leaves the new pod in
+`ContainerCreating` and the broker down. Before you install or upgrade, run
+`kubectl describe secret <SECRET_NAME>` for each Secret to confirm it lists the
+key the chart mounts; the command shows key names and sizes, not values. Run
+`helm upgrade` with `--wait`: without it, Helm reports success while the new pod
+is still starting.
+
+Leave
 `oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart
 sets them to AS-1's issuer and `tuiClientID`. It refuses values that differ,
 any `oidc.jwksURI` (AS-1's discovery document supplies its keys),
 `oidc.allowPrivateHTTPSIssuer`, and identity broker flags in `extraArgs`.
+
+### Create the broker's keys
+
+Each role needs its own key. The broker client's key set is a JWK Set holding
+the public half of `keys.brokerClient` under a `kid` equal to the key's RFC
+7638 thumbprint. The repository's
+[`broker-client-key-set.sh`](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-idbroker/broker-client-key-set.sh)
+derives it from the private key with `openssl`. From a checkout, these commands
+create the Secret the example values name:
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -out agent-issuer.pem
+openssl ecparam -name prime256v1 -genkey -noout -out broker-client.pem
+deploy/mecak8s-idbroker/broker-client-key-set.sh < broker-client.pem > broker-client-jwks.json
+kubectl create secret generic mecak8s-identity-broker \
+  --from-file=agent-issuer.pem --from-file=broker-client.pem --from-file=broker-client-jwks.json
+```
+
+Generate AS-1's signing key the same way, as `signing-key.pem` in the
+`mecak8s-as1` Secret, beside `upstream-client-secret`. Delete the private key
+files once the Secrets exist.
+
+### Identity broker configuration file
+
+`mecak8s` reads the identity broker's trust domain, audience, and key paths
+from the JSON file `--identity-broker-config` names, which
+`--enable-identity-broker` requires. The chart renders this file from the
+`identityBroker` values and mounts it; without the chart, write it yourself:
+
+```json
+{
+  "trust_domain": "agents.example.com",
+  "audience": "https://mecatl.example.com/identity-broker",
+  "keys": {
+    "agent_issuer": {
+      "key_file": "/var/run/secrets/identity-broker/agent-issuer/key.pem",
+      "fallback_key_files": ["/var/run/secrets/identity-broker/agent-issuer-old/public.pem"]
+    },
+    "broker_client": {
+      "key_file": "/var/run/secrets/identity-broker/broker-client/key.pem",
+      "key_set_file": "/var/run/secrets/identity-broker/broker-client/jwks.json"
+    },
+    "as1_signing": {
+      "key_file": "/var/run/secrets/identity-broker/as1-signing/signing-key.pem"
+    }
+  }
+}
+```
+
+|Field|Meaning|
+|-|-|
+|`trust_domain`|The agent trust domain: lowercase letters, digits, `.`, `-`, and `_`. Required.|
+|`audience`|The broker audience every agent credential names. Required.|
+|`keys.agent_issuer.key_file`|EC P-256 private key that signs agent credentials. Required.|
+|`keys.agent_issuer.fallback_key_files`|_Optional._ Earlier agent issuer keys. Credentials they signed keep verifying while they are listed.|
+|`keys.broker_client.key_file`, `key_set_file`|EC P-256 private key the broker authenticates with at AS-1 and the MCP gateway, and the public JWK Set those servers register for it. Required together, and required with `--identity-broker-as1-issuer`.|
+|`keys.as1_signing.key_file`|AS-1's EC P-256 or RSA private key, which signs access tokens. Required with `--identity-broker-as1-issuer`, and refused without it.|
+|`keys.as1_signing.fallback_key_files`|_Optional._ Earlier AS-1 signing keys. AS-1 publishes them in its key set, so tokens they signed keep verifying, and never signs with them. Requires `key_file`.|
+
+Every path is absolute. A private key is a PEM file in PKCS #1
+(`RSA PRIVATE KEY`), SEC 1 (`EC PRIVATE KEY`, as `openssl ecparam -genkey`
+writes), or PKCS #8 (`PRIVATE KEY`) form; only its first PEM block is read.
+`mecak8s` refuses an unknown field, so a misspelled field fails startup rather
+than being ignored. The error names the file and the field.
+
+Rotate a signing key by making the new key `key_file` and listing the old key
+in `fallback_key_files`. Remove the fallback once everything it signed has
+expired: agent credentials last an hour, and AS-1's access tokens last their
+own lifetime. Fallbacks serve a planned rotation only. Remove a compromised key
+at once instead of keeping it as a fallback. List an agent issuer fallback as
+its public key, in PKIX (`PUBLIC KEY`) form, so the retired private key leaves
+the pod:
+
+```sh
+openssl ec -in agent-issuer-old.pem -pubout -out agent-issuer-old-public.pem
+```
+
+The broker also accepts the old private key there. AS-1's fallbacks must stay
+private keys, because AS-1 loads every key file as a signing key. The broker
+client rotates through its key set instead: add the next key's public key to
+`key_set_file`, switch `key_file` to the next key, then remove the old public
+key. The chart does not yet set fallback keys.
+
+`mecak8s` reads the file and the keys only at startup. The chart rolls the pod
+when the rendered file changes, such as a new key path. After changing a key
+inside a Secret, restart the Deployment yourself, for example for a release
+named `mecak8s` in the `mecatl` namespace:
+
+```sh
+kubectl rollout restart deployment/mecak8s-mecak8s --namespace mecatl
+```
+
+AS-1's signing key is part of this file: `mecak8s` refuses to start with the
+removed `--identity-broker-as1-signing-key-file` flag, so set
+`keys.as1_signing.key_file` instead.
+
+### Keep the broker's keys out of sessions
+
+The broker reads its keys from files in the `mecak8s` pod, so it runs only
+where sessions cannot read that filesystem. With `identityBroker.enabled`, the
+chart refuses a `workspace` and `mecak8s` refuses `--workspace`. Sessions are
+then file-less. To give them files, use the
+[Redis virtual workspace](state-and-execution.md#redis-virtual-workspace)
+(`redis.filesystem.enabled`) or [Kubernetes execution](native-execution.md)
+(`execution.enabled`); both keep session files outside the pod's filesystem.
 
 ### Choose the issuer
 
@@ -295,15 +432,15 @@ ownership still keys on the access token's `sub_id`.
 Users approve a consent page at AS-1 when they sign in. AS-1 keeps its users,
 pending sign-ins, and refresh tokens in memory, so every pod restart or rollout
 signs all users out of AS-1 and they run `mecatui login` again. The broker's
-sessions and the key its client uses at AS-1 live in the same memory, so a
-restart drops them too: the broker generates a fresh client key at startup, and
-each signed-in user's next request opens a new broker session. With
-`signingKey`, access tokens issued before a restart keep verifying until they
-expire. Without it, AS-1 generates a key at startup and those tokens stop
-verifying immediately. AS-1 accepts each access token for one session open,
-but it forgets which tokens it has accepted when the pod restarts. A token
+sessions live in the same memory, so a restart drops them too, and each
+signed-in user's next request opens a new broker session. AS-1's signing key
+comes from a Secret, so the access tokens AS-1 issued before a restart keep
+verifying until they expire. AS-1 accepts each access token for one session
+open, but it forgets which tokens it has accepted when the pod restarts. A token
 used before a restart can open one more session after it, until the token
-expires.
+expires. The MCP gateway's embedded authorization server generates its own
+signing key at each start, so the tokens it issued stop verifying after a
+restart.
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see

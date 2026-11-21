@@ -17,6 +17,16 @@ set:
   oidc.resource: https://mecatl.example.com
   identityBroker.enabled: true
   identityBroker.subjectClaim: sub
+  identityBroker.trustDomain: agents.example.com
+  identityBroker.audience: https://broker.example.com
+  identityBroker.keys.agentIssuer.secretName: ib-agent
+  identityBroker.keys.agentIssuer.key: key.pem
+  identityBroker.keys.brokerClient.secretName: ib-client
+  identityBroker.keys.brokerClient.key: key.pem
+  identityBroker.keys.brokerClient.keySet.secretName: ib-client
+  identityBroker.keys.brokerClient.keySet.key: jwks.json
+  identityBroker.keys.as1Signing.secretName: ib-as1
+  identityBroker.keys.as1Signing.key: signing.pem
   identityBroker.as1.issuer: https://mecatl.example.com/as1
   identityBroker.as1.tuiClientID: mecatui
   identityBroker.as1.upstream.issuer: https://login.example.com/tenant/v2.0
@@ -45,34 +55,33 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-subject-claim=sub
-      - notExists:
-          path: spec.template.spec.volumes[?(@.name == "as1-signing-key")]
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --identity-broker-config=/etc/mecatl-identity-broker/identity-broker.json
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-config")].configMap.name
+          value: unit-mecak8s-identity-broker
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources[?(@.secret.name == "ib-as1")].secret.items
+          value:
+            - key: signing.pem
+              path: as1-signing/signing.pem
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "identity-broker-keys")].readOnly
+          value: true
 
-  - it: projects the signing key and upstream client secret read-only
+  - it: projects the upstream client secret read-only
     set:
       identityBroker.subjectClaim: oid
-      identityBroker.as1.signingKey.secretName: as1-signing
-      identityBroker.as1.signingKey.key: key.pem
       identityBroker.as1.upstream.clientSecret.secretName: as1-upstream
       identityBroker.as1.upstream.clientSecret.key: client-secret
     asserts:
-      - contains:
-          path: spec.template.spec.containers[0].args
-          content: --identity-broker-as1-signing-key-file=/var/run/secrets/as1-signing-key/key.pem
       - contains:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-as1-upstream-client-secret-file=/var/run/secrets/as1-upstream-client-secret/client-secret
       - contains:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-subject-claim=oid
-      - equal:
-          path: spec.template.spec.volumes[?(@.name == "as1-signing-key")].secret
-          value:
-            secretName: as1-signing
-            defaultMode: 288
-            items:
-              - key: key.pem
-                path: key.pem
       - equal:
           path: spec.template.spec.volumes[?(@.name == "as1-upstream-client-secret")].secret
           value:
@@ -81,9 +90,6 @@ tests:
             items:
               - key: client-secret
                 path: client-secret
-      - equal:
-          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-signing-key")].readOnly
-          value: true
       - equal:
           path: spec.template.spec.containers[0].volumeMounts[?(@.name == "as1-upstream-client-secret")].readOnly
           value: true
@@ -149,6 +155,8 @@ tests:
       identityBroker.as1.tuiClientID: ""
       identityBroker.as1.upstream.issuer: ""
       identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
@@ -156,6 +164,17 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-as1-issuer=https://mecatl.example.com/as1
+
+  - it: rejects AS-1's signing key without AS-1
+    set:
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.keys.as1Signing requires identityBroker.as1.issuer: only a hosted AS-1 uses AS-1's signing key"
 
   - it: rejects AS-1 without OIDC
     set:
@@ -409,9 +428,72 @@ tests:
       - failedTemplate:
           errorPattern: oidc.allowPrivateHTTPSIssuer cannot be used with identityBroker.as1.issuer
 
-  - it: rejects a signing key Secret without a key
+  - it: rejects an agent issuer Secret without a key
     set:
-      identityBroker.as1.signingKey.secretName: as1-signing
+      identityBroker.keys.agentIssuer.key: ""
     asserts:
       - failedTemplate:
-          errorMessage: identityBroker.as1.signingKey.key is required when identityBroker.as1.signingKey.secretName is set
+          errorMessage: identityBroker.keys.agentIssuer.key is required when identityBroker.keys.agentIssuer.secretName is set
+
+  - it: requires the trust domain
+    set:
+      identityBroker.trustDomain: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.trustDomain is required when identityBroker.enabled is true
+
+  - it: requires AS-1's keys with AS-1
+    set:
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.keys.as1Signing is required when identityBroker.as1.issuer is set
+
+  - it: rejects a workspace beside the identity broker
+    set:
+      workspace: /data
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.enabled cannot be used with workspace
+
+  - it: rejects a workspace flag in extraArgs beside the identity broker
+    set:
+      extraArgs: [--no-shell, --workspace=/data]
+    asserts:
+      - failedTemplate:
+          errorPattern: extraArgs entry "--workspace=/data" sets a workspace, which identityBroker.enabled refuses
+
+  - it: points the removed AS-1 signing key value at its new place
+    set:
+      identityBroker.as1.signingKey.secretName: as1-signing-key
+      identityBroker.as1.signingKey.key: signing-key.pem
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing: set the key there, and clear identityBroker.as1.signingKey.secretName and identityBroker.as1.signingKey.key"
+
+  - it: accepts the removed AS-1 signing key value left empty
+    set:
+      identityBroker.as1.signingKey.secretName: ""
+      identityBroker.as1.signingKey.key: ""
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker
+
+  - it: rejects one Secret key for two roles
+    set:
+      identityBroker.keys.as1Signing.secretName: ib-client
+      identityBroker.keys.as1Signing.key: key.pem
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.keys.as1Signing and identityBroker.keys.brokerClient name the same Secret key ib-client/key.pem; each role needs its own key
+
+  - it: accepts two roles' keys in one Secret under different keys
+    set:
+      identityBroker.keys.as1Signing.secretName: ib-client
+      identityBroker.keys.as1Signing.key: as1.pem
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker

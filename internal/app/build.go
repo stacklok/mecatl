@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -981,12 +980,19 @@ type Config struct {
 	MCPAuthority *mcpauthority.Result
 	ConfiguredMCPBroker
 	// IdentityBroker starts the experimental agent identity broker. Only
-	// mecak8s sets it.
+	// mecak8s sets it. Build refuses it while sessions have a shell or a
+	// local Workspace in this process, where its key files are.
 	IdentityBroker bool
 	// identityBrokerCore replaces the real identity broker in tests.
 	identityBrokerCore identitybroker.Core
-	// identityBrokerConfig replaces the real identity broker's interim
-	// configuration in tests.
+	// IdentityBrokerConfigFile is the identity broker's configuration file:
+	// its agent trust domain, audience, and keys (package brokerconfig). It
+	// is required with, and only allowed with, IdentityBroker, and only
+	// mecak8s sets it.
+	IdentityBrokerConfigFile string
+	// identityBrokerConfig replaces the configuration the real identity
+	// broker builds from IdentityBrokerConfigFile in tests; the file's keys
+	// stay.
 	identityBrokerConfig *identitybroker.Config
 	// identityBrokerAS2Transport wraps the identity broker's in-process
 	// transport to AS-2, so tests can observe the ID-JAGs it redeems. It is
@@ -2368,12 +2374,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		identity := mcpBrokerIdentity{idjagTarget: idjagTarget}
-		if ib.client != nil {
-			if identity.clientKeySet, err = json.Marshal(ib.client.JWKS()); err != nil {
-				err = fmt.Errorf("encode the broker client key set: %w", err)
-			}
-		}
+		identity := mcpBrokerIdentity{idjagTarget: idjagTarget, clientKeySetFile: ib.clientKeySetFile}
 		switch {
 		case ib.hosted != nil:
 			identity.as1Issuer = ib.hosted.Issuer
@@ -2383,9 +2384,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
 			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
 		}
-		if err == nil {
-			broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
-		}
+		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
 		if err != nil {
 			childLiveness.Close()
 			mcpClose()

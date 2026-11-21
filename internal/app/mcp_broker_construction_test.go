@@ -79,7 +79,7 @@ func mountedBrokerRoutes(t *testing.T, built *Built) (authorize, callback bool) 
 
 func TestBuildKeepsBundledMCPBrokerWithIdentityBroker(t *testing.T) {
 	built, err := buildIsolated(t, t.Context(), Config{
-		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		UseMock: true, NoSoul: true,
 		IdentityBroker: true, identityBrokerCore: newClosableCore(t),
 		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}),
 	})
@@ -104,7 +104,7 @@ func TestBuildKeepsBundledMCPBrokerWithIdentityBroker(t *testing.T) {
 
 func TestBuildKeepsConfiguredMCPBrokerWithIdentityBroker(t *testing.T) {
 	cfg := Config{
-		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		UseMock: true, NoSoul: true,
 		IdentityBroker: true, identityBrokerCore: newClosableCore(t),
 		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}),
 	}
@@ -130,9 +130,9 @@ func protectedBrokerAuthority() *mcpauthority.Result {
 }
 
 // unusedAS1 points the identity broker's session open at an AS-1 startup
-// never calls, with clientKey as the broker client key.
-func unusedAS1(issuer string, clientKey *ecdsa.PrivateKey) *IdentityBrokerAS1 {
-	return &IdentityBrokerAS1{Issuer: issuer, TokenEndpoint: issuer + "/token", HTTPClient: &http.Client{}, ClientKey: clientKey}
+// never calls.
+func unusedAS1(issuer string) *IdentityBrokerAS1 {
+	return &IdentityBrokerAS1{Issuer: issuer, TokenEndpoint: issuer + "/token", HTTPClient: &http.Client{}}
 }
 
 func newBrokerClientKey(t *testing.T) *ecdsa.PrivateKey {
@@ -151,13 +151,14 @@ func newBrokerClientKey(t *testing.T) *ecdsa.PrivateKey {
 func TestBuildRecordsAS2(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	for name, cfg := range map[string]Config{
-		"external AS-1": {IdentityBrokerAS1: unusedAS1("https://as1.example", nil)},
+		"external AS-1": {IdentityBrokerAS1: unusedAS1("https://as1.example")},
 		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, "https://as1.mecatl.test/as1")},
 		"no AS-1":       {},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.UseMock, cfg.NoSoul = true, true
 			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
+			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -224,16 +225,16 @@ func TestBuildRecordsAS2(t *testing.T) {
 	}
 }
 
-// TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet pins that an empty broker
-// client key set, like a nil one, sets up no AS-2.
-func TestBuildMCPBrokerSetsNoAS2ForAnEmptyKeySet(t *testing.T) {
-	parts, err := buildMCPBroker(t.Context(), Config{}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}, nil, mcpBrokerIdentity{clientKeySet: []byte{}})
+// TestBuildMCPBrokerSetsNoAS2WithoutAKeySetFile pins that no broker client
+// key set file sets up no AS-2.
+func TestBuildMCPBrokerSetsNoAS2WithoutAKeySetFile(t *testing.T) {
+	parts, err := buildMCPBroker(t.Context(), Config{}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}}, nil, mcpBrokerIdentity{})
 	if err != nil {
 		t.Fatalf("buildMCPBroker: %v", err)
 	}
 	t.Cleanup(parts.close)
 	if parts.as2 != nil {
-		t.Fatalf("an empty broker client key set set up AS-2 %+v", parts.as2)
+		t.Fatalf("no broker client key set set up AS-2 %+v", parts.as2)
 	}
 }
 
@@ -245,7 +246,10 @@ func TestBuildRecordsNoAS2(t *testing.T) {
 		"identity broker alone": {IdentityBroker: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.UseMock, cfg.NoSoul = true, true
+			if cfg.IdentityBroker && cfg.identityBrokerCore == nil {
+				cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
+			}
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -262,13 +266,14 @@ func TestBuildRefusesAS2WithAS1sIssuer(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	for name, cfg := range map[string]Config{
 		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, as2TestIssuer)},
-		"external AS-1": {IdentityBrokerAS1: unusedAS1(as2TestIssuer, nil)},
+		"external AS-1": {IdentityBrokerAS1: unusedAS1(as2TestIssuer)},
 		// The same server spelled differently is still AS-2's issuer.
-		"external AS-1, other spelling": {IdentityBrokerAS1: unusedAS1("HTTPS://Broker.Example:443/v1/mcp/broker/", nil)},
+		"external AS-1, other spelling": {IdentityBrokerAS1: unusedAS1("HTTPS://Broker.Example:443/v1/mcp/broker/")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg.Workspace, cfg.UseMock, cfg.NoSoul = t.TempDir(), true, true
+			cfg.UseMock, cfg.NoSoul = true, true
 			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
+			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err == nil {
 				built.Close()
