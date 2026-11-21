@@ -401354,6 +401354,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795249023068,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73a03d88f098c1a2708f6397ed4de43f8244190b",
+          "message": "refactor(mcpbroker): carry the output schema and a token value through Gateway.ListTools (#2932)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-21T16:56:32+01:00",
+          "tree_id": "04b89a71b929ef77a9057e748a59be0658db4497",
+          "url": "https://github.com/stacklok/mecatl/commit/73a03d88f098c1a2708f6397ed4de43f8244190b"
+        },
+        "date": 1795277287402,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -579141,6 +579175,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795277284110,
+  "lastUpdate": 1795277288061,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
