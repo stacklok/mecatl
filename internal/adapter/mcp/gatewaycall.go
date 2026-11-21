@@ -239,6 +239,7 @@ func GatewayToolResult(callID session.ToolCallID, server, tool string, a Gateway
 	case a.result == nil:
 		return session.NewToolError(callID, "mcp call failed: the gateway call did not complete")
 	}
+	// Shortcut: a gateway result is not checked against the output schema its listing declares; removed by #2920 (check gateway tool results against their listed output schema).
 	return mapCallToolResult(callID, a.result, nil, tool, server)
 }
 
