@@ -51,9 +51,10 @@ type GatewayTool struct {
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
 // Shortcut: only the embedded gateway implements Gateway; removed by #2812 (external gateway implementation of the Gateway interface).
 type embeddedGateway struct {
-	endpoint string
-	resource string
-	client   *http.Client
+	endpoint   string
+	resource   string
+	client     *http.Client
+	listLimits mcpadapter.GatewayListLimits
 }
 
 func (g embeddedGateway) Endpoint() string         { return g.endpoint }
@@ -75,7 +76,7 @@ func (g embeddedGateway) ListTools(ctx context.Context, server string, credentia
 	if err != nil || !validBearerToken(token) {
 		return nil, mcpadapter.ErrGatewayList
 	}
-	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, identitybroker.NewToken(token.AccessToken))
+	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, identitybroker.NewToken(token.AccessToken), g.listLimits)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +118,11 @@ type GatewayCalls struct {
 	Servers []string
 	// SendOnce records claimed calls; nil means NewMemorySendOnceRecord.
 	SendOnce SendOnceRecord
+	// ListLimits bound each listing of a server's tools through the gateway;
+	// a zero field takes the mcp package's default. Production leaves it zero:
+	// it lets tests lower a limit until operator gateway entries (#2538) need
+	// their own.
+	ListLimits mcpadapter.GatewayListLimits
 }
 
 // WithGatewayCalls sends calls on calls.Servers' broker routes to g.

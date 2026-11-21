@@ -347,7 +347,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create gateway client: %w", err))
 		}
-		gateway := embeddedGateway{endpoint: endpoint, resource: resource, client: client}
+		gateway := embeddedGateway{endpoint: endpoint, resource: resource, client: client, listLimits: config.GatewayCalls.ListLimits}
 		runtime.setGateway(gateway, *config.GatewayCalls)
 		if err := runtime.checkGateway(); err != nil {
 			return rollback(err)
