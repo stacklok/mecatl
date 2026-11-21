@@ -88,24 +88,56 @@ func (*SessionGroup) Unload(context.Context, sessionid.SessionID) error {
 	return ErrNotImplemented
 }
 
-// Close proposes one terminal shutdown: reject new loads/execution, signal
-// cancellation, maintain ownership through bounded existing-work drain, then
-// release. Actual ownership loss retires all members without waiting for blocked
-// I/O. Neither caller cancellation nor a report proves external effects stopped.
+// Drain proposes promptly and idempotently starting group-owned graceful
+// shutdown, without waiting for external work or borrowing a caller context.
+// It closes new load/execution admission, but lets admitted work finish or reach
+// a safe checkpoint while ownership remains provable. Normal draining includes
+// quiescing/detaching execution environments before releasing the lease; there
+// is no separate graceful cleanup phase after release.
 //
-// The first call starts group-owned shutdown, even if its context is canceled.
-// Config.CloseTimeout bounds that shutdown, including Config.DrainTimeout; caller
-// contexts bound only their own waits. Concurrent and repeated calls observe the
-// same shutdown and final result, never restart it or extend its budget. Each
-// returned final report owns its Unresolved slice independently of other results.
+// Config.DrainTimeout expiry escalates to emergency cleanup. Observed ownership
+// loss or inability to prove validity immediately retires admission and skips
+// grace, including during an existing drain. Emergency actions may begin while
+// ownership is held or after it is gone, and must respect that distinction:
+// stale cleanup must never affect a successor's environment or authority.
+// Lease supervision continues while authority remains usable; draining neither
+// grants authority nor delays loss handling behind a blocked participant.
 //
-// A completed shutdown returns its final report and nil error, including when
-// release is uncertain or work remains: callers must inspect the report. A wait
-// canceled before completion returns zero CloseReport and the context error,
-// not a partial report or evidence of release. Later calls may await completion.
-// This observation contract remains provisional pending lifecycle implementation.
-// Currently it always returns zero CloseReport and ErrNotImplemented, performs
-// no shutdown, and releases nothing, even for a canceled context or nil receiver.
-func (*SessionGroup) Close(context.Context) (CloseReport, error) {
-	return CloseReport{}, ErrNotImplemented
+// The first shutdown trigger (Drain or ownership trouble) starts the single
+// Config.ShutdownTimeout budget. Repeated Drain calls cannot reopen admission,
+// restart/extend budgets, or downgrade emergency cleanup to graceful draining.
+// The eventual integration must coordinate runtime/environment participants;
+// callback shape and handoff guarantees await concrete consumers. These phase
+// boundaries are provisional; see LifecycleStatus before adding consumers.
+// Currently it always returns ErrNotImplemented and starts no shutdown.
+func (*SessionGroup) Drain() error {
+	return ErrNotImplemented
+}
+
+// Status proposes promptly capturing a concurrency-safe lifecycle observation.
+// It must not wait for storage or participant callbacks. The returned value is
+// detached scalar state, not authority or a substitute for admission checks.
+// Currently it returns zero LifecycleStatus and ErrNotImplemented.
+func (*SessionGroup) Status() (LifecycleStatus, error) {
+	return LifecycleStatus{}, ErrNotImplemented
+}
+
+// Done proposes a stable channel closed once bounded shutdown coordination has
+// completed and its final report is available. Closure proves neither lease
+// release nor cessation of all external effects; unresolved work stays reported.
+// Callers may select on Done and their own contexts without canceling shutdown.
+// Currently it returns nil, including on a nil/zero group, and signals nothing.
+func (*SessionGroup) Done() <-chan struct{} {
+	return nil
+}
+
+// Report proposes nonblocking access to the final shutdown accounting. Before
+// completion it returns zero ShutdownReport and ErrNotComplete. After Done closes,
+// it returns the same final outcome with a separately owned Unresolved slice on
+// every call. Nil error means the report is available, not that shutdown was clean;
+// callers must inspect release and unresolved outcomes. Provisional reports do not
+// transfer the lifetime obligation for outstanding dependencies.
+// Currently it returns zero ShutdownReport and ErrNotImplemented.
+func (*SessionGroup) Report() (ShutdownReport, error) {
+	return ShutdownReport{}, ErrNotImplemented
 }

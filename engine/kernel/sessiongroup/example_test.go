@@ -24,13 +24,22 @@ func ExampleSessionGroup() {
 		panic(err)
 	}
 	defer func() {
-		report, err := group.Close(ctx)
+		if err := group.Drain(); err != nil {
+			panic(err)
+		}
+		select {
+		case <-group.Done():
+		case <-ctx.Done():
+			// Ending this wait does not stop group-owned shutdown.
+			panic(ctx.Err())
+		}
+		report, err := group.Report()
 		if err != nil {
 			panic(err)
 		}
-		if report.Release != sessiongroup.CloseReleaseReleased || len(report.Unresolved) != 0 {
-			// A completed close can still report uncertain release or live work.
-			panic("session group close left unresolved responsibility")
+		if report.Release != sessiongroup.ShutdownReleaseReleased || len(report.Unresolved) != 0 {
+			// Completion can still report uncertain release or live work.
+			panic("session group shutdown left unresolved responsibility")
 		}
 	}()
 

@@ -9,18 +9,21 @@
 // GroupID remains stable across hosts and ownership incarnations. SessionIDs are
 // independent peer identities, not derived from GroupID or a first member.
 //
-// Configuration, bounded close reporting, and the separate lease contracts
+// Configuration, bounded shutdown reporting, and the separate lease contracts
 // declare group-scoped authority and fenced storage guarantees without providing
 // an operational host. Config is a provisional construction boundary, not a
-// general runtime capability bundle. Close proposes one group-owned bounded
-// shutdown whose callers independently wait for a final CloseReport.
+// general runtime capability bundle. Drain proposes nonblocking initiation;
+// Status exposes provisional phase/authority observations, Done signals bounded
+// completion, and Report returns the final accounting. LifecycleStatus describes
+// normal drain and emergency cleanup paths, not a generic plugin protocol.
 //
-// These are provisional declarations, not an operational host. Open and every
-// lifecycle/navigation operation return ErrNotImplemented. They perform no I/O,
-// start no goroutines, retain no arguments, and establish no ownership. Storage,
-// authoritative membership, lease maintenance, and private runtime construction
-// are deliberately left for subsequent contract slices. Revisit these signatures
-// with those consumers before implementing them.
+// These are provisional declarations, not an operational host. Open, Drain,
+// Status, Report, and navigation operations return ErrNotImplemented. Done is
+// nil, not a completion signal. They perform no I/O, start no goroutines, retain
+// no arguments, and establish no ownership. Storage, authoritative membership,
+// lease maintenance, and private runtime construction are deliberately left for
+// subsequent contract slices. Revisit these signatures with concrete consumers
+// before implementing them.
 //
 // The intended implementation permits concurrent member progress, converges
 // concurrent loads to one mutable runtime per member, and orders loading, closing,

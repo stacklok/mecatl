@@ -1,34 +1,51 @@
     ifacemethod func (Clock).Now() time.Time
     ifacemethod func (Clock).Wait(ctx context.Context, until time.Time) error
-    method func (*SessionGroup).Close(context.Context) (CloseReport, error)
+    method func (*SessionGroup).Done() <-chan struct{}
+    method func (*SessionGroup).Drain() error
     method func (*SessionGroup).GroupID() id.GroupID
     method func (*SessionGroup).Load(context.Context, id.SessionID) (*sessionruntime.SessionRuntime, error)
     method func (*SessionGroup).LoadedRuntimes() ([]*sessionruntime.SessionRuntime, error)
     method func (*SessionGroup).Members(context.Context) ([]id.SessionID, error)
+    method func (*SessionGroup).Report() (ShutdownReport, error)
+    method func (*SessionGroup).Status() (LifecycleStatus, error)
     method func (*SessionGroup).Unload(context.Context, id.SessionID) error
-    method func (CloseObligationCause).Error() string
     method func (Config).Validate() error
-const CloseCauseDeadline CloseObligationCause = 1
-const CloseCauseOperationBlocked CloseObligationCause = 2
-const CloseCauseStillActive CloseObligationCause = 3
-const CloseCauseUnknown CloseObligationCause = 0
-const CloseObligationMember CloseObligationKind = 3
-const CloseObligationProvider CloseObligationKind = 1
-const CloseObligationUnknown CloseObligationKind = 0
-const CloseObligationWork CloseObligationKind = 2
-const CloseReleaseNotHeld CloseRelease = 1
-const CloseReleaseReleased CloseRelease = 2
-const CloseReleaseUnattempted CloseRelease = 4
-const CloseReleaseUncertain CloseRelease = 3
-const CloseReleaseUnknown CloseRelease = 0
+    method func (ShutdownObligationCause).Error() string
+const AuthorityHeld Authority = 1
+const AuthorityLost Authority = 3
+const AuthorityReleased Authority = 2
+const AuthorityUnknown Authority = 0
+const AuthorityUnproven Authority = 4
+const PhaseActive Phase = 1
+const PhaseComplete Phase = 4
+const PhaseDraining Phase = 2
+const PhaseEmergencyCleanup Phase = 3
+const PhaseUnknown Phase = 0
+const ShutdownCauseDeadline ShutdownObligationCause = 1
+const ShutdownCauseOperationBlocked ShutdownObligationCause = 2
+const ShutdownCauseStillActive ShutdownObligationCause = 3
+const ShutdownCauseUnknown ShutdownObligationCause = 0
+const ShutdownObligationMember ShutdownObligationKind = 3
+const ShutdownObligationProvider ShutdownObligationKind = 1
+const ShutdownObligationUnknown ShutdownObligationKind = 0
+const ShutdownObligationWork ShutdownObligationKind = 2
+const ShutdownReleaseNotHeld ShutdownRelease = 1
+const ShutdownReleaseReleased ShutdownRelease = 2
+const ShutdownReleaseUnattempted ShutdownRelease = 4
+const ShutdownReleaseUncertain ShutdownRelease = 3
+const ShutdownReleaseUnknown ShutdownRelease = 0
 func Open(context.Context, id.GroupID, Config) (*SessionGroup, error)
+type Authority uint8
 type Clock interface{Now() time.Time; Wait(ctx context.Context, until time.Time) error}
-type CloseObligation struct{Kind CloseObligationKind; Member id.SessionID; Cause CloseObligationCause}
-type CloseObligationCause uint8
-type CloseObligationKind uint8
-type CloseRelease uint8
-type CloseReport struct{GroupID id.GroupID; Release CloseRelease; Unresolved []CloseObligation}
-type Config struct{Provider lease.Provider; Clock Clock; HistoryPolicy history.Policy; SessionPolicy session.Policy; InstanceID uint64; OpeningTimeout time.Duration; AttemptTimeout time.Duration; RetryInterval time.Duration; RenewInterval time.Duration; DrainTimeout time.Duration; CloseTimeout time.Duration; MaxLoadedSessions int}
+type Config struct{Provider lease.Provider; Clock Clock; HistoryPolicy history.Policy; SessionPolicy session.Policy; InstanceID uint64; OpeningTimeout time.Duration; AttemptTimeout time.Duration; RetryInterval time.Duration; RenewInterval time.Duration; DrainTimeout time.Duration; ShutdownTimeout time.Duration; MaxLoadedSessions int}
+type LifecycleStatus struct{Phase Phase; Authority Authority}
+type Phase uint8
 type SessionGroup struct{}
+type ShutdownObligation struct{Kind ShutdownObligationKind; Member id.SessionID; Cause ShutdownObligationCause}
+type ShutdownObligationCause uint8
+type ShutdownObligationKind uint8
+type ShutdownRelease uint8
+type ShutdownReport struct{GroupID id.GroupID; Release ShutdownRelease; Unresolved []ShutdownObligation}
 var ErrInvalidConfig error
+var ErrNotComplete error
 var ErrNotImplemented error

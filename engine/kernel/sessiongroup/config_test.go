@@ -79,7 +79,7 @@ func validConfig(provider lease.Provider, clock sessiongroup.Clock) sessiongroup
 		RetryInterval:     time.Nanosecond,
 		RenewInterval:     time.Nanosecond,
 		DrainTimeout:      time.Nanosecond,
-		CloseTimeout:      2 * time.Nanosecond,
+		ShutdownTimeout:   2 * time.Nanosecond,
 		MaxLoadedSessions: 1,
 	}
 }
@@ -95,29 +95,29 @@ func TestConfigValidate(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*sessiongroup.Config){
-		"nil provider":                  func(c *sessiongroup.Config) { c.Provider = nil },
-		"nil clock":                     func(c *sessiongroup.Config) { c.Clock = nil },
-		"zero history policy":           func(c *sessiongroup.Config) { c.HistoryPolicy = history.Policy{} },
-		"invalid history policy":        func(c *sessiongroup.Config) { c.HistoryPolicy.RetryWindow = 0 },
-		"zero session policy":           func(c *sessiongroup.Config) { c.SessionPolicy = session.Policy{} },
-		"invalid session policy":        func(c *sessiongroup.Config) { c.SessionPolicy.MaxRecordsPerCommit = 0 },
-		"zero instance ID":              func(c *sessiongroup.Config) { c.InstanceID = 0 },
-		"zero opening timeout":          func(c *sessiongroup.Config) { c.OpeningTimeout = 0 },
-		"negative opening timeout":      func(c *sessiongroup.Config) { c.OpeningTimeout = -time.Nanosecond },
-		"zero attempt timeout":          func(c *sessiongroup.Config) { c.AttemptTimeout = 0 },
-		"negative attempt timeout":      func(c *sessiongroup.Config) { c.AttemptTimeout = -time.Nanosecond },
-		"zero retry interval":           func(c *sessiongroup.Config) { c.RetryInterval = 0 },
-		"negative retry interval":       func(c *sessiongroup.Config) { c.RetryInterval = -time.Nanosecond },
-		"zero renewal interval":         func(c *sessiongroup.Config) { c.RenewInterval = 0 },
-		"negative renewal interval":     func(c *sessiongroup.Config) { c.RenewInterval = -time.Nanosecond },
-		"zero drain timeout":            func(c *sessiongroup.Config) { c.DrainTimeout = 0 },
-		"negative drain timeout":        func(c *sessiongroup.Config) { c.DrainTimeout = -time.Nanosecond },
-		"zero close timeout":            func(c *sessiongroup.Config) { c.CloseTimeout = 0 },
-		"negative close timeout":        func(c *sessiongroup.Config) { c.CloseTimeout = -time.Nanosecond },
-		"equal close and drain timeout": func(c *sessiongroup.Config) { c.CloseTimeout = c.DrainTimeout },
-		"shorter close timeout":         func(c *sessiongroup.Config) { c.CloseTimeout = c.DrainTimeout - time.Nanosecond },
-		"zero loaded sessions":          func(c *sessiongroup.Config) { c.MaxLoadedSessions = 0 },
-		"negative loaded sessions":      func(c *sessiongroup.Config) { c.MaxLoadedSessions = -1 },
+		"nil provider":                     func(c *sessiongroup.Config) { c.Provider = nil },
+		"nil clock":                        func(c *sessiongroup.Config) { c.Clock = nil },
+		"zero history policy":              func(c *sessiongroup.Config) { c.HistoryPolicy = history.Policy{} },
+		"invalid history policy":           func(c *sessiongroup.Config) { c.HistoryPolicy.RetryWindow = 0 },
+		"zero session policy":              func(c *sessiongroup.Config) { c.SessionPolicy = session.Policy{} },
+		"invalid session policy":           func(c *sessiongroup.Config) { c.SessionPolicy.MaxRecordsPerCommit = 0 },
+		"zero instance ID":                 func(c *sessiongroup.Config) { c.InstanceID = 0 },
+		"zero opening timeout":             func(c *sessiongroup.Config) { c.OpeningTimeout = 0 },
+		"negative opening timeout":         func(c *sessiongroup.Config) { c.OpeningTimeout = -time.Nanosecond },
+		"zero attempt timeout":             func(c *sessiongroup.Config) { c.AttemptTimeout = 0 },
+		"negative attempt timeout":         func(c *sessiongroup.Config) { c.AttemptTimeout = -time.Nanosecond },
+		"zero retry interval":              func(c *sessiongroup.Config) { c.RetryInterval = 0 },
+		"negative retry interval":          func(c *sessiongroup.Config) { c.RetryInterval = -time.Nanosecond },
+		"zero renewal interval":            func(c *sessiongroup.Config) { c.RenewInterval = 0 },
+		"negative renewal interval":        func(c *sessiongroup.Config) { c.RenewInterval = -time.Nanosecond },
+		"zero drain timeout":               func(c *sessiongroup.Config) { c.DrainTimeout = 0 },
+		"negative drain timeout":           func(c *sessiongroup.Config) { c.DrainTimeout = -time.Nanosecond },
+		"zero shutdown timeout":            func(c *sessiongroup.Config) { c.ShutdownTimeout = 0 },
+		"negative shutdown timeout":        func(c *sessiongroup.Config) { c.ShutdownTimeout = -time.Nanosecond },
+		"equal shutdown and drain timeout": func(c *sessiongroup.Config) { c.ShutdownTimeout = c.DrainTimeout },
+		"shorter shutdown timeout":         func(c *sessiongroup.Config) { c.ShutdownTimeout = c.DrainTimeout - time.Nanosecond },
+		"zero loaded sessions":             func(c *sessiongroup.Config) { c.MaxLoadedSessions = 0 },
+		"negative loaded sessions":         func(c *sessiongroup.Config) { c.MaxLoadedSessions = -1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			provider := &testProvider{}
@@ -143,7 +143,7 @@ func TestConfigValidateBoundaries(t *testing.T) {
 	config.RetryInterval = time.Hour
 	config.RenewInterval = time.Hour
 	config.DrainTimeout = time.Nanosecond
-	config.CloseTimeout = 2 * time.Nanosecond
+	config.ShutdownTimeout = 2 * time.Nanosecond
 	config.MaxLoadedSessions = 1
 	if err := config.Validate(); err != nil {
 		t.Fatalf("independent positive bounds must remain valid: %v", err)

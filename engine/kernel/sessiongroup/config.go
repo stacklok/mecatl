@@ -37,7 +37,7 @@ type Clock interface {
 //
 // It is copied during construction. Caller-owned Provider and Clock implementations
 // must remain usable through completion of every outstanding group call, including
-// failed opening, bounded close, and operations that remain uncooperative after a
+// failed opening, bounded shutdown, and operations that remain uncooperative after a
 // report returns. A report neither transfers nor ends that obligation. Every duration
 // and bound is required and positive. Config has no defaults.
 //
@@ -66,7 +66,7 @@ type Config struct {
 	// waits, and failed-opening cleanup. A caller's earlier deadline wins.
 	OpeningTimeout time.Duration
 	// AttemptTimeout bounds each acquisition, reconciliation, or renewal call;
-	// it never extends OpeningTimeout, established validity, or CloseTimeout.
+	// it never extends OpeningTimeout, established validity, or ShutdownTimeout.
 	// Cancellation is not proof that an uncooperative call has stopped.
 	AttemptTimeout time.Duration
 	// RetryInterval is the positive delay before retrying acquisition,
@@ -76,14 +76,17 @@ type Config struct {
 	// RenewInterval is the positive delay between successful maintenance
 	// renewal attempts. Validity deadlines remain independently enforced.
 	RenewInterval time.Duration
-	// DrainTimeout bounds the graceful interval after close rejects new local
-	// admission and before release is attempted.
+	// DrainTimeout bounds the entire cooperative drain: reject new admission,
+	// finish/checkpoint admitted work, quiesce/detach environments, then release
+	// ownership. Expiry escalates to emergency cleanup; it does not prove any
+	// participant stopped or authorize overlapping a blocked release operation.
 	DrainTimeout time.Duration
-	// CloseTimeout bounds the single group-owned close operation, including
-	// draining and release, from its first invocation. Close caller contexts
-	// bound only observation, not shutdown. It must exceed DrainTimeout to
-	// reserve time for release; uncooperative operations may outlive the report.
-	CloseTimeout time.Duration
+	// ShutdownTimeout bounds total shutdown coordination, from the first Drain
+	// request or ownership-loss/unprovable-validity trigger. It includes the
+	// graceful interval when one is possible and must exceed DrainTimeout to
+	// reserve time for emergency cleanup and release. Repeated Drain requests
+	// cannot extend it. Uncooperative operations may outlive the final report.
+	ShutdownTimeout time.Duration
 	// MaxLoadedSessions bounds the number of resident member runtimes retained
 	// at once. Loading another Session is refused at capacity, without changing
 	// permanent membership or authority over unloaded members. A runtime with
@@ -93,14 +96,14 @@ type Config struct {
 
 // Validate reports whether Config contains all required dependencies and
 // positive bounded values. It does not execute injected code. A valid Config
-// has valid private member History and Session policies and reserves release
-// time by requiring CloseTimeout to exceed DrainTimeout.
+// has valid private member History and Session policies and reserves emergency
+// cleanup/release time by requiring ShutdownTimeout to exceed DrainTimeout.
 func (c Config) Validate() error {
 	if c.Provider == nil || c.Clock == nil || c.InstanceID == 0 ||
 		c.HistoryPolicy.Validate() != nil || c.SessionPolicy.Validate() != nil ||
 		c.OpeningTimeout <= 0 || c.AttemptTimeout <= 0 ||
 		c.RetryInterval <= 0 || c.RenewInterval <= 0 ||
-		c.DrainTimeout <= 0 || c.CloseTimeout <= c.DrainTimeout ||
+		c.DrainTimeout <= 0 || c.ShutdownTimeout <= c.DrainTimeout ||
 		c.MaxLoadedSessions <= 0 {
 		return ErrInvalidConfig
 	}

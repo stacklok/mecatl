@@ -58,10 +58,20 @@ func TestSkeletonCannotEstablishHosting(t *testing.T) {
 				t.Fatalf("Unload claimed success: %v", err)
 			}
 			for range 2 {
-				report, err := g.Close(ctx)
-				if report.GroupID != (groupid.GroupID{}) || report.Release != sessiongroup.CloseReleaseUnknown ||
+				if err := g.Drain(); !errors.Is(err, sessiongroup.ErrNotImplemented) {
+					t.Fatalf("Drain claimed shutdown initiation: %v", err)
+				}
+				status, err := g.Status()
+				if status != (sessiongroup.LifecycleStatus{}) || !errors.Is(err, sessiongroup.ErrNotImplemented) {
+					t.Fatalf("Status claimed lifecycle/ownership: %+v, %v", status, err)
+				}
+				if g.Done() != nil {
+					t.Fatal("unconstructed group exposes a completion signal")
+				}
+				report, err := g.Report()
+				if report.GroupID != (groupid.GroupID{}) || report.Release != sessiongroup.ShutdownReleaseUnknown ||
 					report.Unresolved != nil || !errors.Is(err, sessiongroup.ErrNotImplemented) {
-					t.Fatalf("Close claimed drain/release: %+v, %v", report, err)
+					t.Fatalf("Report claimed final accounting: %+v, %v", report, err)
 				}
 			}
 		}
