@@ -270,7 +270,17 @@ configuration file, a ConfigMap. `mecak8s` refuses to start when a required key
 is missing, when one key serves two roles, or when the key set lacks the broker
 client's public key under its `kid`; the
 [configuration file](#identity-broker-configuration-file) section lists every
-rule. Leave
+rule.
+
+The Deployment rolls out with `Recreate`, so the running pod stops before the
+new one starts. A Secret or key that does not exist leaves the new pod in
+`ContainerCreating` and the broker down. Before you install or upgrade, run
+`kubectl describe secret <SECRET_NAME>` for each Secret to confirm it lists the
+key the chart mounts; the command shows key names and sizes, not values. Run
+`helm upgrade` with `--wait`: without it, Helm reports success while the new pod
+is still starting.
+
+Leave
 `oidc.issuer`, `oidc.clientID`, and `oidc.acceptedClientIDs` empty: the chart
 sets them to AS-1's issuer and `tuiClientID`. It refuses values that differ,
 any `oidc.jwksURI` (AS-1's discovery document supplies its keys),
