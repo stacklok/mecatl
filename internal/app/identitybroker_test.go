@@ -515,7 +515,7 @@ func TestIdentityBrokerVerifiesCredentialsOfTheRotatedAgentIssuerKey(t *testing.
 	}
 	reg, err := before.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
 		SessionID: opened.ID, HostSessionID: "hostS42", Owner: owner, Incarnation: incarnation,
-		Definition: identitybroker.DefinitionRef{Source: "system", Name: "main"},
+		Definition: builtinMainRef(),
 	})
 	if err != nil {
 		t.Fatalf("RegisterAgent: %v", err)
