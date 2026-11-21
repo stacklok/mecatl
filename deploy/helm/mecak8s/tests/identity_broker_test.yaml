@@ -470,7 +470,7 @@ tests:
       identityBroker.as1.signingKey.key: signing-key.pem
     asserts:
       - failedTemplate:
-          errorMessage: identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing
+          errorMessage: "identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing: set the key there, and clear identityBroker.as1.signingKey.secretName and identityBroker.as1.signingKey.key"
 
   - it: accepts the removed AS-1 signing key value left empty
     set:

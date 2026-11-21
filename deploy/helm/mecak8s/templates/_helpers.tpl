@@ -100,7 +100,7 @@ client IDs from it; the chart renders the same derived values.
 {{- $keySet := $brokerClient.keySet | default dict -}}
 {{- $as1Signing := $keys.as1Signing | default dict -}}
 {{- /* Checked first, so an upgrade with the old value learns where it went. */ -}}
-{{- with $as1.signingKey -}}{{- if or .secretName .key -}}{{ fail "identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing" }}{{- end -}}{{- end -}}
+{{- with $as1.signingKey -}}{{- if or .secretName .key -}}{{ fail "identityBroker.as1.signingKey moved to identityBroker.keys.as1Signing: set the key there, and clear identityBroker.as1.signingKey.secretName and identityBroker.as1.signingKey.key" }}{{- end -}}{{- end -}}
 {{- range $arg := .Values.extraArgs -}}
 {{- /* Only identityBroker.enabled also renders the one replica and Recreate strategy the process-local broker state needs. */ -}}
 {{- if regexMatch "^--?enable-identity-broker(=|$)" (toString $arg) -}}
