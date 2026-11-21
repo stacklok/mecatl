@@ -12,7 +12,7 @@ func TestModelSettingsSubmitLoadExactOwnershipAndOmission(t *testing.T) {
 	h, s, p := newIteratorSession(t)
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	binding := session.ModelBinding{Route: "r", API: "a", Model: "m", Settings: session.ModelSettings{
 		ReasoningEffort: new(" target-native/尾 \n"), MaxOutputTokens: new(int64(9223372036854775807)),
 	}}
@@ -27,7 +27,7 @@ func TestModelSettingsSubmitLoadExactOwnershipAndOmission(t *testing.T) {
 			snapshot := candidate.Snapshot()
 			v, ok := snapshot.ModelBinding()
 			fromRecord, recordOK := snapshot.RecordAt(1).ModelBinding()
-			if !ok || !recordOK || v != fromRecord || v.HistoryID() != scope || !bindingMatches(v, want) {
+			if !ok || !recordOK || v != fromRecord || v.SessionID() != scope || !bindingMatches(v, want) {
 				t.Fatal("typed settings changed or lost scope")
 			}
 			if n := testing.AllocsPerRun(100, func() {

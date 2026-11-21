@@ -57,26 +57,32 @@ func learningFailoverSpecs() {
 				requestBody, _ := json.Marshal(map[string]string{"text": "Turn this workflow into a skill: retain the restart-safe procedure for future sessions."})
 				var resp *http.Response
 				var responseBody []byte
-				// A loaded kind API server can exhaust the bounded lease-acquire call before
-				// run launch. Retrying that pre-stream response is safe: a launched run has
-				// already committed HTTP 200 and is returned immediately.
+				var requestErr error
+				attempt := 0
+				// Preserve the existing pre-stream retries while recording why admission
+				// failed. HTTP 200 is committed only after the run has launched.
 				gomega.Eventually(func() int {
+					attempt++
+					started := time.Now()
 					req, _ := http.NewRequestWithContext(runCtx, http.MethodPost, fmt.Sprintf("http://%s/v1/sessions/%s/prompt", addr, sessionID), bytes.NewReader(requestBody))
 					req.Header.Set("Content-Type", "application/json")
 					req.Header.Set("Accept", "text/event-stream")
-					var err error
-					resp, err = http.DefaultClient.Do(req)
-					if err != nil {
+					resp, requestErr = http.DefaultClient.Do(req)
+					if requestErr != nil {
+						ginkgo.GinkgoWriter.Printf("learning prompt attempt %d after %s: %v\n", attempt, time.Since(started), requestErr)
 						return 0
 					}
+					ginkgo.GinkgoWriter.Printf("learning prompt attempt %d after %s: HTTP %d\n", attempt, time.Since(started), resp.StatusCode)
 					if resp.StatusCode == http.StatusOK {
 						return resp.StatusCode
 					}
-					responseBody, _ = io.ReadAll(io.LimitReader(resp.Body, 8192))
+					responseBody, requestErr = io.ReadAll(io.LimitReader(resp.Body, 8192))
 					_ = resp.Body.Close()
+					writePromptFailureDiagnostic(ginkgo.GinkgoWriter, resp.StatusCode, bytes.NewReader(responseBody), "")
 					return resp.StatusCode
-				}, 30*time.Second, time.Second).Should(gomega.Equal(http.StatusOK),
-					"prompt response: %s", formatBody(responseBody))
+				}, 30*time.Second, time.Second).Should(gomega.Equal(http.StatusOK), func() string {
+					return fmt.Sprintf("prompt response: %s; request/read error: %v", formatBody(responseBody), requestErr)
+				})
 				defer func() { _ = resp.Body.Close() }()
 				go func() {
 					_, _ = io.Copy(io.Discard, resp.Body)

@@ -7,34 +7,34 @@ symlink; edit this file, never the symlink.
 
 Build through the Taskfile; bare root `go build` leaves stray binaries.
 
+Common entry points (select checks appropriate to the change):
+
 ```sh
 task build              # binaries in bin/
-task test               # complete offline suite, all modules and standalone proofs
-task test:race          # complete suite with race detection
-task lint               # root, engine, authn/oidc, and provider modules
-task docs               # regenerate references and run strict documentation checks
-task generate           # regenerate protobuf contracts and configuration reference
-go run ./cmd/mecademo    # offline session smoke test
+task test               # complete offline suite when broad coverage is needed
+task lint               # Go lint across modules
+task docs               # regenerate and check documentation
+task generate           # regenerate contracts and configuration reference
+go run ./cmd/mecademo    # offline harness smoke test
 ```
 
-- While iterating, run the smallest focused test that exercises the change and its
-  direct integration boundary. Run `task test` once per integrated change set, not
-  after every edit.
-- Before a PR is ready, `task lint && task test:race && task check:pr` must pass and
-  the offline demo must show tool call, permission ask/approval, and result. CI runs
-  more than this; `.github/workflows/ci.yml` lists the jobs for each surface. CI
-  verifies the branch independently; it does not replace these local gates. Give
-  complete Go test suites (`test`, `test:race`, `test:workspace`, and
-  `test:workspace:race`) an outer timeout of 1800 seconds (30 minutes). Give other
-  full gates a 600-second timeout.
+Use `task --list` for focused, specialized, and maintenance tasks.
+
+- Run focused tests covering the changed behavior and its direct integration
+  boundary. Widen to affected callers when shared contracts or composition change.
+- Use `-race` for affected concurrency/shared-state tests. Choose one test mode per
+  check; CI supplies the broad race, platform, and deployment matrix.
+- Run lint, generation, docs, and smoke checks for the surfaces changed. Report
+  local results and checks left to CI; investigate relevant failures before handoff.
+- Give complete Go test suites an outer timeout of 1800 seconds (30 minutes), and
+  other full gates 600 seconds.
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
-- For changes spanning Go modules, follow [the cross-module workflow](docs/module-development.md)
-  before changing dependency pins. Use `task test:workspace:race` for same-checkout
-  evidence; it does not replace standalone/publication checks. Keep module sums
-  tracked; root `go.work.sum` is ignored.
-- See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
+- Cross-module or dependency-metadata changes: follow
+  [module development](docs/module-development.md) for workspace synchronization
+  and integration checks. Qualify standalone published dependencies separately
+  through [module publication](docs/module-publication.md).
 
 ## Module layout
 

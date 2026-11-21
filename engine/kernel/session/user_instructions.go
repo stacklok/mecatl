@@ -3,13 +3,13 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // UserInstructions is a complete replacement for prepared user-level standing
 // guidance, including prepared SOUL.md/persona and applicable AGENTS.md or
-// CLAUDE.md guidance. ReplaceUserInstructions supplies history scope. It is
+// CLAUDE.md guidance. ReplaceUserInstructions supplies Session scope. It is
 // selected by intended placement and authority, not producer, file, or provider
 // message role. Dynamically triggered guidance enters chronological EffectiveInput
 // with attribution rather than replacing this value. Nil and empty Blocks
@@ -40,14 +40,14 @@ func newUserInstructionsRecord(v UserInstructions, limits codec.Limits) (*materi
 }
 
 // UserInstructionsView retains immutable accepted or proposed backing,
-// including its record. Capture and navigation cost O(1); zero has no history or
+// including its record. Capture and navigation cost O(1); zero has no Session scope or
 // blocks.
 //
 //dtogen:include
 type UserInstructionsView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.UserInstructions
 }
 
-// HistoryID returns the retained scope, or zero for zero.
-func (v UserInstructionsView) HistoryID() historyid.HistoryID { return v.scope }
+// SessionID returns the retained scope, or zero for zero.
+func (v UserInstructionsView) SessionID() sessionid.SessionID { return v.scope }

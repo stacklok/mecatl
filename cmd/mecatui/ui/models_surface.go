@@ -26,8 +26,8 @@ const (
 	modelsNone modelsView = iota
 	modelsPanel
 
-	// modelsNormalChromeWidth distinguishes the compact fallback, where all
-	// chrome must fit, from ordinary card rendering, which measures natural text.
+	// modelsNormalChromeWidth distinguishes wrapped help in narrow offers from
+	// ordinary card rendering, which keeps each help line together.
 	modelsNormalChromeWidth = 80
 )
 
@@ -46,6 +46,7 @@ type modelsState struct {
 	list         *bounded.List
 	rowBudget    int              // view cache, refreshed from Render geometry
 	hitItems     map[HitID]string // view cache: collision-safe model ID, replaced by every Render frame
+	hitControls  map[HitID]modelsControlHit
 	deps         surfaceDeps
 	intent       surfaceIntent
 }
@@ -68,28 +69,107 @@ type modelsGlobalDefaultIntent struct {
 
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
+type modelsControlHit struct {
+	selectModel      bool
+	selected, filter string
+}
+
+type modelsControl struct {
+	rect        cellRect
+	selectModel bool
+}
+
+func (s *modelsState) canSelect() bool {
+	_, ok := s.chosen()
+	return ok && s.deps.keys.Choose.Enabled()
+}
+
+func (s *modelsState) selectModel() bool {
+	if s.rowBudget == 0 || !s.canSelect() || s.intent != nil {
+		return false
+	}
+	chosen, _ := s.chosen()
+	s.intent = modelsSelectIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}
+	return true
+}
+
+func (s *modelsState) closeOrClear() bool {
+	if !s.deps.keys.Close.Enabled() {
+		return false
+	}
+	if s.rowBudget > 0 && s.filter.Value() != "" {
+		s.filter.SetValue("")
+		s.syncFilter()
+		return false
+	}
+	return true
+}
+
+func (s *modelsState) footerControls(width int) ([]string, []modelsControl) {
+	back := footerCloseLabel
+	if s.filter.Value() != "" {
+		back = "Clear filter"
+	}
+	lines, rendered := renderFooterControls(s.deps.theme, width, []footerControlSpec{
+		{hint: s.deps.marks.choose, label: "Use model", enabled: s.canSelect()},
+		{hint: s.deps.marks.closeOnly, label: back, enabled: s.deps.keys.Close.Enabled()},
+	})
+	controls := make([]modelsControl, len(rendered))
+	for i, control := range rendered {
+		controls[i] = modelsControl{rect: control.rect, selectModel: control.index == 0}
+	}
+	return lines, controls
+}
+
+func (s *modelsState) modalMaxOuterWidth() int {
+	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
+	prefix, suffix := modelsFixedLines(*s)
+	width := 0
+	for _, line := range append(prefix, suffix...) {
+		width = max(width, ansi.StringWidth(terminaltext.ExpandTabs(line, terminaltext.DefaultTabWidth)))
+	}
+	for _, model := range s.catalog.models {
+		text := modelRowText(s.catalog.active, s.catalog.globalDefault, s.catalog.configProvenanceProviderIDs, model)
+		for _, line := range strings.Split(text, "\n") {
+			width = max(width, 4+ansi.StringWidth(line))
+		}
+	}
+	return min(128, width+frame)
+}
+
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	s.hitControls = nil
+	list := s.listControl()
 	if width <= 0 || height <= 0 {
 		s.rowBudget = 0
 		s.hitItems = nil
 		return "", nil
 	}
-	prefix, suffix := modelsFixedLines(*s, s.provenance)
+	prefix, suffix, controls := modelsFrameLines(*s, s.provenance, width, height)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
-	list := s.listControl()
+	if s.rowBudget == 0 || ((s.canSelect() || s.deps.keys.Close.Enabled()) && len(controls) == 0) {
+		s.rowBudget = 0
+		s.hitItems = nil
+		if !s.deps.keys.Close.Enabled() {
+			return boundedDisplayLine(s.deps.theme.Style("muted").Render("terminal too small"), width), nil
+		}
+		return renderSkillsCompact(s.deps.theme, s.deps.marks, width), nil
+	}
 	s.syncList(width, s.rowBudget)
-	view := list.ViewWithIndicators(s.rowBudget, list.RevealPending())
+	// Measure without moving the live browsing anchor; short lists stay content-sized.
+	measurement := *list
+	bodyRows := len(measurement.View().Rows)
+	view := list.ViewWithIndicators(bodyRows, list.RevealPending())
 	s.hitItems = make(map[HitID]string)
 
+	return s.renderRows(width, len(prefix)+bodyRows+len(suffix), prefix, suffix, controls, view)
+}
+
+func (s *modelsState) renderRows(width, height int, prefix, suffix []string, controls []modelsControl, view bounded.ListView) (string, []ClickableRegion) {
 	lines := make([]string, 0, height)
 	appendChrome := func(line string) {
 		if len(lines) < max(0, height) {
-			// Keep normal Models chrome intact so the surrounding card can retain its
-			// natural width. Compact geometry still needs a hard bound.
-			if width < modelsNormalChromeWidth {
-				line = boundedDisplayLine(line, width)
-			}
-			lines = append(lines, line)
+			lines = append(lines, boundedDisplayLine(line, width))
 		}
 	}
 	appendRow := func(line string) {
@@ -104,23 +184,37 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	if view.Above > 0 {
 		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d items", view.Above)))
 	}
-	if len(view.Rows) > 0 {
-		for _, row := range view.Rows {
-			presentation := presentListRow(row, s.deps.theme.Style("spinner"), s.deps.theme.Style("muted"))
-			y := len(lines)
-			appendRow(presentation.Style.Render(presentation.Text))
-			if y < len(lines) && s.deps.hits != nil {
-				id := s.deps.hits.allocate()
-				x1 := min(max(0, width), lipgloss.Width(lines[y]))
-				if x1 > 0 {
-					regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
-					s.hitItems[id] = row.ID
-				}
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, s.deps.theme.Style("spinner"), s.deps.theme.Style("muted"))
+		y := len(lines)
+		appendRow(presentation.Style.Render(presentation.Text))
+		if y < len(lines) && s.deps.hits != nil {
+			id := s.deps.hits.allocate()
+			x1 := min(max(0, width), lipgloss.Width(lines[y]))
+			if x1 > 0 {
+				regions = append(regions, ClickableRegion{rect: cellRect{x0: 0, x1: x1, y0: y, y1: y + 1}, hit: id})
+				s.hitItems[id] = row.ID
 			}
 		}
 	}
 	if view.Below > 0 {
 		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	for len(lines) < height-len(suffix) {
+		lines = append(lines, "")
+	}
+	s.hitControls = make(map[HitID]modelsControlHit)
+	for _, control := range controls {
+		if s.deps.hits == nil {
+			break
+		}
+		rect := control.rect
+		rect.y0 += len(lines)
+		rect.y1 += len(lines)
+		id := s.deps.hits.allocate()
+		chosen, _ := s.chosen()
+		s.hitControls[id] = modelsControlHit{selectModel: control.selectModel, selected: modelIdentity(chosen), filter: s.filter.Value()}
+		regions = append(regions, ClickableRegion{rect: rect, hit: id})
 	}
 	for _, line := range suffix {
 		appendChrome(line)
@@ -129,19 +223,13 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	s.hitItems, s.hitControls = nil, nil
 	move, navigation := boundedFilterNavigationMove(msg, s.deps.keys)
 	switch {
-	case key.Matches(msg, s.deps.keys.Close) && s.rowBudget == 0:
-		return nil, true, true
+	case key.Matches(msg, s.deps.keys.Close):
+		return nil, true, s.closeOrClear()
 	case s.rowBudget == 0:
 		return nil, true, false
-	case key.Matches(msg, s.deps.keys.Close):
-		if s.filter.Value() != "" {
-			s.filter.SetValue("")
-			s.syncFilter()
-			return nil, true, false
-		}
-		return nil, true, true
 	case navigation:
 		s.moveCursor(move)
 	case key.Matches(msg, s.deps.keys.SetGlobalDefault):
@@ -149,11 +237,7 @@ func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 			s.intent = modelsGlobalDefaultIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}
 		}
 	case key.Matches(msg, s.deps.keys.Choose):
-		if chosen, ok := s.chosen(); ok {
-			s.intent = modelsSelectIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}
-			return nil, true, true
-		}
-		return nil, true, false
+		return nil, true, s.selectModel()
 	default:
 		var cmd tea.Cmd
 		s.filter, cmd = s.filter.Update(msg)
@@ -168,17 +252,25 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		if s.view == modelsNone {
 			return nil, false, false
 		}
-		identity, current := s.hitItems[hit.ID]
-		if !current {
-			return nil, true, false
+		if target, current := s.hitControls[hit.ID]; current {
+			s.hitItems, s.hitControls = nil, nil
+			chosen, _ := s.chosen()
+			if s.rowBudget == 0 || target.selected != modelIdentity(chosen) || target.filter != s.filter.Value() {
+				return nil, true, false
+			}
+			if target.selectModel {
+				return nil, true, s.selectModel()
+			}
+			return nil, true, s.closeOrClear()
 		}
-		index := modelIndexByIdentity(s.filtered, identity)
-		if index < 0 {
+		identity, current := s.hitItems[hit.ID]
+		s.hitItems, s.hitControls = nil, nil
+		if !current || s.rowBudget == 0 || s.loading || s.err != nil {
 			return nil, true, false
 		}
 		list := s.listControl()
 		list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
-		list.SetCursor(index)
+		list.SelectID(identity)
 		return nil, true, false
 	}
 	result, ok := msg.(client.ModelsMsg)
@@ -191,6 +283,7 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	if result.RequestToken != s.requestToken {
 		return nil, true, false
 	}
+	s.hitItems, s.hitControls = nil, nil
 	s.loading, s.err = false, result.Err
 	if result.Err != nil {
 		s.catalog.statuses, s.catalog.configProvenanceProviderIDs = nil, nil
@@ -204,17 +297,18 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 }
 
 func (s *modelsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
-	list := s.listControl()
-	if msg.Mouse().Button == tea.MouseWheelUp {
-		list.Scroll(bounded.LineUp)
-	} else {
-		list.Scroll(bounded.LineDown)
+	s.hitItems, s.hitControls = nil, nil
+	if s.rowBudget == 0 {
+		return nil, true
+	}
+	if move, ok := boundedWheelMove(msg); ok {
+		s.listControl().Scroll(move)
 	}
 	return nil, true
 }
 func (s *modelsState) Close() {
 	s.view = modelsNone
-	s.hitItems = nil
+	s.hitItems, s.hitControls = nil, nil
 }
 func (s *modelsState) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
@@ -229,6 +323,7 @@ func (s *modelsState) listControl() *bounded.List {
 }
 
 func (s *modelsState) syncFilter() {
+	s.hitItems, s.hitControls = nil, nil
 	s.filtered = filterModels(s.catalog.models, s.filter.Value())
 	list := s.listControl()
 	list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
@@ -275,15 +370,6 @@ func modelIdentity(model client.ModelInfo) string {
 	return aggregateScopedID(model.ProviderID, model.ID)
 }
 
-func modelIndexByIdentity(models []client.ModelInfo, identity string) int {
-	for i, model := range models {
-		if modelIdentity(model) == identity {
-			return i
-		}
-	}
-	return -1
-}
-
 func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bounded.ListItem {
 	items := make([]bounded.ListItem, 0, len(models))
 	for _, model := range models {
@@ -296,30 +382,13 @@ func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bound
 	return items
 }
 
-func modelsFixedLines(picker modelsState, prov string) (prefix, suffix []string) {
-	title := "Models"
-	if len(picker.filtered) > 0 {
-		title += "  (" + strconv.Itoa(len(picker.filtered)) + ")"
-	}
-	prefix = append(prefix, picker.deps.theme.Style("askTitle").Render(title))
-	if prov != "" {
-		prefix = append(prefix, picker.deps.theme.Style("muted").Render(prov))
-	}
-	prefix = append(prefix, picker.filter.View(), "", picker.deps.theme.Style("warning").Render(modelSwitchDisclosure), "")
-	if picker.loading {
-		prefix = append(prefix, picker.deps.theme.Style("muted").Render("loading…"))
-	} else if picker.err != nil {
-		prefix = append(prefix,
-			picker.deps.theme.Style("errorText").Render("✗ list models: "+terminaltext.Sanitize(picker.err.Error())),
-			picker.deps.theme.Style("muted").Render(modelsErrorHint),
-		)
-	} else if len(picker.catalog.models) == 0 {
-		for _, line := range strings.Split(modelsEmptyCopy(picker.deps.caps, picker.catalog.statuses), "\n") {
-			prefix = append(prefix, picker.deps.theme.Style("muted").Render(line))
-		}
-	} else if len(picker.filtered) == 0 {
-		prefix = append(prefix, picker.deps.theme.Style("muted").Render("no models match "+strconv.Quote(picker.filter.Value())+" — "+picker.deps.marks.closeOnly+" to clear"))
-	}
+func modelsFixedLines(picker modelsState) (prefix, suffix []string) {
+	prefix, suffix, _ = modelsFrameLines(picker, picker.provenance, modelsNormalChromeWidth, -1)
+	return prefix, suffix
+}
+
+func modelsFrameLines(picker modelsState, prov string, width, height int) (prefix, suffix []string, controls []modelsControl) {
+	prefix = modelsPrefix(picker, prov)
 	if picker.err == nil {
 		statuses := renderProviderStatusLines(picker.catalog.statuses, len(picker.catalog.models) == 0)
 		if !picker.loading && len(picker.catalog.models) > 0 && len(picker.filtered) > 0 && len(statuses) > 0 {
@@ -327,17 +396,69 @@ func modelsFixedLines(picker modelsState, prov string) (prefix, suffix []string)
 			suffix = append(suffix, "")
 		}
 		for _, status := range statuses {
-			suffix = append(suffix, picker.deps.theme.Style("errorText").Render(terminaltext.Sanitize(status)))
+			suffix = append(suffix, picker.deps.theme.Style("errorText").Render(terminaltext.SanitizeSingleLine(status)))
 		}
 	}
-	suffix = append(suffix, "",
-		picker.deps.theme.Style("muted").Render("type to filter · ↑/↓/"+picker.deps.marks.scrollUp+" move · "+picker.deps.marks.choose+" use · "+picker.deps.marks.setGlobalDefault+" set global default · "+picker.deps.marks.closeOnly+" clear filter / close"),
-		picker.deps.theme.Style("muted").Render("● current  ★ global default"),
-		picker.deps.theme.Style("muted").Render("reason = emits reasoning · set its effort tier with /effort"))
-	if anyUncachedModel(picker.catalog.models) {
-		suffix = append(suffix, picker.deps.theme.Style("muted").Render("no-cache = no prompt-cache breakpoint sent; costly for Claude models"))
+	suffix = append(suffix, "")
+	buttons, controls := picker.footerControls(width)
+	for i := range controls {
+		controls[i].rect.y0 += len(suffix)
+		controls[i].rect.y1 += len(suffix)
 	}
-	return prefix, suffix
+	suffix = append(suffix, buttons...)
+	navigation := "type to filter · ↑/↓/" + picker.deps.marks.scrollUp + " move"
+	if !picker.loading && picker.err == nil && len(picker.filtered) > 0 && picker.deps.keys.SetGlobalDefault.Enabled() {
+		navigation += " · " + picker.deps.marks.setGlobalDefault + " set global default"
+	}
+	help := []string{
+		navigation,
+		"● current  ★ global default",
+		"reason = emits reasoning · set its effort tier with /effort",
+	}
+	if anyUncachedModel(picker.catalog.models) {
+		help = append(help, "no-cache = no prompt-cache breakpoint sent; costly for Claude models")
+	}
+	for _, line := range help {
+		lines := []string{picker.deps.theme.Style("muted").Render(line)}
+		if width < modelsNormalChromeWidth {
+			lines = skillsTextLines(picker.deps.theme.Style("muted"), line, width)
+		}
+		if height < 0 || height-len(prefix)-len(suffix)-len(lines) >= 3 {
+			suffix = append(suffix, lines...)
+		}
+	}
+	return prefix, suffix, controls
+}
+
+func modelsPrefix(picker modelsState, prov string) (prefix []string) {
+	title := "Models"
+	if len(picker.filtered) > 0 {
+		title += "  (" + strconv.Itoa(len(picker.filtered)) + ")"
+	}
+	prefix = append(prefix, picker.deps.theme.Style("askTitle").Render(title))
+	if prov != "" {
+		prefix = append(prefix, picker.deps.theme.Style("muted").Render(terminaltext.SanitizeSingleLine(prov)))
+	}
+	prefix = append(prefix, picker.filter.View(), "", picker.deps.theme.Style("warning").Render(modelSwitchDisclosure), "")
+	if picker.loading {
+		return append(prefix, picker.deps.theme.Style("muted").Render("loading…"))
+	}
+	if picker.err != nil {
+		return append(prefix,
+			picker.deps.theme.Style("errorText").Render("✗ list models: "+terminaltext.SanitizeSingleLine(picker.err.Error())),
+			picker.deps.theme.Style("muted").Render(modelsErrorHint),
+		)
+	}
+	if len(picker.catalog.models) == 0 {
+		for _, line := range strings.Split(terminaltext.Sanitize(modelsEmptyCopy(picker.deps.caps, picker.catalog.statuses)), "\n") {
+			prefix = append(prefix, picker.deps.theme.Style("muted").Render(line))
+		}
+		return prefix
+	}
+	if len(picker.filtered) == 0 {
+		prefix = append(prefix, picker.deps.theme.Style("muted").Render("no models match "+strconv.Quote(picker.filter.Value())))
+	}
+	return prefix
 }
 
 func boundedDisplayLine(line string, width int) string {
@@ -349,7 +470,7 @@ func boundedDisplayLine(line string, width int) string {
 }
 func (s *modelsState) chosen() (client.ModelInfo, bool) {
 	cursor := s.listControl().Cursor()
-	if cursor < 0 || cursor >= len(s.filtered) {
+	if s.loading || s.err != nil || cursor < 0 || cursor >= len(s.filtered) {
 		return client.ModelInfo{}, false
 	}
 	return s.filtered[cursor], true
@@ -454,7 +575,7 @@ func modelRowText(_ client.ModelSelection, _ client.ModelSelection, configProven
 	if len(segs) > 0 {
 		line += "  " + strings.Join(segs, " ")
 	}
-	return line
+	return terminaltext.ExpandTabs(line, terminaltext.DefaultTabWidth)
 }
 func modelLabel(mi client.ModelInfo) string {
 	if mi.DisplayName != "" {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func usageReportFixture() UsageReport {
@@ -30,7 +30,7 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 	run := batchRun(t, b)
 	input := batchInput(t, b, run, []byte("input"))
 	mustBatch(t, b.AddEffectiveInput(run, EffectiveInput{Inputs: []InputItem{{UserInputID: new(input.RunRelative())}}}))
-	mustBatch(t, b.ReplaceModelBinding(run.HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
+	mustBatch(t, b.ReplaceModelBinding(run.SessionID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 	request, err := b.AddModelRequest(run, captureCommit(t, b), ModelRequest{Recipe: ConstructionRecipe{Algorithm: "a", Version: 1, Check: []byte{1}}})
 	mustBatch(t, err)
 	execution := b.admission.candidate
@@ -60,7 +60,7 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 	if err := b.AddModelResponse(request, ModelResponse{Terminal: ResponseTerminalNormal}); !errors.Is(err, ErrTransition) {
 		t.Fatalf("same-batch response barrier bypassed: %v", err)
 	}
-	if sessionID.HistoryRelative() != 1 || requestUsage.HistoryRelative() != 2 || runUsage.HistoryRelative() != 3 {
+	if sessionID.SessionRelative() != 1 || requestUsage.SessionRelative() != 2 || runUsage.SessionRelative() != 3 {
 		t.Fatal("allocation is not history-wide")
 	}
 	*report.Buckets[0].Counters.Output = 99
@@ -86,11 +86,11 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 	mustBatch(t, err)
 	mustBatch(t, b.ReplaceUsage(requestUsage, reduced))
 	submitBatch(t, s, b)
-	if late.HistoryRelative() != 4 || s.Snapshot().ActiveRun() != next {
+	if late.SessionRelative() != 4 || s.Snapshot().ActiveRun() != next {
 		t.Fatal("late accounting attached to current run or reset allocation")
 	}
 	interactionReplay(t, s)
-	loaded, err := Load(t.Context(), s.history, run.HistoryID(), testConfigFor(s.policy))
+	loaded, err := Load(t.Context(), s.history, run.SessionID(), testConfigFor(s.policy))
 	mustBatch(t, err)
 	for _, snapshot := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		var reports []UsageReport
@@ -100,7 +100,7 @@ func TestUsageAuthoringPrefixAndReplacements(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if usage.ID().HistoryID() != run.HistoryID() {
+			if usage.ID().SessionID() != run.SessionID() {
 				t.Fatal("usage scope lost")
 			}
 			if d, present := usage.Definition(); present {
@@ -175,7 +175,7 @@ func TestUsageRequestCountsAcrossRuns(t *testing.T) {
 		_, err := b.AddUsage(nil, &id, UsagePurposeMain, UsageReport{State: UsageReportActive})
 		mustBatch(t, err)
 	}
-	for _, id := range []ModelRequestID{requestID(empty.historyID, empty.ordinal, 1), requestID(first.runID.historyID, first.runID.ordinal, 3), requestID(latest.historyID, latest.ordinal, 2)} {
+	for _, id := range []ModelRequestID{requestID(empty.sessionID, empty.ordinal, 1), requestID(first.runID.sessionID, first.runID.ordinal, 3), requestID(latest.sessionID, latest.ordinal, 2)} {
 		before := b.admission
 		if _, err := b.AddUsage(nil, &id, UsagePurposeMain, UsageReport{State: UsageReportActive}); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(before, b.admission) {
 			t.Fatalf("absent request changed admission: %v", err)
@@ -214,12 +214,12 @@ func TestUsageRequestCountAdmissionOwnership(t *testing.T) {
 	left, right := newAdmission(pinned), newAdmission(pinned)
 	req := interactionRequest(s, 1)
 	req.ID.runID = run
-	mustBatch(t, right.admit(run.historyID, interactionRecord(t)(makeRequestRecord(req, s.policy.PayloadLimits))))
+	mustBatch(t, right.admit(run.sessionID, interactionRecord(t)(makeRequestRecord(req, s.policy.PayloadLimits))))
 	ended := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, run, s.policy.PayloadLimits))
 	started := startRecord(t, 3)
 	for _, a := range []*admissionContext{&left, &right} {
-		mustBatch(t, a.admit(run.historyID, ended))
-		mustBatch(t, a.admit(run.historyID, started))
+		mustBatch(t, a.admit(run.sessionID, ended))
+		mustBatch(t, a.admit(run.sessionID, started))
 	}
 	if !reflect.DeepEqual(backing, []uint64{1, 99, 98}) || !reflect.DeepEqual(left.stagedRequests, []uint64{0}) || !reflect.DeepEqual(right.stagedRequests, []uint64{1}) {
 		t.Fatal("independent candidates shared mutable request counts")
@@ -228,10 +228,10 @@ func TestUsageRequestCountAdmissionOwnership(t *testing.T) {
 	before := left
 	before.acceptedRequests = slices.Clone(left.acceptedRequests)
 	before.stagedRequests = slices.Clone(left.stagedRequests)
-	if err := left.admit(run.historyID, usage); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(left, before) {
+	if err := left.admit(run.sessionID, usage); !errors.Is(err, ErrTransition) || !reflect.DeepEqual(left, before) {
 		t.Fatalf("independent request leaked into candidate: %v", err)
 	}
-	mustBatch(t, right.admit(run.historyID, usage))
+	mustBatch(t, right.admit(run.sessionID, usage))
 	if pinned.lifecycle.requests != 0 || len(pinned.finalRequests) != 1 {
 		t.Fatal("speculation changed retained snapshot")
 	}
@@ -304,10 +304,10 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 	}
 	mustBatch(t, b.Create())
 	run := batchRun(t, b)
-	foreign := RunID{historyID: historyid.NewHistoryID(), ordinal: 1}
-	foreignRequest := requestID(foreign.historyID, 1, 1)
-	validRequest := requestID(run.historyID, 1, 1)
-	missingRun := RunID{historyID: run.historyID, ordinal: 2}
+	foreign := RunID{sessionID: sessionid.NewSessionID(), ordinal: 1}
+	foreignRequest := requestID(foreign.sessionID, 1, 1)
+	validRequest := requestID(run.sessionID, 1, 1)
+	missingRun := RunID{sessionID: run.sessionID, ordinal: 2}
 	malformed := usageReportFixture()
 	malformed.Raw.Data = make([]byte, s.policy.PayloadLimits.MaxByteStringBytes+1)
 	for _, tc := range []struct {
@@ -318,7 +318,7 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 	}{
 		{"both", &run, &validRequest, codec.ErrInvalidData},
 		{"zero run", new(RunID), nil, codec.ErrInvalidData},
-		{"malformed run", &RunID{historyID: run.historyID}, nil, codec.ErrInvalidData},
+		{"malformed run", &RunID{sessionID: run.sessionID}, nil, codec.ErrInvalidData},
 		{"unscoped run", &RunID{ordinal: 1}, nil, codec.ErrInvalidData},
 		{"zero request", nil, new(ModelRequestID), codec.ErrInvalidData},
 		{"malformed request", nil, &ModelRequestID{runID: run}, codec.ErrInvalidData},
@@ -355,7 +355,7 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 	}
 	id, err := b.AddUsage(nil, nil, UsagePurposeMain, usageReportFixture())
 	mustBatch(t, err)
-	if id.HistoryRelative() != 1 {
+	if id.SessionRelative() != 1 {
 		t.Fatal("failed additions consumed identity")
 	}
 	before := b.admission
@@ -365,8 +365,8 @@ func TestUsageInvalidAuthoringAndAllocation(t *testing.T) {
 		want   error
 	}{
 		{UsageID{}, malformed, codec.ErrInvalidData},
-		{UsageID{historyID: foreign.historyID, usageOrdinal: 1}, malformed, ErrIdentity},
-		{UsageID{historyID: run.historyID, usageOrdinal: 2}, UsageReport{State: UsageReportActive}, ErrTransition},
+		{UsageID{sessionID: foreign.sessionID, usageOrdinal: 1}, malformed, ErrIdentity},
+		{UsageID{sessionID: run.sessionID, usageOrdinal: 2}, UsageReport{State: UsageReportActive}, ErrTransition},
 		{id, UsageReport{}, codec.ErrInvalidData},
 		{id, malformed, codec.ErrLimitExceeded},
 	} {
@@ -415,7 +415,7 @@ func TestUsageIdentityExhaustion(t *testing.T) {
 	b.admission.candidate.usages = math.MaxUint64 - 1
 	last, err := b.AddUsage(nil, nil, UsagePurposeMain, UsageReport{State: UsageReportActive})
 	mustBatch(t, err)
-	if last.HistoryRelative() != math.MaxUint64 {
+	if last.SessionRelative() != math.MaxUint64 {
 		t.Fatal("last identity")
 	}
 	before := b.admission
@@ -434,7 +434,7 @@ func TestUsageIdentityExhaustion(t *testing.T) {
 	b = beginBatch(t, s)
 	id, err := b.AddUsage(nil, nil, UsagePurposeMain, UsageReport{State: UsageReportActive})
 	mustBatch(t, err)
-	if id.HistoryRelative() != 1 {
+	if id.SessionRelative() != 1 {
 		t.Fatal("discarded IDs consumed allocation")
 	}
 	submitBatch(t, s, b)
@@ -495,13 +495,13 @@ func TestUsageSharedAdmissionRejectsTamperedReplay(t *testing.T) {
 					err = s.apply(interactionCommit(t, s, records))
 				case "load":
 					forged := interactionCommit(t, s, records)
-					result, e := s.history.Append(t.Context(), s.Snapshot().HistoryID(), forged.Commit)
+					result, e := s.history.Append(t.Context(), s.Snapshot().SessionID().ResourceID(), forged.Commit)
 					mustBatch(t, e)
 					if result.Status != history.StatusAccepted {
 						t.Fatal("History rejected opaque session records")
 					}
 					var loaded *Session
-					loaded, err = Load(t.Context(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+					loaded, err = Load(t.Context(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed replay published partial aggregate")
 					}
@@ -517,8 +517,8 @@ func TestUsageSharedAdmissionRejectsTamperedReplay(t *testing.T) {
 func TestUsageRejectsForwardSameBatchCorrelation(t *testing.T) {
 	for _, correlation := range []string{"run", "request"} {
 		s := interactionFixture(t, "idle")
-		scope := s.Snapshot().HistoryID()
-		run := RunID{historyID: scope, ordinal: 1}
+		scope := s.Snapshot().SessionID()
+		run := RunID{sessionID: scope, ordinal: 1}
 		definition := &UsageDefinition{Purpose: UsagePurposeMain, RunID: new(uint64(1))}
 		start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: 1}, s.policy.PayloadLimits))
 		records := []*materializedRecord{}
@@ -538,7 +538,7 @@ func TestUsageRejectsForwardSameBatchCorrelation(t *testing.T) {
 			t.Fatalf("forward %s preflight: %v", correlation, err)
 		}
 		forged := interactionCommit(t, s, records)
-		_, err := s.history.Append(t.Context(), scope, forged.Commit)
+		_, err := s.history.Append(t.Context(), scope.ResourceID(), forged.Commit)
 		mustBatch(t, err)
 		if loaded, err := Load(t.Context(), s.history, scope, testConfigFor(s.policy)); loaded != nil || !errors.Is(err, ErrTransition) {
 			t.Fatalf("forward %s replay: %v", correlation, err)

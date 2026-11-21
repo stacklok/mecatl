@@ -1,0 +1,65 @@
+suite: identity broker values kept from an earlier release
+templates:
+  - templates/deployment.yaml
+release:
+  name: unit
+  namespace: test
+values:
+  - fixtures/identity-broker-previous-values.yaml
+set:
+  guardrails.fromSettings: true
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+tests:
+  - it: renders a broker-disabled release without trustDomain, audience, or keys
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")]
+
+  - it: still requires them once the broker is enabled
+    set:
+      identityBroker.enabled: true
+      replicaCount: 1
+      extraArgs: [--no-shell]
+    asserts:
+      - failedTemplate:
+          errorPattern: "missing properties 'trustDomain', 'audience', 'keys'|identityBroker: trustDomain is required"
+
+  # The keys of a broker without AS-1 are the agent issuer's alone. A release
+  # upgraded with --reuse-values has no brokerClient or as1Signing values, and
+  # needs none.
+  - it: renders an enabled broker without AS-1 when only the agent issuer key is named
+    values:
+      - fixtures/identity-broker-agent-issuer-only-values.yaml
+    set:
+      replicaCount: 1
+      extraArgs: [--no-shell]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --enable-identity-broker
+      - exists:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")]
+
+  - it: still requires the broker client and AS-1 signing keys with AS-1
+    values:
+      - fixtures/identity-broker-agent-issuer-only-values.yaml
+    set:
+      identityBroker.subjectClaim: sub
+      identityBroker.as1.issuer: https://mecatl.example.com/as1
+      identityBroker.as1.tuiClientID: mecatui
+      identityBroker.as1.upstream.issuer: https://login.example.com/tenant/v2.0
+      identityBroker.as1.upstream.clientID: as1
+      oidc.enabled: true
+      oidc.audience: https://mecatl.example.com/api
+      oidc.ownerIdentity: sub_id
+      oidc.resource: https://mecatl.example.com
+      replicaCount: 1
+      extraArgs: [--no-shell]
+    asserts:
+      - failedTemplate:
+          errorPattern: identityBroker.keys.brokerClient is required when identityBroker.as1.issuer is set

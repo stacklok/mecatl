@@ -107,18 +107,18 @@ func TestToolBulkCloseoutCandidateFactsAndSuccessor(t *testing.T) {
 								h := isolated.history
 								request := history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1}
 								for request.After != request.Through {
-									page, e := s.history.Read(context.Background(), run.historyID, request)
+									page, e := s.history.Read(context.Background(), run.sessionID.ResourceID(), request)
 									interactionCheck(t, e)
 									for _, accepted := range page.Commits {
-										_, e := h.Append(context.Background(), run.historyID, accepted.Commit)
+										_, e := h.Append(context.Background(), run.sessionID.ResourceID(), accepted.Commit)
 										interactionCheck(t, e)
 									}
 									request.After = page.Next
 								}
-								_, e := h.Append(context.Background(), run.historyID, c.Commit)
+								_, e := h.Append(context.Background(), run.sessionID.ResourceID(), c.Commit)
 								interactionCheck(t, e)
 								var loaded *Session
-								loaded, err = Load(context.Background(), h, run.historyID, testConfigFor(s.policy))
+								loaded, err = Load(context.Background(), h, run.sessionID, testConfigFor(s.policy))
 								if loaded != nil {
 									t.Fatal("failed load published a partial session")
 								}
@@ -158,7 +158,7 @@ func TestToolBulkPreservesEveryExplicitDisposition(t *testing.T) {
 				})
 				explicit.RunID = calls[0].requestID.runID.ordinal
 				explicit.RequestID, explicit.CallID = calls[0].requestID.requestOrdinal, calls[0].ordinal
-				loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+				loaded, err := Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 				interactionCheck(t, err)
 				for _, snap := range []Snapshot{s.Snapshot(), loaded.Snapshot()} {
 					v, ok := snap.RecordAt(position).ToolDisposition()
@@ -191,7 +191,7 @@ func TestRunEndingExactEscapePolicy(t *testing.T) {
 						case "empty detail":
 							ending.Explanation = new("")
 						case "mixed":
-							interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
+							interactionCheck(t, b.ReplaceRootInstructions(run.sessionID, RootInstructions{}))
 						}
 						err = b.AddRunEnded(run, ending)
 						allowedBulk := reason == RunEndedLimit || reason == RunEndedCaptureFailed

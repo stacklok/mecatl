@@ -3,12 +3,13 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
-// Created is the canonical empty creation payload. History identity belongs to
-// the enclosing envelope, not the payload; CreatedView exposes it on inspection.
+// Created is the canonical empty creation payload. Session identity belongs to
+// the enclosing root history envelope, not the payload; CreatedView exposes it
+// on inspection.
 type Created = sessionformat.Created
 
 // newCreatedRecord encodes an owned creation record under explicit limits.
@@ -21,19 +22,19 @@ func newCreatedRecord(v Created, limits codec.Limits) (*materializedRecord, erro
 	return decodeMaterialized(format.Record{Kind: sessionformat.KindCreated, KindVersion: sessionformat.Version, Payload: payload}, limits)
 }
 
-// CreatedView retains immutable creation backing and its enclosing history.
+// CreatedView retains immutable creation backing and its enclosing Session scope.
 // Zero has zero identity; capture and inspection cost O(1).
 //
 //dtogen:include
 type CreatedView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.Created
 }
 
-// HistoryID returns the enclosing history, or zero for a zero view.
-func (v CreatedView) HistoryID() historyid.HistoryID {
+// SessionID returns the enclosing Session, or zero for a zero view.
+func (v CreatedView) SessionID() sessionid.SessionID {
 	if v.value == nil {
-		return historyid.HistoryID{}
+		return sessionid.SessionID{}
 	}
 	return v.scope
 }

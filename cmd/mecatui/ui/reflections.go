@@ -190,12 +190,7 @@ func (s *reflectionsState) handleHit(hit surfaceHitMsg) (tea.Cmd, bool, bool) {
 	}
 	if target.action == "select" {
 		if !s.loading && !s.pending {
-			for i, p := range s.page.Proposals {
-				if reflectionIdentity(p) == target.identity {
-					s.list.SetCursor(i)
-					break
-				}
-			}
+			s.list.SelectID(target.identity)
 		}
 		return nil, true, false
 	}

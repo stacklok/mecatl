@@ -15,9 +15,9 @@ description: >-
 ## Prerequisites
 
 - The operator has a mecatl deployment and an API key for at least one provider
-  (OpenRouter, Anthropic, or OpenAI). The config targets ONE provider — provider
-  is fixed per session, so every alias must resolve to a model id on the same
-  provider.
+  (OpenRouter, Anthropic, or OpenAI). Scalar aliases use
+  `models.default_provider`; an object alias `{provider, model}` pins its own
+  provider for a new session's default or a routed delegation.
 - Web search is available for live benchmark/pricing lookup.
 
 ## Workflow
@@ -68,7 +68,9 @@ one, or say there is no specific target.”
 
 **Q6 — Existing config (auto-discovered, not asked blank)**
 
-Do NOT ask. Silently run `cat ~/.config/mecatl/settings.yaml`.
+Don't ask. Resolve the operator settings file (`$XDG_CONFIG_HOME/mecatl/settings.yaml`,
+else `~/.config/mecatl/settings.yaml`, or the `--permission-config` file the
+operator names) and read it with the Read tool. Show only its `models:` block.
 
 - **Found with `models:` block** — show it fenced, then ask: “I found an existing
   `models:` config. Should I use it as a base (recommended) or start fresh?”
@@ -90,7 +92,7 @@ search for:
   verify the exact OpenRouter/Anthropic/OpenAI model id.
 - **Modality** (text-only vs multimodal) — critical if vision is in scope.
 - **License** (MIT/Apache open vs proprietary) if the operator cares.
-- **Context window** (1M+ is common in 2026; note anything below).
+- **Context window** (note anything well below current frontier norms).
 
 Cross-check at least two sources per model (vendor model card + independent
 leaderboard like Vals.ai / llm-stats / LLMReference). Flag vendor-reported vs
@@ -107,11 +109,13 @@ schema and rules. Then build the config:
 
 1. **Aliases** — the spine. Define `heavy`/`coder`/`quick` (minimum) pointing at
    concrete provider model ids. Add `image` (or another specialty alias) only if
-   the operator needs multimodal. Every alias must be on the chosen provider.
+   the operator needs multimodal. Use scalar aliases on the chosen
+   provider unless the operator wants cross-provider routing; then use
+   `{provider, model}` aliases.
 2. **`default`** — the session model. Usually the `heavy` alias (the strongest
    reasoning model), unless the operator wants a cheaper default.
-3. **Slots** — route the four housekeeping calls (`compaction`/`ask-reviewer`/
-   `guardrail`/`router`) to the `quick` alias (they're one-turn, tool-less calls
+3. **Slots** — route the housekeeping calls (`compaction`/`ask-reviewer`/
+   `guardrail`/`router`/`title`) to the `quick` alias (they're one-turn, tool-less calls
    that need instruction-following + JSON discipline, not deep coding). Route
    `plan` to `heavy` (the opusplan pattern — plan-mode turns swap to a strong
    reasoning model).
@@ -136,26 +140,26 @@ After the config, include:
   `model slot ACTIVE` / `subagent model router ACTIVE` lines on startup (a missing
   line = that binding failed to resolve and degraded to the session model).
 - An **honest gaps note** — call out anything the chosen fleet can't do (e.g.
-  "nothing here reaches Opus 4.8's 88.6% SWE-bench Verified; that ceiling requires
-  Anthropic"). Don't oversell.
+  "nothing here reaches <current frontier model>'s SWE-bench Verified score; that
+  ceiling requires <its provider>"). Don't oversell.
 
 ## Guidelines
 
-- **Provider-fixed invariant**: never mix providers across aliases. If the
-  operator wants Anthropic models, ALL aliases are `anthropic/*` ids. OpenRouter
-  is the common choice because it aggregates many vendors behind one provider.
+- **One provider by default**: prefer one provider unless the operator wants
+  cross-provider routing. OpenRouter is the common choice because it aggregates
+  many vendors behind one provider. Plan mode stays on the session's provider.
 - **Cost-tiered default**: when the operator says "cost-tiered" or doesn't
-  specify, prefer open/cheap models (DeepSeek V4-Flash/Pro, GLM-5.2, Gemini Flash)
+  specify, prefer the cheapest credible open or cheap models
   and put the expensive frontier model only where it's load-bearing (`heavy`/
   `plan`/`large`). Housekeeping slots always go on the cheapest credible model.
 - **Capability-first default**: when the operator says "capability-first", put
-  the strongest available model (Opus 4.8 / GPT-5.5 / Gemini 3 Pro) at `heavy`/
-  `default`/`plan` and a strong mid (Sonnet 4.6 / Gemini 3.5 Flash) at `coder`,
+  the strongest available frontier model at `heavy`/`default`/`plan` and a
+  strong mid-tier model at `coder`,
   accepting the higher spend. Still route housekeeping to a cheaper tier — there's
-  no value in running compaction summaries on Opus.
+  no value in running compaction summaries on a frontier model.
 - **Vision**: if the operator needs images and the `heavy`/`coder` models are
-  text-only, add an `image` alias pointing at a multimodal model (Gemini 3.5
-  Flash is the strongest cheap multimodal coder in mid-2026). If vision is rare,
+  text-only, add an `image` alias pointing at a multimodal model (the strongest
+  cheap multimodal coder the Step 2 search finds). If vision is rare,
   make `image` a category the router can pick OR an alias the operator invokes
   via per-call `model: image` (more reliable — the classifier can't detect
   attached files, only prompt text that mentions them).
@@ -173,7 +177,7 @@ After the config, include:
 | Situation | Fix |
 |---|---|
 | Operator wants a provider you can't find model ids for | Ask for the provider's model directory URL, or fall back to OpenRouter (aggregates most) |
-| No model on the chosen provider meets the stated ceiling (e.g. "beat Opus 4.8" on OpenRouter) | Say so honestly. Offer the closest non-Anthropic option + note that the ceiling requires switching providers. |
+| No model on the chosen provider meets the stated ceiling (e.g. "beat <frontier model>" on OpenRouter) | Say so honestly. Offer the closest non-Anthropic option + note that the ceiling requires switching providers. |
 | Operator asks for >4 router categories | Push back: explain the classifier-accuracy and steering-surface tradeoffs. Suggest an agent-def `model:` pin for the rare task instead of a category. |
 | A recommended model id doesn't resolve on the provider | Verify the exact id via the provider's model page before emitting the config. OpenRouter ids are `vendor/model-name`; Anthropic direct ids are `claude-*`. |
 | Benchmark data is sparse or stale (>6 months) | Flag it. Prefer Vals.ai (independent, re-runs) over vendor model cards. Note the review date. |
@@ -199,7 +203,7 @@ Ask normally, one question at a time. For example:
    territory**
 
 The operator can correct an answer naturally, such as “Actually, use Anthropic
-instead,” before the search begins. Then silently inspect
-`~/.config/mecatl/settings.yaml`; if it has a `models:` block, ask whether to use
+instead,” before the search begins. Then read the resolved
+operator settings file with the Read tool; if it has a `models:` block, ask whether to use
 it as a base or start fresh. Otherwise, begin Step 2 and search for models that
 fit the recorded preferences.

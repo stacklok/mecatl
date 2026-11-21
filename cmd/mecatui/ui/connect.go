@@ -73,6 +73,28 @@ type connectState struct {
 	intent                        surfaceIntent
 	compact                       bool   // view cache: refreshed from every Render offer
 	offer                         [2]int // view cache: last usable list geometry, for reveal on resize
+	hitTargets                    map[HitID]connectHit
+}
+
+type connectMouseAction uint8
+
+const (
+	connectRow connectMouseAction = iota
+	connectPrimary
+	connectBack
+)
+
+type connectHit struct {
+	action       connectMouseAction
+	id, selected string
+	operation    ConnectRestartIntent
+	confirmation ConnectRestartIntent
+	confirming   bool
+}
+
+type connectControl struct {
+	rect   cellRect
+	action connectMouseAction
 }
 
 type connectTargetsMsg struct {
@@ -116,6 +138,7 @@ func (m Model) openConnectRecovery(err string, reason client.AuthReason, target,
 }
 
 func (s *connectState) listCmd() tea.Cmd {
+	s.hitTargets = nil
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -135,10 +158,13 @@ func (s *connectState) Close() {
 		s.cancel()
 	}
 	s.request++
-	s.intent = nil
+	s.intent, s.hitTargets = nil, nil
 }
 
 func (s *connectState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	if hit, ok := msg.(surfaceHitMsg); ok {
+		return nil, true, s.handleHit(hit)
+	}
 	result, ok := msg.(connectTargetsMsg)
 	if !ok {
 		return nil, false, false
@@ -146,6 +172,7 @@ func (s *connectState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	if result.owner != s || result.request != s.request || !s.loading {
 		return nil, true, false
 	}
+	s.hitTargets = nil
 	s.loading = false
 	s.listFailed = result.err != nil
 	if result.err != nil {
@@ -157,14 +184,30 @@ func (s *connectState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	} else {
 		s.targets = append([]ConnectTarget(nil), result.targets...)
 		s.syncItems()
-		for i, item := range s.items {
-			if item.ID == "target:"+s.failedTarget {
-				s.list.SetCursor(i)
-				break
-			}
-		}
+		s.list.SelectID("target:" + s.failedTarget)
 	}
 	return nil, true, false
+}
+
+func (s *connectState) handleHit(hit surfaceHitMsg) bool {
+	target, current := s.hitTargets[hit.ID]
+	s.hitTargets = nil
+	operation, _ := s.selectedIntent()
+	var confirmation ConnectRestartIntent
+	if s.confirm != nil {
+		confirmation = *s.confirm
+	}
+	if !current || s.compact || target.selected != s.list.CursorID() || target.operation != operation || target.confirming != (s.confirm != nil) || target.confirmation != confirmation {
+		return false
+	}
+	if target.action != connectRow {
+		return s.act(target.action)
+	}
+	if s.loading || s.listFailed || s.confirm != nil {
+		return false
+	}
+	s.list.SelectID(target.id)
+	return false
 }
 
 func connectDisplay(text string) string {
@@ -172,6 +215,7 @@ func connectDisplay(text string) string {
 }
 
 func (s *connectState) syncItems() {
+	s.hitTargets = nil
 	s.items, s.unavailable = nil, nil
 	for _, target := range s.targets {
 		text := connectDisplay(target.Target + "\n" + target.Issuer + " · " + target.ClientID + " · " + target.Audience)
@@ -219,20 +263,39 @@ func (s *connectState) selectedIntent() (ConnectRestartIntent, bool) {
 	return ConnectRestartIntent{}, false
 }
 
-func (s *connectState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	if key.Matches(msg, s.deps.keys.Close) {
+func (s *connectState) canChoose() bool {
+	_, available := s.selectedIntent()
+	return s.deps.keys.Choose.Enabled() && !s.loading && !s.listFailed && (s.confirm != nil || available)
+}
+
+func (s *connectState) act(action connectMouseAction) bool {
+	if action == connectBack && s.deps.keys.Close.Enabled() {
 		if s.confirm != nil {
 			s.confirm = nil
-			return nil, true, false
+		} else {
+			return true
 		}
-		return nil, true, true
+	} else if action == connectPrimary && !s.compact && s.canChoose() && s.intent == nil {
+		if s.confirm != nil {
+			s.intent = connectSelectIntent{restart: *s.confirm}
+		} else if intent, ok := s.selectedIntent(); ok {
+			s.confirm = &intent
+		}
+	}
+	return false
+}
+
+func (s *connectState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	s.hitTargets = nil
+	if key.Matches(msg, s.deps.keys.Close) {
+		return nil, true, s.act(connectBack)
 	}
 	if s.compact {
 		return nil, true, false
 	}
 	if s.confirm != nil {
 		if key.Matches(msg, s.deps.keys.Choose) {
-			s.intent = connectSelectIntent{restart: *s.confirm}
+			s.act(connectPrimary)
 		}
 		return nil, true, false
 	}
@@ -242,14 +305,13 @@ func (s *connectState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if move, ok := boundedNavigationMove(msg, s.deps.keys); ok {
 		s.list.Move(move)
 	} else if key.Matches(msg, s.deps.keys.Choose) {
-		if intent, ok := s.selectedIntent(); ok {
-			s.confirm = &intent
-		}
+		s.act(connectPrimary)
 	}
 	return nil, true, false
 }
 
 func (s *connectState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	s.hitTargets = nil
 	if !s.compact && s.confirm == nil && !s.loading {
 		if move, ok := boundedWheelMove(msg); ok {
 			s.list.Scroll(move)
@@ -288,12 +350,57 @@ func connectConfirmationLabel(action ConnectAction) string {
 	}
 }
 
-func (s *connectState) footerLines(width int, action ConnectAction) []string {
-	th, hk := s.deps.theme, s.deps.marks
-	actions := []string{hk.closeOnly + ": close"}
-	if action != 0 && s.deps.keys.Choose.Enabled() {
-		actions = append([]string{hk.choose + ": " + connectActionLabel(action)}, actions...)
+func (s *connectState) footerControls(width int, action ConnectAction) ([]string, []connectControl) {
+	back := footerCloseLabel
+	if s.confirm != nil {
+		back = "Back"
 	}
+	lines, rendered := renderFooterControls(s.deps.theme, width, []footerControlSpec{
+		{hint: s.deps.marks.choose, label: connectActionLabel(action), enabled: action != 0 && s.deps.keys.Choose.Enabled()},
+		{hint: s.deps.marks.closeOnly, label: back, enabled: s.deps.keys.Close.Enabled()},
+	})
+	controls := make([]connectControl, len(rendered))
+	for i, control := range rendered {
+		controls[i] = connectControl{rect: control.rect, action: [...]connectMouseAction{connectPrimary, connectBack}[control.index]}
+	}
+	return lines, controls
+}
+
+func (s *connectState) addHit(regions *[]ClickableRegion, rect cellRect, action connectMouseAction, id string) {
+	if s.deps.hits == nil {
+		return
+	}
+	operation, _ := s.selectedIntent()
+	target := connectHit{action: action, id: id, selected: s.list.CursorID(), operation: operation, confirming: s.confirm != nil}
+	if s.confirm != nil {
+		target.confirmation = *s.confirm
+	}
+	hit := s.deps.hits.allocate()
+	s.hitTargets[hit] = target
+	*regions = append(*regions, ClickableRegion{rect: rect, hit: hit})
+}
+
+func (s *connectState) addControls(regions *[]ClickableRegion, controls []connectControl, y int) {
+	for _, control := range controls {
+		rect := control.rect
+		rect.y0 += y
+		rect.y1 += y
+		s.addHit(regions, rect, control.action, "")
+	}
+}
+
+func (s *connectState) renderCompact(width int) string {
+	if !s.deps.keys.Close.Enabled() {
+		return ansi.Cut(s.deps.theme.Style("muted").Render("terminal too small"), 0, width)
+	}
+	if s.confirm != nil {
+		return ansi.Cut(s.deps.theme.Style("muted").Render(s.deps.marks.closeOnly+" back"), 0, width)
+	}
+	return renderSkillsCompact(s.deps.theme, s.deps.marks, width)
+}
+
+func (s *connectState) navigationLines(width int) []string {
+	th, hk := s.deps.theme, s.deps.marks
 	var navigation []string
 	for i, pair := range []struct {
 		up, down     key.Binding
@@ -324,18 +431,18 @@ func (s *connectState) footerLines(width int, action ConnectAction) []string {
 		}
 		navigation = append(navigation, marks+" "+pair.label)
 	}
-	lines := skillsTextLines(th.Style("muted"), strings.Join(actions, " · "), width)
-	if len(navigation) > 0 {
-		lines = append(lines, skillsTextLines(th.Style("muted"), strings.Join(navigation, " · "), width)...)
+	if len(navigation) == 0 {
+		return nil
 	}
-	return lines
+	return skillsTextLines(th.Style("muted"), strings.Join(navigation, " · "), width)
 }
 
 func (s *connectState) modalMaxOuterWidth() int {
 	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
 	width := ansi.StringWidth("Connect to remote")
 	texts := []string{s.err, connectAuthHint(s.reason, s.failedTarget)}
-	for _, line := range s.footerLines(128, RetryAfterCleanup) {
+	controls, _ := s.footerControls(128, RetryAfterCleanup)
+	for _, line := range append(controls, s.navigationLines(128)...) {
 		width = max(width, ansi.StringWidth(line))
 	}
 	for _, item := range s.items {
@@ -357,17 +464,22 @@ func (s *connectState) Render(width, height int) (string, []ClickableRegion) {
 	offer := [2]int{width, height}
 	reveal := offer != s.offer || s.list.RevealPending()
 	s.compact = true
+	s.hitTargets = make(map[HitID]connectHit)
 	if width <= 0 || height <= 0 {
 		return "", nil
 	}
-	th, hk := s.deps.theme, s.deps.marks
 	if width <= 2 {
-		return renderSkillsCompact(th, hk, width), nil
+		return s.renderCompact(width), nil
 	}
-	title := skillsTextLines(th.Style("askTitle"), "Connect to remote", width)
+	title := skillsTextLines(s.deps.theme.Style("askTitle"), "Connect to remote", width)
 	if s.confirm != nil {
-		return s.renderConfirmation(title, width, height), nil
+		return s.renderConfirmation(title, width, height)
 	}
+	return s.renderPicker(title, width, height, offer, reveal)
+}
+
+func (s *connectState) renderPicker(title []string, width, height int, offer [2]int, reveal bool) (string, []ClickableRegion) {
+	th := s.deps.theme
 	prefix := title
 	if s.err != "" {
 		prefix = append(prefix, skillsTextLines(th.Style("warning"), connectDisplay(s.err), width)...)
@@ -382,10 +494,18 @@ func (s *connectState) Render(width, height int) (string, []ClickableRegion) {
 	if intent, ok := s.selectedIntent(); ok {
 		action = intent.Action
 	}
-	// Reserve the longest action hint so selection cannot resize the card.
-	footer := s.footerLines(width, action)
-	footerRows := max(len(footer), len(s.footerLines(width, RetryAfterCleanup)))
+	footer, controls := s.footerControls(width, action)
+	if (action != 0 && s.deps.keys.Choose.Enabled() || s.deps.keys.Close.Enabled()) && len(controls) == 0 {
+		return s.renderCompact(width), nil
+	}
+	// Reserve wrapped controls before budgeting the list; selection must not resize it.
+	reserved, _ := s.footerControls(width, RetryAfterCleanup)
+	footerRows := max(len(footer), len(reserved))
 	footer = append(footer, make([]string, footerRows-len(footer))...)
+	help := s.navigationLines(width)
+	if height-len(prefix)-len(footer)-len(help) >= 3 {
+		footer = append(footer, help...)
+	}
 	rows := height - len(prefix) - len(footer)
 	spacing := 0
 	if rows >= 5 {
@@ -395,7 +515,7 @@ func (s *connectState) Render(width, height int) (string, []ClickableRegion) {
 	list := s.list
 	list.SetGeometry(width, rows, 1, bounded.Wrap)
 	if !list.Valid() {
-		return renderSkillsCompact(th, hk, width), nil
+		return s.renderCompact(width), nil
 	}
 	var state []string
 	if s.loading {
@@ -406,7 +526,7 @@ func (s *connectState) Render(width, height int) (string, []ClickableRegion) {
 		state = skillsTextLines(th.Style("muted"), "No available saved targets", width)
 	}
 	if len(state) > rows {
-		return renderSkillsCompact(th, hk, width), nil
+		return s.renderCompact(width), nil
 	}
 	s.compact = false
 	s.list, s.offer = list, offer
@@ -414,41 +534,46 @@ func (s *connectState) Render(width, height int) (string, []ClickableRegion) {
 	if spacing > 0 {
 		lines = append(lines, "")
 	}
-	lines = s.appendInventoryRows(lines, state, width, rows, reveal)
+	var regions []ClickableRegion
+	lines = s.appendInventoryRows(lines, state, width, rows, reveal, &regions)
 	if spacing > 0 {
 		lines = append(lines, "")
 	}
+	s.addControls(&regions, controls, len(lines))
 	lines = append(lines, footer...)
 	for i := range lines {
 		lines[i] = ansi.Cut(lines[i], 0, width)
 	}
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n"), regions
 }
 
-func (s *connectState) renderConfirmation(title []string, width, height int) string {
-	th, hk := s.deps.theme, s.deps.marks
+func (s *connectState) renderConfirmation(title []string, width, height int) (string, []ClickableRegion) {
+	th := s.deps.theme
 	lines := append(title, skillsTextLines(th.Style("warning"), connectConfirmationLabel(s.confirm.Action), width)...)
 	target := s.confirm.Target
 	if s.confirm.Action == AddTarget {
 		target = "OIDC sign-in for a new target…"
 	}
 	lines = append(lines, skillsTextLines(th.Style("spinner"), connectDisplay(target), width)...)
-	footer := hk.closeOnly + ": back"
-	if s.deps.keys.Choose.Enabled() {
-		footer = hk.choose + ": " + connectActionLabel(s.confirm.Action) + " · " + footer
+	action := ConnectAction(0)
+	if s.canChoose() {
+		action = s.confirm.Action
 	}
-	lines = append(lines, skillsTextLines(th.Style("muted"), footer, width)...)
-	if len(lines) > height {
-		return ansi.Cut(th.Style("muted").Render(hk.closeOnly+" back"), 0, width)
+	footer, controls := s.footerControls(width, action)
+	if len(lines)+len(footer) > height || ((s.canChoose() || s.deps.keys.Close.Enabled()) && len(controls) == 0) {
+		return s.renderCompact(width), nil
 	}
+	var regions []ClickableRegion
+	s.addControls(&regions, controls, len(lines))
+	lines = append(lines, footer...)
 	s.compact = false
 	for i := range lines {
 		lines[i] = ansi.Cut(lines[i], 0, width)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), regions
 }
 
-func (s *connectState) appendInventoryRows(lines, state []string, width, rows int, reveal bool) []string {
+func (s *connectState) appendInventoryRows(lines, state []string, width, rows int, reveal bool, regions *[]ClickableRegion) []string {
 	th := s.deps.theme
 	body := state
 	if state == nil {
@@ -460,7 +585,10 @@ func (s *connectState) appendInventoryRows(lines, state []string, width, rows in
 		}
 		for _, row := range view.Rows {
 			p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
-			body = append(body, ansi.Cut(p.Style.Render(p.Text), 0, width))
+			text := ansi.Cut(p.Style.Render(p.Text), 0, width)
+			y := len(lines) + len(body)
+			s.addHit(regions, cellRect{x0: 0, x1: ansi.StringWidth(text), y0: y, y1: y + 1}, connectRow, row.ID)
+			body = append(body, text)
 		}
 		if rows > 1 && view.Below > 0 {
 			body = append(body, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)), 0, width))

@@ -13,27 +13,27 @@ import (
 
 func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 	fixture, limits := internalFixture(t)
-	id := fixture.Snapshot().HistoryID()
+	id := fixture.Snapshot().SessionID()
 	created, e := newCreatedRecord(Created{}, limits)
 	if e != nil {
 		t.Fatal(e)
 	}
 	start := func(n uint64) *materializedRecord {
-		r, e := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: n}.HistoryRelative()}, limits)
+		r, e := newRunStartedRecord(RunStarted{ID: RunID{sessionID: id, ordinal: n}.SessionRelative()}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	input := func(run, n uint64) *materializedRecord {
-		r, e := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: run}, ordinal: n}, UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, limits)
+		r, e := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{sessionID: id, ordinal: run}, ordinal: n}, UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
 		return r
 	}
 	closeout := func(n uint64) *materializedRecord {
-		r, e := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, RunID{historyID: id, ordinal: n}, limits)
+		r, e := newRunEndedRecord(RunEnded{Reason: RunEndedInterrupted}, RunID{sessionID: id, ordinal: n}, limits)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -91,7 +91,7 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 				}
 				dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: before.Head().Sequence + 1}
 				if before.Head() == (history.CommitRef{}) {
-					dto.HistoryID = new(id)
+					dto.HistoryID = new(id.ResourceID())
 				} else {
 					dto.Parent = new(before.Head().CID)
 				}
@@ -120,13 +120,13 @@ func TestSessionMetadataAndDecodedLegalityAgree(t *testing.T) {
 
 func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := s.Snapshot().HistoryID()
+	id := s.Snapshot().SessionID()
 	s.policy.PayloadLimits.MaxByteStringBytes = 1
-	start, err := newRunStartedRecord(RunStarted{ID: RunID{historyID: id, ordinal: 1}.HistoryRelative()}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: RunID{sessionID: id, ordinal: 1}.SessionRelative()}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{historyID: id, ordinal: 1}, ordinal: 1}, UserInput: UserInput{Parts: internalByteParts([]byte("too long"))}}, limits)
+	input, err := makeInputRecord(identifiedInput{ID: UserInputID{runID: RunID{sessionID: id, ordinal: 1}, ordinal: 1}, UserInput: UserInput{Parts: internalByteParts([]byte("too long"))}}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestSessionMetadataPreservesOrderedFailure(t *testing.T) {
 	if _, err := s.prepare([]*materializedRecord{start, input}, 0, 1); !errors.Is(err, ErrTransition) {
 		t.Fatalf("metadata: %v", err)
 	}
-	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(id), Sequence: 1, Records: []format.Record{start.format(), input.format()}}
+	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(id.ResourceID()), Sequence: 1, Records: []format.Record{start.format(), input.format()}}
 	wire, err := codec.Encode(dto, limits)
 	if err != nil {
 		t.Fatal(err)

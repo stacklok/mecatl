@@ -6,14 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -26,69 +21,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
-
-func TestKindExecutionRevocationStopsActiveWriterAndRetainsFenceUncertainty(t *testing.T) {
-	state, kubeconfig, ctx, cancel := requireProduction(t)
-	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
-	owner, binding, attached := createProductionEnvironment(t, ctx, client, "revoke-active-writer")
-	rc, _ := acquireRun(t, ctx, client, owner, binding, attached, "revoke-active-writer")
-	initial := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: `i=0; while [ $i -lt 120 ]; do i=$((i+1)); printf '%s\n' "$i" > revoke-counter; sleep 1; done`, TimeoutMillis: 150000})
-		done <- err
-	}()
-	waitActiveOperationOrCommandError(t, ctx, kubeconfig, attached.Environment.ID, done)
-	if _, err := client.RevokeEnvironment(ctx, attached.Environment, owner, rc.GrantGeneration, "revoke-active-writer"); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("revoked active writer returned clean completion")
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("revoked active writer did not stop promptly")
-	}
-	fenced := waitExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID, func(s executionStatus) bool {
-		return s.FenceState == "FenceUnknown" && s.ActiveOperationID != ""
-	})
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "post-revoke-writer", Data: []byte("forbidden")}); err == nil {
-		t.Fatal("revoked grant admitted a new writer")
-	}
-	pod := kubeValue(t, ctx, kubeconfig, "get", "pod", "-n", namespace, "-l", "execution.mecatl.dev/environment="+attached.Environment.ID, "-o", "jsonpath={.items[0].metadata.name}")
-	first := strings.TrimSpace(string(runKubectl(t, ctx, kubeconfig, "exec", "-n", namespace, pod, "--", "cat", "/workspace/revoke-counter")))
-	time.Sleep(2 * time.Second)
-	second := strings.TrimSpace(string(runKubectl(t, ctx, kubeconfig, "exec", "-n", namespace, pod, "--", "cat", "/workspace/revoke-counter")))
-	if first == "" || first != second {
-		t.Fatalf("workspace kept changing after RPC stopped: first=%q second=%q", first, second)
-	}
-
-	contextName := os.Getenv("MECATL_KUBE_CONTEXT")
-	if contextName == "" {
-		t.Fatal("explicit fixture Kubernetes context required")
-	}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{CurrentContext: contextName}).ClientConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.Timeout = 15 * time.Second
-	kube, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envUID := kubeValue(t, ctx, kubeconfig, "get", "executionenvironment", attached.Environment.ID, "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-	if err := terminateOwnedExecutor(ctx, kube, attached.Environment.ID, envUID, initial.PodUID); err != nil {
-		t.Fatal(err)
-	}
-	waitExecutorTerminal(ctx, t, kubeconfig, attached.Environment.ID, initial.PodUID)
-	if err := client.RecoverEnvironment(ctx, executionenv.RetireEnvironmentRequest{Environment: attached.Environment, Owner: owner, ExpectedEpoch: initial.Epoch, ExpectedPodUID: initial.PodUID, ExpectedPVCUID: fenced.PVCUID, OperationID: "recover-revoke-active-writer"}); err != nil {
-		t.Fatal(err)
-	}
-	retireSyntheticEnvironment(t, ctx, client, kubeconfig, owner, binding, attached.Environment)
-}
 
 func TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
@@ -103,10 +35,21 @@ func TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete(t *testing.T
 	status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	commandDone := make(chan error, 1)
 	go func() {
-		_, commandErr := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "sleep 3", TimeoutMillis: 10000})
+		_, commandErr := client.StartCommand(ctx, executionenv.CommandStartRequest{
+			Context:       rc,
+			Command:       "touch final-reference-started && sleep 10",
+			TimeoutMillis: 20000,
+		})
 		commandDone <- commandErr
 	}()
-	waitActiveOperationOrCommandError(t, ctx, kubeconfig, attached.Environment.ID, commandDone)
+	waitWorkspaceFileOrCommandError(
+		t,
+		ctx,
+		kubeconfig,
+		attached.Environment.ID,
+		"final-reference-started",
+		commandDone,
+	)
 	deleteRef := executionenv.ReferenceRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, OperationID: "delete-expired-final-reference"}
 	if err := client.PrepareReferenceDelete(ctx, deleteRef); err != nil {
 		t.Fatal(err)

@@ -12,13 +12,13 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyformat "github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // These helpers are independent of the pre-run-ownership suite during migration.
-func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.History, session.Policy, historyid.HistoryID) {
+func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.History, session.Policy, sessionid.SessionID) {
 	t.Helper()
 	limits := codec.Limits{MaxBytes: 8192, MaxStringBytes: 8192, MaxByteStringBytes: 8192,
 		MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
@@ -29,7 +29,7 @@ func ownedCoreFixture(t *testing.T, maxRecords int) (*session.Session, *history.
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func ownedCoreSubmit(t *testing.T, s *session.Session, b *session.SessionCommit)
 func TestOwnedCoreLifecycleSnapshotsAndReplay(t *testing.T) {
 	s, h, p, id := ownedCoreFixture(t, 2048)
 	empty := s.Snapshot()
-	if empty.HistoryID() != id || empty.Created() || empty.RecordCount() != 0 {
+	if empty.SessionID() != id || empty.Created() || empty.RecordCount() != 0 {
 		t.Fatal("new scope")
 	}
 	b := ownedCoreBatch(t, s)
@@ -201,7 +201,7 @@ func TestOwnedCoreLoadRejectionAndImportedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1, Records: []historyformat.Record{
+	c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: new(id.ResourceID()), Sequence: 1, Records: []historyformat.Record{
 		makeRecord(sessionformat.KindCreated, created), makeRecord(sessionformat.KindRunStarted, started), makeRecord(sessionformat.KindUserInput, encodeInput(1)), makeRecord(sessionformat.KindUserInput, encodeInput(3)),
 	}}
 	identify := func(c historyformat.Commit) history.Commit {

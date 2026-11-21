@@ -9,21 +9,21 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	historyformat "github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // interactionReplay compares independent replay from genesis, not a clone of the
 // submitting reducer's state. Each page is read from the real memory History.
 func interactionReplay(t testing.TB, s *Session) {
 	t.Helper()
-	loaded, err := Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+	loaded, err := Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
-	applied, err := New(s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+	applied, err := New(s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 	interactionCheck(t, err)
 	request := history.ReadRequest{Through: s.Snapshot().Head(), MaxCommits: 1}
 	for request.After != request.Through {
-		page, err := s.history.Read(context.Background(), s.Snapshot().HistoryID(), request)
+		page, err := s.history.Read(context.Background(), s.Snapshot().SessionID().ResourceID(), request)
 		interactionCheck(t, err)
 		for _, c := range page.Commits {
 			interactionCheck(t, applied.apply(c))
@@ -125,17 +125,17 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 					} else {
 						head := s.Snapshot().Head()
 						c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
-						ref, e := s.history.Identify(run.historyID, c)
+						ref, e := s.history.Identify(run.sessionID.ResourceID(), c)
 						interactionCheck(t, e)
 						if path == "apply" {
 							err = s.apply(history.Commit{Ref: ref, Commit: c})
 						} else {
-							result, e := s.history.Append(context.Background(), run.historyID, c)
+							result, e := s.history.Append(context.Background(), run.sessionID.ResourceID(), c)
 							interactionCheck(t, e)
 							if result.Status != history.StatusAccepted {
 								t.Fatal("History rejected locally valid DTO")
 							}
-							loaded, e := Load(context.Background(), s.history, run.historyID, testConfigFor(s.policy))
+							loaded, e := Load(context.Background(), s.history, run.sessionID, testConfigFor(s.policy))
 							err = e
 							if err != nil && loaded != nil {
 								t.Fatal("failed Load published partial state")
@@ -164,7 +164,7 @@ func TestInteractionSuccessorScopeAndFutureReferences(t *testing.T) {
 	// outcome destination still rejects before lifecycle admission.
 	s := interactionFixture(t, "responded")
 	id := interactionRequest(s, 1).ID
-	id.runID.historyID = historyid.NewHistoryID()
+	id.runID.sessionID = sessionid.NewSessionID()
 	b, err := s.BeginCommit()
 	interactionCheck(t, err)
 	if _, err = b.AddModelRequest(s.Snapshot().ActiveRun(), captureCommit(t, b), ModelRequest{Recipe: interactionRequest(s, 2).Recipe, RetryOf: new(id.RunRelative())}); err != nil {
@@ -194,15 +194,15 @@ func TestInteractionNumericEndingEncodingRejectedOnReplay(t *testing.T) {
 			} else {
 				head := s.Snapshot().Head()
 				c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
-				ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
+				ref, e := s.history.Identify(s.Snapshot().SessionID().ResourceID(), c)
 				interactionCheck(t, e)
 				if path == "apply" {
 					err = s.apply(history.Commit{Ref: ref, Commit: c})
 				} else {
-					_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
+					_, e = s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), c)
 					interactionCheck(t, e)
 					var loaded *Session
-					loaded, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+					loaded, err = Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					if loaded != nil {
 						t.Fatal("failed Load returned a partial session")
 					}
@@ -235,14 +235,14 @@ func TestInteractionUnknownKindAndVersionFailClosed(t *testing.T) {
 				} else {
 					head := s.Snapshot().Head()
 					c := historyformat.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: head.Sequence + 1, Parent: new(head.CID), Records: []historyformat.Record{dto}}
-					ref, e := s.history.Identify(s.Snapshot().HistoryID(), c)
+					ref, e := s.history.Identify(s.Snapshot().SessionID().ResourceID(), c)
 					interactionCheck(t, e)
 					if path == "apply" {
 						err = s.apply(history.Commit{Ref: ref, Commit: c})
 					} else {
-						_, e = s.history.Append(context.Background(), s.Snapshot().HistoryID(), c)
+						_, e = s.history.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), c)
 						interactionCheck(t, e)
-						_, err = Load(context.Background(), s.history, s.Snapshot().HistoryID(), testConfigFor(s.policy))
+						_, err = Load(context.Background(), s.history, s.Snapshot().SessionID(), testConfigFor(s.policy))
 					}
 				}
 				if !errors.Is(err, ErrUnsupportedRecord) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {

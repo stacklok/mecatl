@@ -7,7 +7,7 @@ import "errors"
 // return scoped identities; [NewModelRequestID] reconstructs an identity value
 // without allocating or establishing membership.
 type ModelRequestID struct {
-	// runID is the owning run, including history scope.
+	// runID is the owning run, including Session scope.
 	runID RunID
 	// requestOrdinal is the one-based request ordinal within RunID. Its distinct
 	// field name prevents conversion from other occurrence identity kinds.

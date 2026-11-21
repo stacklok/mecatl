@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestSnapshotUsagesLatestAndPinned(t *testing.T) {
@@ -40,7 +40,7 @@ func TestSnapshotUsagesLatestAndPinned(t *testing.T) {
 	ids := []UsageID{first, second, third}
 	check := func(want UsageReport) {
 		t.Helper()
-		loaded, err := Load(t.Context(), s.history, run.HistoryID(), testConfigFor(s.policy))
+		loaded, err := Load(t.Context(), s.history, run.SessionID(), testConfigFor(s.policy))
 		mustBatch(t, err)
 		for seam, snapshot := range map[string]Snapshot{"Submit": s.Snapshot(), "Load": loaded.Snapshot()} {
 			t.Run(seam, func(t *testing.T) {
@@ -204,7 +204,7 @@ func TestUsageEntriesZeroLookupAndBounds(t *testing.T) {
 		t.Fatal("unsafe zero entry")
 	}
 	joined := s.Snapshot().Usages()
-	for _, absent := range []UsageID{{}, {usageOrdinal: 1}, {historyID: id.historyID}, {historyID: historyid.NewHistoryID(), usageOrdinal: 1}, {historyID: id.historyID, usageOrdinal: 2}, {historyID: id.historyID, usageOrdinal: math.MaxUint64}} {
+	for _, absent := range []UsageID{{}, {usageOrdinal: 1}, {sessionID: id.sessionID}, {sessionID: sessionid.NewSessionID(), usageOrdinal: 1}, {sessionID: id.sessionID, usageOrdinal: 2}, {sessionID: id.sessionID, usageOrdinal: math.MaxUint64}} {
 		for _, collection := range []UsageEntriesView{zero, joined} {
 			if got, ok := collection.ByID(absent); ok || got != (UsageEntryView{}) {
 				t.Fatal("invalid/foreign/absent identity present")

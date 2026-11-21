@@ -6,9 +6,9 @@ import (
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // Reconstruct rebuilds an accepted request from its retained recipe and exact
@@ -24,7 +24,7 @@ func Reconstruct(snapshot session.Snapshot, requestID session.ModelRequestID, li
 	if _, err := codec.NewBudget(limits); err != nil {
 		return Request{}, err
 	}
-	if requestID.Validate() != nil || requestID.RunID().HistoryID() != snapshot.HistoryID() {
+	if requestID.Validate() != nil || requestID.RunID().SessionID() != snapshot.SessionID() {
 		return Request{}, session.ErrIdentity
 	}
 	for i := 0; i < snapshot.RecordCount(); i++ {
@@ -76,7 +76,7 @@ type requestPrefix struct {
 	run      session.RunID
 }
 
-func (v requestPrefix) HistoryID() historyid.HistoryID { return v.snapshot.HistoryID() }
+func (v requestPrefix) SessionID() sessionid.SessionID { return v.snapshot.SessionID() }
 func (v requestPrefix) ActiveRun() session.RunID       { return v.run }
 func (v requestPrefix) RecordCount() int               { return v.count }
 func (v requestPrefix) RecordAt(i int) session.RecordView {

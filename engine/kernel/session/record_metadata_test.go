@@ -8,8 +8,8 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func internalTestHistory(t testing.TB, limits codec.Limits) *history.History {
@@ -22,7 +22,7 @@ func internalTestHistory(t testing.TB, limits codec.Limits) *history.History {
 }
 func internalFixture(t testing.TB) (*Session, codec.Limits) {
 	t.Helper()
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +47,9 @@ func internalApply(t testing.TB, s *Session, records ...*materializedRecord) pre
 }
 func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := s.Snapshot().HistoryID()
+	id := s.Snapshot().SessionID()
 	run := RunStarted{ID: 24}
-	runID := RunID{historyID: id, ordinal: run.ID}
+	runID := RunID{sessionID: id, ordinal: run.ID}
 	input := identifiedInput{ID: UserInputID{runID: runID, ordinal: 24}, UserInput: UserInput{Parts: internalByteParts([]byte{0xff, 0, 'x'})}}
 	wantInput := input.Clone()
 	wantInput.RunID, wantInput.ID = run.ID, input.ID.ordinal
@@ -105,9 +105,9 @@ func TestRecordMaterializationAgreementAndOwnership(t *testing.T) {
 }
 func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 	s, limits := internalFixture(t)
-	run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: 1}
-	id := requestID(run.historyID, run.ordinal, 2)
-	retry := requestID(run.historyID, run.ordinal, 1)
+	run := RunID{sessionID: s.Snapshot().SessionID(), ordinal: 1}
+	id := requestID(run.sessionID, run.ordinal, 2)
+	retry := requestID(run.sessionID, run.ordinal, 1)
 	request := identifiedRequest{ID: id, ModelRequest: ModelRequest{Source: &SourceHead{Sequence: 1, CID: contentid.Sum([]byte("source"))}, Recipe: ConstructionRecipe{Algorithm: "retained", Version: 1, Parameters: []byte{0xff}, Check: []byte{1}}, RetryOf: new(retry.RunRelative())}}
 	ending := RunEnded{Reason: RunEndedCaptureFailed, Explanation: new("retained detail"), Capture: &CaptureFailureEvidence{RequestID: id.RunRelative(), Evidence: &ObservedEvidence{Correlation: new("retained correlation")}}}
 	report := sessionformat.Usage{ID: 1, Report: UsageReport{State: UsageReportActive, Buckets: []UsageBucket{{Counters: UsageCounters{Input: new(int64(0))}}}, Raw: &OpaqueProviderData{Producer: "p", Format: "usage", Version: 1, Data: []byte{0xff}}}}
@@ -149,13 +149,13 @@ func TestRequestAndEndingMaterializationOwnsCompleteValues(t *testing.T) {
 
 func TestMaterializedPreflightBoundedDecodeDoesNotPublish(t *testing.T) {
 	s, limits := internalFixture(t)
-	id := s.Snapshot().HistoryID()
-	run := RunID{historyID: id, ordinal: 1}
+	id := s.Snapshot().SessionID()
+	run := RunID{sessionID: id, ordinal: 1}
 	created, err := newCreatedRecord(Created{}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	start, err := newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, limits)
+	start, err := newRunStartedRecord(RunStarted{ID: run.SessionRelative()}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}

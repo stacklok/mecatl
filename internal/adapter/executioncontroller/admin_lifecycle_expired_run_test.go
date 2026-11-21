@@ -98,7 +98,7 @@ func TestExpiredExactRunAdmitsReadyFalseLifecycleWithTerminalProof(t *testing.T)
 	}
 }
 
-func TestLifecycleRefusesLiveMalformedMismatchedClaimsAndActiveOperationWithoutMutation(t *testing.T) {
+func TestLifecycleRefusesLiveMalformedAndMismatchedClaimsWithoutMutation(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name  string
@@ -121,9 +121,6 @@ func TestLifecycleRefusesLiveMalformedMismatchedClaimsAndActiveOperationWithoutM
 		}},
 		{name: "missing active-run client", plant: func(o *unstructured.Unstructured) {
 			unstructured.RemoveNestedField(o.Object, "status", "activeRun", "clientHash")
-		}},
-		{name: "active operation", plant: func(o *unstructured.Unstructured) {
-			_ = unstructured.SetNestedMap(o.Object, map[string]any{"id": "writer", "operation": string(executionenv.OpFileReplace), "claimID": "claim", "runID": "run", "epoch": int64(4), "holderID": "holder"}, "status", "activeOperation")
 		}},
 	}
 	for _, tc := range cases {

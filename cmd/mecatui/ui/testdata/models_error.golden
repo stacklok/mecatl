@@ -1,0 +1,30 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Models                                                                                          ┃
+┃  current: gpt-5 (server default)                                                                 ┃
+┃  > filter models…                                                                                ┃
+┃                                                                                                  ┃
+┃  Switching models is expensive as it clears caches.                                              ┃
+┃                                                                                                  ┃
+┃  ✗ list models: catalog unavailable                                                              ┃
+┃  the model service may be unavailable — check mecated is running (log: $XDG_STATE_HOME/mecatl/m  ┃
+┃                                                                                                  ┃
+┃  [esc Close]                                                                                     ┃
+┃  type to filter · ↑/↓/pgup move                                                                  ┃
+┃  ● current  ★ global default                                                                     ┃
+┃  reason = emits reasoning · set its effort tier with /effort                                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

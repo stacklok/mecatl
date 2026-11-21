@@ -120,10 +120,9 @@ sidebar_position: 1
 
 Write about current behavior in clear technical prose. Keep roadmap discussion explicitly separated in `cloud-native-harness.md`; public task guides and reference must describe delivered surfaces. Contributor qualification commands and test receipts belong in the owning internal documentation. Preserve verified operator limitations when trimming that material.
 
-Use sentence-case
-headings, descriptive links, and examples that help readers complete a task.
-Style Mecatl as a proper noun, and write the component and binary names
-`mecatui`, `mecated`, and `mecak8s` in code font. For deeper guidance, see
+Use sentence-case headings, descriptive links, and examples that help readers
+complete a task. Style Mecatl as a proper noun, and write the component and
+binary names `mecatui`, `mecated`, and `mecak8s` in code font. For deeper guidance, see
 [Diataxis](https://diataxis.fr/) and the
 [Google developer documentation style guide](https://developers.google.com/style).
 
@@ -165,6 +164,7 @@ Generated reference pages are exceptions to direct editing:
 - For `reference/server-cli.md`, change flag registration/help or `scripts/server-cli-reference.py`, then run `task docs:server-cli`. Never edit the generated output by hand.
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
+- For `reference/grpc-schema.md`, change the comments in `contracts/proto/mecatl/v1/harness.proto` or `schedule.proto`, then run `task docs:grpc-ref`.
 - For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change
   the TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then
   run `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed

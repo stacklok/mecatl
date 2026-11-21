@@ -13,11 +13,11 @@ import (
 )
 
 func TestUserInput(t *testing.T) {
-	id := allocatedInput(t, allocatedRun(t, testHistoryID(t), 1), 1)
+	id := allocatedInput(t, allocatedRun(t, testSessionID(t), 1), 1)
 	for _, content := range [][]byte{nil, {}, {0xff, 0, 0x9f}, []byte(`{ "not": json }`), []byte(" e\u0301\r\n")} {
 		v := session.UserInput{Parts: byteParts(bytes.Clone(content))}
 		stored := v
-		stored.RunID, stored.ID = id.RunID().HistoryRelative(), id.RunRelative()
+		stored.RunID, stored.ID = id.RunID().SessionRelative(), id.RunRelative()
 		if err := stored.Validate(); err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
 	b := beginBatch(t, s)
 	defer b.Discard()
 	mustBatch(t, b.Create())
-	if run := batchRun(t, b); run != allocatedRun(t, testHistoryID(t), 1) {
+	if run := batchRun(t, b); run != allocatedRun(t, testSessionID(t), 1) {
 		t.Fatal("fixture run")
 	}
 	limited := testLimits()
@@ -102,7 +102,7 @@ func TestUserInputLimitsAndTransactionalRead(t *testing.T) {
 	if err := stored.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := b.AddUserInput(allocatedRun(t, testHistoryID(t), 1), v); !errors.Is(err, codec.ErrLimitExceeded) || id != (session.UserInputID{}) {
+	if id, err := b.AddUserInput(allocatedRun(t, testSessionID(t), 1), v); !errors.Is(err, codec.ErrLimitExceeded) || id != (session.UserInputID{}) {
 		t.Fatalf("limit: %v", err)
 	}
 	for _, test := range []struct {

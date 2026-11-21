@@ -7,7 +7,7 @@ import "errors"
 // Allocation and inspection return scoped identities; [NewUserInputID] can
 // reconstruct an identity value without allocating or establishing membership.
 type UserInputID struct {
-	// runID is the owning run, including its history scope.
+	// runID is the owning run, including its Session scope.
 	runID RunID
 	// ordinal is the one-based input ordinal within that run.
 	ordinal uint64
@@ -40,7 +40,7 @@ func (v UserInputID) validateOrdinal() error {
 	return nil
 }
 
-// Validate checks local identity validity without mutation or history lookup.
+// Validate checks local identity validity without mutation or Session lookup.
 // It does not establish acceptance or monotonic allocation.
 func (v UserInputID) Validate() error {
 	if err := v.runID.Validate(); err != nil {

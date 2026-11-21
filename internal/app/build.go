@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -981,12 +980,19 @@ type Config struct {
 	MCPAuthority *mcpauthority.Result
 	ConfiguredMCPBroker
 	// IdentityBroker starts the experimental agent identity broker. Only
-	// mecak8s sets it.
+	// mecak8s sets it. Build refuses it while sessions have a shell or a
+	// local Workspace in this process, where its key files are.
 	IdentityBroker bool
 	// identityBrokerCore replaces the real identity broker in tests.
 	identityBrokerCore identitybroker.Core
-	// identityBrokerConfig replaces the real identity broker's interim
-	// configuration in tests.
+	// IdentityBrokerConfigFile is the identity broker's configuration file:
+	// its agent trust domain, audience, and keys (package brokerconfig). It
+	// is required with, and only allowed with, IdentityBroker, and only
+	// mecak8s sets it.
+	IdentityBrokerConfigFile string
+	// identityBrokerConfig replaces the configuration the real identity
+	// broker builds from IdentityBrokerConfigFile in tests; the file's keys
+	// stay.
 	identityBrokerConfig *identitybroker.Config
 	// identityBrokerAS2Transport wraps the identity broker's in-process
 	// transport to AS-2, so tests can observe the ID-JAGs it redeems. It is
@@ -2368,12 +2374,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		identity := mcpBrokerIdentity{idjagTarget: idjagTarget}
-		if ib.client != nil {
-			if identity.clientKeySet, err = json.Marshal(ib.client.JWKS()); err != nil {
-				err = fmt.Errorf("encode the broker client key set: %w", err)
-			}
-		}
+		identity := mcpBrokerIdentity{idjagTarget: idjagTarget, clientKeySetFile: ib.clientKeySetFile}
 		switch {
 		case ib.hosted != nil:
 			identity.as1Issuer = ib.hosted.Issuer
@@ -2383,9 +2384,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
 			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
 		}
-		if err == nil {
-			broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
-		}
+		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
 		if err != nil {
 			childLiveness.Close()
 			mcpClose()
@@ -8637,16 +8636,20 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			// supervisor tears them down on member teardown; the MCP tool names are handed
 			// to the supervisor so the read-only-member backstop exempts them (they report
 			// ReadOnly()==false but never touch the workspace).
-			mcpTools, names2, _, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
+			mcpTools, _, _, cl := defMCPTools(context.Background(), cfg.diag(), def, mainMgr)
 			mcpEntry := classification(server.KindDerived,
 				"member agent-definition MCP tools are scoped to this already authorized team member")
+			var registered []string
+			// defMCPTools already left out the tools the def excludes.
 			for _, mt := range mcpTools {
 				if err := classified.register(mt, mcpEntry); err != nil {
 					cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def MCP tool registration failed; skipped",
 						"member", spec.Name, "agent", def.Name, "tool", mt.Spec().Name, "err", err)
+					continue
 				}
+				registered = append(registered, mt.Spec().Name)
 			}
-			mcpClose, mcpNames = cl, names2
+			mcpClose, mcpNames = cl, registered
 			memberLimits = defLimits(def, session.Limits{}) // only def-set fields; AddMember merges with the team default
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
 			// pinned-and-known provider switches the member engine; a def pinning none
@@ -9242,8 +9245,8 @@ const (
 		"`mecatui connect ADDRESS`; mecated the general-purpose gRPC and HTTP/SSE server; mecak8s the " +
 		"Kubernetes-native server keeping session state in Redis; mecatequi a one-shot CI task returning " +
 		"a patch; mecatl-execution-provider the authenticated Kubernetes control plane that owns persistent " +
-		"execution-environment lifecycle; mecatl-executor the credential-free workload helper that performs " +
-		"one confined filesystem or command operation inside an executor Pod."
+		"execution-environment lifecycle; mecatl-executor the credential-free workload server that runs " +
+		"confined filesystem and command operations inside an executor Pod."
 
 	// selfKnowledgePostureAxes is the load-bearing content clause: the three safety
 	// axes, kept distinct. Conflating the per-session permission mode with the

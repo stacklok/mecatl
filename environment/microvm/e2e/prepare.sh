@@ -4,6 +4,7 @@ set -eu
 release=v0.0.41
 alpine_version=3.22.1
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+export GOWORK="$repo_root/go.work"
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform=linux-amd64; alpine_arch=x86_64; goarch=amd64 ;;
@@ -132,7 +133,7 @@ docker run --rm --platform "linux/$goarch" \
 
 (
   cd "$repo_root/environment/microvm"
-  GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -trimpath -o "$cache/guest-agent/mecatl-guest-agent" ./cmd/mecatl-guest-agent
+  CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -trimpath -o "$cache/guest-agent/mecatl-guest-agent" ./cmd/mecatl-guest-agent
 )
 chmod 0755 "$cache/guest-agent/mecatl-guest-agent"
 printf '%s\n' "$release $runtime_sha $firmware_sha alpine-$alpine_version $rootfs_sha" >"$cache/VERIFIED"
@@ -144,7 +145,7 @@ rm -rf "$fixture" "$package" "$oci"
 mkdir -p "$fixture" "$oci/context"
 (
   cd "$repo_root/environment/microvm"
-  GOWORK=off go build -trimpath -o "$fixture/mecatl-microvmd" ./cmd/mecatl-microvmd
+  go build -trimpath -o "$fixture/mecatl-microvmd" ./cmd/mecatl-microvmd
 )
 cp "$cache/guest-agent/mecatl-guest-agent" "$fixture/mecatl-guest-agent"
 
@@ -169,9 +170,10 @@ PY
 image_ref="ghcr.io/stacklok/brood-box/base@$image_manifest"
 (
   cd "$repo_root/environment/microvm"
-  GOWORK=off go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"
+  go run ./cmd/mecatl-oci-tree-digest "$image_ref" "$oci/resolver-cache" "linux/$goarch"
 ) >"$oci/tree-digest"
 image_tree_digest=$(cat "$oci/tree-digest")
+MICROVM_RELEASE_GOWORK="$GOWORK" \
 MICROVM_RELEASE_FIXTURE_DIR="$fixture" \
 MICROVM_RELEASE_RUNTIME_DIR="$cache/runtime" \
 MICROVM_RELEASE_FIRMWARE_DIR="$cache/firmware" \

@@ -12,9 +12,9 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 	"github.com/stacklok/mecatl/engine/kernel/value"
 )
 
@@ -47,7 +47,7 @@ func newConstructionFixtureWithConfig(t *testing.T, config session.Config) *cons
 	limits.MaxArrayElements = 16384
 	h, err := history.New(mem.New(), history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
 	requireConstruction(t, err)
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	requireConstruction(t, err)
 	policy := session.Policy{PayloadLimits: limits, CommitLimits: limits, MaxRecordsPerCommit: 1024, SoftMaxRetainedRecords: 32768, MaxRetainedRecords: 32768, SoftMaxPayloadBytes: 1 << 30, MaxPayloadBytes: 1 << 30, SoftMaxDecodedWork: 1 << 40, MaxDecodedWork: 1 << 40}
 	config.Policy = policy
@@ -121,7 +121,7 @@ func TestInstructionKeysDoNotAffectLogicalRequest(t *testing.T) {
 	for _, collection := range []string{"root", "user"} {
 		t.Run(collection, func(t *testing.T) {
 			f := newConstructionFixture(t)
-			scope := f.run.HistoryID()
+			scope := f.run.SessionID()
 			root := session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root contract")}}
 			user := session.UserInstructions{Blocks: []session.InstructionBlock{instruction("user guidance")}}
 			requireConstruction(t, f.b.ReplaceRootInstructions(scope, root))
@@ -187,7 +187,7 @@ func TestConstructChronologicalCaptureSubmitLoad(t *testing.T) {
 		}
 	}
 	f := newConstructionFixture(t)
-	id := f.run.HistoryID()
+	id := f.run.SessionID()
 	requireConstruction(t, f.b.ReplaceRootInstructions(id, session.RootInstructions{Blocks: []session.InstructionBlock{instruction("old root")}}))
 	requireConstruction(t, f.b.ReplaceUserInstructions(id, session.UserInstructions{Blocks: []session.InstructionBlock{instruction("prefix")}}))
 	requireConstruction(t, f.b.ReplaceToolCatalog(id, session.ToolCatalog{Tools: []session.ToolDefinition{{Name: "tool", Description: "description", ArgumentSchema: []byte(" true ")}}}))
@@ -442,14 +442,14 @@ func TestConstructInactiveAndClosedCapture(t *testing.T) {
 
 func TestConstructUnconsumedContributionsAndLifecycleOmission(t *testing.T) {
 	f := newConstructionFixture(t)
-	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
-	requireConstruction(t, f.b.ReplaceUserInstructions(f.run.HistoryID(), session.UserInstructions{Blocks: []session.InstructionBlock{instruction("prefix")}}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.SessionID(), session.RootInstructions{Blocks: []session.InstructionBlock{instruction("root")}}))
+	requireConstruction(t, f.b.ReplaceUserInstructions(f.run.SessionID(), session.UserInstructions{Blocks: []session.InstructionBlock{instruction("prefix")}}))
 	requireConstruction(t, f.b.AddEffectiveInput(f.run, session.EffectiveInput{Inputs: []session.InputItem{inline(session.PromptContext, "unconsumed")}}))
 	requireConstruction(t, f.b.EndRun(session.RunEndedInterrupted))
 	var err error
 	f.run, err = f.b.StartRun()
 	requireConstruction(t, err)
-	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.HistoryID(), session.RootInstructions{}))
+	requireConstruction(t, f.b.ReplaceRootInstructions(f.run.SessionID(), session.RootInstructions{}))
 	before := f.build(format.ParametersV1{}).Request().MutableClone()
 	if len(before.Conversation) != 1 || len(before.RootInstructions) != 0 || len(before.UserInstructions) != 1 {
 		t.Fatal("run ending withdrew unconsumed input or coupled independent replacements")

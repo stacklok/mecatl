@@ -12,7 +12,7 @@ import (
 )
 
 func TestRecoveryOnlyModelInitListsTargetsWithoutSessionCreator(t *testing.T) {
-	m := New(Deps{Connect: fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}}, ConnectOpen: true, ConnectError: "Authentication needs attention.", ConnectReason: client.AuthNotEnrolled, ConnectTarget: "remote.example:443", ConnectResumeSessionID: "session-1", Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
+	m := New(Deps{Connect: fakeConnect{targets: []ConnectTarget{{Target: "other.example:443"}, {Target: "remote.example:443"}}}, ConnectOpen: true, ConnectError: "Authentication needs attention.", ConnectReason: client.AuthNotEnrolled, ConnectTarget: "remote.example:443", ConnectResumeSessionID: "session-1", Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
 	s, ok := m.modal.(*connectState)
 	if m.phase != phaseIdle || !ok {
 		t.Fatal("missing recovery surface")
@@ -26,8 +26,8 @@ func TestRecoveryOnlyModelInitListsTargetsWithoutSessionCreator(t *testing.T) {
 		t.Fatal("Init did not issue exactly one owned load")
 	}
 	m = applyAll(m, result)
-	if s.loading || len(s.targets) != 1 || s.list.CursorID() != "target:remote.example:443" {
-		t.Fatalf("load not applied: %+v", s)
+	if s.loading || len(s.targets) != 2 || s.list.CursorID() != "target:remote.example:443" || s.list.Cursor() != 1 {
+		t.Fatalf("load: loading=%t targets=%d selection=(%d,%q), want second saved target", s.loading, len(s.targets), s.list.Cursor(), s.list.CursorID())
 	}
 }
 

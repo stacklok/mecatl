@@ -8,14 +8,14 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func TestUserInstructionsSubmitLoadReplacementAndOwnership(t *testing.T) {
 	h, s, p := newIteratorSession(t)
-	scope := s.Snapshot().HistoryID()
+	scope := s.Snapshot().SessionID()
 	if v, ok := s.Snapshot().UserInstructions(); ok || v != (session.UserInstructionsView{}) {
 		t.Fatal("absent prefix present")
 	}
@@ -43,7 +43,7 @@ func TestUserInstructionsSubmitLoadReplacementAndOwnership(t *testing.T) {
 	check := func(snapshot session.Snapshot, want session.UserInstructions) {
 		t.Helper()
 		v, ok := snapshot.UserInstructions()
-		if !ok || v.HistoryID() != scope || v.Blocks().Len() != len(want.Blocks) {
+		if !ok || v.SessionID() != scope || v.Blocks().Len() != len(want.Blocks) {
 			t.Fatal("prefix presence/scope/blocks")
 		}
 		for i, block := range v.Blocks().All() {
@@ -113,7 +113,7 @@ func TestUserInstructionsSubmitLoadReplacementAndOwnership(t *testing.T) {
 			t.Fatal("prefix replacement/clear changed root instructions")
 		}
 		selected, ok := snapshot.RecordAt(snapshot.RecordCount() - 1).UserInstructions()
-		if !ok || selected.HistoryID() != scope || selected.Blocks().Len() != 0 {
+		if !ok || selected.SessionID() != scope || selected.Blocks().Len() != 0 {
 			t.Fatal("explicit empty replacement lost")
 		}
 	}
@@ -128,16 +128,16 @@ func TestUserInstructionsScopeValidationAndZero(t *testing.T) {
 	s := boundSession(t, h, sessionPolicy())
 	b := beginBatch(t, s)
 	mustBatch(t, b.Create())
-	scope := s.Snapshot().HistoryID()
-	foreign, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	scope := s.Snapshot().SessionID()
+	foreign, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	mustBatch(t, err)
 	for _, tc := range []struct {
-		scope historyid.HistoryID
+		scope sessionid.SessionID
 		value session.UserInstructions
 		want  error
 	}{
 		{foreign, session.UserInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona"}}}, session.ErrIdentity},
-		{historyid.HistoryID{}, session.UserInstructions{}, codec.ErrInvalidData},
+		{sessionid.SessionID{}, session.UserInstructions{}, codec.ErrInvalidData},
 		{scope, session.UserInstructions{Blocks: []session.InstructionBlock{{Key: "operator/persona"}}}, codec.ErrInvalidData},
 	} {
 		if err := b.ReplaceUserInstructions(tc.scope, tc.value); !errors.Is(err, tc.want) {
@@ -150,7 +150,7 @@ func TestUserInstructionsScopeValidationAndZero(t *testing.T) {
 		t.Fatal("failed additions consumed record slots")
 	}
 	for _, record := range []session.RecordView{{}, s.Snapshot().RecordAt(0)} {
-		if v, ok := record.UserInstructions(); ok || v.HistoryID() != (historyid.HistoryID{}) || v.Blocks().Len() != 0 {
+		if v, ok := record.UserInstructions(); ok || v.SessionID() != (sessionid.SessionID{}) || v.Blocks().Len() != 0 {
 			t.Fatal("zero/wrong-kind prefix")
 		}
 	}

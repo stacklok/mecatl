@@ -696,7 +696,7 @@ func TestModelsOverlayHintsReflectKeyOverride(t *testing.T) {
 	picker := modelsState{view: modelsPanel, catalog: catalog, filtered: catalog.models, deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk, caps: client.Capabilities{ModelSelection: true}}}
 	rendered, _ := picker.Render(200, 30)
 	got := stripANSIstr(rendered)
-	if !strings.Contains(got, "↑/↓/ctrl+f14 move · ctrl+f17 use · ctrl+f25 set global default · ctrl+f16 clear filter / close") {
+	if !strings.Contains(got, "↑/↓/ctrl+f14 move · ctrl+f25 set global default") || !strings.Contains(got, "[ctrl+f17 Use model] [ctrl+f16 Close]") {
 		t.Errorf("models hint should carry live page/use/set/close: %q", got)
 	}
 	for _, stale := range []string{"↑/↓/pgup move", "enter use · ctrl+g set global default · esc clear filter / close"} {
@@ -774,19 +774,19 @@ func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 		st.syncFilter()
 		body, _ := st.Render(100, 30)
 		got := stripANSIstr(body)
-		if !strings.Contains(got, "ctrl+f17: select  ctrl+f16: close") {
-			t.Errorf("worktrees panel hint should carry live select/close: %q", got)
+		if !strings.Contains(got, "[ctrl+f17 Start session] [ctrl+f16 Close]") {
+			t.Errorf("worktrees panel hint should carry captured start/close: %q", got)
 		}
-		if strings.Contains(got, "enter: select  esc: close") {
+		if strings.Contains(got, "[enter Start session] [esc Close]") {
 			t.Errorf("worktrees panel hint still shows defaults: %q", got)
 		}
 		st.confirm = &st.worktrees[0]
 		body, _ = st.Render(100, 30)
 		got = stripANSIstr(body)
-		if !strings.Contains(got, "ctrl+f17: start session  ctrl+f16: back") {
+		if !strings.Contains(got, "[ctrl+f17 Start session] [ctrl+f16 Back]") {
 			t.Errorf("worktrees confirmation did not use captured markings: %q", got)
 		}
-		if strings.Contains(got, "enter: start session  esc: back") {
+		if strings.Contains(got, "[enter Start session] [esc Back]") {
 			t.Errorf("worktrees confirmation still shows defaults: %q", got)
 		}
 	})

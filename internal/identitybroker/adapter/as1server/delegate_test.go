@@ -1,13 +1,18 @@
 package as1server
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +20,7 @@ import (
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -87,24 +93,144 @@ const delegateMaxLifetime = time.Hour
 // client-assertion signer for that key and the key itself.
 func newDelegate(t *testing.T) (DelegateClient, *identitybroker.ClientAssertionSigner, *ecdsa.PrivateKey) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := brokerconfigtest.NewKey(t)
 	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keySet, err := json.Marshal(signer.JWKS())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return DelegateClient{
 		ID:                   identitybroker.BrokerClientID,
-		KeySet:               keySet,
+		KeySetFile:           brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), key),
 		AllowedSourceClients: []string{testClientID},
 		IDJAGMaxLifetime:     delegateMaxLifetime,
 	}, signer, key
+}
+
+// TestDelegateKeySetFileIsCheckedBeforeConstruction: New refuses a delegate
+// key set file that is relative, absent, not a JWK Set, or holds no key, in
+// validation, before it builds anything, and without the file's contents. An
+// absent file's error still matches fs.ErrNotExist.
+func TestDelegateKeySetFileIsCheckedBeforeConstruction(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for name, test := range map[string]struct{ file, want string }{
+		"relative":       {file: "jwks.json", want: "is not an absolute path"},
+		"absent":         {file: filepath.Join(dir, "absent.json"), want: "no such file"},
+		"not a JWK Set":  {file: write("array.json", `["secret-shaped"]`), want: "is not a JSON JWK Set"},
+		"malformed JSON": {file: write("malformed.json", `{"keys":`), want: "is not a JSON JWK Set"},
+		"empty JWK Set":  {file: write("empty.json", `{"keys":[]}`), want: "holds no key"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _, _ := newDelegate(t)
+			d.KeySetFile = test.file
+			cfg := Config{
+				Issuer: "https://as1.mecatl.test/as1", Audience: testAudience,
+				PublicClients: []PublicClient{{ID: testClientID, RedirectURIs: []string{testRedirect}}},
+				Upstream:      UpstreamConfig{Issuer: "https://idp.example", ClientID: "mecatl-as1"},
+				Delegate:      &d,
+			}
+			// The upstream is never reached: validation fails first.
+			server, err := New(t.Context(), cfg)
+			if err == nil {
+				_ = server.Close()
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("New = %v, want ErrInvalidConfig containing %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), "secret-shaped") {
+				t.Errorf("New = %v, which contains the file's contents", err)
+			}
+			if name == "absent" && !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("New = %v, want it to match fs.ErrNotExist", err)
+			}
+		})
+	}
+}
+
+// TestDelegateKeySetFileIsLeftAsTheOperatorWroteIt: the key set file is the
+// operator's, such as a mounted Secret, so AS-1 only reads it: it is unchanged
+// after a failed construction, a construction, and Close.
+func TestDelegateKeySetFileIsLeftAsTheOperatorWroteIt(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	d, _, _ := newDelegate(t)
+	want, err := os.ReadFile(d.KeySetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchanged := func(when string) {
+		t.Helper()
+		if got, err := os.ReadFile(d.KeySetFile); err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("key set file %s: %v, changed = %v", when, err, !bytes.Equal(got, want))
+		}
+	}
+	cfg := testConfig(t, h, "https://as1.mecatl.test/as1")
+	cfg.Delegate = &d
+	// Construction fails after validation, at the absent signing key.
+	cfg.SigningKeyFile = filepath.Join(t.TempDir(), "absent.pem")
+	if server, err := New(t.Context(), cfg); err == nil {
+		_ = server.Close()
+		t.Fatal("New accepted an absent signing key file")
+	}
+	unchanged("after a failed construction")
+	cfg.SigningKeyFile = ""
+	server, err := New(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	unchanged("after construction")
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	unchanged("after Close")
+}
+
+// TestDelegateKeySetRotation: with the old and new broker client keys in the
+// key set file, AS-1 accepts client assertions signed by either; rebuilt from
+// a file holding only the new key, it accepts only the new key's.
+func TestDelegateKeySetRotation(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	oldKey, newKey := brokerconfigtest.NewKey(t), brokerconfigtest.NewKey(t)
+	start := func(keys ...*ecdsa.PrivateKey) *fixture {
+		f, _, _ := startDelegateAS1(t, h, func(_ *Config, d *DelegateClient) {
+			d.KeySetFile = brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), keys...)
+		})
+		return f
+	}
+	// status is the token endpoint's answer to an exchange authenticated
+	// with an assertion key signs.
+	status := func(f *fixture, key *ecdsa.PrivateKey) (int, string) {
+		t.Helper()
+		signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := time.Now()
+		assertion := signAssertion(t, key, signer.JWKS().Keys[0].KeyID, jwt.MapClaims{
+			"iss": identitybroker.BrokerClientID, "sub": identitybroker.BrokerClientID, "aud": f.server.Issuer(),
+			"iat": n.Unix(), "exp": n.Add(time.Minute).Unix(), "jti": rand.Text(),
+		})
+		return postToken(t, f.server, exchangeForm(assertion, f.signIn(t, testAudience).AccessToken))
+	}
+
+	during := start(oldKey, newKey)
+	for name, key := range map[string]*ecdsa.PrivateKey{"old": oldKey, "new": newKey} {
+		if code, errCode := status(during, key); code != http.StatusOK {
+			t.Errorf("during the rotation, the %s key's assertion: status %d error %q, want 200", name, code, errCode)
+		}
+	}
+	after := start(newKey)
+	if code, errCode := status(after, newKey); code != http.StatusOK {
+		t.Errorf("after the rotation, the new key's assertion: status %d error %q, want 200", code, errCode)
+	}
+	if code, errCode := status(after, oldKey); code != http.StatusUnauthorized || errCode != "invalid_client" {
+		t.Errorf("after the rotation, the old key's assertion: status %d error %q, want 401 invalid_client", code, errCode)
+	}
 }
 
 // startDelegateAS1 hosts AS-1 on loopback with a delegate client whose keys are

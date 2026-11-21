@@ -4,23 +4,15 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
 
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func TestSecurityReloadTLSWithoutPolicyGenerationChange(t *testing.T) {
@@ -91,13 +83,13 @@ func TestSecuritySnapshotExpiryBoundary(t *testing.T) {
 	}
 }
 
-func TestSecurityProjectedSwitchDuringActiveOperation(t *testing.T) {
+func TestSecurityProjectedSwitch(t *testing.T) {
 	for _, mode := range []string{"renewal", "policy and TLS", "separate policy", "stable mismatched key", "switch to mismatched key", "continuous switches"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				dir := t.TempDir()
 				now := time.Now().UTC()
-				ca, cert, key, issued := rpcSecurityPKI(t, now, "spiffe://example/client")
+				ca, cert, key, _ := rpcSecurityPKI(t, now, "spiffe://example/client")
 				_, nextCert, nextKey := syntheticPKI(t, now)
 				manifest := securityManifest{Version: 1, Generation: 1, TLS: securityTLSManifest{CertificateFile: "tls.crt", PrivateKeyFile: "tls.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: "spiffe://example/client", MayAttestOwner: true, ExecutionTemplates: []string{"go"}}}}
 				policyDir := dir
@@ -139,31 +131,6 @@ func TestSecurityProjectedSwitchDuringActiveOperation(t *testing.T) {
 				if err := manager.Reload(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				leaf, err := x509.ParseCertificate(issued.Certificate[0])
-				if err != nil {
-					t.Fatal(err)
-				}
-				env := runFixtureEnvironment(1, 1)
-				_ = unstructured.SetNestedField(env.Object, hashText("spiffe://example/client"), "spec", "clientHash")
-				_ = unstructured.SetNestedField(env.Object, hashText("spiffe://example/client"), "status", "activeRun", "clientHash")
-				resource := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-				executor := newLeaseBlockingExecutor()
-				defer executor.unblock()
-				store := NewStore(resource, "ns", testProfiles(), executor).WithSecurityManager(manager)
-				ctx := peer.NewContext(t.Context(), &peer.Peer{AuthInfo: credentials.TLSInfo{State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}}})
-				done := make(chan error, 1)
-				go func() {
-					resp, err := store.execute(ctx, "spiffe://example/client", "owner", operationRequestContext(), executionenv.ExecutorRequest{Operation: executionenv.OpCommandStart, Command: "true"})
-					if err == nil && (resp.Command == nil || resp.Command.State != executionenv.CommandSucceeded || resp.Command.TerminalReceipt != "confirmed") {
-						err = errors.New("missing successful terminal receipt")
-					}
-					done <- err
-				}()
-				select {
-				case <-executor.started:
-				case err := <-done:
-					t.Fatalf("operation failed before dispatch: %v", err)
-				}
 				reads := 0
 				manager.readFile = func(root *os.Root, name string) ([]byte, error) {
 					data, err := readRootFile(root, name)
@@ -184,7 +151,7 @@ func TestSecurityProjectedSwitchDuringActiveOperation(t *testing.T) {
 				case "switch to mismatched key":
 					writeRotationMaterial(t, filepath.Join(dir, "..second"), map[string][]byte{"tls.key": key})
 				}
-				err = manager.Reload(t.Context())
+				err := manager.Reload(t.Context())
 				if invalid {
 					if err == nil || manager.Ready() || manager.CheckReady(t.Context()) {
 						t.Fatal("invalid projection retained authority")
@@ -215,25 +182,6 @@ func TestSecurityProjectedSwitchDuringActiveOperation(t *testing.T) {
 				}
 				if reads != wantReads {
 					t.Fatalf("candidate attempts = %d, want %d", reads, wantReads)
-				}
-				executor.unblock()
-				err = <-done
-				wantFence := fenceHealthy
-				if invalid {
-					wantFence = "FenceUnknown"
-					var fenced *executionenv.Error
-					if !errors.As(err, &fenced) || fenced.Code != executionenv.CodeFenceUnknown {
-						t.Fatalf("invalid authority completion: %v", err)
-					}
-				} else if err != nil {
-					t.Fatalf("renewal lost active operation: %v", err)
-				}
-				current, err := resource.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-				if err != nil || textNested(current.Object, "status", "fenceState") != wantFence {
-					t.Fatalf("unexpected durable fence: %v", err)
-				}
-				if !invalid && textNested(current.Object, "status", "activeOperation", "id") != "" {
-					t.Fatal("successful operation was not cleared")
 				}
 			})
 		})

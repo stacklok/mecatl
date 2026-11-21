@@ -481,24 +481,9 @@ func TestUnsupportedSchemaFailsClosedWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestExpiredOperationLeaseFencesWithoutClearingIdentity(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
-	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "peer-op", "operation": "file.replace", "claimID": "claim", "runID": "run", "epoch": int64(4), "holderID": "peer", "renewedAt": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), "expiresAt": time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)}, "status", "activeOperation")
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	r := NewReconciler(dynamicClient, kubefake.NewSimpleClientset(), "ns", testProfiles())
-	if err := r.Reconcile(t.Context(), "env"); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-	if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "activeOperation", "id") != "peer-op" {
-		t.Fatalf("expired operation was not retained and fenced: %v", got.Object["status"])
-	}
-}
-
 func TestRecoverRequiresExactTerminalPodAndPersistsProof(t *testing.T) {
 	env := lifecycleAdminEnvironment(2, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
-	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "uncertain", "claimID": "claim", "epoch": int64(4)}, "status", "activeOperation")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
 	q := adminRequestFixture()
@@ -507,7 +492,8 @@ func TestRecoverRequiresExactTerminalPodAndPersistsProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
-	if textNested(got.Object, "status", "fenceState") != fenceHealthy || textNested(got.Object, "status", "activeOperation", "id") != "" || textNested(got.Object, "status", "terminationProof", "podUID") != "pod-uid" {
+	if textNested(got.Object, "status", "fenceState") != fenceHealthy ||
+		textNested(got.Object, "status", "terminationProof", "podUID") != "pod-uid" {
 		t.Fatalf("recovery proof/status=%v", got.Object["status"])
 	}
 }
@@ -516,7 +502,6 @@ func TestRecoveredTerminalProofCanStartExactReplacement(t *testing.T) {
 	env := lifecycleAdminEnvironment(2, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	setConditionObject(env, "Ready", false, "FenceUnknown", "holder lost")
-	_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": "uncertain", "claimID": "claim", "epoch": int64(4)}, "status", "activeOperation")
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC()))
 	q := adminRequestFixture()

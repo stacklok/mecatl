@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // ToolReturnStatus is the closed tool-level return meaning, not rollback semantics.
@@ -115,7 +115,7 @@ func newToolDispositionRecord(v ToolDisposition, call RequestedCallID, limits co
 //
 //dtogen:include
 type ToolDispositionView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.ToolDisposition
 }
 

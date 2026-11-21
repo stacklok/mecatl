@@ -24,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -300,6 +301,8 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell",
+		// AS-1's signing key, and so its access tokens, survive the restart.
+		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true}).Path,
 		"--permission-mode=yolo", "--guardrails=off",
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", httpAddr,
@@ -307,7 +310,6 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		"--session-lease-k8s-namespace", "",
 		"--tls-cert", certFile, "--tls-key", keyFile,
 		"--identity-broker-as1-issuer", issuer,
-		"--identity-broker-as1-signing-key-file", h.WriteSigningKey(t, dir),
 		"--identity-broker-as1-tui-client-id", identityharness.DefaultClientID,
 		"--identity-broker-as1-upstream-issuer", h.IdP.Issuer(),
 		"--identity-broker-as1-upstream-client-id", "mecak8s-as1",

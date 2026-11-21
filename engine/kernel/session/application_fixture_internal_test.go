@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
-func allocatedRun(t testing.TB, scope historyid.HistoryID, ordinal uint64) RunID {
+func allocatedRun(t testing.TB, scope sessionid.SessionID, ordinal uint64) RunID {
 	t.Helper()
-	return RunID{historyID: scope, ordinal: ordinal}
+	return RunID{sessionID: scope, ordinal: ordinal}
 }
 func allocatedInput(t testing.TB, run RunID, ordinal uint64) UserInputID {
 	t.Helper()
@@ -24,7 +25,7 @@ func newLifecycleHistory(t testing.TB, backend history.Backend) *history.History
 }
 func boundSession(t testing.TB, h *history.History, p Policy) *Session {
 	t.Helper()
-	s, err := New(h, testHistoryID(t), testConfigFor(p))
+	s, err := New(h, testSessionID(t), testConfigFor(p))
 	mustBatch(t, err)
 	return s
 }
@@ -60,7 +61,7 @@ func submitBatch(t testing.TB, s *Session, b *SessionCommit) history.CommitRef {
 }
 func assertHistoryHead(t testing.TB, h *history.History, want history.CommitRef) {
 	t.Helper()
-	got, err := h.Head(context.Background(), testHistoryID(t))
+	got, err := h.Head(context.Background(), testSessionID(t).ResourceID())
 	if err != nil || got != want {
 		t.Fatalf("Head = %v, %v; want %v", got, err, want)
 	}
@@ -72,7 +73,7 @@ type batchBackend struct {
 	attempts []history.ByteCommit
 }
 
-func (b *batchBackend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
+func (b *batchBackend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, c history.ByteCommit) (history.Observation, error) {
 	b.attempts = append(b.attempts, c)
 	return b.Backend.Append(ctx, id, expected, c)
 }

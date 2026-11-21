@@ -1,0 +1,30 @@
+ mecatui · Golden session · fixture/fixture-model/default · mode default
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                 ┃                                                               ┃
+                 ┃  Models  (6)                                                  ┃
+                 ┃  current: gpt-5 (server default)                              ┃
+                 ┃  > filter models…                                             ┃
+                 ┃                                                               ┃
+                 ┃  Switching models is expensive as it clears caches.           ┃
+                 ┃                                                               ┃
+                 ┃  ▶   provider · model-00                                      ┃
+                 ┃      provider · model-01                                      ┃
+                 ┃      provider · model-02                                      ┃
+                 ┃      provider · model-03                                      ┃
+                 ┃      provider · model-04                                      ┃
+                 ┃      provider · model-05                                      ┃
+                 ┃                                                               ┃
+                 ┃  type to filter · ↑/↓/pgup move · ctrl+g set global default   ┃
+                 ┃  ● current  ★ global default                                  ┃
+                 ┃  reason = emits reasoning · set its effort tier with /effort  ┃
+                 ┃                                                               ┃
+                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+│
+│ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
+│
+│
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+? help · / commands · ctrl+c quit

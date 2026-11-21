@@ -42,6 +42,9 @@ includes:
     dir: .
 
 vars:
+  # Resolve the checkout workspace in Task's directory, independent of ROOT_DIR.
+  GO_WORKFILE:
+    sh: 'printf "%s/go.work" "$(pwd -P)"'
   GO_MODULES:
     - '.'
     - engine
@@ -77,8 +80,12 @@ vars:
   RACE_CGO: 'CGO_ENABLED={{if eq OS "linux"}}1{{else}}0{{end}}'
 
 # Release binaries build with CGO_ENABLED=0; test the same configuration.
+# The checkout workspace is the default; an inherited GOWORK (including off) wins.
+# This is different from Makefile and appears to be controversial as there is an experiment
+# (https://taskfile.dev/docs/experiments/env-precedence) to change it.
 env:
   CGO_ENABLED: '0'
+  GOWORK: '{{.GO_WORKFILE}}'
 
 tasks:
   default:
@@ -374,14 +381,14 @@ tasks:
       vars: [MODULE]
     vars:
       RACE: '{{default "" .RACE}}'
-      TEST_GOWORK: '{{default "off" .TEST_GOWORK}}'
+      TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     preconditions:
       - sh: '{{if has .MODULE .GO_MODULES}}true{{else}}false{{end}}'
         msg: 'MODULE must be one of: {{join ", " .GO_MODULES}}'
     cmds:
       # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
       # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
-      - cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} {{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly -timeout=20m {{.RACE}} ./...
+      - cd {{.MODULE | shellQuote}} && {{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}{{if .RACE}}{{.RACE_CGO}} {{end}}go test -mod=readonly -timeout=20m {{.RACE}} ./...
 
   test:_suite:
     internal: true
@@ -400,8 +407,8 @@ tasks:
     desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
     cmds:
       - mkdir -p bin/microvm
-      - cd environment/microvm && GOWORK=off go build -o ../../bin/microvm/mecatl-microvmd ./cmd/mecatl-microvmd
-      - cd environment/microvm && GOWORK=off CGO_ENABLED=0 GOOS=linux go build -o ../../bin/microvm/mecatl-guest-agent ./cmd/mecatl-guest-agent
+      - cd environment/microvm && go build -o ../../bin/microvm/mecatl-microvmd ./cmd/mecatl-microvmd
+      - cd environment/microvm && CGO_ENABLED=0 GOOS=linux go build -o ../../bin/microvm/mecatl-guest-agent ./cmd/mecatl-guest-agent
 
   microvm:package:
     desc: Package the independently admitted guest-agent artifact.
@@ -473,7 +480,7 @@ tasks:
           INSTALL_ROOT="${E2E_STATE_ROOT}/mecatl-release-install-${PLATFORM}-$$"
           rm -rf "${INSTALL_ROOT}"
           trap 'rm -rf "${INSTALL_ROOT}"' EXIT
-          (cd environment/microvm && GOWORK=off go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
+          (cd environment/microvm && go build -o "${MICROVMD_BIN}" ./cmd/mecatl-microvmd)
           # The focused live test crosses ordinary first-use readiness and the
           # production UDS through the server-owned microVM default. It drives
           # filesystem Read/Write/Shell, source and host-path isolation, logical-child
@@ -537,7 +544,7 @@ tasks:
     desc: Run the complete offline test suite without the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '', TEST_GOWORK: ''}
+        vars: {RACE: ''}
 
   test:non-race:
     desc: Compatibility alias for the complete offline test suite
@@ -548,20 +555,33 @@ tasks:
     desc: Run the complete offline test suite with the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '-race', TEST_GOWORK: ''}
+        vars: {RACE: '-race'}
 
+  # Unlike ordinary test tasks, workspace variants explicitly select this checkout.
   test:workspace:
-    desc: Run the complete offline test suite against this checkout's workspace
-    # Resolve in Task's checkout directory; ROOT_DIR is CLI-overridable.
+    desc: Run the complete offline workspace test suite against this checkout
     cmds:
       - task: test:_suite
         vars: {RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
 
   test:workspace:race:
-    desc: Run the complete offline workspace test suite with the race detector
+    desc: Run the complete offline workspace race suite against this checkout
     cmds:
       - task: test:_suite
         vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  # Standalone tasks deliberately prove the consumer dependency closure.
+  test:standalone:
+    desc: Run the complete offline test suite with GOWORK=off
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '', TEST_GOWORK: 'off'}
+
+  test:standalone:race:
+    desc: Run the complete offline test suite with GOWORK=off and the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race', TEST_GOWORK: 'off'}
 
   test:module:
     desc: Run one module's tests with GOWORK=off (MODULE=. for root)
@@ -592,26 +612,17 @@ tasks:
     cmds:
       - sh .github/scripts/module-metadata.sh
 
-  test:module-candidate:
-    desc: Test each module with current sibling sources and check its own dependency metadata
-    vars:
-      MODULE: '{{.MODULE | default ""}}'
+  test:workspace-sync:
+    desc: Synchronize this checkout's workspace dependencies and require committed metadata (may modify files)
     cmds:
-      - python3 .github/scripts/module-candidate.py{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
-
-  tidy:module-candidate:
-    desc: Repair candidate metadata while preserving declared sibling versions and original replacements
-    vars:
-      MODULE: '{{.MODULE | default ""}}'
-    cmds:
-      - python3 .github/scripts/module-candidate.py --fix{{if .MODULE}} --module {{.MODULE | shellQuote}}{{end}}
+      - task: deps:sync
+      - task: test:module-metadata
 
   test:workspace-infrastructure:
     desc: Run offline workspace and module-metadata task regression tests
     cmds:
       - python3 .github/scripts/module-metadata_test.py
       - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
-      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/module-candidate_test.py
 
   test:module-publication-tools:
     desc: Run offline bounded-publication helper and workflow regression tests
@@ -670,8 +681,7 @@ tasks:
       Prove the opt-in provider/ submodules build + test with NO workspace
       (GOWORK=off), the same hygiene gate as test:engine-standalone. All four
       provider modules are checked with their own published dependency closures.
-      CI covers this through `task test:race`, which tests every module with
-      GOWORK=off. To prove the closure needs no network over a warmed module
+      To prove the closure needs no network over a warmed module
       cache, run `task test:provider-standalone GOPROXY=off`.
     vars:
       GOPROXY: '{{.GOPROXY | default ""}}'
@@ -751,7 +761,20 @@ tasks:
       `CONTAINER_ENGINE=podman` (Kind's `k8s-file` Podman log driver is required;
       see https://kind.sigs.k8s.io/docs/user/rootless/). NOT part of `task test`
       (slow ~5-8 min mock-only, ~10-15 min with live).
-    deps: [build]
+    cmds:
+      - task: e2e:_k8s
+
+  # This release-parity variant deliberately tests declared published dependencies.
+  e2e:k8s:pinned:
+    desc: Run the same Kind E2E suite and image builds with published sibling dependencies
+    cmds:
+      - task: e2e:_k8s
+        vars: {K8S_GOWORK: 'off'}
+
+  e2e:_k8s:
+    internal: true
+    vars:
+      K8S_GOWORK: '{{default "" .K8S_GOWORK}}'
     preconditions:
       - sh: command -v kind >/dev/null 2>&1
         msg: "kind is not installed (https://kind.sigs.k8s.io/docs/user/quick-start/#installation)"
@@ -778,8 +801,7 @@ tasks:
       # real haiku turn takes 10-30s, the live lease/persistence specs each drive
       # 2-3 turns with FlakeAttempts(2), and the provider patch + rollout adds
       # ~1-2 min. Without the key the live specs Skip and the suite fits in 15m;
-      # the outer bound only matters when the live variant runs. GOWORK=off proves
-      # the image uses tagged external dependencies rather than workspace overlays.
+      # the outer bound only matters when the live variant runs.
       - cmd: |
           runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
           case "$runtime:${KIND_EXPERIMENTAL_PROVIDER:-}" in
@@ -787,7 +809,7 @@ tasks:
             podman:) export KIND_EXPERIMENTAL_PROVIDER=podman ;;
             *) echo "CONTAINER_ENGINE and KIND_EXPERIMENTAL_PROVIDER disagree" >&2; exit 2 ;;
           esac
-          GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+          {{if .K8S_GOWORK}}GOWORK={{.K8S_GOWORK | shellQuote}} {{end}}go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
 
   e2e:k8s:execution:
     desc: |
@@ -1126,7 +1148,7 @@ tasks:
         cmd: |
           set -o pipefail
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} GOWORK=off go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
+            (cd {{.ITEM | shellQuote}} && CGO_ENABLED=1 GOOS=${target%/*} GOARCH=${target#*/} go list -deps -test -f '{{"{{"}}if .CgoFiles{{"}}"}}{{"{{"}}.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}' ./...)
           done | sort -u | while read -r pkg; do
             case " runtime/cgo net os/user plugin {{.CGO_ALLOWED}} " in
               *" $pkg "*) ;;
@@ -1285,6 +1307,7 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:module:
+    # Deliberately resolve declared published requirements, not workspace replacements.
     desc: Tidy one module with GOWORK=off, without workspace synchronization
     requires:
       vars: [MODULE]
@@ -1294,31 +1317,18 @@ tasks:
     cmds:
       - cd {{.MODULE | shellQuote}} && GOWORK=off go mod tidy
 
-  tidy:
-    desc: Tidy root and every nested module, including standalone adapters
+  deps:sync:
+    desc: Synchronize member dependency versions with this checkout's workspace
     cmds:
-      - go mod tidy
-      - go work sync
-      - cd engine && GOWORK=off go mod tidy
-      - cd internal/adaptersupport && GOWORK=off go mod tidy
-      - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
-      - cd adapters && GOWORK=off go mod tidy
-      - cd agentdef && GOWORK=off go mod tidy
-      # OIDC resolves its published engine baseline independently of the workspace.
-      - cd authn/oidc && GOWORK=off go mod tidy
-      # The microVM runtime is isolated in its own module; its tools-tag anchor
-      # retains the future runtime dependency without linking it by default.
-      - cd environment/microvm && GOWORK=off go mod tidy
-      - cd integration/microvm && GOWORK=off go mod tidy
-      # All provider modules now use resolvable standalone dependencies. The
-      # OpenAI-family modules pin the ssefilter module to an immutable revision
-      # until the provider module release tags are cut.
-      - cd provider/ssefilter && GOWORK=off go mod tidy
-      - cd provider/anthropic && GOWORK=off go mod tidy
-      - cd provider/openai && GOWORK=off go mod tidy
-      - cd provider/openaichat && GOWORK=off go mod tidy
+      - GOWORK={{.GO_WORKFILE | shellQuote}} go work sync
+
+  tidy:
+    desc: Alias for deps:sync (workspace synchronization, not standalone tidy)
+    cmds:
+      - task: deps:sync
 
   generate:timezones:
+    # Isolate the generator from the workspace so generated data follows only its module.
     desc: Refresh the client timezone catalog from the active Go toolchain
     cmds:
       # Explicit maintenance only: compiler upgrades do not require a catalog refresh.
@@ -1337,6 +1347,7 @@ tasks:
       - task: generate:data:check
 
   generate:data:
+    # Isolate the generator from the workspace to keep DTO output deterministic.
     desc: Regenerate isolated kernel DTO operations
     cmds:
       - GOWORK=off go run ./internal/dtogen/cmd/dtogen -repo .
@@ -1441,9 +1452,9 @@ tasks:
       - task: docs:check
 
   ci:
-    desc: Full local CI gate (tidy, fmt, lint, race test, build)
+    desc: Full local CI gate (workspace sync, fmt, lint, race test, build)
     cmds:
-      - task: tidy
+      - task: test:workspace-sync
       - task: fmt
       - task: lint
       - task: test:race
@@ -1456,11 +1467,9 @@ tasks:
     cmds:
       - sh scripts/vet-build-tags.sh
       - task: lint:cgo
-      # go work sync fails under an operator's GOWORK=off; CI uses the workspace.
-      - GOWORK= task tidy
-      - task: test:module-metadata
+      - task: test:workspace-sync
       - bash .github/scripts/macos-closure-guard.sh
-      - task: test:module
+      - task: test:workspace:module
         vars: {MODULE: engine}
       - task: sdk:install
       - task: generate:data:check

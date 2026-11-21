@@ -40,7 +40,7 @@ const MaxRunEndedReasonBytes = 32
 //dtogen:include
 type CaptureFailureEvidence struct {
 	// RequestID is the required positive numeric request component within the
-	// enclosing RunEnded's run. Its history envelope supplies history scope.
+	// enclosing RunEnded's run. Its root history envelope supplies Session scope.
 	// Local validation checks positivity, not pending request membership.
 	RequestID uint64 `cbor:"q" view:"manual"`
 	// Evidence is optional diagnostic observation for the uncaptured response. Nil
@@ -78,8 +78,8 @@ func (v CaptureFailureEvidence) validateLocal() error {
 //dtogen:validate validateLocal
 //dtogen:include
 type RunEnded struct {
-	// RunID is the required positive numeric run component within the history
-	// supplied by the enclosing envelope. The aggregate checks active ownership.
+	// RunID is the required positive Session-relative run component; the root
+	// history envelope supplies Session scope. The aggregate checks active ownership.
 	RunID uint64 `cbor:"r" view:"manual"`
 	// Reason is required and uses the closed RunEnded vocabulary; empty and
 	// unknown labels are rejected. Labels must be valid UTF-8, at most

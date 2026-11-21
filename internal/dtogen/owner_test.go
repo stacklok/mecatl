@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+func TestObsoleteGeneratorDirectiveRejected(t *testing.T) {
+	cfg := moduleFixture(t, "//cborgen:validate local\ntype Record string\nfunc(Record)local()error{return nil}")
+	if _, err := Load(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "obsolete cborgen directive") {
+		t.Fatal("old validator silently ignored", err)
+	}
+}
+
 // TestOwnerCompositionAndBootstrap exercises actual owner declarations and a
 // compiled third-package consumer, not coincidentally compatible handwritten APIs.
 func TestOwnerCompositionAndBootstrap(t *testing.T) {

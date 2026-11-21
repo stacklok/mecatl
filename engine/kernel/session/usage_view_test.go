@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // Direct DTO-backed fixtures isolate leaf navigation and allocation checks from
@@ -27,12 +27,12 @@ func usageViewFixture(t *testing.T) UsageView {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return UsageView{scope: historyid.NewHistoryID(), value: &owned}
+	return UsageView{scope: sessionid.NewSessionID(), value: &owned}
 }
 
 func TestUsageViewScopedTraversalAndOwnership(t *testing.T) {
 	v := usageViewFixture(t)
-	if v.ID().HistoryID() != v.scope || v.ID().HistoryRelative() != 7 {
+	if v.ID().SessionID() != v.scope || v.ID().SessionRelative() != 7 {
 		t.Fatal("usage scope lost")
 	}
 	def, ok := v.Definition()
@@ -40,7 +40,7 @@ func TestUsageViewScopedTraversalAndOwnership(t *testing.T) {
 		t.Fatal("definition navigation")
 	}
 	run, ok := def.RunID()
-	if !ok || run.HistoryID() != v.scope || run.HistoryRelative() != 2 {
+	if !ok || run.SessionID() != v.scope || run.SessionRelative() != 2 {
 		t.Fatal("run scope lost")
 	}
 	request, ok := def.RequestID()

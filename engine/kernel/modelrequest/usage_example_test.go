@@ -9,9 +9,9 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/modelrequest/format"
 	"github.com/stacklok/mecatl/engine/kernel/session"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func Example_usageAccounting() {
@@ -25,9 +25,9 @@ func Example_usageAccounting() {
 	policy := session.Policy{CommitLimits: limits, PayloadLimits: limits, MaxRecordsPerCommit: 16, SoftMaxRetainedRecords: 128, MaxRetainedRecords: 128, SoftMaxPayloadBytes: 32768, MaxPayloadBytes: 32768, SoftMaxDecodedWork: 1 << 24, MaxDecodedWork: 1 << 24}
 	h, err := history.New(mem.New(), history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
 	must(err)
-	historyID := historyid.NewHistoryID()
+	sessionID := sessionid.NewSessionID()
 	config := session.Config{Policy: policy, InstanceID: 1} // Reused by this running writer.
-	s, err := session.New(h, historyID, config)
+	s, err := session.New(h, sessionID, config)
 	must(err)
 	begin := func() *session.SessionCommit {
 		b, err := s.BeginCommit()
@@ -40,7 +40,7 @@ func Example_usageAccounting() {
 	}
 	show := func(label string) {
 		// Rebuild from storage, not a producer-maintained counter or cached sum.
-		loaded, err := session.Load(ctx, h, historyID, config)
+		loaded, err := session.Load(ctx, h, sessionID, config)
 		must(err)
 		tokens, incomplete, err := knownUsageTokens(loaded.Snapshot().Usages())
 		must(err)
@@ -51,7 +51,7 @@ func Example_usageAccounting() {
 	must(b.Create())
 	runA, err := b.StartRun()
 	must(err)
-	must(b.ReplaceModelBinding(historyID, session.ModelBinding{Route: "primary", API: "example", Model: "chat"}))
+	must(b.ReplaceModelBinding(sessionID, session.ModelBinding{Route: "primary", API: "example", Model: "chat"}))
 	input, err := b.AddUserInput(runA, session.UserInput{Parts: []session.ContentPart{{Text: new("Hello")}}})
 	must(err)
 	must(b.AddEffectiveInput(runA, session.EffectiveInput{Inputs: []session.InputItem{{UserInputID: new(input.RunRelative())}}}))
@@ -96,7 +96,7 @@ func Example_usageAccounting() {
 	submit(b)
 	show("restored")
 
-	loaded, err := session.Load(ctx, h, historyID, config)
+	loaded, err := session.Load(ctx, h, sessionID, config)
 	must(err)
 	entry, ok := loaded.Snapshot().Usages().ByID(conversation)
 	owner, _ := entry.Definition().RunID()

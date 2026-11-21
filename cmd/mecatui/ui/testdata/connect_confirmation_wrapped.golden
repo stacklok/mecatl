@@ -1,0 +1,32 @@
+ mecatui · Golden sess…
+──────────────────────────────
+
+
+
+
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                            ┃
+┃  Connect to remote         ┃
+┃  Connect to this saved ta  ┃
+┃  rget?                     ┃
+┃  remote.example:443        ┃
+┃  [enter connect]           ┃
+┃  [esc Back]                ┃
+┃                            ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+
+
+
+│
+│ Ask mecatl to do something…
+│ (enter to send ·
+│ shift+enter for newline · ?
+──────────────────────────────
+ ready       ctx ▒▒▒▒░░░░ 50%
+? help · / commands · ctrl+c quit

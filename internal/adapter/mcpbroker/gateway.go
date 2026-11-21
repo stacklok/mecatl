@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"golang.org/x/oauth2"
-
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/agentcredential"
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -33,10 +31,12 @@ type Gateway interface {
 	// for the model-visible tool name on backend.
 	Route(backend, modelVisibleName string) (server, tool string, err error)
 	// ListTools lists the tools the gateway routes to server, each under its
-	// name on that server, sent with credential as the bearer. The gateway
-	// attributes each tool to its server. An error never carries the
-	// credential.
-	ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error)
+	// name on that server, sent with token as the bearer. token is a value,
+	// not a source, so the bearer sent is the one the caller holds and checks
+	// listed tools for. The caller checks the token before passing it. The
+	// gateway attributes each tool to its server. An error never carries the
+	// token.
+	ListTools(ctx context.Context, server string, token identitybroker.Token) ([]GatewayTool, error)
 }
 
 // GatewayTool is one tool a gateway lists for a server.
@@ -45,15 +45,21 @@ type GatewayTool struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
-	ReadOnly    bool
+	// OutputSchema is the schema the tool's structured result declares; nil
+	// when the tool declares none. It is not checked for the bearer, because
+	// nothing uses it yet: whatever carries it into the catalogue must check
+	// it as the input schema is checked.
+	OutputSchema map[string]any
+	ReadOnly     bool
 }
 
 // embeddedGateway is the bundled ToolHive process's vMCP, reached in process.
 // Shortcut: only the embedded gateway implements Gateway; removed by #2812 (external gateway implementation of the Gateway interface).
 type embeddedGateway struct {
-	endpoint string
-	resource string
-	client   *http.Client
+	endpoint   string
+	resource   string
+	client     *http.Client
+	listLimits mcpadapter.GatewayListLimits
 }
 
 func (g embeddedGateway) Endpoint() string         { return g.endpoint }
@@ -67,15 +73,11 @@ func (embeddedGateway) Route(backend, modelVisibleName string) (string, string, 
 }
 
 // ListTools lists the vMCP's tools routed to server.
-func (g embeddedGateway) ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
-	if server == "" || credential == nil {
+func (g embeddedGateway) ListTools(ctx context.Context, server string, token identitybroker.Token) ([]GatewayTool, error) {
+	if server == "" || token.IsZero() {
 		return nil, mcpadapter.ErrGatewayList
 	}
-	token, err := credential.Token()
-	if err != nil || !validBearerToken(token) {
-		return nil, mcpadapter.ErrGatewayList
-	}
-	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, identitybroker.NewToken(token.AccessToken))
+	listed, err := mcpadapter.ListGatewayTools(ctx, g.endpoint, g.client, token, g.listLimits)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +92,9 @@ func (g embeddedGateway) ListTools(ctx context.Context, server string, credentia
 		// The SDK decodes a listed schema as a JSON object; any other value is
 		// left nil for the catalogue to refuse.
 		schema, _ := t.InputSchema.(map[string]any)
+		outputSchema, _ := t.OutputSchema.(map[string]any)
 		tools = append(tools, GatewayTool{Name: name, Description: t.Description, InputSchema: schema,
-			ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint})
+			OutputSchema: outputSchema, ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint})
 	}
 	return tools, nil
 }
@@ -119,6 +122,11 @@ type GatewayCalls struct {
 	Servers []string
 	// SendOnce records claimed calls; nil means NewMemorySendOnceRecord.
 	SendOnce SendOnceRecord
+	// ListLimits bound each listing of a server's tools through the gateway;
+	// a zero field takes the mcp package's default. Production leaves it zero:
+	// it lets tests lower a limit until operator gateway entries (#2538) need
+	// their own.
+	ListLimits mcpadapter.GatewayListLimits
 }
 
 // WithGatewayCalls sends calls on calls.Servers' broker routes to g.

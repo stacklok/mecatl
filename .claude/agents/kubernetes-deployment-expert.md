@@ -453,7 +453,6 @@ not with individual findings.
 - **`secure-code-reviewer`** — when the finding is in application
   code that happens to be deployed via K8s (SSRF, injection,
   authn/authz in the app).
-- **`go-architect`** — for Go controller / operator code architecture.
 
 ## References to cite
 

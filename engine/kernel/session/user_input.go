@@ -3,8 +3,8 @@ package session
 import (
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 // UserInput is the canonical submission payload. AddUserInput takes its destination
@@ -36,7 +36,7 @@ func newUserInputRecord(v UserInput, id UserInputID, limits codec.Limits) (*mate
 //
 //dtogen:include
 type UserInputView struct {
-	scope historyid.HistoryID
+	scope sessionid.SessionID
 	value *sessionformat.UserInput
 }
 
@@ -45,5 +45,5 @@ func (v UserInputView) ID() UserInputID {
 	if v.value == nil {
 		return UserInputID{}
 	}
-	return UserInputID{runID: RunID{historyID: v.scope, ordinal: v.value.RunID}, ordinal: v.value.ID}
+	return UserInputID{runID: RunID{sessionID: v.scope, ordinal: v.value.RunID}, ordinal: v.value.ID}
 }

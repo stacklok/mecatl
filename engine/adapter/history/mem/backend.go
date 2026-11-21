@@ -7,6 +7,7 @@ import (
 	"math"
 	"sync"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 )
 
@@ -16,19 +17,19 @@ import (
 // Acceptance is process-local, not durable across process loss.
 type Backend struct {
 	mu        sync.RWMutex
-	histories map[history.HistoryID][]history.ByteCommit
+	histories map[resourceid.ID][]history.ByteCommit
 }
 
 var _ history.Backend = (*Backend)(nil)
 
 // New returns an empty isolated byte backend, with no codec or retry policy.
 func New() *Backend {
-	return &Backend{histories: make(map[history.HistoryID][]history.ByteCommit)}
+	return &Backend{histories: make(map[resourceid.ID][]history.ByteCommit)}
 }
 
 // Observe reads the head and requested ordinal under one lock. An absent history
 // has zero evidence. Returned references contain no mutable storage.
-func (s *Backend) Observe(ctx context.Context, id history.HistoryID, sequence int64) (history.Observation, error) {
+func (s *Backend) Observe(ctx context.Context, id resourceid.ID, sequence int64) (history.Observation, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return history.Observation{}, err
 	}
@@ -59,7 +60,7 @@ func observe(entries []history.ByteCommit, sequence int64) history.Observation {
 // Append copies opaque bytes only on successful expected-head comparison. It
 // validates index metadata, not canonical encoding or parent links. A failed CAS
 // returns coherent head/ordinal evidence without copying or retrying the write.
-func (s *Backend) Append(ctx context.Context, id history.HistoryID, expected history.CommitRef, commit history.ByteCommit) (history.Observation, error) {
+func (s *Backend) Append(ctx context.Context, id resourceid.ID, expected history.CommitRef, commit history.ByteCommit) (history.Observation, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return history.Observation{}, err
 	}
@@ -88,7 +89,7 @@ func (s *Backend) Append(ctx context.Context, id history.HistoryID, expected his
 // Read verifies indexed boundaries and captures immutable entries under one lock.
 // It sizes the result and checks every byte/count cap before allocating or copying
 // commit storage. Errors return nil output, including on a per-commit cap breach.
-func (s *Backend) Read(ctx context.Context, id history.HistoryID, request history.ByteReadRequest) ([]history.ByteCommit, error) {
+func (s *Backend) Read(ctx context.Context, id resourceid.ID, request history.ByteReadRequest) ([]history.ByteCommit, error) {
 	if err := checkScope(ctx, id); err != nil {
 		return nil, err
 	}
@@ -133,7 +134,7 @@ func (s *Backend) Read(ctx context.Context, id history.HistoryID, request histor
 // readEntries validates the request and both indexed boundaries, then captures
 // immutable entries under one lock. Returned entries borrow backend storage for
 // read-only use; errors return nil entries.
-func (s *Backend) readEntries(ctx context.Context, id history.HistoryID, request history.ByteReadRequest) ([]history.ByteCommit, error) {
+func (s *Backend) readEntries(ctx context.Context, id resourceid.ID, request history.ByteReadRequest) ([]history.ByteCommit, error) {
 	if (request.After != (history.CommitRef{}) && request.After.Validate() != nil) ||
 		request.Through.Validate() != nil || request.After.Sequence > request.Through.Sequence ||
 		(request.After.Sequence == request.Through.Sequence && request.After != request.Through) ||
@@ -159,11 +160,11 @@ func (s *Backend) readEntries(ctx context.Context, id history.HistoryID, request
 }
 
 // checkScope validates public byte operations before map access or allocation.
-func checkScope(ctx context.Context, id history.HistoryID) error {
+func checkScope(ctx context.Context, id resourceid.ID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if id == (history.HistoryID{}) {
+	if id == (resourceid.ID{}) {
 		return invalid("history ID must be set")
 	}
 	return nil

@@ -38,7 +38,6 @@ func openedWorktrees(t *testing.T, rows []client.Worktree) (Model, *worktreesSta
 	mm, cmd := m.openWorktrees()
 	m = feedWorktreesList(t, mm.(Model), cmd)
 	s := m.modal.(*worktreesState)
-	_ = m.View()
 	return m, s
 }
 
@@ -51,8 +50,13 @@ func worktreesBodyFits(t *testing.T, s *worktreesState, width, height int) strin
 		}
 		return body
 	}
-	if lipgloss.Width(body) > width || lipgloss.Height(body) > height || !utf8.ValidString(body) || len(hits) != 0 {
+	if lipgloss.Width(body) > width || lipgloss.Height(body) > height || !utf8.ValidString(body) {
 		t.Fatalf("body does not fit %dx%d: %dx%d\n%s", width, height, lipgloss.Width(body), lipgloss.Height(body), body)
+	}
+	for _, hit := range hits {
+		if s.compact || hit.rect.x0 < 0 || hit.rect.x1 > width || hit.rect.y0 < 0 || hit.rect.y1 > height {
+			t.Fatalf("hit outside usable body: %+v", hit)
+		}
 	}
 	return stripANSIstr(body)
 }
@@ -232,7 +236,7 @@ func TestWorktreesSurface_Scenario2_WrappingAndStableCard(t *testing.T) {
 	rows := worktreeInventory(30)
 	rows[4].Label = strings.Repeat("wide label 界 ❤️ ", 12)
 	m, s := openedWorktrees(t, rows)
-	m = effortOffer(m, 32, 16)
+	m = offerCardBody(m, 32, 16)
 	_ = m.renderBody()
 	bounds := m.metrics.outerBounds
 	for _, msg := range []tea.Msg{
@@ -330,7 +334,7 @@ func TestWorktreesSurface_Scenario4_WheelResizeAndLiveConversation(t *testing.T)
 	m.conv.startAssistant()
 	m.conv.appendAssistant(strings.Repeat("underlying conversation\n\n", 100))
 	m.refreshView()
-	m = effortOffer(m, 80, 10)
+	m = offerCardBody(m, 80, 10)
 	m.vp.SetYOffset(9)
 	m.conversationView.observe(m.vp)
 	_ = m.View()
@@ -348,7 +352,7 @@ func TestWorktreesSurface_Scenario4_WheelResizeAndLiveConversation(t *testing.T)
 	if m.modal != s || s.list.Offset() != offset || s.list.CursorID() != selected || m.vp.YOffset() != before || !strings.Contains(m.conv.scrollback.SnapshotAt(1).Payload.(scrollback.AssistantCardSnapshot).Text, "live update") {
 		t.Fatal("live event interrupted modal or did not update conversation")
 	}
-	m = effortOffer(m, 70, 9)
+	m = offerCardBody(m, 70, 9)
 	out = stripANSIstr(m.renderBody())
 	if !strings.Contains(out, "▶") || s.list.CursorID() != selected {
 		t.Fatal("resize did not reveal the selected worktree")
@@ -376,7 +380,7 @@ func TestWorktreesSurface_Scenario5_LoadingErrorEmptyAndUnsafeMetadata(t *testin
 	m := newWorktreesModel(t, &fakeConv{}, &fakeWorktreeLister{})
 	mm, _ := m.openWorktrees()
 	s := mm.(Model).modal.(*worktreesState)
-	if out := worktreesBodyFits(t, s, 80, 20); !strings.Contains(out, "loading") || strings.Contains(out, ": select") {
+	if out := worktreesBodyFits(t, s, 80, 20); !strings.Contains(out, "loading") || strings.Contains(out, "Start session]") {
 		t.Fatalf("loading state advertised selection:\n%s", out)
 	}
 	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -387,7 +391,7 @@ func TestWorktreesSurface_Scenario5_LoadingErrorEmptyAndUnsafeMetadata(t *testin
 		s.loading = true
 		s.HandleMsg(worktreesResultMsg{owner: s, request: s.request, result: result})
 		out := worktreesBodyFits(t, s, 32, 20)
-		if result.Err != nil && !strings.Contains(out, "could not list") || result.Err == nil && !strings.Contains(out, "no worktrees found") || strings.Contains(out, ": select") || strings.Contains(out, "\u202e") {
+		if result.Err != nil && !strings.Contains(out, "could not list") || result.Err == nil && !strings.Contains(out, "no worktrees found") || strings.Contains(out, "Start session]") || strings.Contains(out, "\u202e") {
 			t.Fatalf("incorrect error/empty state:\n%s", out)
 		}
 	}
@@ -498,7 +502,7 @@ func TestWorktreesSurface_Scenario8_ConfirmationFitsAndResizeInvalidatesActivati
 		if offer == [2]int{80, 80} && (s.compact || !strings.Contains(out, "界") || !strings.Contains(out, "branch:")) {
 			t.Fatalf("large confirmation did not render sanitized Unicode metadata:\n%s", out)
 		}
-		if !s.compact && (!strings.Contains(out, "start") || !strings.Contains(out, "back")) {
+		if !s.compact && (!strings.Contains(out, "Start session") || !strings.Contains(out, "Back")) {
 			t.Fatalf("fitted confirmation lost actions:\n%s", out)
 		}
 		if s.compact {
@@ -508,9 +512,9 @@ func TestWorktreesSurface_Scenario8_ConfirmationFitsAndResizeInvalidatesActivati
 			}
 		}
 	}
-	m = effortOffer(m, 80, 20)
+	m = offerCardBody(m, 80, 20)
 	_ = m.View()
-	m = effortOffer(m, 80, 1)
+	m = offerCardBody(m, 80, 1)
 	// Deliberately no View between resize and Enter.
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.modal != s || m.phase != phaseIdle || !s.compact || s.intent != nil {

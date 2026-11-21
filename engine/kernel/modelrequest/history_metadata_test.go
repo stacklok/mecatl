@@ -33,7 +33,7 @@ func TestHistoryMetadataExcludedFromLogicalRequest(t *testing.T) {
 			}}
 			f := newConstructionFixtureWithConfig(t, config)
 			h, s, b, run := f.h, f.s, f.b, f.run
-			scope := run.HistoryID()
+			scope := run.SessionID()
 			root := session.RootInstructions{Blocks: []session.InstructionBlock{instruction("same root")}}
 			requireConstruction(t, b.ReplaceRootInstructions(scope, root))
 			input, err := b.AddUserInput(run, session.UserInput{Parts: textParts("selected", "nonempty sibling")})

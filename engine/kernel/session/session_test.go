@@ -11,17 +11,17 @@ import (
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
 	"github.com/stacklok/mecatl/engine/kernel/history/format"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func testLimits() codec.Limits {
 	return codec.Limits{MaxBytes: 4096, MaxStringBytes: 128, MaxByteStringBytes: 1024, MaxArrayElements: 16, MaxMapPairs: 16, MaxDepth: 8, MaxNodes: 512, MaxCollectionElements: 128}
 }
-func testHistoryID(t testing.TB) historyid.HistoryID {
+func testSessionID(t testing.TB) sessionid.SessionID {
 	t.Helper()
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	mustBatch(t, err)
 	return id
 }
@@ -84,7 +84,7 @@ func proposedCommit(t testing.TB, s *session.Session, records ...fixtureRecord) 
 	v := s.Snapshot()
 	dto := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: v.Head().Sequence + 1}
 	if v.Head() == (history.CommitRef{}) {
-		dto.HistoryID = new(v.HistoryID())
+		dto.HistoryID = new(v.SessionID().ResourceID())
 	} else {
 		dto.Parent = new(v.Head().CID)
 	}
@@ -101,10 +101,10 @@ func historyWithPrefix(t testing.TB, source *history.History, v session.Snapshot
 	h := newSessionHistory(t)
 	request := history.ReadRequest{Through: v.Head(), MaxCommits: 1}
 	for request.After != request.Through {
-		page, err := source.Read(context.Background(), v.HistoryID(), request)
+		page, err := source.Read(context.Background(), v.SessionID().ResourceID(), request)
 		mustBatch(t, err)
 		for _, c := range page.Commits {
-			result, err := h.Append(context.Background(), v.HistoryID(), c.Commit)
+			result, err := h.Append(context.Background(), v.SessionID().ResourceID(), c.Commit)
 			mustBatch(t, err)
 			if result.Status != history.StatusAccepted {
 				t.Fatal("fixture prefix not accepted")
@@ -117,23 +117,23 @@ func historyWithPrefix(t testing.TB, source *history.History, v session.Snapshot
 func loadFixtureCommit(t testing.TB, source *history.History, s *session.Session, c history.Commit, p session.Policy) (*session.Session, error) {
 	t.Helper()
 	h := historyWithPrefix(t, source, s.Snapshot())
-	result, err := h.Append(context.Background(), s.Snapshot().HistoryID(), c.Commit)
+	result, err := h.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), c.Commit)
 	if err != nil {
 		return nil, err
 	}
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture continuation not accepted")
 	}
-	return session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(p))
+	return session.Load(context.Background(), h, s.Snapshot().SessionID(), testConfigFor(p))
 }
 func loadRecords(t testing.TB, h *history.History, s *session.Session, records ...fixtureRecord) *session.Session {
 	t.Helper()
-	result, err := h.Append(context.Background(), s.Snapshot().HistoryID(), proposedCommit(t, s, records...).Commit)
+	result, err := h.Append(context.Background(), s.Snapshot().SessionID().ResourceID(), proposedCommit(t, s, records...).Commit)
 	mustBatch(t, err)
 	if result.Status != history.StatusAccepted {
 		t.Fatal("fixture append rejected")
 	}
-	loaded, err := session.Load(context.Background(), h, s.Snapshot().HistoryID(), testConfigFor(sessionPolicy()))
+	loaded, err := session.Load(context.Background(), h, s.Snapshot().SessionID(), testConfigFor(sessionPolicy()))
 	mustBatch(t, err)
 	return loaded
 }
@@ -175,7 +175,7 @@ func userInputsMatch(v session.Snapshot, run session.RunID, count uint64) bool {
 }
 
 type rejectedSnapshotFacts struct {
-	historyID historyid.HistoryID
+	sessionID sessionid.SessionID
 	head      history.CommitRef
 	created   bool
 	activeRun session.RunID
@@ -190,7 +190,7 @@ type rejectedRunFacts struct {
 }
 
 func captureRejectedSnapshot(v session.Snapshot) rejectedSnapshotFacts {
-	facts := rejectedSnapshotFacts{historyID: v.HistoryID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
+	facts := rejectedSnapshotFacts{sessionID: v.SessionID(), head: v.Head(), created: v.Created(), activeRun: v.ActiveRun()}
 	for r := range v.Records() {
 		facts.records = append(facts.records, r.MutableClone())
 	}

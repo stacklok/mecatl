@@ -1,0 +1,7 @@
+    method func (*SessionRuntime).Cancel(context.Context) error
+    method func (*SessionRuntime).GroupID() id.GroupID
+    method func (*SessionRuntime).Run(context.Context, session.UserInput) error
+    method func (*SessionRuntime).SessionID() id.SessionID
+    method func (*SessionRuntime).Snapshot(context.Context) (session.Snapshot, error)
+type SessionRuntime struct{}
+var ErrNotImplemented error

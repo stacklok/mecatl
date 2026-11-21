@@ -162,7 +162,7 @@ class WriterTests(unittest.TestCase):
         if command == "publish":
             args += ["--module", module]
         with mock.patch.object(p.urllib.request, "build_opener", return_value=self.api), \
-                mock.patch.object(p.candidate.subprocess, "run", side_effect=AssertionError("writer subprocess")), \
+                mock.patch.object(p.subprocess, "run", side_effect=AssertionError("writer subprocess")), \
                 mock.patch.object(p, "environment", side_effect=AssertionError("writer Go environment")), \
                 mock.patch.dict(os.environ, {"GH_TOKEN": "fixture-not-a-secret", "GITHUB_OUTPUT": str(self.output),
                                              "GITHUB_STEP_SUMMARY": str(self.summary)}, clear=True), \
@@ -628,7 +628,7 @@ class WorkflowTests(unittest.TestCase):
                 mock.patch.object(p, "prepare", side_effect=prepare), \
                 mock.patch.object(p, "reconcile", side_effect=reconcile), \
                 mock.patch.object(p, "run", side_effect=download), \
-                mock.patch.object(p.candidate, "go", side_effect=go), \
+                mock.patch.object(p, "go", side_effect=go), \
                 mock.patch.object(p.time, "sleep"):
             for module in p.ORDER:
                 result, selected = self.command("prepare", module, parent)

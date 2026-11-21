@@ -14,7 +14,7 @@ func TestRunEnded(t *testing.T) {
 	if err := v.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := newRunEndedRecord(v, allocatedRun(t, testHistoryID(t), 1), testLimits())
+	r, err := newRunEndedRecord(v, allocatedRun(t, testSessionID(t), 1), testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

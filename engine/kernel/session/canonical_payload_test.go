@@ -10,9 +10,9 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/history"
-	historyid "github.com/stacklok/mecatl/engine/kernel/history/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionformat "github.com/stacklok/mecatl/engine/kernel/session/format"
+	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
 )
 
 func canonicalSession(t *testing.T) (*session.Session, *history.History, session.Policy) {
@@ -23,7 +23,7 @@ func canonicalSession(t *testing.T) (*session.Session, *history.History, session
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := historyid.ParseHistoryID("HST1111111111111111111111")
+	id, err := sessionid.ParseSessionID("SES1111111111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	scope := run.HistoryID()
+	scope := run.SessionID()
 	parts := []sessionformat.ContentPart{{Text: new("original")}}
 	authored := sessionformat.UserInput{Parts: parts}
 	input, err := b.AddUserInput(run, authored)
@@ -90,10 +90,10 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 		t.Fatal("add mutated authoring context")
 	}
 	wantInput := authored.Clone()
-	wantInput.RunID, wantInput.ID = run.HistoryRelative(), input.RunRelative()
+	wantInput.RunID, wantInput.ID = run.SessionRelative(), input.RunRelative()
 	wantEffective := effective.Clone()
-	wantEffective.RunID = run.HistoryRelative()
-	want := []codec.Marshaler{sessionformat.Created{}, sessionformat.RunStarted{ID: run.HistoryRelative()}, wantInput, instructions.Clone(), catalog.Clone(), binding.Clone(), wantEffective}
+	wantEffective.RunID = run.SessionRelative()
+	want := []codec.Marshaler{sessionformat.Created{}, sessionformat.RunStarted{ID: run.SessionRelative()}, wantInput, instructions.Clone(), catalog.Clone(), binding.Clone(), wantEffective}
 	*parts[0].Text = "changed"
 	instructions.Blocks[0].Source.WorkspaceFile.Path = "changed"
 	catalog.Tools[0].ArgumentSchema[0] = 'X'
@@ -104,7 +104,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 	canonicalOK(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		created, ok := snapshot.RecordAt(0).Created()
-		if !ok || created.HistoryID() != scope {
+		if !ok || created.SessionID() != scope {
 			t.Fatal("creation identity lost")
 		}
 		started, ok := snapshot.RecordAt(1).RunStarted()
@@ -114,7 +114,7 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 		if v, ok := snapshot.RecordAt(0).RunStarted(); ok || v.ID() != (session.RunID{}) {
 			t.Fatal("wrong-kind start present")
 		}
-		if v, ok := snapshot.RecordAt(1).Created(); ok || v.HistoryID() != (historyid.HistoryID{}) {
+		if v, ok := snapshot.RecordAt(1).Created(); ok || v.SessionID() != (sessionid.SessionID{}) {
 			t.Fatal("wrong-kind creation present")
 		}
 		for i, value := range want {
@@ -130,13 +130,13 @@ func TestCanonicalPayloadOwnershipAndStoredBytes(t *testing.T) {
 		}
 	}
 	var zero session.RecordView
-	if v, ok := zero.Created(); ok || v.HistoryID() != (historyid.HistoryID{}) {
+	if v, ok := zero.Created(); ok || v.SessionID() != (sessionid.SessionID{}) {
 		t.Fatal("zero creation present")
 	}
 	if v, ok := zero.RunStarted(); ok || v.ID() != (session.RunID{}) {
 		t.Fatal("zero start present")
 	}
-	if (session.CreatedView{}).HistoryID() != (historyid.HistoryID{}) || (session.RunStartedView{}).ID() != (session.RunID{}) {
+	if (session.CreatedView{}).SessionID() != (sessionid.SessionID{}) || (session.RunStartedView{}).ID() != (session.RunID{}) {
 		t.Fatal("zero handles have identity")
 	}
 }
@@ -147,7 +147,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
+	canonicalOK(t, b.ReplaceModelBinding(run.SessionID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
 
 	request := canonicalRequest(s)
@@ -161,7 +161,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 		t.Fatal("request addition mutated caller value")
 	}
 	wantRequest := request.Clone()
-	wantRequest.RunID, wantRequest.ID = run.HistoryRelative(), first.RunRelative()
+	wantRequest.RunID, wantRequest.ID = run.SessionRelative(), first.RunRelative()
 	head := s.Snapshot().Head()
 	wantRequest.Source = &sessionformat.SourceHead{Sequence: head.Sequence, CID: head.CID}
 	clear(request.Recipe.Parameters)
@@ -174,14 +174,14 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	originalFailure := failure.Clone()
 	b = canonicalBegin(t, s)
 	canonicalOK(t, b.AddInvocationFailure(first, failure))
-	wantFailureUsage := sessionformat.Usage{ID: 1, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.HistoryRelative()), RequestID: new(first.RunRelative())}, Report: failureUsage.Clone()}
+	wantFailureUsage := sessionformat.Usage{ID: 1, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.SessionRelative()), RequestID: new(first.RunRelative())}, Report: failureUsage.Clone()}
 	_, err = b.AddUsage(nil, &first, session.UsagePurposeMain, failureUsage)
 	canonicalOK(t, err)
 	if !failure.Equal(originalFailure) {
 		t.Fatal("failure addition mutated caller value")
 	}
 	wantFailure := failure.Clone()
-	wantFailure.RunID, wantFailure.RequestID = run.HistoryRelative(), first.RunRelative()
+	wantFailure.RunID, wantFailure.RequestID = run.SessionRelative(), first.RunRelative()
 	*failure.Explanation = "changed"
 	*failure.Evidence.Detail = "changed"
 	*failure.Evidence.Correlation = "changed"
@@ -200,7 +200,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 		t.Fatal("retry addition mutated caller value")
 	}
 	wantRetry := retry.Clone()
-	wantRetry.RunID, wantRetry.ID = run.HistoryRelative(), second.RunRelative()
+	wantRetry.RunID, wantRetry.ID = run.SessionRelative(), second.RunRelative()
 	head = s.Snapshot().Head()
 	wantRetry.Source = &sessionformat.SourceHead{Sequence: head.Sequence, CID: head.CID}
 	*retry.RetryOf = 99
@@ -219,14 +219,14 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	originalResponse := response.Clone()
 	b = canonicalBegin(t, s)
 	canonicalOK(t, b.AddModelResponse(second, response))
-	wantResponseUsage := sessionformat.Usage{ID: 2, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.HistoryRelative()), RequestID: new(second.RunRelative())}, Report: responseUsage.Clone()}
+	wantResponseUsage := sessionformat.Usage{ID: 2, Definition: &sessionformat.UsageDefinition{Purpose: session.UsagePurposeMain, RunID: new(run.SessionRelative()), RequestID: new(second.RunRelative())}, Report: responseUsage.Clone()}
 	_, err = b.AddUsage(nil, &second, session.UsagePurposeMain, responseUsage)
 	canonicalOK(t, err)
 	if !response.Equal(originalResponse) {
 		t.Fatal("response addition mutated caller value")
 	}
 	wantResponse := response.Clone()
-	wantResponse.RunID, wantResponse.RequestID = run.HistoryRelative(), second.RunRelative()
+	wantResponse.RunID, wantResponse.RequestID = run.SessionRelative(), second.RunRelative()
 	*response.ProviderStopReason = "changed"
 	*response.Items[0].Content.Parts[0].Text = "changed"
 	clear(response.Items[0].Content.Parts[1].Media.InlineData)
@@ -239,7 +239,7 @@ func TestCanonicalInteractionBytesAndOwnership(t *testing.T) {
 	canonicalOK(t, b.AddRunEnded(run, session.RunEnded{Reason: session.RunEndedLimit, BulkToolCloseout: true}))
 	canonicalSubmit(t, s, b)
 
-	loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(p))
+	loaded, err := session.Load(context.Background(), h, run.SessionID(), testConfigFor(p))
 	canonicalOK(t, err)
 	want := []struct {
 		kind  string
@@ -286,9 +286,9 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	foreignScope, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreignScope, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	canonicalOK(t, err)
-	foreignRun, err := session.NewRunID(foreignScope, run.HistoryRelative())
+	foreignRun, err := session.NewRunID(foreignScope, run.SessionRelative())
 	canonicalOK(t, err)
 	foreignInput, err := session.NewUserInputID(foreignRun, 1)
 	canonicalOK(t, err)
@@ -303,7 +303,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	if err := b.AddEffectiveInput(run, sessionformat.EffectiveInput{Inputs: []sessionformat.InputItem{{UserInputID: new(uint64(2))}}}); !errors.Is(err, session.ErrTransition) {
 		t.Fatalf("future input: %v", err)
 	}
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
+	canonicalOK(t, b.ReplaceModelBinding(run.SessionID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
 	b = canonicalBegin(t, s)
 	request := canonicalRequest(s)
@@ -354,7 +354,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 	ending := sessionformat.RunEnded{Reason: sessionformat.RunEndedCaptureFailed, Capture: &sessionformat.CaptureFailureEvidence{RequestID: foreignPending.RunRelative(), Evidence: &sessionformat.ObservedEvidence{Detail: new("retained")}}}
 	canonicalOK(t, b.AddRunEnded(run, ending))
 	canonicalSubmit(t, s, b)
-	loaded, err := session.Load(context.Background(), h, run.HistoryID(), testConfigFor(p))
+	loaded, err := session.Load(context.Background(), h, run.SessionID(), testConfigFor(p))
 	canonicalOK(t, err)
 	for _, snapshot := range []session.Snapshot{s.Snapshot(), loaded.Snapshot()} {
 		effective, ok := snapshot.RecordAt(3).EffectiveInput()
@@ -382,7 +382,7 @@ func TestCanonicalRelativeReferences(t *testing.T) {
 			t.Fatal("relative capture did not reconstruct destination scope")
 		}
 		want := ending.Clone()
-		want.RunID = run.HistoryRelative()
+		want.RunID = run.SessionRelative()
 		wire, err := codec.Encode(want, p.PayloadLimits)
 		canonicalOK(t, err)
 		if !bytes.Equal(snapshot.RecordAt(8).MutableClone().Payload, wire) {
@@ -400,9 +400,9 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 	canonicalOK(t, b.Create())
 	run, err := b.StartRun()
 	canonicalOK(t, err)
-	canonicalOK(t, b.ReplaceModelBinding(run.HistoryID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
+	canonicalOK(t, b.ReplaceModelBinding(run.SessionID(), sessionformat.ModelBinding{Route: "r", API: "a", Model: "m", Settings: sessionformat.ModelSettings{ReasoningEffort: new("exact")}}))
 	canonicalSubmit(t, s, b)
-	foreignScope, err := historyid.ParseHistoryID("HST2222222222222222222222")
+	foreignScope, err := sessionid.ParseSessionID("SES2222222222222222222222")
 	canonicalOK(t, err)
 	foreignRun, err := session.NewRunID(foreignScope, 1)
 	canonicalOK(t, err)
@@ -412,7 +412,7 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 	canonicalOK(t, err)
 	b = canonicalBegin(t, s)
 	oversized := make([]byte, 1025)
-	for _, component := range []uint64{run.HistoryRelative(), 99} {
+	for _, component := range []uint64{run.SessionRelative(), 99} {
 		// Matching synthesized fields are just as invalid as conflicting ones.
 		for _, dirty := range []sessionformat.UserInput{{RunID: component}, {ID: component}} {
 			dirty.Parts = []sessionformat.ContentPart{{Media: &sessionformat.Media{InlineData: oversized}}}
@@ -487,21 +487,21 @@ func TestCanonicalExplicitDestinationAndDirtyFieldPrecedence(t *testing.T) {
 			}
 		}
 	}
-	for _, add := range []func(historyid.HistoryID) error{
-		func(scope historyid.HistoryID) error {
+	for _, add := range []func(sessionid.SessionID) error{
+		func(scope sessionid.SessionID) error {
 			return b.ReplaceRootInstructions(scope, sessionformat.RootInstructions{Blocks: []sessionformat.InstructionBlock{{Key: "harness/core"}}})
 		},
-		func(scope historyid.HistoryID) error {
+		func(scope sessionid.SessionID) error {
 			return b.ReplaceToolCatalog(scope, sessionformat.ToolCatalog{Tools: []sessionformat.ToolDefinition{{ArgumentSchema: oversized}}})
 		},
-		func(scope historyid.HistoryID) error {
+		func(scope sessionid.SessionID) error {
 			return b.ReplaceModelBinding(scope, sessionformat.ModelBinding{Settings: sessionformat.ModelSettings{ReasoningEffort: new(string(oversized))}})
 		},
 	} {
 		if err := add(foreignScope); !errors.Is(err, session.ErrIdentity) {
 			t.Fatalf("replacement foreign scope: %v", err)
 		}
-		if err := add(historyid.HistoryID{}); !errors.Is(err, codec.ErrInvalidData) {
+		if err := add(sessionid.SessionID{}); !errors.Is(err, codec.ErrInvalidData) {
 			t.Fatalf("replacement invalid scope: %v", err)
 		}
 	}

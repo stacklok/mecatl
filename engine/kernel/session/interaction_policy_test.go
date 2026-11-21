@@ -47,7 +47,7 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					s.policy.PayloadLimits = limits
 					// Prove a Load rejection is caused by this response, not an earlier
 					// fact made inadmissible by the deliberately tighter payload policy.
-					_, err := Load(context.Background(), s.history, id.runID.historyID, testConfigFor(s.policy))
+					_, err := Load(context.Background(), s.history, id.runID.sessionID, testConfigFor(s.policy))
 					interactionCheck(t, err)
 					before := detachedSessionState(s.state)
 					switch path {
@@ -63,12 +63,12 @@ func TestInteractionResponsePayloadPolicyBoundaries(t *testing.T) {
 					case "apply":
 						err = s.apply(c)
 					case "load":
-						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
+						result, e := s.history.Append(context.Background(), id.runID.sessionID.ResourceID(), c.Commit)
 						interactionCheck(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("History response admission")
 						}
-						_, err = Load(context.Background(), s.history, id.runID.historyID, testConfigFor(s.policy))
+						_, err = Load(context.Background(), s.history, id.runID.sessionID, testConfigFor(s.policy))
 					}
 					if short {
 						if !errors.Is(err, codec.ErrLimitExceeded) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -93,7 +93,7 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					// count policy rejects the candidate, not its prefix.
 					interactionSubmit(t, s, func(b *SessionCommit) { interactionCheck(t, b.Create()) })
 					interactionSubmit(t, s, func(b *SessionCommit) {
-						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().HistoryID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
+						interactionCheck(t, b.ReplaceModelBinding(s.Snapshot().SessionID(), ModelBinding{Route: "r", API: "a", Model: "m"}))
 					})
 					interactionSubmit(t, s, func(b *SessionCommit) { _, err := b.StartRun(); interactionCheck(t, err) })
 					request := interactionRequest(s, 1)
@@ -146,13 +146,13 @@ func TestInteractionOutcomePolicyBoundaries(t *testing.T) {
 					case "apply":
 						err = s.apply(c)
 					case "load":
-						result, e := s.history.Append(context.Background(), id.runID.historyID, c.Commit)
+						result, e := s.history.Append(context.Background(), id.runID.sessionID.ResourceID(), c.Commit)
 						interactionCheck(t, e)
 						if result.Status != history.StatusAccepted {
 							t.Fatal("memory History acceptance")
 						}
 						var loaded *Session
-						loaded, err = Load(context.Background(), s.history, id.runID.historyID, testConfigFor(p))
+						loaded, err = Load(context.Background(), s.history, id.runID.sessionID, testConfigFor(p))
 						if err != nil && loaded != nil {
 							t.Fatal("failed load published partial state")
 						}
@@ -178,7 +178,7 @@ func TestInteractionMinimalEndingEnvelopeWidths(t *testing.T) {
 			s := interactionFixture(t, "pending")
 			for s.Snapshot().Head().Sequence < next-1 {
 				interactionSubmit(t, s, func(b *SessionCommit) {
-					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().HistoryID(), RootInstructions{}))
+					interactionCheck(t, b.ReplaceRootInstructions(s.Snapshot().SessionID(), RootInstructions{}))
 				})
 			}
 			for _, reason := range []RunEndedReason{RunEndedLimit, RunEndedCaptureFailed} {

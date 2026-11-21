@@ -5,9 +5,10 @@
 // payload's kind and schema version.
 //
 // Occurrence IDs and their references store relative components; field comments
-// define their enclosing history or run scope. Payloads omit the enclosing history
-// identity. The session aggregate checks membership and cross-record legality;
-// payload validity alone establishes neither acceptance nor execution authority.
+// define their enclosing Session or run scope. Payloads omit the enclosing Session
+// identity, which is also the history's resource key. The session aggregate checks
+// membership and cross-record legality; payload validity alone establishes neither
+// acceptance nor execution authority.
 //
 // Public Validate methods check payload contracts, including child values.
 // Generated CBOR methods implement canonical encoding; kernel/codec helpers apply

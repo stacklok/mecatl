@@ -178,8 +178,8 @@ func TestConnectGeometrySanitizationAndRestoration(t *testing.T) {
 	s := m.modal.(*connectState)
 	for _, size := range [][2]int{{128, 30}, {32, 12}, {7, 20}, {1, 1}, {0, 0}, {80, 30}} {
 		body, hits := s.Render(size[0], size[1])
-		if hits != nil {
-			t.Fatal("connect publishes click regions")
+		if s.compact && len(hits) != 0 {
+			t.Fatal("compact connect publishes click regions")
 		}
 		if lipgloss.Width(body) > size[0] || lipgloss.Height(body) > size[1] && body != "" {
 			t.Fatalf("offer %v exceeded by %dx%d: %q", size, lipgloss.Width(body), lipgloss.Height(body), body)

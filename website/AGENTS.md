@@ -38,10 +38,9 @@ enforced in CI — nothing fails a PR for unformatted markdown. Run it before
 committing sizeable prose edits if you want the diff to stay clean; skip it
 for small, targeted changes.
 
-`user-docs/.prettierignore` excludes the generated reference pages
-(`reference/server-cli.md`, `reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
-`reference/typescript-sdk-api/node.md`) so prettier never fights their own
-generators — see [`../user-docs/AGENTS.md`](../user-docs/AGENTS.md#verify-behavior).
+`user-docs/.prettierignore` excludes the generated reference pages so prettier
+never fights their generators — see
+[`../user-docs/AGENTS.md`](../user-docs/AGENTS.md#verify-behavior).
 
 Prettier resolves `.prettierignore` relative to the invoking process's `cwd`,
 not by walking up from each file the way `.prettierrc` config resolution
@@ -75,7 +74,7 @@ Docusaurus strips the `.md` extension when building URLs.
 ### For same-directory siblings, relative `.md` is fine
 
 ```markdown
-<!-- inside getting-started/demo.md -->
+<!-- inside building/go/demo.md -->
 [Build your first agent](./first-agent.md)
 ```
 

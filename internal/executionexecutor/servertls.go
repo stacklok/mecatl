@@ -1,3 +1,4 @@
+// Package executionexecutor is the executor server's TLS and command supervision.
 package executionexecutor
 
 import (

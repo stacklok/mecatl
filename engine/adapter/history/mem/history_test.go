@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/history/conformance"
 	"github.com/stacklok/mecatl/engine/adapter/history/mem"
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
@@ -54,7 +55,7 @@ func TestPolicyValidationAndCopy(t *testing.T) {
 	}
 	p.CommitLimits.MaxBytes = 1
 	p.MaxPageBytes, p.MaxPageCommits, p.RetryWindow = 1, 1, 1
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, HistoryID: &id, Sequence: 1,
 		Records: []format.Record{{Timestamp: 0, Kind: "opaque", KindVersion: 7, Payload: []byte("tiny")}},
 	}

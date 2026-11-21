@@ -63,18 +63,17 @@ block strings into a fresh string every frame. `SetContent` was only ~15 MB —
 **the hypothesis was wrong.** The per-block cache already worked (only the 1 live
 block re-rendered, ~8.6%).
 
-**Fix.** Cache the joined string (`renderer.joinCache`) and reuse it on any frame
-where no block re-rendered. The reuse signal already existed: `blockRenders`
-increments only on a per-block cache miss. Guard = `joinValid && blockRenders ==
-before && joinKey{nBlocks,width,expand} matches`. `blockRenders == before` is the
-load-bearing signal (every render-visible mutation bumps a block `rev` → miss →
-`blockRenders++`); the key fields are belt-and-suspenders.
+**Fix.** Cache the joined frame and reuse it on any frame where no block
+re-rendered. The reuse signal already existed: `blockRenders` increments only on
+a per-block cache miss, and every render-visible mutation bumps a block `rev` →
+miss → `blockRenders++`. Unchanged `blockRenders` is the load-bearing guard;
+layout keys (block count, width) are belt-and-suspenders.
 
 **Proof.** The *streaming* bench mutates the live block every op → all-miss → flat
 (it's the worst-case floor, correctly unchanged). A *steady-frame* bench
 (`BenchmarkScrollbackViewSteady`, the cursor-move/scroll/`renderInput` path) showed
 the win: **B/op −99.6% (32.5 MB → 137 KB), allocs/op −46%.** Golden suite: zero
-diffs (byte-identical). Mutation test: forcing an unconditional `return joinCache`
+diffs (byte-identical). Mutation test: forcing unconditional reuse of the cached join
 turned 10 tests red.
 
 **Lessons.**

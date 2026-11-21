@@ -52,7 +52,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						before := detachedSessionState(s.state)
 						b, err := s.BeginCommit()
 						interactionCheck(t, err)
-						interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
+						interactionCheck(t, b.ReplaceRootInstructions(run.sessionID, RootInstructions{}))
 						_, err = s.SubmitCommit(context.Background(), b)
 						if short {
 							if !errors.Is(err, codec.ErrLimitExceeded) || errors.Is(err, ErrAcceptanceUnknown) || !reflect.DeepEqual(before, detachedSessionState(s.state)) {
@@ -76,7 +76,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 						if s.state.view.lifecycle.pending != active.pending || s.state.view.lifecycle.calls != active.calls || s.state.view.lifecycle.frontier != active.frontier || s.state.view.lifecycle.accounted != active.accounted {
 							t.Fatal("ending erased uncertainty")
 						}
-						loaded, err := Load(context.Background(), s.history, run.historyID, testConfigFor(p))
+						loaded, err := Load(context.Background(), s.history, run.sessionID, testConfigFor(p))
 						interactionCheck(t, err)
 						if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 							t.Fatal("hard-only ending replay")
@@ -90,7 +90,7 @@ func TestInteractionEveryMinimalEndingReservation(t *testing.T) {
 	// bounds every reason, including at maximum run widths.
 	for _, ordinal := range []uint64{1, 23, 24, 255, 256, math.MaxUint64} {
 		s, _ := internalFixture(t)
-		run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: ordinal}
+		run := RunID{sessionID: s.Snapshot().SessionID(), ordinal: ordinal}
 		largest := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
 		for _, reason := range reasons {
 			r := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: reason, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
@@ -169,7 +169,7 @@ func TestInteractionMinimalEndingEncodingPolicyDimensions(t *testing.T) {
 					var value codec.Marshaler = ending.commit
 					limits := s.policy.CommitLimits
 					if owner == "payload" {
-						value = RunEnded{RunID: s.Snapshot().ActiveRun().HistoryRelative(), Reason: reason, BulkToolCloseout: true}
+						value = RunEnded{RunID: s.Snapshot().ActiveRun().SessionRelative(), Reason: reason, BulkToolCloseout: true}
 						limits = s.policy.PayloadLimits
 					}
 					lo, hi := 1, int(reflect.ValueOf(limits).Field(field).Int())
@@ -247,7 +247,7 @@ func TestInteractionDetailedAndMixedEndingsStaySoftBounded(t *testing.T) {
 			case "capture":
 				ending.Capture = &CaptureFailureEvidence{RequestID: s.state.view.lifecycle.pending.RunRelative()}
 			case "mixed":
-				interactionCheck(t, b.ReplaceRootInstructions(run.historyID, RootInstructions{}))
+				interactionCheck(t, b.ReplaceRootInstructions(run.sessionID, RootInstructions{}))
 			}
 			interactionCheck(t, b.AddRunEnded(run, ending))
 			_, err = s.SubmitCommit(context.Background(), b)
@@ -265,8 +265,8 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 	for _, short := range []bool{false, true} {
 		t.Run(fmt.Sprint(short), func(t *testing.T) {
 			s, backend := closeoutWidthPrefix(t)
-			run := RunID{historyID: s.Snapshot().HistoryID(), ordinal: uint64(s.Snapshot().RunCount()) + 1}
-			start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: run.HistoryRelative()}, s.policy.PayloadLimits))
+			run := RunID{sessionID: s.Snapshot().SessionID(), ordinal: uint64(s.Snapshot().RunCount()) + 1}
+			start := interactionRecord(t)(newRunStartedRecord(RunStarted{ID: run.SessionRelative()}, s.policy.PayloadLimits))
 			candidate, err := s.prepare([]*materializedRecord{start}, 0, 1)
 			interactionCheck(t, err)
 			ending := interactionRecord(t)(newRunEndedRecord(RunEnded{Reason: RunEndedCaptureFailed, BulkToolCloseout: true}, run, s.policy.PayloadLimits))
@@ -284,7 +284,7 @@ func TestInteractionHistoryPolicyReservesExactNextEndingWithoutIO(t *testing.T) 
 			limits.MaxByteStringBytes = min(limits.MaxByteStringBytes, limits.MaxBytes)
 			s.history, err = history.New(backend, history.Policy{CommitLimits: limits, RetryWindow: 16, MaxPageBytes: limits.MaxBytes, MaxPageCommits: 2})
 			interactionCheck(t, err)
-			if _, err := s.history.Identify(run.historyID, candidate.commit); err != nil {
+			if _, err := s.history.Identify(run.sessionID.ResourceID(), candidate.commit); err != nil {
 				t.Fatalf("candidate itself must fit tighter history: %v", err)
 			}
 			attempts := backend.appends
@@ -370,7 +370,7 @@ func TestInteractionCaptureEvidenceMembershipAndPreservation(t *testing.T) {
 			if againInput != 0 || againRaw.Data().Copy()[0] != 0xff || s.state.view.lifecycle.pending != pending {
 				t.Fatal("capture export mutated fact or resolved request")
 			}
-			loaded, err := Load(context.Background(), s.history, pending.runID.historyID, testConfigFor(s.policy))
+			loaded, err := Load(context.Background(), s.history, pending.runID.sessionID, testConfigFor(s.policy))
 			interactionCheck(t, err)
 			if !reflect.DeepEqual(s.Snapshot(), loaded.Snapshot()) {
 				t.Fatal("capture replay")

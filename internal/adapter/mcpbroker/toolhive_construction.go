@@ -96,21 +96,21 @@ func NewAS2Trust(t as2trust.Trust) AS2Trust { return AS2Trust{t: &t} }
 type ToolHiveBrokerClient struct {
 	// ID is the client ID.
 	ID string
-	// KeySet is the client's public signing keys as a JSON JWK Set (RFC 7517
-	// section 5). It is written to a private temporary file ToolHive reads
-	// once, at construction, and removed after.
-	KeySet []byte
+	// KeySetFile is the absolute path of the client's public signing keys as
+	// a JSON JWK Set (RFC 7517 section 5), the operator's file, which must
+	// hold at least one key and which ToolHive reads once, at construction.
+	// It may hold an old and a new key while the client rotates.
+	KeySetFile string
 }
 
-// as2DelegateClient is ToolHive's configuration of the broker client, whose
-// public key set is in jwksFile, at AS-2 with the vMCP resource. Restricted
-// with no source clients, it can exchange only tokens issued to itself, never
-// a user's gateway login token.
-func as2DelegateClient(client ToolHiveBrokerClient, jwksFile, resource string) authserver.DelegateClientRunConfig {
+// as2DelegateClient is ToolHive's configuration of the broker client at AS-2
+// with the vMCP resource. Restricted with no source clients, it can exchange
+// only tokens issued to itself, never a user's gateway login token.
+func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,
 		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodPrivateKeyJWT,
-		JWKSFile:                jwksFile,
+		JWKSFile:                client.KeySetFile,
 		GrantTypes:              []string{oauthproto.GrantTypeTokenExchange, oauthproto.GrantTypeJWTBearer},
 		Scopes:                  []string{"openid"},
 		Audiences:               []string{resource},
@@ -137,25 +137,19 @@ func AS2Endpoints(callbackURL string) (issuer, resource string, err error) {
 	return issuer, as2Resource(issuer), nil
 }
 
-// as2RunConfig writes the broker client's key set to a file and returns AS-2's
-// additions to the embedded authorization server's RunConfig, with a function
-// that removes the file once ToolHive has read it, at construction. trust is
-// zero in production.
-func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer, func(), error) {
-	jwksFile, remove, err := writeKeySet("as2-broker-client-", client.KeySet)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+// as2RunConfig returns AS-2's additions to the embedded authorization
+// server's RunConfig. trust is zero in production.
+func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer) {
 	// Leaving JWTBearer unset keeps ToolHive's JWT-bearer grant, and so
 	// ID-JAG redemption, disabled.
 	grants := &authserver.InboundGrantsRunConfig{TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
-		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, jwksFile, resource)},
+		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, resource)},
 	}}
 	var trusted []tokenexchange.TrustedIssuer
 	if trust.t != nil {
 		trusted, grants.JWTBearer = as2TrustRunConfig(trust.t, issuer, resource)
 	}
-	return grants, trusted, remove, nil
+	return grants, trusted
 }
 
 // as2TrustRef names the trusted issuer for its JWT-bearer policy.

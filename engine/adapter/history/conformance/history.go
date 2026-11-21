@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
 	"github.com/stacklok/mecatl/engine/kernel/contentid"
 	"github.com/stacklok/mecatl/engine/kernel/history"
@@ -46,6 +47,7 @@ func withPolicy(factory Factory) historyFactory {
 func Run(t *testing.T, backend Factory) {
 	factory := withPolicy(backend)
 	t.Helper()
+	t.Run("ResourceIdentityKinds", func(t *testing.T) { resourceIdentityKinds(t, backend) })
 	t.Run("BackendContract", func(t *testing.T) { backendContract(t, backend) })
 	t.Run("BackendAppendSequences", func(t *testing.T) { backendAppendSequences(t, backend) })
 	t.Run("ReadBoundaries", func(t *testing.T) { readBoundaries(t, backend) })
@@ -86,7 +88,7 @@ func RunAllocationChecks(t *testing.T, backend Factory) {
 	t.Run("TinyRead", func(t *testing.T) { hugePolicyTinyResult(t, factory) })
 }
 
-func encoded(t *testing.T, id history.HistoryID, parent history.CommitRef, payload string) (format.Commit, history.CommitRef) {
+func encoded(t *testing.T, id resourceid.ID, parent history.CommitRef, payload string) (format.Commit, history.CommitRef) {
 	t.Helper()
 	c := format.Commit{FormatVersion: 1, Timestamp: 0, InstanceID: 1, Sequence: parent.Sequence + 1,
 		Records: []format.Record{{Timestamp: 0, Kind: opaqueKind, KindVersion: 7, Payload: []byte(payload)}},
@@ -111,7 +113,7 @@ func wantResolution(t *testing.T, got history.Resolution, err error, status hist
 	}
 }
 
-func appendAccepted(t *testing.T, s *history.History, id history.HistoryID, b format.Commit, ref history.CommitRef) {
+func appendAccepted(t *testing.T, s *history.History, id resourceid.ID, b format.Commit, ref history.CommitRef) {
 	t.Helper()
 	got, err := s.Append(context.Background(), id, b)
 	wantResolution(t, got, err, history.StatusAccepted, ref, ref)
@@ -119,7 +121,7 @@ func appendAccepted(t *testing.T, s *history.History, id history.HistoryID, b fo
 
 func identifyAndMutation(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, want := encoded(t, id, history.CommitRef{}, "\x00\xffopaque")
 	original, err := s.Identify(id, root)
 	if err != nil || original != want {
@@ -147,7 +149,7 @@ func identifyAndMutation(t *testing.T, factory historyFactory) {
 func appendResolveAndRetryWindow(t *testing.T, factory historyFactory) {
 	ctx := context.Background()
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "root")
 	second, r2 := encoded(t, id, r1, "second")
 	third, r3 := encoded(t, id, r2, "third")
@@ -220,7 +222,7 @@ func advancingRetryWindows(t *testing.T, factory historyFactory) {
 			p.RetryWindow = window.width
 			s := factory(t, p)
 			ctx := context.Background()
-			id := history.NewHistoryID()
+			id := resourceid.New("FOO")
 			commits := make([]format.Commit, 0, int(window.width+1))
 			refs := make([]history.CommitRef, 0, int(window.width+1))
 			parent := history.CommitRef{}
@@ -258,7 +260,7 @@ func advancingRetryWindows(t *testing.T, factory historyFactory) {
 	}
 }
 
-func conflictingCommit(t *testing.T, id history.HistoryID, refs []history.CommitRef, sequence int64) (format.Commit, history.CommitRef) {
+func conflictingCommit(t *testing.T, id resourceid.ID, refs []history.CommitRef, sequence int64) (format.Commit, history.CommitRef) {
 	t.Helper()
 	parent := history.CommitRef{}
 	if sequence > 1 {
@@ -270,7 +272,7 @@ func conflictingCommit(t *testing.T, id history.HistoryID, refs []history.Commit
 func readBoundsAndOwnership(t *testing.T, factory historyFactory) {
 	ctx := context.Background()
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "\x00opaque\xff")
 	original := root.Clone()
 	appendAccepted(t, s, id, root, r1)
@@ -329,7 +331,7 @@ func hugePolicyTinyResult(t *testing.T, factory historyFactory) {
 	p.MaxPageBytes = math.MaxInt
 	p.RetryWindow = math.MaxInt64
 	s := factory(t, p)
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	b, ref := encoded(t, id, history.CommitRef{}, "tiny")
 	appendAccepted(t, s, id, b, ref)
 	request := history.ReadRequest{Through: ref, MaxCommits: math.MaxInt}
@@ -350,7 +352,7 @@ func hugePolicyTinyResult(t *testing.T, factory historyFactory) {
 func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 	ctx := context.Background()
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	b, ref := encoded(t, id, history.CommitRef{}, "private-payload")
 	req := history.ReadRequest{Through: ref, MaxCommits: policy().MaxPageCommits}
 	if head, err := s.Head(ctx, id); !errors.Is(err, history.ErrNotFound) || head != (history.CommitRef{}) {
@@ -359,14 +361,14 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 	if page, err := s.Read(ctx, id, req); !errors.Is(err, history.ErrNotFound) || !reflect.DeepEqual(page, history.Page{}) {
 		t.Fatalf("unknown read = %+v, %v", page, err)
 	}
-	if head, err := s.Head(ctx, history.HistoryID{}); !errors.Is(err, history.ErrInvalid) || head != (history.CommitRef{}) {
+	if head, err := s.Head(ctx, resourceid.ID{}); !errors.Is(err, history.ErrInvalid) || head != (history.CommitRef{}) {
 		t.Fatalf("zero ID head = %+v, %v", head, err)
 	}
 	for _, input := range []struct {
-		id history.HistoryID
+		id resourceid.ID
 		b  format.Commit
 	}{
-		{history.HistoryID{}, b}, {history.NewHistoryID(), b}, {id, format.Commit{}},
+		{resourceid.ID{}, b}, {resourceid.New("FOO"), b}, {id, format.Commit{}},
 		{id, format.Commit{FormatVersion: 2, HistoryID: &id, Sequence: 1, Records: b.Records}},
 	} {
 		got, err := s.Append(ctx, input.id, input.b)
@@ -380,12 +382,12 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 			t.Fatalf("invalid resolve = %+v, %v", got, err)
 		}
 	}
-	got, err := s.Resolve(ctx, history.HistoryID{}, ref)
+	got, err := s.Resolve(ctx, resourceid.ID{}, ref)
 	if !errors.Is(err, history.ErrInvalid) || got != (history.Resolution{}) {
 		t.Fatalf("zero ID resolve = %+v, %v", got, err)
 	}
 	appendAccepted(t, s, id, b, ref)
-	_, foreign := encoded(t, history.NewHistoryID(), history.CommitRef{}, "foreign")
+	_, foreign := encoded(t, resourceid.New("FOO"), history.CommitRef{}, "foreign")
 	for _, mutate := range []func(*history.ReadRequest){
 		func(r *history.ReadRequest) { r.After = history.CommitRef{Sequence: -1, CID: ref.CID} },
 		func(r *history.ReadRequest) { r.After = history.CommitRef{Sequence: 2, CID: ref.CID} },
@@ -407,7 +409,7 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 		page, err := s.Read(ctx, id, r)
 		wantPageError(t, page, err, history.ErrInvalid)
 	}
-	page, err := s.Read(ctx, history.HistoryID{}, req)
+	page, err := s.Read(ctx, resourceid.ID{}, req)
 	if !errors.Is(err, history.ErrInvalid) || !reflect.DeepEqual(page, history.Page{}) {
 		t.Fatalf("zero ID read = %+v, %v", page, err)
 	}
@@ -415,7 +417,7 @@ func invalidInputsAndMissingHistory(t *testing.T, factory historyFactory) {
 
 func canceledOperations(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	b, ref := encoded(t, id, history.CommitRef{}, "root")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -451,7 +453,7 @@ func canceledOperations(t *testing.T, factory historyFactory) {
 func concurrentReadAndResolutionDuringAppend(t *testing.T, factory historyFactory) {
 	ctx := context.Background()
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	root, r1 := encoded(t, id, history.CommitRef{}, "root")
 	appendAccepted(t, s, id, root, r1)
 	var commits []format.Commit
@@ -503,7 +505,7 @@ func concurrentReadAndResolutionDuringAppend(t *testing.T, factory historyFactor
 
 func concurrentRootAndDuplicateAppends(t *testing.T, factory historyFactory) {
 	s := factory(t, policy())
-	id := history.NewHistoryID()
+	id := resourceid.New("FOO")
 	b1, r1 := encoded(t, id, history.CommitRef{}, "root one")
 	b2, r2 := encoded(t, id, history.CommitRef{}, "root two")
 	start := make(chan struct{})

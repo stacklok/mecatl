@@ -187,7 +187,7 @@ func (s *Store) ReserveSuccessor(
 		if admitted, err = s.profiles.admittedCapabilities(o); err != nil {
 			return err
 		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		if textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
 		}
 		if textNested(o.Object, "status", "activeRun", "claimID") != "" {
