@@ -236,6 +236,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
 		}
+		// Shortcut: the embedded authorization server sets no signing key and no HMAC secret, so ToolHive generates both at each start and the tokens, authorization codes, and refresh tokens they protect do not survive a restart; removed by #2538 (mecak8s supplies the signing key with the identity broker on) and #2869 (the HMAC secret).
 		runConfig := &authserver.RunConfig{
 			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
 		}

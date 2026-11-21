@@ -173,6 +173,7 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 			return nil, fmt.Errorf("as1server: register client %q: %w", pc.ID, err)
 		}
 	}
+	// Shortcut: AS-1 sets no HMAC secret, so ToolHive generates one at each start and the authorization codes and refresh tokens it protects do not survive a restart; removed by #2563 (durable broker state).
 	runConfig := &authserver.RunConfig{
 		SchemaVersion:    "v1",
 		Issuer:           cfg.Issuer,
