@@ -119,12 +119,7 @@ func (s *worktreesState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		}
 		if target.action == worktreeRow {
 			if !s.loading && s.err == nil && s.confirm == nil {
-				for i, wt := range s.filtered {
-					if s.identities[wt.Selector] == target.id {
-						s.list.SetCursor(i)
-						break
-					}
-				}
+				s.list.SelectID(target.id)
 			}
 			return nil, true, false
 		}

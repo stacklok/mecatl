@@ -367,3 +367,108 @@ func TestListViewWithIndicatorsNormalizesPhysicalOffsetAfterGeometryChange(t *te
 		t.Fatalf("geometry resize retained stale physical offset: offset=%d view=%#v", list.Offset(), view)
 	}
 }
+
+func TestListSelectID(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 2, 1, Clip)
+	list.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}})
+
+	if !list.SelectID("c") {
+		t.Fatal("known ID was not selected")
+	}
+	if list.Cursor() != 2 || list.CursorID() != "c" || list.Offset() != 1 || !list.RevealPending() {
+		t.Fatalf("known selection = cursor=%d id=%q offset=%d reveal=%t", list.Cursor(), list.CursorID(), list.Offset(), list.RevealPending())
+	}
+
+	duplicates := new(List)
+	duplicates.SetItems([]ListItem{{ID: "duplicate", Text: "first"}, {ID: "duplicate", Text: "second"}})
+	duplicates.SetCursor(1)
+	if !duplicates.SelectID("duplicate") || duplicates.Cursor() != 0 {
+		t.Fatalf("duplicate ID selected cursor %d, want first match", duplicates.Cursor())
+	}
+
+	empty := new(List)
+	if empty.SelectID("anything") {
+		t.Fatal("empty inventory selected an ID")
+	}
+	if empty.Cursor() != 0 || empty.CursorID() != "" || empty.Offset() != 0 || empty.RevealPending() {
+		t.Fatalf("empty selection mutated state: cursor=%d id=%q offset=%d reveal=%t", empty.Cursor(), empty.CursorID(), empty.Offset(), empty.RevealPending())
+	}
+}
+
+func TestListSelectIDMissPreservesState(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 2, 1, Clip)
+	list.SetItems([]ListItem{{ID: "before", Text: "before"}, {ID: "selected", Text: "0\n1\n2\n3"}, {ID: "after", Text: "after"}})
+	list.SetCursor(1)
+	list.Move(PageDown)
+	if list.cursorLine == 0 || !list.RevealPending() {
+		t.Fatalf("pending setup = continuation=%d reveal=%t", list.cursorLine, list.RevealPending())
+	}
+	assertSelectIDMissPreservesState(t, list)
+
+	list.Scroll(LineUp)
+	if list.RevealPending() {
+		t.Fatal("scroll did not clear reveal")
+	}
+	assertSelectIDMissPreservesState(t, list)
+}
+
+func assertSelectIDMissPreservesState(t *testing.T, list *List) {
+	t.Helper()
+	cursor, id, continuation, offset, reveal := list.Cursor(), list.CursorID(), list.cursorLine, list.Offset(), list.RevealPending()
+	if list.SelectID("missing") {
+		t.Fatal("missing ID was selected")
+	}
+	if list.Cursor() != cursor || list.CursorID() != id || list.cursorLine != continuation || list.Offset() != offset || list.RevealPending() != reveal {
+		t.Fatalf("missing selection mutated state: got cursor=%d id=%q continuation=%d offset=%d reveal=%t, want cursor=%d id=%q continuation=%d offset=%d reveal=%t", list.Cursor(), list.CursorID(), list.cursorLine, list.Offset(), list.RevealPending(), cursor, id, continuation, offset, reveal)
+	}
+}
+
+func TestListSelectIDRevealsAfterScrollAndReorder(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(8, 2, 1, Wrap)
+	list.SetItems([]ListItem{
+		{ID: "before", Text: "before"},
+		{ID: "selected", Text: "selected continuation wraps"},
+		{ID: "after", Text: "after"},
+	})
+	if !list.SelectID("selected") {
+		t.Fatal("initial selection failed")
+	}
+	list.Move(PageDown)
+	if list.cursorLine == 0 {
+		t.Fatal("setup did not reach selected continuation")
+	}
+	list.Scroll(End)
+	if list.RevealPending() {
+		t.Fatal("independent scroll did not clear reveal")
+	}
+	if !list.SelectID("selected") {
+		t.Fatal("repeated selection failed")
+	}
+	if list.cursorLine != 0 || !list.RevealPending() {
+		t.Fatalf("repeated selection = continuation=%d reveal=%t", list.cursorLine, list.RevealPending())
+	}
+	view := list.ViewWithIndicators(2, list.RevealPending())
+	selectedVisible := false
+	for _, row := range view.Rows {
+		selectedVisible = selectedVisible || row.ID == "selected"
+	}
+	if !selectedVisible || list.RevealPending() {
+		t.Fatalf("reveal after scroll = rows=%#v reveal=%t", view.Rows, list.RevealPending())
+	}
+
+	list.SetItems([]ListItem{
+		{ID: "after", Text: "after"},
+		{ID: "before", Text: "before"},
+		{ID: "selected", Text: "selected continuation wraps"},
+	})
+	list.Scroll(Top)
+	if !list.SelectID("selected") {
+		t.Fatal("reordered selection failed")
+	}
+	if list.Cursor() != 2 || list.CursorID() != "selected" || !list.RevealPending() {
+		t.Fatalf("reordered selection = cursor=%d id=%q reveal=%t", list.Cursor(), list.CursorID(), list.RevealPending())
+	}
+}

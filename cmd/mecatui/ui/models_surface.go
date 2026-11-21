@@ -268,13 +268,9 @@ func (s *modelsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		if !current || s.rowBudget == 0 || s.loading || s.err != nil {
 			return nil, true, false
 		}
-		index := modelIndexByIdentity(s.filtered, identity)
-		if index < 0 {
-			return nil, true, false
-		}
 		list := s.listControl()
 		list.SetItems(modelsBoundedItems(s.catalog, s.filtered))
-		list.SetCursor(index)
+		list.SelectID(identity)
 		return nil, true, false
 	}
 	result, ok := msg.(client.ModelsMsg)
@@ -305,11 +301,8 @@ func (s *modelsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.rowBudget == 0 {
 		return nil, true
 	}
-	list := s.listControl()
-	if msg.Mouse().Button == tea.MouseWheelUp {
-		list.Scroll(bounded.LineUp)
-	} else {
-		list.Scroll(bounded.LineDown)
+	if move, ok := boundedWheelMove(msg); ok {
+		s.listControl().Scroll(move)
 	}
 	return nil, true
 }
@@ -375,15 +368,6 @@ func (s *modelsState) moveCursor(move bounded.Move) {
 
 func modelIdentity(model client.ModelInfo) string {
 	return aggregateScopedID(model.ProviderID, model.ID)
-}
-
-func modelIndexByIdentity(models []client.ModelInfo, identity string) int {
-	for i, model := range models {
-		if modelIdentity(model) == identity {
-			return i
-		}
-	}
-	return -1
 }
 
 func modelsBoundedItems(catalog modelCatalog, models []client.ModelInfo) []bounded.ListItem {

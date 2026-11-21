@@ -21,7 +21,7 @@ func TestModelsCardGeometryStableWhileBrowsing(t *testing.T) {
 			m := modelsMouseModel(t, inventory)
 			s := modelsSurface(t, m)
 			for _, size := range [][2]int{{200, 24}, {80, 18}, {80, 10}, {34, 24}, {200, 24}} {
-				m = effortOffer(m, size[0], size[1])
+				m = offerCardBody(m, size[0], size[1])
 				_ = m.View()
 				bounds := m.metrics.outerBounds
 				if bounds.x1-bounds.x0 != min(m.width, 128) {
@@ -53,7 +53,7 @@ func TestModelsCardGeometryStableWhileBrowsing(t *testing.T) {
 				}
 			}
 			chosen, _ := s.chosen()
-			m, cmd := effortClick(m, modelsMouseControl(t, m, true), false)
+			m, cmd := clickFrameHit(m, modelsMouseControl(t, m, true), false)
 			if cmd == nil || m.modal != nil || m.createModelSelection != (client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}) {
 				t.Fatal("footer click after resize did not activate the selected model")
 			}
@@ -66,7 +66,7 @@ func TestModelsSmallCardUsesContentWidth(t *testing.T) {
 		inventory := modelsMouseInventory(4)
 		inventory[3].DisplayName = strings.Repeat("x", labelWidth)
 		m := modelsMouseModel(t, inventory)
-		m = effortOffer(m, 200, 30)
+		m = offerCardBody(m, 200, 30)
 		_ = m.View()
 		want := 4 + len("provider") + 3 + labelWidth + m.deps.Theme.Style("askCard").GetHorizontalFrameSize()
 		if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != want {
@@ -78,7 +78,7 @@ func TestModelsSmallCardUsesContentWidth(t *testing.T) {
 func TestModelsTabbedRowsMatchExpandedLayout(t *testing.T) {
 	for _, label := range []string{"wide\t界" + strings.Repeat("x", 45), "wide    界" + strings.Repeat("x", 45)} {
 		m := modelsMouseModel(t, []client.ModelInfo{{ProviderID: "provider", ID: "model", DisplayName: label}})
-		m = effortOffer(m, 200, 30)
+		m = offerCardBody(m, 200, 30)
 		_ = m.View()
 		want := 4 + len("provider") + 3 + len("wide") + 4 + 2 + 45 + m.deps.Theme.Style("askCard").GetHorizontalFrameSize()
 		if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != want {
@@ -99,12 +99,12 @@ func TestModelsTabbedRowsMatchExpandedLayout(t *testing.T) {
 
 func TestModelsCardHeightStableAfterResizeFromScrolledWindow(t *testing.T) {
 	m := modelsMouseModel(t, modelsMouseInventory(4))
-	m = effortOffer(m, 80, 10)
+	m = offerCardBody(m, 80, 10)
 	_ = m.View()
 	for range 4 {
 		m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	}
-	m = effortOffer(m, 80, 30)
+	m = offerCardBody(m, 80, 30)
 	_ = m.View()
 	bounds := m.metrics.outerBounds
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
@@ -446,21 +446,93 @@ func TestModelsWheelCancelsPendingRevealBeforeRender(t *testing.T) {
 	}
 }
 
-func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
-	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
-	mm, cmd := m.runModels()
-	m = feedCmd(t, mm.(Model), cmd)
-	m.vp.SetContent(strings.Repeat("line\n", 40))
-	m.vp.SetHeight(3)
-	m.vp.SetYOffset(5)
-	if got := m.vp.YOffset(); got != 5 {
-		t.Fatalf("viewport setup offset = %d, want 5", got)
+func TestModelsWheelDirectionsPreserveSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		button tea.MouseButton
+		delta  int
+	}{
+		{"up", tea.MouseWheelUp, -1},
+		{"down", tea.MouseWheelDown, 1},
+		{"left", tea.MouseWheelLeft, 0},
+		{"right", tea.MouseWheelRight, 0},
+		{"none", tea.MouseNone, 0},
+	} {
+		for _, pending := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pending=%t", tc.name, pending), func(t *testing.T) {
+				s := boundedScenarioModelsState(t, 30)
+				_, _ = s.Render(40, 12)
+				s.list.SetCursor(10)
+				if !pending {
+					s.list.Scroll(bounded.Top)
+					for range 4 {
+						s.list.Scroll(bounded.LineDown)
+					}
+				}
+				selected, offset := s.list.CursorID(), s.list.Offset()
+				if offset == 0 || s.list.RevealPending() != pending {
+					t.Fatal("setup did not establish interior viewport and requested reveal state")
+				}
+				cmd, consumed := s.HandleWheel(tea.MouseWheelMsg{Button: tc.button})
+				if cmd != nil || !consumed || s.list.CursorID() != selected || s.list.Offset() != offset+tc.delta {
+					t.Fatalf("wheel: consumed=%t selection=%q offset=%d, want selection=%q offset=%d", consumed, s.list.CursorID(), s.list.Offset(), selected, offset+tc.delta)
+				}
+				if s.list.RevealPending() != (pending && tc.delta == 0) {
+					t.Fatal("wheel changed pending reveal incorrectly")
+				}
+				if len(s.hitItems) != 0 || len(s.hitControls) != 0 {
+					t.Fatal("wheel retained surface hits")
+				}
+			})
+		}
 	}
+}
 
-	mm, _ = m.onMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	m = mm.(Model)
-	if got := m.vp.YOffset(); got != 5 {
-		t.Fatalf("viewport offset = %d, want 5; open models surface must consume the wheel", got)
+func TestModelsSurfaceConsumesWheelBeforeViewport(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		button tea.MouseButton
+		delta  int
+	}{
+		{"up", tea.MouseWheelUp, -1},
+		{"down", tea.MouseWheelDown, 1},
+		{"left", tea.MouseWheelLeft, 0},
+		{"right", tea.MouseWheelRight, 0},
+		{"none", tea.MouseNone, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := offerCardBody(modelsMouseModel(t, modelsMouseInventory(30)), 60, 12)
+			s := modelsSurface(t, m)
+			_ = m.View()
+			for range 4 {
+				s.list.Scroll(bounded.LineDown)
+			}
+			_ = m.View()
+			if len(m.hits.frame) == 0 || s.list.Offset() == 0 {
+				t.Fatal("setup did not publish a browsed frame")
+			}
+			selected, offset := s.list.CursorID(), s.list.Offset()
+			m.conv.addUser("scrollable source")
+			m.conv.startAssistant()
+			m.conv.appendAssistant(strings.Repeat("underlying conversation\n\n", 100))
+			m.refreshView()
+			m.vp.SetYOffset(5)
+			m.conversationView.observe(m.vp)
+			if m.vp.YOffset() != 5 || m.vp.AtBottom() {
+				t.Fatal("transcript fixture must be away from both scroll edges")
+			}
+			updated, cmd := m.Update(tea.MouseWheelMsg{Button: tc.button})
+			m = updated.(Model)
+			if cmd != nil || m.modal != s || m.vp.YOffset() != 5 {
+				t.Fatalf("modal wheel: cmd=%t modal=%t parentOffset=%d, want same modal and parent offset 5", cmd != nil, m.modal == s, m.vp.YOffset())
+			}
+			if s.list.CursorID() != selected || s.list.Offset() != offset+tc.delta {
+				t.Fatalf("routed wheel: selection=%q offset=%d, want selection=%q offset=%d", s.list.CursorID(), s.list.Offset(), selected, offset+tc.delta)
+			}
+			if len(m.hits.frame) != 0 || len(s.hitItems) != 0 || len(s.hitControls) != 0 {
+				t.Fatal("routed wheel retained current-frame hits")
+			}
+		})
 	}
 }
 

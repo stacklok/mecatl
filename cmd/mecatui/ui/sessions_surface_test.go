@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -23,6 +24,46 @@ func TestSessionsNextTabCyclesVisibleTabsWhenDraftsAreHidden(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionsSelectionRestoresIdentityAcrossRefreshAndPagination(t *testing.T) {
+	st := newSessionsPanelState()
+	st.view, st.loading, st.loadState = sessionsPanel, false, sessionsComplete
+	st.sessions = []client.SessionListItem{
+		{ID: "a", Kind: client.SessionKindMain},
+		{ID: "b", Kind: client.SessionKindMain},
+	}
+	st.listControl()
+	st.syncFilter()
+	st.selectSessionID("b")
+
+	st.handleSessionsListed(client.SessionsListedMsg{Sessions: []client.SessionListItem{
+		{ID: "c", Kind: client.SessionKindMain},
+		{ID: "a", Kind: client.SessionKindMain},
+		{ID: "b", Kind: client.SessionKindMain},
+	}})
+	if st.list.CursorID() != "b" || st.list.Cursor() != 2 {
+		t.Fatalf("refresh selection = %q, want b", st.list.CursorID())
+	}
+
+	st.loadState, st.pageRequestToken = sessionsLoadingMore, 1
+	st.applyPage(client.SessionInventoryPageMsg{
+		RequestToken: 1,
+		Cursor:       "next",
+		Page:         client.SessionInventoryPage{Sessions: []client.SessionListItem{{ID: "d", Kind: client.SessionKindMain}}},
+	})
+	if st.list.CursorID() != "b" || len(st.sessions) != 4 || st.sessions[3].ID != "d" {
+		t.Fatalf("pagination did not append d and preserve b: selection=%q sessions=%+v", st.list.CursorID(), st.sessions)
+	}
+
+	st.list.SetGeometry(40, 1, 1, bounded.Wrap)
+	st.list.Scroll(bounded.Top)
+	selected, offset := st.list.CursorID(), st.list.Offset()
+	st.selectSessionID("missing")
+	if st.list.CursorID() != selected || st.list.Offset() != offset {
+		t.Fatalf("missing ID disturbed browsing: selection=%q offset=%d, want %q/%d", st.list.CursorID(), st.list.Offset(), selected, offset)
+	}
+}
+
 func TestSessionsSurfaceConsumesPickerKeysAndMessages(t *testing.T) {
 	st := newSessionsPanelState()
 	st.loading = false

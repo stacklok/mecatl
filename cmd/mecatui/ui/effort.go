@@ -117,12 +117,7 @@ func (s *effortState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 			s.apply()
 		}
 	} else {
-		for i, tier := range effortTiers {
-			if tier == target.tier {
-				s.list.SetCursor(i)
-				break
-			}
-		}
+		s.list.SelectID(target.tier)
 	}
 	return nil, true, false
 }

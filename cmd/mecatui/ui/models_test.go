@@ -1785,7 +1785,7 @@ func TestModelsPickerMeasuresChromeWithinOffer(t *testing.T) {
 		t.Fatal("preferred width did not account for provenance chrome")
 	}
 	for _, width := range []int{200, 100, 32} {
-		m = effortOffer(m, width, 30)
+		m = offerCardBody(m, width, 30)
 		out := stripANSIstr(m.View().Content)
 		if bounds := m.metrics.outerBounds; bounds.x0 < 0 || bounds.x1 > m.width || bounds.x1-bounds.x0 > 128 {
 			t.Fatalf("card outside capped offer: %+v", bounds)
