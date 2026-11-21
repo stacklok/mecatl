@@ -102,9 +102,9 @@ task mecak8s-idbroker:status
 `task mecak8s-idbroker:image-refresh` rebuilds the image from the current tree,
 loads it, and restarts `mecak8s` without resetting the cluster. AS-1 keeps its
 users, sign-ins, and refresh tokens in memory, so any restart signs everyone out
-of AS-1: run `login` again. The identity broker's keys, AS-1's signing key
-among them, are in Secrets, so access tokens issued before the restart keep
-verifying until they expire. Sessions persist in Redis.
+of AS-1: run `login` again. AS-1's signing key is in a Secret, so the access
+tokens AS-1 issued before the restart keep verifying until they expire.
+Sessions persist in Redis.
 
 `task mecak8s-idbroker:destroy` deletes only the `mecatl-idbroker` cluster and
 its state. Remove the aliases separately with `hosts-remove`. A failed

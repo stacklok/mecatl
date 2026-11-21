@@ -423,12 +423,14 @@ Users approve a consent page at AS-1 when they sign in. AS-1 keeps its users,
 pending sign-ins, and refresh tokens in memory, so every pod restart or rollout
 signs all users out of AS-1 and they run `mecatui login` again. The broker's
 sessions live in the same memory, so a restart drops them too, and each
-signed-in user's next request opens a new broker session. The keys come from
-Secrets, so access tokens issued before a restart keep verifying until they
-expire. AS-1 accepts each access token for one session open,
-but it forgets which tokens it has accepted when the pod restarts. A token
+signed-in user's next request opens a new broker session. AS-1's signing key
+comes from a Secret, so the access tokens AS-1 issued before a restart keep
+verifying until they expire. AS-1 accepts each access token for one session
+open, but it forgets which tokens it has accepted when the pod restarts. A token
 used before a restart can open one more session after it, until the token
-expires.
+expires. The MCP gateway's embedded authorization server generates its own
+signing key at each start, so the tokens it issued stop verifying after a
+restart.
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see

@@ -304,10 +304,12 @@ identityBroker:
   # enabled also requires trustDomain, audience, and keys.agentIssuer, and renders
   # them into the identity broker's configuration file (a ConfigMap, mounted
   # read-only with --identity-broker-config). The keys stay in existing Secrets the
-  # chart never creates; it projects them read-only. No key is generated at
-  # startup, so the signing keys stay the same across a restart and access
-  # tokens issued before it keep verifying until they expire; broker sessions,
-  # agent registrations, and AS-1's refresh tokens are in memory and lost. The
+  # chart never creates; it projects them read-only. The broker generates none of
+  # its own keys at startup, so they stay the same across a restart and the
+  # access tokens AS-1 issued before it keep verifying until they expire. The MCP
+  # gateway's embedded authorization server generates its signing key at each
+  # start, so the tokens it issued stop verifying. Broker sessions, agent
+  # registrations, and AS-1's refresh tokens are in memory and lost. The
   # broker reads its keys only at startup: a configuration change rolls the
   # pod, but after changing a key in a Secret, run
   # `kubectl rollout restart deployment/<release>-mecak8s`.
