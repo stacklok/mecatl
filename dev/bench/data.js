@@ -445639,6 +445639,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795280646085,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15b07ea99d6821e74453b294186881618a64f78e",
+          "message": "refactor(mecatui): share picker selection and pointer test helpers (#2943)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-21T16:52:10Z",
+          "tree_id": "ef2bbdbe17ba566b3be2715031d9f96ea812a3d8",
+          "url": "https://github.com/stacklok/mecatl/commit/15b07ea99d6821e74453b294186881618a64f78e"
+        },
+        "date": 1795281441447,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13415.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -580197,6 +580236,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795281437172,
+  "lastUpdate": 1795281442356,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
