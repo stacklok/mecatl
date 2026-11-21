@@ -28,11 +28,19 @@ func (fakeGatewayTool) Execute(context.Context, session.ToolCall, tool.Environme
 func (f fakeGatewayTool) GatewayServer() string { return f.server }
 
 // TestDefGatewayToolsAgreesWithTheBrokersCeiling is the design's cross-check
-// between the harness and the broker: for each definition, the gateway tools
-// the harness gives a helper running it (defGatewayTools) are exactly the
-// tools the broker's loader resolves its ceiling to allow. The two read the
-// same files with their own parsers, so a change to either side's rule that
-// the other does not follow fails here.
+// between the harness and the broker. Both read the same definition files
+// (the harness through agentfs, the broker through its loader, both on
+// agentdef) and apply their own rule: the harness picks a helper's gateway
+// tools (defGatewayTools), the broker resolves a ceiling (resolveCeiling)
+// and checks calls against it (Ceiling.Allows). For each definition, the
+// tools the harness gives are exactly the tools the broker allows, so a
+// change to either rule that the other does not follow fails here.
+//
+// It also covers the parent: a helper's gateway tools come from its root's,
+// which today is always the built-in main agent (named helpers start no
+// helpers, and named roots get no gateway tools, #2938), so its effective
+// ceiling is its definition's intersected with system/main's. And it covers
+// the built-in helpers, whose catalogs hold every gateway tool.
 func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 	definitions := map[string]string{
 		"one-server":     "mcpServers: [calendar]\n",
@@ -42,6 +50,8 @@ func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 		"tools-only":     "tools: [mcp__calendar__echo]\n",
 		"no-servers":     "",
 		"other-excluded": "mcpServers: [calendar]\ndisallowedTools: [mcp__github__read]\n",
+		"exact-names":    "mcpServers: [calendar, github]\ndisallowedTools: [mcp__github__pr.merge, mcp__GitHub__read, mcp__calendar__Echo, \"mcp__calendar__ lookup\"]\n",
+		"ambiguous":      "mcpServers: [git]\ndisallowedTools: [mcp__git___x]\n",
 	}
 	dir := t.TempDir()
 	for name, frontmatter := range definitions {
@@ -50,10 +60,35 @@ func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	servers := []string{"calendar", "github"}
+	servers := []string{"calendar", "github", "git"}
 	sessionTools := []tool.Tool{
-		fakeGatewayTool{"calendar", "echo"}, fakeGatewayTool{"calendar", "lookup"},
-		fakeGatewayTool{"github", "merge"}, fakeGatewayTool{"github", "read"},
+		fakeGatewayTool{"calendar", "echo"}, fakeGatewayTool{"calendar", "lookup"}, fakeGatewayTool{"calendar", "Echo"},
+		fakeGatewayTool{"github", "merge"}, fakeGatewayTool{"github", "read"}, fakeGatewayTool{"github", "pr.merge"},
+		fakeGatewayTool{"git", "_x"}, fakeGatewayTool{"git", "y"},
+	}
+	// allowed returns the names of the session tools every ceiling allows.
+	allowed := func(ceilings ...identitybroker.Ceiling) []string {
+		var out []string
+		for _, st := range sessionTools {
+			ft := st.(fakeGatewayTool)
+			ok := true
+			for _, c := range ceilings {
+				ok = ok && c.Allows(ft.server, ft.name)
+			}
+			if ok {
+				out = append(out, ft.Spec().Name)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	names := func(tools []tool.Tool) []string {
+		var out []string
+		for _, gt := range tools {
+			out = append(out, gt.Spec().Name)
+		}
+		slices.Sort(out)
+		return out
 	}
 
 	records, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}, Servers: servers})
@@ -61,9 +96,13 @@ func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	ceilings := map[string]identitybroker.Ceiling{}
+	builtins := map[string]identitybroker.Ceiling{}
 	for _, r := range records {
-		if r.Ref.Source == identitybroker.SourceGlobal {
+		switch r.Ref.Source {
+		case identitybroker.SourceGlobal:
 			ceilings[r.Ref.Name] = r.Ceiling
+		case identitybroker.SourceSystem:
+			builtins[r.Ref.Name] = r.Ceiling
 		}
 	}
 	discovered, skipped, err := agents.DirSource{Dir: dir}.Agents(t.Context())
@@ -73,24 +112,35 @@ func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 	if len(discovered) != len(definitions) || len(ceilings) != len(definitions) {
 		t.Fatalf("the harness found %d definitions and the broker %d, want %d each", len(discovered), len(ceilings), len(definitions))
 	}
+	main, ok := builtins[identitybroker.BuiltinMain]
+	if !ok {
+		t.Fatal("the broker loaded no system/main")
+	}
 	for _, d := range discovered {
-		var harness []string
-		for _, gt := range defGatewayTools(d.Def, sessionTools) {
-			harness = append(harness, gt.Spec().Name)
-		}
-		var broker []string
-		for _, grant := range ceilings[d.Def.Name].Servers() {
-			for _, st := range sessionTools {
-				ft := st.(fakeGatewayTool)
-				if ft.server == grant.Server && !slices.Contains(grant.ExceptTools, ft.name) {
-					broker = append(broker, ft.Spec().Name)
-				}
-			}
-		}
-		slices.Sort(harness)
-		slices.Sort(broker)
-		if !slices.Equal(harness, broker) {
+		harness := names(defGatewayTools(d.Def, sessionTools))
+		if broker := allowed(ceilings[d.Def.Name]); !slices.Equal(harness, broker) {
 			t.Errorf("%s: the harness gives %v, the broker allows %v", d.Def.Name, harness, broker)
+		}
+		if effective := allowed(ceilings[d.Def.Name], main); !slices.Equal(harness, effective) {
+			t.Errorf("%s under the main agent: the harness gives %v, the broker's effective ceiling allows %v", d.Def.Name, harness, effective)
+		}
+	}
+
+	all := names(sessionTools)
+	catalogs := map[string]*tool.Catalog{
+		"read-only explorer": readOnlyExplorerCatalog(nil, sessionTools),
+		"writable explorer":  writableExplorerCatalog(nil, "test catalog", sessionTools),
+	}
+	for name, ceiling := range builtins {
+		if got := allowed(ceiling); !slices.Equal(got, all) {
+			t.Errorf("%s: the broker allows %v, want every gateway tool %v", name, got, all)
+		}
+	}
+	for name, cat := range catalogs {
+		for _, tn := range all {
+			if _, ok := cat.Lookup(tn); !ok {
+				t.Errorf("%s lacks gateway tool %s, which the built-in ceiling allows", name, tn)
+			}
 		}
 	}
 }

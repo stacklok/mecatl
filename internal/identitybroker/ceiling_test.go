@@ -133,7 +133,7 @@ func TestAuthorizeCallChecksTheEffectiveCeiling(t *testing.T) {
 // of the call's server.
 func TestAuthorizeCallToolMustBeNamedForItsServer(t *testing.T) {
 	f := newCeilingFixture(t)
-	for _, tool := range []string{"pull_request_read", "calendar.pull_request_read", "github."} {
+	for _, tool := range []string{"pull_request_read", "calendar.pull_request_read", "github.", "GitHub.pull_request_read", "github_pull_request_read"} {
 		req := callRequest(f.s.ID, f.cred)
 		req.OperationID, req.Tool = "op-"+tool, tool
 		_, err := f.authorize(req)
@@ -152,5 +152,47 @@ func TestAuthorizeCallGatewayRouteIsCheckedBeforeTheCeiling(t *testing.T) {
 	wantDetail(t, err, "no gateway routes the server")
 	if d := f.rec.Decisions(); d[len(d)-1].Ceiling != "" {
 		t.Fatalf("a call refused at check 6 names ceiling %q", d[len(d)-1].Ceiling)
+	}
+}
+
+// TestAuthorizeCallSplitsOnlyTheServerPrefix takes everything after the
+// server's name and dot as the tool's name on the server, so dots and double
+// underscores in a tool name are part of it.
+func TestAuthorizeCallSplitsOnlyTheServerPrefix(t *testing.T) {
+	f := newCeilingFixture(t)
+	const full = "calendar; github"
+	for i, tool := range []string{"pr.merge", "a__b", "a.b__c"} {
+		f.wantAllowed(t, f.call(f.cred, "R42", "", "op-split-"+string(rune('a'+i)), tool), full)
+	}
+	// The reviewer's exclusion is the exact name, not a prefix of a dotted
+	// one.
+	const narrowed = "calendar; github except " + conformance.ReviewerExcludedTool
+	f.wantAllowed(t, f.call(f.reviewerCred, "R43", "D1", "op-reviewer-dotted", conformance.ReviewerExcludedTool+".dry_run"), narrowed)
+}
+
+// TestAuthorizeCallChildCannotGainAServerItsParentLacks registers a child
+// whose definition grants github under a parent whose ceiling is empty: its
+// effective ceiling is empty, so its calls are refused.
+func TestAuthorizeCallChildCannotGainAServerItsParentLacks(t *testing.T) {
+	f := newCeilingFixture(t)
+	child, err := f.b.RegisterAgent(context.Background(), testWorkload, identitybroker.RegisterAgentRequest{
+		SessionID: f.s.ID, HostSessionID: "hostS-under-tool-less", Owner: testOwner, Incarnation: "inc_gbcdefghijklmnopqrstuvwxya",
+		Definition: conformance.DeployerDefinition, Parent: f.toolLess, ParentHostSessionID: "hostS-tool-less",
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+	if err := f.b.ReportDelegation(context.Background(), testWorkload, identitybroker.ReportDelegationRequest{
+		SessionID: f.s.ID, Owner: testOwner, DelegationID: "D5",
+		DelegatingRun: "R46", DelegatingAgent: f.toolLess, ReceivingRun: "R47", ReceivingAgent: child.Agent,
+	}); err != nil {
+		t.Fatalf("ReportDelegation: %v", err)
+	}
+	exchanges, redemptions := len(f.issuer.requests()), len(f.as2.redeemed())
+	_, err = f.authorize(f.call(child.Credential, "R47", "D5", "op-child", "pull_request_read"))
+	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred, child.Credential)
+	f.wantCounts(t, exchanges, redemptions)
+	if d := f.rec.Decisions(); d[len(d)-1].Ceiling != "none" {
+		t.Fatalf("decision = %+v, want a refusal under ceiling none", d[len(d)-1])
 	}
 }

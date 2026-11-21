@@ -123,13 +123,19 @@ type testGateway struct {
 	resource string
 	client   *http.Client
 	list     func(server string, credential oauth2.TokenSource) ([]GatewayTool, error)
+	// server, when set, is the server Route names for every call.
+	server string
 }
 
 func (g testGateway) Endpoint() string         { return g.endpoint }
 func (g testGateway) Resource() string         { return g.resource }
 func (g testGateway) HTTPClient() *http.Client { return g.client }
-func (testGateway) Route(backend, name string) (string, string, error) {
-	return embeddedGateway{}.Route(backend, name)
+func (g testGateway) Route(backend, name string) (string, string, error) {
+	server, routed, err := embeddedGateway{}.Route(backend, name)
+	if g.server != "" {
+		server = g.server
+	}
+	return server, routed, err
 }
 func (g testGateway) ListTools(ctx context.Context, server string, credential oauth2.TokenSource) ([]GatewayTool, error) {
 	if g.list != nil {
@@ -251,6 +257,8 @@ type gatewayFixtureOptions struct {
 	noGateway   bool
 	tokenPrefix string
 	agentToken  string
+	// routeServer, when set, is the server the gateway's Route names.
+	routeServer string
 }
 
 func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture {
@@ -292,7 +300,7 @@ func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture
 	harness.runtime.diag = f.diag
 	if !opts.noGateway {
 		WithGatewayCalls(
-			testGateway{endpoint: f.g.URL(), resource: f.g.URL(), client: &http.Client{Transport: f.wire, Timeout: 10 * time.Second}},
+			testGateway{endpoint: f.g.URL(), resource: f.g.URL(), client: &http.Client{Transport: f.wire, Timeout: 10 * time.Second}, server: opts.routeServer},
 			GatewayCalls{Authorizer: f.auth, Credentials: f.creds, Servers: opts.servers},
 		)(harness.runtime)
 	}
@@ -399,6 +407,22 @@ func TestSendOnceKeysByOperation(t *testing.T) {
 	}
 	if err := rec.Claim(ctx, "root", "op_1", "hash-b"); err != nil {
 		t.Fatalf("claim after the release = %v", err)
+	}
+}
+
+// TestGatewayCallRefusesARouteToAnotherServer refuses a call whose gateway
+// names a server other than the tool's backend, before anything is
+// authorized: the harness picked the tool by backend and the broker checks
+// the routed server, so they must agree.
+func TestGatewayCallRefusesARouteToAnotherServer(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{routeServer: "calendar"})
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeInternal)
+	if n := len(f.auth.calls()); n != 0 {
+		t.Fatalf("authorize calls = %d, want none", n)
+	}
+	if got := f.diag.String(); !strings.Contains(got, "a server other than the tool's backend") {
+		t.Fatalf("diagnostics = %s, want the route mismatch", got)
 	}
 }
 

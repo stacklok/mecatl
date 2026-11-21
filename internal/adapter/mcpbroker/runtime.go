@@ -656,7 +656,9 @@ func (t *sessionTool) HelperGatewayTool() (tool.Tool, bool) {
 	return t, true
 }
 
-// GatewayServer names the gateway server t's calls are routed to.
+// GatewayServer names the backend t's calls are routed to. A gateway call is
+// refused unless the gateway's Route names this backend as the call's server,
+// so it is the server the identity broker checks.
 func (t *sessionTool) GatewayServer() string { return t.route.backend }
 
 func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }

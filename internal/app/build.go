@@ -2381,6 +2381,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
 		}
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
+			// One list for both sides: the MCP broker sends only these
+			// servers' tools through the gateway, so they are the only helper
+			// gateway tools defGatewayTools can pick, and the identity broker
+			// resolved every definition's ceiling against the same list.
 			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
 		}
 		if err == nil {

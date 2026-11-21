@@ -62,6 +62,7 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 
 	// Check 7: the agent's stored effective ceiling allows the exact server
 	// and tool.
+	// Shortcut: the ceiling follows the definition the agent reported at registration, so a root reporting system/main gets every gateway server, and a child reporting a built-in gets its parent's whole ceiling rather than a narrower one; removed by #2551 (root eligibility and nesting checks).
 	t.mu.Lock()
 	ceiling := t.agents[agent.Agent.Subject].ceiling
 	t.mu.Unlock()

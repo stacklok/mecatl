@@ -364,7 +364,7 @@ The **identity work** establishes who acts and records it:
 
 The **authority work** decides what each agent may do:
 
-- the definition loader resolving each loaded definition's ceiling into permitted MCP server/tool pairs; a definition the broker did not load gets no ceiling of its own and inherits the ceiling of the instance that creates it;
+- the definition loader resolving each loaded definition's ceiling into server-wide entries, each permitting a referenced server's tools except those the definition excludes by name; a definition the broker did not load gets no ceiling of its own and inherits the ceiling of the instance that creates it;
 - each instance's effective ceiling, its definition ceiling narrowed by its parent's;
 - Cedar policy generation and a ceiling check on every call;
 - grants scoped to a run the user started, replacing the session's standing refresh token, so that sessions of absent users carry no authority;

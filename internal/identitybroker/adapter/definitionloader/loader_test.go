@@ -628,6 +628,24 @@ func TestLoadResolvesCeilings(t *testing.T) {
 		}
 	}
 
+	// Exclusions match exactly: case and dots are part of a name,
+	// and an exclusion that could belong to git or git_ narrows both.
+	names := t.TempDir()
+	writeDef(t, names, "names.md", "---\nname: names\ndescription: Names\n"+
+		"disallowedTools: [mcp__git___x, mcp__github__pr.merge, mcp__GitHub__read]\n"+
+		"mcpServers: [git, git_, github]\n---\n")
+	records, _, err = definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{names}, Servers: []string{"git", "git_", "github"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range records {
+		if r.Ref.Name == "names" {
+			if got, want := r.Ceiling.String(), `git except _x; git_ except x; github except pr.merge`; got != want {
+				t.Errorf("names ceiling = %s, want %s", got, want)
+			}
+		}
+	}
+
 	// With no gateway servers, every ceiling allows nothing.
 	records, _, err = definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
 	if err != nil {

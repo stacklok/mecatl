@@ -287,6 +287,11 @@ func readFile(path string) ([]byte, time.Time, error) {
 }
 
 func builtinRecord(def agentdef.Definition, revision string, servers map[string]bool) (identitybroker.DefinitionRecord, error) {
+	// builtinCeiling gives a built-in every gateway server, so a built-in
+	// that set tool fields would have them ignored without a word.
+	if len(def.Tools) != 0 || len(def.DisallowedTools) != 0 || len(def.MCPServers) != 0 {
+		return identitybroker.DefinitionRecord{}, fmt.Errorf("built-in definition %s sets tool fields, which builtinCeiling does not resolve", def.Name)
+	}
 	digest, err := definitionDigest(def)
 	if err != nil {
 		return identitybroker.DefinitionRecord{}, err
@@ -351,7 +356,9 @@ func serverSet(servers []string) map[string]bool {
 }
 
 // builtinCeiling is a built-in definition's ceiling: every gateway server,
-// whole. The main agent of a session started without a named definition
+// whole, as the harness gives a built-in helper every gateway tool
+// (readOnlyExplorerCatalog, writableExplorerCatalog). Built-ins set no tool
+// fields; builtinRecord refuses one that does. The main agent of a session started without a named definition
 // calls any of them, as the main conversation does; a built-in helper's
 // parent's ceiling narrows it at registration.
 func builtinCeiling(servers map[string]bool) identitybroker.Ceiling {

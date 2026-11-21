@@ -240,9 +240,12 @@ func (g *Gateway) validate() error {
 // isGatewayServerName reports whether s is a server name the gateway may
 // route: letters, digits, and underscores, never two underscores together, as
 // Mecatl's MCP configuration requires of server names. A call's tool is named
-// "<server>.<tool>" and a definition excludes one as "mcp__<server>__<tool>",
-// so a dot or a double underscore in a server name would let one server's
-// name begin another's, and a tool of one pass as a tool of the other.
+// "<server>.<tool>", so with no dot in a server name a call names exactly one
+// server and tool. A definition excludes a tool as "mcp__<server>__<tool>",
+// which one rule cannot keep unambiguous while the configuration allows a
+// trailing underscore: "mcp__git___x" is tool "_x" on git and tool "x" on
+// git_. The loader then excludes it from both, so an ambiguous exclusion only
+// narrows.
 func isGatewayServerName(s string) bool {
 	if s == "" || strings.Contains(s, "__") {
 		return false

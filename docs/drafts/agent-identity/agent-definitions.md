@@ -156,7 +156,7 @@ The table shows how the design handles each event. Today, a turn that was in pro
 | Instance credential expires | Renew the credential for the registered identity after the required checks. Renewal does not widen authority. |
 | Fork or clear | Register a distinct identity. A fork or a clear creates a new root instance in a new host session, which opens its own broker session. The source session keeps its broker session. |
 | Fresh incarnation | Register a distinct identity. Reusing a session name or a definition name does not inherit the old instance's authority. |
-| Authority work switched on | The broker computes a ceiling once for each live instance, parents before children. It marks the ceiling as backfilled. Until then, an instance with no ceiling is denied every MCP call. An instance whose definition or parent cannot be resolved gets a ceiling that denies every MCP call. That instance must register again. |
+| Authority work switched on | The broker computes a ceiling once for each live instance, parents before children. It marks the ceiling as backfilled. Until then, an instance with no ceiling is denied every MCP call. An instance whose definition or parent cannot be resolved gets a ceiling that denies every MCP call. That instance must register again. While broker state is in memory, no instance outlives the broker that registered it, so there is nothing to backfill; revisit with #2559 and #2563. |
 
 A continued run keeps its original bounds. A new restriction can narrow them. So can the withdrawal of a permission. Credential renewal and policy changes must not widen recovered authority. If the original identity or definition cannot be recovered, restoration fails closed. It never substitutes another instance or definition.
 

@@ -29,8 +29,12 @@ type Gateway interface {
 	Resource() string
 	// HTTPClient carries every request of a call.
 	HTTPClient() *http.Client
-	// Route returns the gateway backend and the tool name the gateway routes
-	// for the model-visible tool name on backend.
+	// Route returns the gateway server and the tool name the gateway routes
+	// for the model-visible tool name on backend. The server must be backend,
+	// the name operators and agent definitions use, and the tool must be
+	// "<server>.<tool>", with the tool's name on the server: the identity
+	// broker checks both against the acting agent's tool limit and refuses
+	// any other form.
 	Route(backend, modelVisibleName string) (server, tool string, err error)
 	// ListTools lists the tools the gateway routes to server, each under its
 	// name on that server, sent with credential as the bearer. The gateway

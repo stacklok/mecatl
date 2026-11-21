@@ -145,7 +145,13 @@ func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest,
 			return Registration{}, true, nil
 		}
 	}
-	t.recordLocked(identity, s.ID, req, b.effectiveCeilingLocked(req), credential, expiresAt)
+	// A new instance's effective ceiling is computed once, here; one
+	// registered before keeps its own.
+	var ceiling Ceiling
+	if _, registered := t.agents[identity.subject]; !registered {
+		ceiling = b.effectiveCeilingLocked(req)
+	}
+	t.recordLocked(identity, s.ID, req, ceiling, credential, expiresAt)
 	return Registration{Agent: AgentRef{Subject: identity.subject}, Credential: credential, ExpiresAt: expiresAt}, false, nil
 }
 
@@ -153,6 +159,8 @@ func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest,
 // registering with req: its definition's ceiling, intersected with its
 // parent's effective ceiling when it has a parent. The caller holds t.mu and
 // has checked req, so the definition is loaded and the parent registered.
+//
+// Shortcut: broker state is in memory, so after a restart each instance registers again and its ceiling is computed afresh against the definitions and gateway servers loaded then; a longer server list can widen it under the same definition revision; removed by #2563 (durable broker state keeps each effective ceiling and its resolution inputs).
 func (b *Broker) effectiveCeilingLocked(req RegisterAgentRequest) Ceiling {
 	ceiling := b.definitions[req.Definition].Ceiling
 	if req.Parent.IsZero() {
