@@ -400996,6 +400996,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795214531002,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e238528d257d1e26bd473ef2378906de09bd446d",
+          "message": "fix(mcp): bound the gateway tool listing (#2931)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-21T09:04:16+01:00",
+          "tree_id": "f20275cd85e2477b6aa5dfa49f9ca3960c54c1d5",
+          "url": "https://github.com/stacklok/mecatl/commit/e238528d257d1e26bd473ef2378906de09bd446d"
+        },
+        "date": 1795249023068,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -578630,6 +578664,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795249019742,
+  "lastUpdate": 1795249023913,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
