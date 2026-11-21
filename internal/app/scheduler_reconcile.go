@@ -22,6 +22,12 @@ const reconcileStaleFireMsgClaim = "fire lost: process crashed between claim and
 // reason an operator reading the fire record sees.
 const reconcileStaleFireMsgRun = "fire lost: process crashed during run"
 
+// reconcileStaleFireMsgPastDeadline is the terminal StopError Err when an
+// in-flight fire is past its explicit FireDeadline but never recorded terminal
+// (issue #2588). Grep logs for the same incident via
+// "reconcile stale fire past FireDeadline (issue #2588)".
+const reconcileStaleFireMsgPastDeadline = "fire lost: hung past FireDeadline with in-flight lease (issue #2588)"
+
 // makeReconcileStaleFire builds the composition-injected
 // scheduler.ReconcileStaleFire callback over the assembled *server.Service +
 // ScheduleStore (issue #386). It is the
@@ -179,6 +185,12 @@ func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessi
 		// settled session. Idempotent per fire id: a fire already terminal (a
 		// late RecordFire from the crashed process) is a no-op.
 		fireID := string(sessID) // the fire id IS the session id (decision #7).
+		reconcileErr := reconcileStaleFireMsgRun
+		reconciledLogMsg := "scheduler: reconciled stale fire (crash during run)"
+		if !sched.State.FireDeadline.IsZero() && !now.Before(sched.State.FireDeadline) {
+			reconcileErr = reconcileStaleFireMsgPastDeadline
+			reconciledLogMsg = "scheduler: reconciled stale fire past FireDeadline (issue #2588)"
+		}
 		fire := port.ScheduleFire{
 			ID:           fireID,
 			ScheduleName: name,
@@ -187,7 +199,7 @@ func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessi
 			StartedAt:    sched.State.LastFireStartedAt,
 			Deadline:     sched.State.FireDeadline,
 			Stop:         session.StopError,
-			Err:          reconcileStaleFireMsgRun,
+			Err:          reconcileErr,
 		}
 		if fire.FiredAt.IsZero() {
 			anchor := sched.State.LastFireStartedAt
@@ -203,7 +215,8 @@ func makeReconcileStaleFire(svc *server.Service, store port.ScheduleStore, sessi
 			}
 			return
 		}
-		diag.Log(ctx, port.LevelInfo, "scheduler: reconciled stale fire (crash during run)",
-			"schedule", name, "fire", fireID, "session", sessID)
+		diag.Log(ctx, port.LevelInfo, reconciledLogMsg,
+			"schedule", name, "fire", fireID, "session", sessID,
+			"fire_deadline", sched.State.FireDeadline.UTC().Format(time.RFC3339Nano))
 	}
 }

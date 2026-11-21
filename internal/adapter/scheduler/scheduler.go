@@ -958,8 +958,9 @@ func (s *Scheduler) tickOnce(ctx context.Context) (batch *sync.WaitGroup) {
 		go func() {
 			defer batch.Done()
 			defer s.releaseFire()
-			defer mu.Unlock()
-			s.fireOne(ctx, sched, now)
+			// Release the name mutex before the long-running Fire→RecordFire tail
+			// so reconcileStaleFires can reap a hung in-flight fire (issue #2588).
+			s.fireOne(ctx, sched, now, mu.Unlock)
 		}()
 	}
 	s.reconcileStaleFires(ctx, now, batch)
@@ -984,7 +985,7 @@ func (s *Scheduler) loadDueSchedule(ctx context.Context, name string, now time.T
 
 // fireOne applies the misfire policy, the singleton overlap check, Claims the
 // slot, Fires (unless skip), and RecordFires the outcome.
-func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time) {
+func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time, releaseNameMu func()) {
 	// Admission owns the name fence. Due is only a snapshot: reload before Claim.
 	sched, eligible := s.loadDueSchedule(ctx, sched.Spec.Name, now)
 	if !eligible {
@@ -1100,6 +1101,9 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	// fireClaimed runs the Fire→RecordFire tail (the shared path with FireNow)
 	// and emits the fired/failed event via the callback. It does NOT do the
 	// singleton check or misfire policy — those are this caller's prelude.
+	if releaseNameMu != nil {
+		releaseNameMu()
+	}
 	_, _ = s.fireClaimed(ctx, claimed, now)
 }
 
@@ -1247,7 +1251,12 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 	if !mu.TryLock() {
 		return port.ScheduleFire{}, ErrFireNowOverlap
 	}
-	defer mu.Unlock()
+	nameMuHeld := true
+	defer func() {
+		if nameMuHeld {
+			mu.Unlock()
+		}
+	}()
 	if !s.reserveFire(ctx) {
 		return port.ScheduleFire{}, fmt.Errorf("scheduler: fire-now admission unavailable (draining or capacity exhausted)")
 	}
@@ -1301,7 +1310,10 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}
-	// fireClaimed retains the manual admission through recording and delivery.
+	// Drop the name mutex before the long-running Fire→RecordFire tail so a
+	// concurrent tick can reconcile a hung in-flight fire (issue #2588).
+	nameMuHeld = false
+	mu.Unlock()
 	return s.fireClaimed(ctx, claimed, now)
 }
 
@@ -1627,6 +1639,21 @@ func (s *Scheduler) shouldReconcileStaleFire(ctx context.Context, sched port.Sch
 	// is still running → skip. No lease backend (single-replica by affinity) →
 	// the window is the only oracle (a stale in-flight fire with no lease
 	// backend IS stale — there is no cross-process lease to hold).
+	//
+	// Past an explicit FireDeadline, a hung fire must be reaped even if the
+	// lease is still held (issue #2588); the deadline watchdog should have
+	// terminated the run and RecordFire should have cleared in-flight state.
+	pastDeadline := !sched.State.FireDeadline.IsZero() && !now.Before(sched.State.FireDeadline)
+	if pastDeadline {
+		// Searchable in production logs if a hung singleton stalls again (issue #2588).
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: reconcile stale fire past FireDeadline (issue #2588)",
+			"schedule", sched.Spec.Name,
+			"session", sched.State.LastFireSessionID,
+			"fire_deadline", sched.State.FireDeadline.UTC().Format(time.RFC3339Nano),
+			"last_fire_started_at", anchor.UTC().Format(time.RFC3339Nano),
+		)
+		return true
+	}
 	if s.cfg.Lease != nil {
 		overlap, rel := s.isPriorFireLive(ctx, sched.State.LastFireSessionID)
 		if rel != nil {
