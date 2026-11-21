@@ -429,3 +429,55 @@ func TestProviderModelAllocs(t *testing.T) {
 		t.Errorf("Model(%q) allocations = %v, want 0", id, allocs)
 	}
 }
+
+// TestCatalogEffortLevels pins the effort levels read from models.dev
+// reasoning_options: the "effort" entry's values in catalog order, nil for a
+// reasoning model without an effort option, and nil for a model that doesn't
+// reason even when its source carries options.
+func TestCatalogEffortLevels(t *testing.T) {
+	for _, tc := range []struct {
+		provider, model string
+		want            []string
+	}{
+		{"anthropic", "claude-opus-4-5", []string{"low", "medium", "high"}},
+		{"anthropic", "claude-opus-4-7", []string{"low", "medium", "high", "xhigh", "max"}},
+		{"anthropic", "claude-haiku-4-5", nil},
+		{"openai", "gpt-5", []string{"minimal", "low", "medium", "high"}},
+		{"openai", "gpt-5.4", []string{"none", "low", "medium", "high", "xhigh"}},
+	} {
+		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) {
+			p, ok := Default().Provider(tc.provider)
+			if !ok {
+				t.Fatalf("provider %s missing", tc.provider)
+			}
+			m, ok := p.Model(tc.model)
+			if !ok {
+				t.Fatalf("model %s missing", tc.model)
+			}
+			if got := m.EffortLevels(); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("EffortLevels() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	const raw = `{"p":{"id":"p","models":{` +
+		`"thinks":{"id":"thinks","reasoning":true,"reasoning_options":[{"type":"budget_tokens","min":1024},{"type":"effort","values":["low","high"]}]},` +
+		`"plain":{"id":"plain","reasoning":false,"reasoning_options":[{"type":"effort","values":["low"]}]}}}}`
+	c, err := parse([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	p, _ := c.Provider("p")
+	thinks, _ := p.Model("thinks")
+	if got := thinks.EffortLevels(); !reflect.DeepEqual(got, []string{"low", "high"}) {
+		t.Errorf("thinks EffortLevels() = %v, want [low high]", got)
+	}
+	plain, _ := p.Model("plain")
+	if got := plain.EffortLevels(); got != nil {
+		t.Errorf("plain EffortLevels() = %v, want nil for a model that doesn't reason", got)
+	}
+	thinks.EffortLevels()[0] = "mutated"
+	if got := thinks.EffortLevels()[0]; got != "low" {
+		t.Errorf("EffortLevels() returned shared storage: first level = %q", got)
+	}
+}

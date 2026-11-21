@@ -15,9 +15,11 @@
 // non-empty (many OpenAI-compatible gateways — including the ToolHive LLM
 // gateway proxy — accept a placeholder credential rather than none at all).
 // The response envelope is
-// {"object":"list","data":[{"id","object","created","owned_by","display_name","context_window","input"}]}
-// — decode only `id`, `display_name`, `context_window`, and the optional per-model
-// `input` modality declaration; everything else is ignored by encoding/json.
+// {"object":"list","data":[{"id","object","created","owned_by","display_name","context_window","input","reasoning"}]}
+// — decode only `id`, `display_name`, `context_window`, the optional per-model
+// `input` modality declaration, and the optional `reasoning.supported_efforts`
+// list (OpenRouter's shape, also used by gateways); everything else is ignored
+// by encoding/json.
 // Wire shape pinned to stacklok-enterprise-platform#2270 ("New data-plane GET /v1/models intercept...
 // returns an OpenAI-shaped response
 // (`{object:"list", data:[{id, object, created, owned_by, display_name}]}`)"),
@@ -76,6 +78,11 @@ type Model struct {
 	DisplayName     string
 	ContextLimit    int
 	InputModalities []string
+	// ReasoningEfforts is reasoning.supported_efforts as upstream tokens, and
+	// ReasoningEffortsListed reports whether the entry carried the field at all,
+	// so the caller can tell an omitted list from an empty one.
+	ReasoningEfforts       []string
+	ReasoningEffortsListed bool
 }
 
 // StatusError is returned when the endpoint answers with a non-2xx status. The
@@ -142,10 +149,15 @@ type wireResponse struct {
 }
 
 type wireModel struct {
-	ID            string   `json:"id"`
-	DisplayName   string   `json:"display_name"`
-	ContextWindow int      `json:"context_window"`
-	Input         []string `json:"input"`
+	ID            string         `json:"id"`
+	DisplayName   string         `json:"display_name"`
+	ContextWindow int            `json:"context_window"`
+	Input         []string       `json:"input"`
+	Reasoning     *wireReasoning `json:"reasoning"`
+}
+
+type wireReasoning struct {
+	SupportedEfforts *[]string `json:"supported_efforts"`
 }
 
 // ListModels GETs the live catalog and maps it to []Model. It is read-only and
@@ -190,12 +202,17 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 		if id == "" {
 			continue // defensive: skip a malformed/hostile entry with no id
 		}
-		out = append(out, Model{
+		m := Model{
 			ID:              modeltext.TruncateRunes(id, maxIDRunes),
 			DisplayName:     modeltext.TruncateRunes(modeltext.StripControls(w.DisplayName), maxNameRunes),
 			ContextLimit:    w.ContextWindow,
 			InputModalities: w.Input,
-		})
+		}
+		if w.Reasoning != nil && w.Reasoning.SupportedEfforts != nil {
+			m.ReasoningEfforts = append([]string{}, (*w.Reasoning.SupportedEfforts)...)
+			m.ReasoningEffortsListed = true
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }

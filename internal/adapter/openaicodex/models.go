@@ -33,7 +33,10 @@ type Model struct {
 	InputModalitiesKnown bool
 	Reasoning            bool
 	ReasoningKnown       bool
-	ToolCall             bool
+	// ReasoningEfforts holds the effort token of each supported_reasoning_levels
+	// entry, in listing order. It is meaningful only when ReasoningKnown.
+	ReasoningEfforts []string
+	ToolCall         bool
 }
 
 // Lister enumerates only the models granted to the current ChatGPT account.
@@ -125,6 +128,7 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 			InputModalitiesKnown: wire.InputModalities != nil,
 			Reasoning:            wire.SupportedReasoningLevels != nil && len(*wire.SupportedReasoningLevels) > 0,
 			ReasoningKnown:       wire.SupportedReasoningLevels != nil,
+			ReasoningEfforts:     reasoningEfforts(wire.SupportedReasoningLevels),
 			ToolCall:             true,
 		})
 	}
@@ -135,6 +139,24 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 // slug is returned byte-for-byte; a slug that would require trimming,
 // sanitization, or truncation is rejected instead of silently becoming a
 // different model id.
+// reasoningEfforts reads the effort token from each supported_reasoning_levels
+// entry, skipping entries without one.
+func reasoningEfforts(levels *[]json.RawMessage) []string {
+	if levels == nil {
+		return nil
+	}
+	var out []string
+	for _, raw := range *levels {
+		var level struct {
+			Effort string `json:"effort"`
+		}
+		if json.Unmarshal(raw, &level) == nil && level.Effort != "" {
+			out = append(out, level.Effort)
+		}
+	}
+	return out
+}
+
 func validModelID(value string) bool {
 	return value != "" &&
 		utf8.RuneCountInString(value) <= maxModelIDRunes &&
