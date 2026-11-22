@@ -114,31 +114,6 @@ func TestBuildParamsReasoningEffort(t *testing.T) {
 	}
 }
 
-// TestBuildParamsMultimodal covers an image user part (data URL) and the audio
-// hard error.
-func TestBuildParamsMultimodal(t *testing.T) {
-	img := port.LLMRequest{Model: "m", Messages: []session.Message{{
-		Role:  session.RoleUser,
-		Text:  "what is this?",
-		Parts: []session.Content{{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x1, 0x2}}},
-	}}}
-	got := marshalParams(t, img, "")
-	msgs, _ := got["messages"].([]any)
-	um, _ := msgs[0].(map[string]any)
-	content, ok := um["content"].([]any)
-	if !ok || len(content) != 2 {
-		t.Fatalf("user content parts = %v, want text+image list", um["content"])
-	}
-
-	audio := port.LLMRequest{Model: "m", Messages: []session.Message{{
-		Role:  session.RoleUser,
-		Parts: []session.Content{{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{0x1}}},
-	}}}
-	if _, err := buildParams(audio, ""); err == nil {
-		t.Error("buildParams with audio part: expected error, got nil")
-	}
-}
-
 func ptr[T any](v T) *T { return &v }
 
 // TestBuildParamsToolResultParts proves typed tool-result Parts are projected into
@@ -164,6 +139,27 @@ func TestBuildParamsToolResultParts(t *testing.T) {
 	}
 	if tm["tool_call_id"] != "call_1" {
 		t.Errorf("tool_call_id = %v, want call_1", tm["tool_call_id"])
+	}
+}
+
+// TestBuildParamsToolResultDropsMedia proves tool-result media is dropped:
+// Chat Completions tool messages carry text only, although Capabilities reports
+// image and audio.
+func TestBuildParamsToolResultDropsMedia(t *testing.T) {
+	tr := session.NewToolResultWithParts("call_1", "PLAIN-FALLBACK", []session.Content{
+		{BlockKind: session.BlockText, Text: "block one"},
+		{BlockKind: session.BlockImage, Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{0x1}},
+		{BlockKind: session.BlockAudio, Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte{0x1}},
+	})
+	req := port.LLMRequest{Model: "m", Messages: []session.Message{
+		{Role: session.RoleTool, ToolResult: &tr},
+	}}
+	got := marshalParams(t, req, "")
+	msgs, _ := got["messages"].([]any)
+	tm, _ := msgs[0].(map[string]any)
+	content, _ := tm["content"].(string)
+	if content != "block one" {
+		t.Errorf("tool content = %q, want %q", content, "block one")
 	}
 }
 

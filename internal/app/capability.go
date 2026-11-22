@@ -135,8 +135,7 @@ func hasImageModality(modalities []string) bool {
 // hasAudioModality reports whether "audio" is among a model's input modalities. It is
 // the audio twin of hasImageModality so the live modality path computes audio-ness the
 // SAME way the catalog path does (catalogModalities also scans the raw list for "audio").
-// AND'd with adapterCaps.Audio in modelCapability; the P0 adapters are Audio:false, so
-// this is forward-compatible until an audio-capable adapter ships.
+// AND'd with adapterCaps.Audio in modelCapability.
 func hasAudioModality(modalities []string) bool {
 	for _, mod := range modalities {
 		if mod == "audio" {
@@ -150,9 +149,8 @@ func hasAudioModality(modalities []string) bool {
 // audio) for (providerID, modelID) and whether the (provider, model) pair was
 // found in the catalog at all. A miss (unknown provider, uncatalogued model, or an
 // empty modelID) returns (false, false, false) so the caller falls back to
-// adapter-only caps — a passthrough model is NOT a capability denial. The catalog
-// carries no explicit audio modality today, so catAudio derives from the raw
-// input-modality list ("audio") for forward-compatibility (false in the P0 data).
+// adapter-only caps — a passthrough model is NOT a capability denial. Audio
+// derives from the raw input-modality list ("audio").
 func catalogModalities(providerID, modelID string) (image, audio, found bool) {
 	if providerID == "" || modelID == "" {
 		return false, false, false
@@ -170,8 +168,6 @@ func catalogModalities(providerID, modelID string) (image, audio, found bool) {
 	// so the session echo and ListModels provably agree on a model's image-ness
 	// (the anti-divergence guarantee rests on ONE function, not two copies of the
 	// "is image among inputModalities" test, for BOTH the live and embedded paths).
-	// Audio derives from the same raw list for forward-compatibility; it is false
-	// in the P0 data, so the AND in modelCapability is false regardless.
 	mods := m.InputModalities()
 	image = hasImageModality(mods)
 	for _, mod := range mods {

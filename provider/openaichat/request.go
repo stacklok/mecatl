@@ -3,7 +3,9 @@ package openaichat
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"mime"
 	"strings"
 
 	oai "github.com/openai/openai-go/v3"
@@ -126,9 +128,9 @@ func buildTools(specs []tool.ToolSpec) ([]oai.ChatCompletionToolUnionParam, erro
 // buildMessages converts the layered system prompt + conversation history into
 // Chat Completions messages. The system prompt renders to a leading system
 // message; user/system text map directly; a user message with media Parts maps to
-// a content-part list (text + image_url); an assistant message maps its text and
-// its tool calls (function tool_calls); a tool message maps to a role:"tool"
-// message keyed by tool_call_id.
+// a content-part list (text + image_url/input_audio); an assistant message maps
+// its text and its tool calls (function tool_calls); a tool message maps to a
+// role:"tool" message keyed by tool_call_id.
 func buildMessages(sys prompt.Layered, msgs []session.Message) ([]oai.ChatCompletionMessageParamUnion, error) {
 	out := make([]oai.ChatCompletionMessageParamUnion, 0, len(msgs)+1)
 	if instr := sys.Render(); instr != "" {
@@ -161,10 +163,8 @@ func buildMessages(sys prompt.Layered, msgs []session.Message) ([]oai.ChatComple
 	return out, nil
 }
 
-// userContent builds the content-part list for a multimodal user message: a text
-// part (only when Text is non-empty) followed by one image_url part per image
-// Part (inline bytes as a base64 data URL, or a passthrough URL). Audio is an
-// honest hard error — the provider declares Audio:false.
+// userContent maps a multimodal user message to content parts: a text part when
+// Text is non-empty, then an image_url or input_audio part per media Part.
 func userContent(m session.Message) ([]oai.ChatCompletionContentPartUnionParam, error) {
 	parts := make([]oai.ChatCompletionContentPartUnionParam, 0, len(m.Parts)+1)
 	if m.Text != "" {
@@ -179,12 +179,50 @@ func userContent(m session.Message) ([]oai.ChatCompletionContentPartUnionParam, 
 			}
 			parts = append(parts, oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{URL: url}))
 		case session.MediaAudio:
-			return nil, fmt.Errorf("openaichat: audio input not supported")
+			part, err := audioContentPart(p)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
 		default:
 			return nil, fmt.Errorf("openaichat: unsupported media kind %q", p.Kind)
 		}
 	}
 	return parts, nil
+}
+
+// audioContentPart maps an audio Part to an input_audio part. input_audio carries
+// only inline wav or mp3 data, so URL-sourced parts and other formats are refused.
+func audioContentPart(p session.Content) (oai.ChatCompletionContentPartUnionParam, error) {
+	if p.URL != "" {
+		return oai.ChatCompletionContentPartUnionParam{}, errors.New("openaichat: audio part must be inline data, not a URL")
+	}
+	format, ok := inputAudioFormat(p.MIMEType)
+	if !ok {
+		return oai.ChatCompletionContentPartUnionParam{}, fmt.Errorf("openaichat: unsupported audio MIME type %q", p.MIMEType)
+	}
+	return oai.InputAudioContentPart(oai.ChatCompletionContentPartInputAudioInputAudioParam{
+		Data:   base64.StdEncoding.EncodeToString(p.Data),
+		Format: format,
+	}), nil
+}
+
+// inputAudioFormat returns the input_audio format for an audio MIME type,
+// ignoring case and parameters. Only audio/mpeg is IANA-registered; the others
+// are common unregistered names, since WAV has no registered type.
+func inputAudioFormat(mimeType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(mimeType)
+	if err != nil {
+		return "", false
+	}
+	switch mediaType {
+	case "audio/wav", "audio/wave", "audio/x-wav", "audio/vnd.wave":
+		return "wav", true
+	case "audio/mpeg", "audio/mp3":
+		return "mp3", true
+	default:
+		return "", false
+	}
 }
 
 // assistantMessage maps an assistant turn to a Chat Completions assistant message:
@@ -242,6 +280,6 @@ func toolMessage(tr session.ToolResult) oai.ChatCompletionMessageParamUnion {
 
 // dataURL renders inline media bytes as an RFC 2397 base64 data URL, the form the
 // Chat Completions image_url field accepts.
-func dataURL(mime string, data []byte) string {
-	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+func dataURL(mimeType string, data []byte) string {
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

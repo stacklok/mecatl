@@ -23,9 +23,11 @@ provider.
 Mecatl uses the same resolved support in model listings, session capabilities,
 and prompt validation.
 
-Audio is represented in the neutral wire contract and validation path, but the
-OpenAI Responses path currently has no audio input support. Treat audio as
-unavailable unless the selected deployment explicitly advertises it.
+Audio input follows the same rules. Providers that use the Chat Completions
+protocol can carry audio; a provider you define selects it with
+`api_flavor: openai-chat-completions`. Providers that use the Responses or
+Messages protocols carry no audio. If Mecatl offers audio for a model that
+cannot hear, the model's server rejects it.
 
 ## Send multimodal content
 
@@ -112,8 +114,8 @@ or unresolved capability is fail-closed.
 
 - Capability support is per model and session, not a universal provider switch.
   Changing models may require a new session or a selector-specific engine.
-- The OpenAI Responses adapter currently supports image input but audio input is
-  dormant in the current wire path.
+- Chat Completions audio input carries inline WAV or MP3 data only. Mecatl
+  rejects other audio types and URL-sourced audio before sending the request.
 - Media validation checks structure, capability, and transport safety. Treat
   content from tools and remote sources as untrusted.
 - Inline media and fetched content are bounded by the server and provider

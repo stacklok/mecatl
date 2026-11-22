@@ -21,7 +21,13 @@ const completedChatSSE = `data: {"id":"chatcmpl-1","object":"chat.completion.chu
 
 func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, model string) {
 	t.Helper()
-	seq, err := p.Stream(ctx, port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi")}})
+	drainStream(ctx, t, p, port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi")}})
+}
+
+// drainStream streams req to completion, failing the test on any error.
+func drainStream(ctx context.Context, t *testing.T, p *Provider, req port.LLMRequest) {
+	t.Helper()
+	seq, err := p.Stream(ctx, req)
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
