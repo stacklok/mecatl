@@ -30,8 +30,8 @@ Mecatl uses two authorization servers so that it can work with an MCP gateway it
 
 Between them, for each call, the broker runs two steps, detailed in [credentials and lifecycle](credentials-and-lifecycle.md#7-id-jag-from-as-1):
 
-1. It exchanges `RT-A42` at AS-1 (RFC 8693), with the agent-instance JWT-SVID as `actor_token`, and receives an **ID-JAG** ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) addressed to AS-2.
-2. It redeems the ID-JAG at AS-2 with the RFC 7523 JWT-bearer grant and receives the AS-2 access token `V`.
+1. It exchanges `RT-A42` at AS-1 (RFC 8693), with the agent-instance JWT-SVID as `actor_token`, and receives an **ID-JAG** ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) addressed to AS-2. The request also carries the call's entry, which AS-1 signs into the ID-JAG.
+2. It redeems the ID-JAG at AS-2 with the RFC 7523 JWT-bearer grant and receives the AS-2 access token `V`, which carries the signed entry. It checks that `V` carries the entry it sent before it uses `V`.
 
 The broker authenticates at both servers as one OAuth client, `mecatl`, with `private_key_jwt`. ID-JAG §4.4.1 requires the ID-JAG's `client_id` to match the client that redeems it, so one client ID is used at both. `mecatl` is the broker's client registration, not an identity of the acting agent. The [broker client authentication step](credentials-and-lifecycle.md#5-broker-client-authentication) shows the client assertion.
 
