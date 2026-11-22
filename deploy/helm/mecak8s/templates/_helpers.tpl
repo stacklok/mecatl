@@ -99,6 +99,14 @@ client IDs from it; the chart renders the same derived values.
 {{- end -}}
 {{- /* mcpSigningKeyDir is where the embedded MCP gateway's signing key and its fallbacks are projected. */ -}}
 {{- define "mecak8s.mcpSigningKeyDir" -}}/var/run/secrets/mcp-broker-signing-key{{- end -}}
+{{- /* issuerKey normalizes an issuer URL as mecak8s compares issuers: scheme and host lowercased, a default port dropped, the path compared as written without a trailing slash. mecak8s's startup check is authoritative; this only avoids rendering a release that crash-loops. */ -}}
+{{- define "mecak8s.issuerKey" -}}
+{{- $u := urlParse . -}}
+{{- $scheme := lower $u.scheme -}}
+{{- $host := lower $u.host -}}
+{{- if or (and (eq $scheme "https") (hasSuffix ":443" $host)) (and (eq $scheme "http") (hasSuffix ":80" $host)) -}}{{- $host = regexReplaceAll ":[0-9]+$" $host "" -}}{{- end -}}
+{{- printf "%s://%s%s" $scheme $host (trimSuffix "/" $u.path) -}}
+{{- end -}}
 {{- define "mecak8s.validateGatewayEntries" -}}
 {{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
 {{- $broker := .Values.identityBroker -}}
@@ -128,7 +136,7 @@ client IDs from it; the chart renders the same derived values.
 {{- range $field, $want := dict "as2Issuer" $issuer "tokenEndpoint" (printf "%s/oauth/token" $issuer) "resource" (printf "%s/mcp" $issuer) -}}
 {{- if ne (get $entry $field) $want -}}{{ fail (printf "identityBroker.gateways[0].%s must be %s, which the embedded gateway derives from mcp.broker.callbackURL" $field $want) }}{{- end -}}
 {{- end -}}
-{{- if and $broker.as1.issuer (eq (trimSuffix "/" (lower $broker.as1.issuer)) (lower $issuer)) -}}{{ fail "identityBroker.gateways[0].as2Issuer must differ from identityBroker.as1.issuer: the broker client authenticates to both with one key" }}{{- end -}}
+{{- if and $broker.as1.issuer (eq (include "mecak8s.issuerKey" $broker.as1.issuer) (include "mecak8s.issuerKey" $issuer)) -}}{{ fail "identityBroker.gateways[0].as2Issuer must differ from identityBroker.as1.issuer: the broker client authenticates to both with one key" }}{{- end -}}
 {{- range $entry.servers -}}
 {{- if not (has . $oauth) -}}{{ fail (printf "identityBroker.gateways[0].servers entry %q is not an mcp.servers name with auth.mode oauth" .) }}{{- end -}}
 {{- end -}}

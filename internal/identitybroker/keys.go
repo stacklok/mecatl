@@ -162,6 +162,11 @@ func checkClientKeySet(raw []byte, client JWK) error {
 	}
 	found := false
 	for _, key := range set.Keys {
+		// The broker client signs only with P-256, so any other key in the
+		// set could only let a server accept another role's key as mecatl's.
+		if _, ok := p256JWKKey(key); !ok {
+			return fmt.Errorf("the broker client's key set holds a key that is not an ECDSA P-256 key (kid %q); the broker client signs only with P-256", key.KeyID)
+		}
 		if key.KeyID == client.KeyID {
 			if key.KeyType != client.KeyType || key.Curve != client.Curve || key.X != client.X || key.Y != client.Y {
 				return fmt.Errorf("the broker client's key set holds another key under the broker client key's kid %q", client.KeyID)

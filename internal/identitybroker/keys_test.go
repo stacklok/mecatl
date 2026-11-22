@@ -22,6 +22,17 @@ func keySetOf(t *testing.T, jwks ...JWK) []byte {
 	return raw
 }
 
+// keySetWithRaw is the JSON JWK Set of jwk followed by raw, a JWK that the
+// JWK type cannot represent, such as an RSA or OKP key.
+func keySetWithRaw(t *testing.T, jwk JWK, raw string) []byte {
+	t.Helper()
+	first, err := json.Marshal(jwk)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	return []byte(`{"keys":[` + string(first) + `,` + raw + `]}`)
+}
+
 func jwkOf(t *testing.T, label string) JWK {
 	t.Helper()
 	jwk, err := publicJWK(&testKey(t, label).PublicKey)
@@ -124,6 +135,24 @@ func TestKeysValidateRefuses(t *testing.T) {
 		},
 		"a key set without the broker client's public key": {
 			edit: func(k *Keys) { k.BrokerClientKeySet = keySetOf(t, jwkOf(t, "someone else")) }, want: "does not hold the broker client key's public key",
+		},
+		"a key set with an RSA key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"RSA","kid":"rsa","n":"AQAB","e":"AQAB"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "rsa")`,
+		},
+		"a key set with an Ed25519 key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"OKP","crv":"Ed25519","kid":"okp","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "okp")`,
+		},
+		"a key set with a P-384 key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"EC","crv":"P-384","kid":"p384","x":"AA","y":"AA"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "p384")`,
 		},
 		"a key set with another key under the broker client's kid": {
 			edit: func(k *Keys) {

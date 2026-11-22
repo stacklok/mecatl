@@ -165,6 +165,9 @@ func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
 		"AS-1's issuer": {[]string{
 			"identityBroker.as1.issuer=https://mecatl.example.com/v1/mcp/broker", "oidc.issuer=",
 		}, "must differ from identityBroker.as1.issuer"},
+		"AS-1's issuer with the default port and a trailing slash": {[]string{
+			"identityBroker.as1.issuer=https://MECATL.example.com:443/v1/mcp/broker/", "oidc.issuer=",
+		}, "must differ from identityBroker.as1.issuer"},
 		"no signing key":                     {[]string{"mcp.broker.signingKey.secretName=", "mcp.broker.signingKey.key=", "mcp.broker.signingKey.fallbacks=null"}, "identityBroker.gateways requires mcp.broker.signingKey"},
 		"a signing key without an entry":     {[]string{"identityBroker.gateways=null"}, "mcp.broker.signingKey requires identityBroker.enabled with an identityBroker.gateways entry"},
 		"a signing key that is a broker key": {[]string{"mcp.broker.signingKey.secretName=identity-broker-agent-issuer"}, "name the same Secret key identity-broker-agent-issuer/key.pem"},
@@ -176,6 +179,11 @@ func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
 				t.Fatalf("render = %v, want failure %q:\n%s", err, tc.want, output)
 			}
 		})
+	}
+	// mecak8s compares paths case-sensitively, so an AS-1 issuer whose path
+	// differs from AS-2's only in case is a different issuer and renders.
+	if output, err := renderGatewayEntry(t, "identityBroker.as1.issuer=https://mecatl.example.com/V1/mcp/broker", "oidc.issuer="); err != nil {
+		t.Fatalf("render with AS-1's issuer differing in path case = %v, want success:\n%s", err, output)
 	}
 	// With the broker off, a signing key fails the render.
 	output, err := helm(t, "template", "off", ".", "--set", "mockProvider=true,permissionMode=yolo,redis.local.enabled=true",
