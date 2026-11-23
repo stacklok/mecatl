@@ -195,6 +195,11 @@ boundaries, and platform limits.
 - [User documentation](./user-docs/intro.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 
+## Roadmap
+
+[ROADMAP.md](./ROADMAP.md) describes what Mecatl already does, what is in
+progress, and where the project is heading.
+
 ## Contributing, security, and license
 
 Contributions are welcome through pull requests. Start with
