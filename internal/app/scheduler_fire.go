@@ -102,19 +102,50 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		// binding-less reattachment of the origin's reference. Mint the ID first
 		// so reservation and session publication use the same identity.
 		fireID := newFireID(literalName, now)
-		placement, err := svc.ScheduleFirePlacement(ownerCtx, sched.Spec, session.SessionID(fireID))
+
+		startedAt := now
+		deadline := effectiveFireDeadline(sched.Spec.FireTimeout, defaultTimeout, now)
+		// The deadline bounds the whole fire from its claim: placement, session
+		// creation and run admission as well as the run. Cancellation is a
+		// request, not proof of termination: keep the fire, session lease and
+		// capacity until both the event producer and watchdog return.
+		runCtx := ownerCtx
+		if !deadline.IsZero() {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithDeadline(ownerCtx, deadline)
+			defer cancel()
+		}
+		// A step that fails because the fire deadline lapsed names the deadline
+		// instead of whatever the expired context broke first (a store load reads
+		// as not-found). An earlier caller deadline would be runCtx's deadline
+		// instead, so it is not renamed.
+		deadlineLapsed := func(step string, err error) error {
+			if ctxDeadline, ok := runCtx.Deadline(); ok && ctxDeadline.Equal(deadline) &&
+				errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+				svc.Diagnostics().Log(context.WithoutCancel(ctx), port.LevelWarn,
+					"scheduled fire deadline lapsed before run admission",
+					"schedule", literalName, "fire", fireID, "step", step, "err", err.Error())
+				return fmt.Errorf("scheduled fire wall-clock deadline of %s lapsed before the run started",
+					deadline.Sub(startedAt))
+			}
+			return err
+		}
+
+		placement, err := svc.ScheduleFirePlacement(runCtx, sched.Spec, session.SessionID(fireID))
 		if err != nil {
+			err = deadlineLapsed("placement", err)
 			return fireFailed(sched, now, "", err), err
 		}
 
 		// The pre-minted ID is both the fire ID and session ID. WithSessionID
 		// also gives the persisted session the sched-- GC-retention prefix.
-		sess, err := svc.CreateSessionWithProfile(ownerCtx, mode, limits, sel, profile,
+		sess, err := svc.CreateSessionWithProfile(runCtx, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
 			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
+			err = deadlineLapsed("session creation", err)
 			// A failure before CreateSession installs its placement rollback must
 			// also retire the unpublished reservation. Close is idempotent with
 			// the session transaction and never aborts an ambiguous Commit.
@@ -158,20 +189,8 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		// in the scheduler ignores CarryContext (the crashed fire's context is
 		// untrusted AND incomplete); this gate is on CarryContext + a real prior
 		// session id (not the pending sentinel, not empty).
-		prompt := carriedContextPrompt(ownerCtx, svc, sched)
+		prompt := carriedContextPrompt(runCtx, svc, sched)
 
-		startedAt := now
-		deadline := effectiveFireDeadline(sched.Spec.FireTimeout, defaultTimeout, now)
-
-		// Cancellation is a request, not proof of termination. Keep the fire,
-		// session lease and capacity until both the event producer and watchdog
-		// return. The deadline context also covers provisional run admission.
-		runCtx := ownerCtx
-		if !deadline.IsZero() {
-			var cancel context.CancelFunc
-			runCtx, cancel = context.WithDeadline(ownerCtx, deadline)
-			defer cancel()
-		}
 		inflight := port.ScheduleFire{
 			ID: fireID, ScheduleName: sched.Spec.Name, SessionID: sess.ID,
 			FiredAt: now, StartedAt: startedAt, Deadline: deadline,
@@ -185,24 +204,13 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 
 		run, err := svc.StartScheduledRunContent(runCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
-			// A fire deadline that lapsed during admission surfaces as whatever the
-			// expired context broke first (a store load reads as not-found).
-			// The run never started, so it stays a failed fire, but name the
-			// deadline instead of that misleading cause. An earlier caller
-			// deadline would be runCtx's deadline instead, so it is not renamed.
-			if ctxDeadline, ok := runCtx.Deadline(); ok && ctxDeadline.Equal(deadline) &&
-				errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-				svc.Diagnostics().Log(context.WithoutCancel(ctx), port.LevelWarn,
-					"scheduled fire deadline lapsed before run admission",
-					"schedule", literalName, "fire", fireID, "err", err.Error())
-				err = fmt.Errorf("scheduled fire wall-clock deadline of %s lapsed before the run started",
-					deadline.Sub(startedAt))
-			}
+			// The run never started, so it stays a failed fire.
+			err = deadlineLapsed("run admission", err)
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
 		// Publish the real session only after run admission holds its lease.
 		// A pending claim has no lease oracle and must remain fail-closed.
-		recordFireStart(context.WithoutCancel(ctx), svc.Diagnostics(), store, inflight)
+		recordFireStart(ctx, svc.Diagnostics(), store, inflight)
 		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
 			deliverStarted(ctx, sched, inflight)
 		}
@@ -621,7 +629,10 @@ func recordFireStart(ctx context.Context, diag port.Diagnostics, store port.Sche
 	if store == nil {
 		return
 	}
-	if err := store.RecordFireStart(ctx, f.ScheduleName, f); err != nil {
+	ctx = context.WithoutCancel(ctx)
+	recordCtx, cancel := context.WithTimeout(ctx, fireRecordTimeout)
+	defer cancel()
+	if err := store.RecordFireStart(recordCtx, f.ScheduleName, f); err != nil {
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}
@@ -629,6 +640,14 @@ func recordFireStart(ctx context.Context, diag port.Diagnostics, store port.Sche
 			"schedule", f.ScheduleName, "fire", f.ID, "err", err.Error())
 	}
 }
+
+// fireRecordTimeout bounds each in-flight record write (RecordFireStart and
+// RecordFireProgress) so a store that hangs cannot hold the fire, its lease and
+// its schedule (issue #2955). Both writes are best-effort: a timeout WARNs and
+// the fire continues. A lost RecordFireStart leaves the claim pending until the
+// scheduler's terminal RecordFire, which is deliberately unbounded, settles it.
+// A var so tests can shorten it.
+var fireRecordTimeout = 10 * time.Second
 
 // fireProgressEvents is the set of event types that mark a turn boundary / real
 // activity (issue #386): a tool call starts, a turn closes, or the run ends.
@@ -652,7 +671,9 @@ func recordFireProgressOnEvent(ctx context.Context, diag port.Diagnostics, store
 	if store == nil || !fireProgressEvents[evType] {
 		return
 	}
-	if err := store.RecordFireProgress(ctx, scheduleName, fireID, time.Now()); err != nil {
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fireRecordTimeout)
+	defer cancel()
+	if err := store.RecordFireProgress(recordCtx, scheduleName, fireID, time.Now()); err != nil {
 		if diag == nil {
 			diag = port.NopDiagnostics{}
 		}

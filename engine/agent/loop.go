@@ -2049,7 +2049,9 @@ func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session
 				e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 				return true
 			}
-			e.save(context.WithoutCancel(ctx), r, sess)
+			// save detaches a cancelled ctx itself, bounded by
+			// sessionPersistenceTimeout, so a wedged store cannot hold the run.
+			e.save(ctx, r, sess)
 		}
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true

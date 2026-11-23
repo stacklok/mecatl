@@ -469,6 +469,14 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Fixed
 
+- **A cancelled read batch no longer saves the session without a bound** —
+  when a cancelled tool dispatch had results to record, the run saved the
+  session with a cancel-detached context, which skipped the
+  `sessionPersistenceTimeout` bound that `save` applies to cancelled runs. A
+  store that hung kept the cancelled run open indefinitely. The save now goes
+  through the same bounded path as every other save of a cancelled run. Fixed
+  (patch); no exported signatures changed.
+
 - **System temp-scope approval shows the full command** — a Shell call with
   `temp_scope: "system"` previously surfaced an approval whose args held only
   the first two words of the command (`command_summary`). The ask now carries

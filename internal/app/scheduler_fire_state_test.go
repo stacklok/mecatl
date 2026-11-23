@@ -292,10 +292,17 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 }
 
 // ctxLoadStore is a jsonlstore whose Load honors context cancellation, as a
-// network-backed store (Redis) does.
+// network-backed store (Redis) does. Under a deadline it is also slow to load an
+// existing session, so run admission of a created fire session outlasts the
+// fire deadline the way a slow remote store would.
 type ctxLoadStore struct{ *jsonlstore.Store }
 
 func (s ctxLoadStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	if _, ok := ctx.Deadline(); ok {
+		if _, err := s.Store.Load(context.WithoutCancel(ctx), id); err == nil {
+			<-ctx.Done()
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -323,7 +330,7 @@ func TestFireDeadlineDuringRunAdmissionNamesDeadline(t *testing.T) {
 			Prompt:         "never admitted",
 			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"},
 			PlacementScope: "legacy-local",
-			FireTimeout:    time.Nanosecond,
+			FireTimeout:    2 * time.Second,
 			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
 		},
 		State: port.ScheduleState{NextFireAt: time.Now().Add(-1 * time.Second), Enabled: true},
@@ -360,7 +367,7 @@ func TestFireDeadlineDuringRunAdmissionNamesDeadline(t *testing.T) {
 	})
 
 	fire, fireErr := sched.FireNow(ctx, schedName, time.Now())
-	const want = "scheduled fire wall-clock deadline of 1ns lapsed before the run started"
+	const want = "scheduled fire wall-clock deadline of 2s lapsed before the run started"
 	if fireErr == nil || fireErr.Error() != want {
 		t.Errorf("FireNow err = %v, want %q", fireErr, want)
 	}

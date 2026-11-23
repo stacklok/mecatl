@@ -221,7 +221,8 @@ not evidence that its owner stopped. Lease probe failures likewise fail closed.
 After a process restart without a lease backend, affinity plus the stale window
 permits reconciliation of the prior process's abandoned work.
 
-The deadline context covers run admission as well as execution. A watchdog logs
+The deadline context covers the whole fire from its claim: placement, session
+creation and run admission as well as execution. A watchdog logs
 `overdue/degraded; termination unconfirmed` before calling `Service.Cancel` and
 logs cancellation errors. Once run admission succeeds, empty `Stop` plus the
 saved elapsed `Deadline` and `ProgressAt` remain the truthful degraded
