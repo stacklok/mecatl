@@ -46,15 +46,14 @@ const (
 	ExecutionProviderService_RecoverEnvironment_FullMethodName       = "/mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment"
 	ExecutionProviderService_DeleteRetiredEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment"
 	ExecutionProviderService_RevokeEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment"
-	ExecutionProviderService_Files_FullMethodName                    = "/mecatl.execution.v1.ExecutionProviderService/Files"
-	ExecutionProviderService_StartCommand_FullMethodName             = "/mecatl.execution.v1.ExecutionProviderService/StartCommand"
-	ExecutionProviderService_CommandStatus_FullMethodName            = "/mecatl.execution.v1.ExecutionProviderService/CommandStatus"
-	ExecutionProviderService_CancelCommand_FullMethodName            = "/mecatl.execution.v1.ExecutionProviderService/CancelCommand"
 )
 
 // ExecutionProviderServiceClient is the client API for ExecutionProviderService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// File and command calls use mecatl.executor.v1 FileService and CommandService
+// on the same endpoint.
 type ExecutionProviderServiceClient interface {
 	ListExecutionTemplates(ctx context.Context, in *ListExecutionTemplatesRequest, opts ...grpc.CallOption) (*ListExecutionTemplatesResponse, error)
 	ValidateTemplate(ctx context.Context, in *ValidateTemplateRequest, opts ...grpc.CallOption) (*ValidateTemplateResponse, error)
@@ -76,10 +75,6 @@ type ExecutionProviderServiceClient interface {
 	RecoverEnvironment(ctx context.Context, in *RecoverEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	DeleteRetiredEnvironment(ctx context.Context, in *DeleteRetiredEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RevokeEnvironment(ctx context.Context, in *RevokeEnvironmentRequest, opts ...grpc.CallOption) (*RevokeEnvironmentResponse, error)
-	Files(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (*FileResponse, error)
-	StartCommand(ctx context.Context, in *CommandStartRequest, opts ...grpc.CallOption) (*CommandStartResponse, error)
-	CommandStatus(ctx context.Context, in *CommandQueryRequest, opts ...grpc.CallOption) (*CommandStatusResponse, error)
-	CancelCommand(ctx context.Context, in *CommandQueryRequest, opts ...grpc.CallOption) (*CommandStatusResponse, error)
 }
 
 type executionProviderServiceClient struct {
@@ -290,49 +285,12 @@ func (c *executionProviderServiceClient) RevokeEnvironment(ctx context.Context, 
 	return out, nil
 }
 
-func (c *executionProviderServiceClient) Files(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (*FileResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FileResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_Files_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *executionProviderServiceClient) StartCommand(ctx context.Context, in *CommandStartRequest, opts ...grpc.CallOption) (*CommandStartResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CommandStartResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_StartCommand_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *executionProviderServiceClient) CommandStatus(ctx context.Context, in *CommandQueryRequest, opts ...grpc.CallOption) (*CommandStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CommandStatusResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_CommandStatus_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *executionProviderServiceClient) CancelCommand(ctx context.Context, in *CommandQueryRequest, opts ...grpc.CallOption) (*CommandStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CommandStatusResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_CancelCommand_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ExecutionProviderServiceServer is the server API for ExecutionProviderService service.
 // All implementations must embed UnimplementedExecutionProviderServiceServer
 // for forward compatibility.
+//
+// File and command calls use mecatl.executor.v1 FileService and CommandService
+// on the same endpoint.
 type ExecutionProviderServiceServer interface {
 	ListExecutionTemplates(context.Context, *ListExecutionTemplatesRequest) (*ListExecutionTemplatesResponse, error)
 	ValidateTemplate(context.Context, *ValidateTemplateRequest) (*ValidateTemplateResponse, error)
@@ -354,10 +312,6 @@ type ExecutionProviderServiceServer interface {
 	RecoverEnvironment(context.Context, *RecoverEnvironmentRequest) (*emptypb.Empty, error)
 	DeleteRetiredEnvironment(context.Context, *DeleteRetiredEnvironmentRequest) (*emptypb.Empty, error)
 	RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error)
-	Files(context.Context, *FileRequest) (*FileResponse, error)
-	StartCommand(context.Context, *CommandStartRequest) (*CommandStartResponse, error)
-	CommandStatus(context.Context, *CommandQueryRequest) (*CommandStatusResponse, error)
-	CancelCommand(context.Context, *CommandQueryRequest) (*CommandStatusResponse, error)
 	mustEmbedUnimplementedExecutionProviderServiceServer()
 }
 
@@ -427,18 +381,6 @@ func (UnimplementedExecutionProviderServiceServer) DeleteRetiredEnvironment(cont
 }
 func (UnimplementedExecutionProviderServiceServer) RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RevokeEnvironment not implemented")
-}
-func (UnimplementedExecutionProviderServiceServer) Files(context.Context, *FileRequest) (*FileResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Files not implemented")
-}
-func (UnimplementedExecutionProviderServiceServer) StartCommand(context.Context, *CommandStartRequest) (*CommandStartResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StartCommand not implemented")
-}
-func (UnimplementedExecutionProviderServiceServer) CommandStatus(context.Context, *CommandQueryRequest) (*CommandStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CommandStatus not implemented")
-}
-func (UnimplementedExecutionProviderServiceServer) CancelCommand(context.Context, *CommandQueryRequest) (*CommandStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CancelCommand not implemented")
 }
 func (UnimplementedExecutionProviderServiceServer) mustEmbedUnimplementedExecutionProviderServiceServer() {
 }
@@ -822,78 +764,6 @@ func _ExecutionProviderService_RevokeEnvironment_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ExecutionProviderService_Files_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FileRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).Files(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ExecutionProviderService_Files_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).Files(ctx, req.(*FileRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ExecutionProviderService_StartCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CommandStartRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).StartCommand(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ExecutionProviderService_StartCommand_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).StartCommand(ctx, req.(*CommandStartRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ExecutionProviderService_CommandStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CommandQueryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).CommandStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ExecutionProviderService_CommandStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).CommandStatus(ctx, req.(*CommandQueryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ExecutionProviderService_CancelCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CommandQueryRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).CancelCommand(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ExecutionProviderService_CancelCommand_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).CancelCommand(ctx, req.(*CommandQueryRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // ExecutionProviderService_ServiceDesc is the grpc.ServiceDesc for ExecutionProviderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -980,22 +850,6 @@ var ExecutionProviderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeEnvironment",
 			Handler:    _ExecutionProviderService_RevokeEnvironment_Handler,
-		},
-		{
-			MethodName: "Files",
-			Handler:    _ExecutionProviderService_Files_Handler,
-		},
-		{
-			MethodName: "StartCommand",
-			Handler:    _ExecutionProviderService_StartCommand_Handler,
-		},
-		{
-			MethodName: "CommandStatus",
-			Handler:    _ExecutionProviderService_CommandStatus_Handler,
-		},
-		{
-			MethodName: "CancelCommand",
-			Handler:    _ExecutionProviderService_CancelCommand_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

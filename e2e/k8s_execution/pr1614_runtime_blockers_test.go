@@ -35,11 +35,13 @@ func TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete(t *testing.T
 	status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	commandDone := make(chan error, 1)
 	go func() {
-		_, commandErr := client.StartCommand(ctx, executionenv.CommandStartRequest{
-			Context:       rc,
-			Command:       "touch final-reference-started && sleep 10",
-			TimeoutMillis: 20000,
-		})
+		_, commandErr := runCommand(
+			ctx,
+			client,
+			rc,
+			"touch final-reference-started && sleep 10",
+			20*time.Second,
+		)
 		commandDone <- commandErr
 	}()
 	waitWorkspaceFileOrCommandError(

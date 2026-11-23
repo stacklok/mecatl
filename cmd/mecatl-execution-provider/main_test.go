@@ -6,7 +6,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 )
+
+func TestKeepaliveGraceOutlastsTheLongestCommand(t *testing.T) {
+	grace := serverKeepalive().MaxConnectionAgeGrace
+	if grace < executioncontroller.MaxCommandDuration+time.Minute {
+		t.Fatalf("grace %v cannot finish a %v command started as the connection ages out",
+			grace, executioncontroller.MaxCommandDuration)
+	}
+}
 
 func TestProviderStartupRejectsLegacyProfileConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.yaml")

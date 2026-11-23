@@ -183,8 +183,13 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 			if err != nil || len(commands) != 1 || commands[0].Name != "selected" {
 				t.Fatalf("independent listing=%v, %v", commands, err)
 			}
-			if backend.ensureCalls != 1 || backend.attachCalls != 1 || backend.fileCalls != 0 {
-				t.Fatalf("context discovery touched native provider: ensure=%d attach=%d files=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
+			if backend.ensureCalls != 1 || backend.attachCalls != 1 || backend.fileRoutes != 0 {
+				t.Fatalf(
+					"context discovery touched native provider: ensure=%d attach=%d files=%d",
+					backend.ensureCalls,
+					backend.attachCalls,
+					backend.fileRoutes,
+				)
 			}
 			run, err := built.Service.StartRun(ctx, sess.ID, "/selected")
 			if err != nil {
@@ -193,8 +198,13 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 			for range run.Events() {
 			}
 			built.Service.FinishRun(sess.ID, run)
-			if backend.ensureCalls != 1 || backend.attachCalls != 1 || backend.fileCalls != 0 {
-				t.Fatalf("run changed native attachment ownership: ensure=%d attach=%d files=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
+			if backend.ensureCalls != 1 || backend.attachCalls != 1 || backend.fileRoutes != 0 {
+				t.Fatalf(
+					"run changed native attachment ownership: ensure=%d attach=%d files=%d",
+					backend.ensureCalls,
+					backend.attachCalls,
+					backend.fileRoutes,
+				)
 			}
 			if len(requests) != 1 {
 				t.Fatalf("model requests=%d", len(requests))

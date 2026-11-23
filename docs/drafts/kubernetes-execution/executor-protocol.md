@@ -53,10 +53,10 @@ its arguments. If the executor later needs to check something itself, such as an
 reads that field from the context it already receives.
 
 Lifecycle operations, such as binding, run claims, retirement, replacement, and revocation, stay in a separate service
-that only the trusted service implements. Today `ExecutionProviderService` combines lifecycle operations with `Files`,
-`StartCommand`, `CommandStatus`, and `CancelCommand`; the file and command operations move into the shared services.
-This changes the RPCs mecak8s calls, so mecak8s and the trusted service must be upgraded together. That break is
-accepted for this work.
+that only the trusted service implements. `ExecutionProviderService` keeps the lifecycle operations; its `Files`,
+`StartCommand`, `CommandStatus`, and `CancelCommand` RPCs are removed, and the trusted service serves the shared file and
+command services instead. This changes the RPCs mecak8s calls, so mecak8s and the trusted service must be upgraded
+together. That break is accepted for this work.
 
 ## Capability discovery
 
@@ -65,10 +65,9 @@ admitted capabilities from admission, and it calls the command service only when
 service the server did not register fails with the standard gRPC `Unimplemented` status, which the trusted service
 treats as a misconfigured executor.
 
-If discovery becomes necessary, for example to check at connection time that an executor was started with the
-services admission expects, the preferred mechanism is the standard gRPC health service: `grpc.health.v1.Health/Check`
-returns `SERVING` for a registered service and `NOT_FOUND` otherwise. Server reflection is for debugging tools and is
-not used for this.
+Discovery uses the standard gRPC health service: `grpc.health.v1.Health/Check` returns `SERVING` for a registered
+service and `NOT_FOUND` otherwise. mecak8s checks the trusted service this way at startup. Server reflection is for
+debugging tools and is not used for this.
 
 ## Commands
 
@@ -92,8 +91,7 @@ start, the command never ran. If it fails after the start but before a result, t
 does not retry the command. A result whose outcome is known replaces Pod exec's `terminal_receipt` as proof that the
 command ended and left no process running.
 
-The current provider API returns a command's output in one response. The trusted service can buffer the stream to keep
-that API unchanged, and expose streaming to the agent loop later.
+`StartCommand` is removed; the trusted service relays the command stream between mecak8s and the executor.
 
 ## File content
 
@@ -182,10 +180,10 @@ own framing and handshake are not used.
 
 ## Rollout
 
-The server replaces Pod exec rather than running alongside it: the native Kubernetes execution path is not deployed in
-staging, so there are no users to migrate. The Pod exec transport, the per-operation lease, the one-operation limit,
-and the provider's `pods/exec` permission are removed in the same change that introduces the server. That change also
-includes mutual TLS, so the executor is never reachable without authentication, encryption, and a pinned certificate.
+The server replaced Pod exec rather than running alongside it: the native Kubernetes execution path is not deployed in
+staging, so there were no users to migrate. The Pod exec transport, the per-operation lease, the one-operation limit,
+and the provider's `pods/exec` permission were removed when mecak8s switched to the shared services, together with
+mutual TLS, so the executor is never reachable without authentication, encryption, and a pinned certificate.
 
 ## Local execution
 
@@ -195,8 +193,9 @@ between. The [local execution](local-execution.md) chapter describes it.
 ## Open questions
 
 - **Process separation.** The server and shell programs run in the same container as the same user, so a shell program
-  can read the server's key or replace the server process. Running the server in a separate container, or as a separate
-  user, would narrow that. The [threat model](threat-model.md) chapter tracks whether it is required.
+  can read the server's key or replace the server process. The trusted service rechecks the Pod after the handshake, so
+  a copied key works only against the same Pod. Running the server in a separate container, or as a separate user,
+  would narrow that. The [threat model](threat-model.md) chapter tracks whether it is required.
 - **Binding to the environment.** Whether the executor checks the environment identity and epoch in the request
   context so that the executor can reject calls meant for a previous incarnation, or whether the trusted
   service's own fencing is sufficient.

@@ -15,17 +15,21 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/internal/executionenv"
 	"github.com/stacklok/mecatl/internal/executorrpc/commandconformance"
 	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileconformance"
@@ -43,11 +47,16 @@ type proxyOptions struct {
 }
 
 type proxyFixture struct {
+	dynamic *dynamicfake.FakeDynamicClient
 	conn    *grpc.ClientConn
 	files   *memfs.FileSystem
 	runner  *memexecutor.Runner
 	pin     ExecutorPin
 	connect *recordingConnector
+
+	security     *SecurityManager
+	manifestPath string
+	manifest     securityManifest
 }
 
 type recordingConnector struct {
@@ -78,6 +87,24 @@ func proxyRequestContext() *executorv1.RequestContext {
 		ClaimId:         "claim",
 		Epoch:           1,
 		GrantGeneration: 1,
+	}
+}
+
+func executorRequest(rc *executionv1.RequestContext) *executorv1.RequestContext {
+	return &executorv1.RequestContext{
+		Environment: &executorv1.EnvironmentRef{
+			Id:       rc.GetEnvironment().GetId(),
+			Revision: rc.GetEnvironment().GetRevision(),
+		},
+		Owner: &executorv1.Owner{
+			Issuer:  rc.GetOwner().GetIssuer(),
+			Subject: rc.GetOwner().GetSubject(),
+		},
+		BindingId:       rc.GetBindingId(),
+		Epoch:           rc.GetEpoch(),
+		RunId:           rc.GetRunId(),
+		ClaimId:         rc.GetClaimId(),
+		GrantGeneration: rc.GetGrantGeneration(),
 	}
 }
 
@@ -147,7 +174,7 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		t.Fatal(err)
 	}
 	dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(dynamic, "ns", proxyProfiles(opts), nil).WithSecurityManager(manager)
+	store := NewStore(dynamic, "ns", proxyProfiles(opts)).WithSecurityManager(manager)
 	handler := NewHandler(HandlerConfig{Security: manager}, store)
 
 	files := memfs.NewFileSystem(proxyRoot)
@@ -171,8 +198,7 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor),
 		grpc.ChainStreamInterceptor(limiter.StreamInterceptor),
 	)
-	executorv1.RegisterFileServiceServer(server, NewFileProxy(handler, connector.Connect))
-	executorv1.RegisterCommandServiceServer(server, NewCommandProxy(handler, connector.Connect))
+	RegisterExecutorServices(server, handler, connector.Connect)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +221,18 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &proxyFixture{conn: conn, files: files, runner: runner, pin: pin, connect: connector}
+	return &proxyFixture{
+		dynamic: dynamic,
+		conn:    conn,
+		files:   files,
+		runner:  runner,
+		pin:     pin,
+		connect: connector,
+
+		security:     manager,
+		manifestPath: manifestPath,
+		manifest:     manifest,
+	}
 }
 
 func TestFileProxyConformance(t *testing.T) {
@@ -217,6 +254,76 @@ func TestFileProxyConformance(t *testing.T) {
 			},
 		}
 	})
+}
+
+func TestProviderReportsTheExecutorServicesServing(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{})
+	health := healthpb.NewHealthClient(f.conn)
+	for _, service := range executorServiceNames() {
+		resp, err := health.Check(t.Context(), &healthpb.HealthCheckRequest{Service: service})
+		if err != nil || resp.GetStatus() != healthpb.HealthCheckResponse_SERVING {
+			t.Fatalf("%s health = %v, %v", service, resp, err)
+		}
+	}
+}
+
+type gatedConn struct {
+	grpc.ClientConnInterface
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (c *gatedConn) Invoke(
+	ctx context.Context,
+	method string,
+	args any,
+	reply any,
+	opts ...grpc.CallOption,
+) error {
+	c.entered <- struct{}{}
+	select {
+	case <-c.gate:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return c.ClientConnInterface.Invoke(ctx, method, args, reply, opts...)
+}
+
+func TestConcurrentFileCallsReachTheExecutorTogether(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{})
+	if err := f.files.Write(t.Context(), "a.txt", []byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	gated := &gatedConn{
+		ClientConnInterface: f.connect.conn,
+		entered:             make(chan struct{}, 2),
+		gate:                make(chan struct{}),
+	}
+	f.connect.conn = gated
+	done := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := executorv1.NewFileServiceClient(f.conn).StatFile(
+				t.Context(),
+				&executorv1.StatFileRequest{Context: proxyRequestContext(), Path: "a.txt"},
+			)
+			done <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-gated.entered:
+		case err := <-done:
+			t.Fatalf("call refused while another was in flight: %v", err)
+		}
+	}
+	close(gated.gate)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireOnlyReads(t, f.dynamic)
 }
 
 func TestCommandProxyConformance(t *testing.T) {
@@ -296,7 +403,7 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 				r.Epoch++
 				return r
 			},
-			wantFiles: codes.Aborted, wantCommands: codes.Aborted,
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
 		},
 		{
 			name: "stale grant generation",
@@ -304,12 +411,12 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 				r.GrantGeneration++
 				return r
 			},
-			wantFiles: codes.Aborted, wantCommands: codes.Aborted,
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
 		},
 		{
 			name:      "revoked grant generation",
 			mutate:    setField([]string{"status", "grantGeneration"}, int64(2)),
-			wantFiles: codes.Aborted, wantCommands: codes.Aborted,
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
 		},
 		{
 			name: "lapsed claim",
@@ -317,7 +424,7 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 				[]string{"status", "activeRun", "expiresAt"},
 				time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano),
 			),
-			wantFiles: codes.Aborted, wantCommands: codes.Aborted,
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
 		},
 		{
 			name:      "commands not admitted",
@@ -408,23 +515,41 @@ func TestCommandProxyBoundsTheStart(t *testing.T) {
 		!refusedBeforeForwarding(status.Convert(err)) {
 		t.Fatalf("oversized command = %v", err)
 	}
-	stream, err := executorv1.NewCommandServiceClient(f.conn).RunCommand(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = stream.Send(&executorv1.RunCommandRequest{
-		Context: proxyRequestContext(),
-		Action: &executorv1.RunCommandRequest_Start{Start: &executorv1.StartCommand{
-			Command: "true",
-			Timeout: durationpb.New(2 * time.Minute),
-		}},
-	})
-	_, err = stream.Recv()
-	if status.Code(err) != codes.InvalidArgument || !refusedBeforeForwarding(status.Convert(err)) {
-		t.Fatalf("timeout over the template limit = %v", err)
-	}
 	if f.connect.count() != 0 {
 		t.Fatal("refused command was forwarded")
+	}
+}
+
+func TestCommandProxyCapsTheTimeout(t *testing.T) {
+	route := ExecutorRoute{MaxCommandBytes: 64, MaxCommandDuration: time.Minute}
+	for _, tc := range []struct {
+		requested *durationpb.Duration
+		want      time.Duration
+	}{
+		{requested: nil, want: time.Minute},
+		{requested: durationpb.New(0), want: time.Minute},
+		{requested: durationpb.New(time.Second), want: time.Second},
+		{requested: durationpb.New(time.Hour), want: time.Minute},
+	} {
+		start := &executorv1.RunCommandRequest{
+			Action: &executorv1.RunCommandRequest_Start{Start: &executorv1.StartCommand{
+				Command: "true",
+				Timeout: tc.requested,
+			}},
+		}
+		forward, err := boundedStart(start, route)
+		if err != nil || forward.GetStart().GetTimeout().AsDuration() != tc.want {
+			t.Fatalf("timeout %v forwarded as %v, %v", tc.requested, forward, err)
+		}
+	}
+	negative := &executorv1.RunCommandRequest{
+		Action: &executorv1.RunCommandRequest_Start{Start: &executorv1.StartCommand{
+			Command: "true",
+			Timeout: durationpb.New(-time.Second),
+		}},
+	}
+	if _, err := boundedStart(negative, route); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("negative timeout = %v", err)
 	}
 }
 
@@ -559,7 +684,14 @@ func TestFileProxyEnforcesTheTemplateFileLimit(t *testing.T) {
 	}
 }
 
-func TestExecutorDialerConnectFollowsThePinnedPod(t *testing.T) {
+type pinnedFileServer struct {
+	pki         platformPKI
+	port        int
+	fingerprint string
+}
+
+func startPinnedFileServer(t *testing.T) pinnedFileServer {
+	t.Helper()
 	pki := newPlatformPKI(t, testProviderClientURI)
 	cfg, fingerprint := executorServerTLS(t, "env", pki)
 	files := memfs.NewWorkspace(proxyRoot)
@@ -578,23 +710,51 @@ func TestExecutorDialerConnectFollowsThePinnedPod(t *testing.T) {
 	}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
-	kube := kubefake.NewSimpleClientset(executorPodAt("executor-env", "pod-1", "127.0.0.1"))
-	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
-	dialer.port = listener.Addr().(*net.TCPAddr).Port
-	pin := ExecutorPin{PodName: "executor-env", PodUID: "pod-1", Fingerprint: fingerprint}
-	stat := func() error {
-		conn, release, err := dialer.Connect(pin)
-		if err != nil {
-			return err
-		}
-		defer release()
-		_, err = executorv1.NewFileServiceClient(conn).StatFile(
-			t.Context(),
-			&executorv1.StatFileRequest{Path: "a.txt"},
-		)
+	port := listener.Addr().(*net.TCPAddr).Port
+	return pinnedFileServer{pki: pki, port: port, fingerprint: fingerprint}
+}
+
+func statThrough(t *testing.T, dialer *ExecutorDialer, pin ExecutorPin) error {
+	t.Helper()
+	conn, release, err := dialer.Connect(pin)
+	if err != nil {
 		return err
 	}
-	if err := stat(); err != nil {
+	defer release()
+	_, err = executorv1.NewFileServiceClient(conn).StatFile(
+		t.Context(),
+		&executorv1.StatFileRequest{Path: "a.txt"},
+	)
+	return err
+}
+
+func TestExecutorDialerConnectConfirmsThePodAfterTheHandshake(t *testing.T) {
+	srv := startPinnedFileServer(t)
+	pin := ExecutorPin{PodName: "executor-env", PodUID: "pod-1", Fingerprint: srv.fingerprint}
+	live := executorPodAt("executor-env", "pod-1", "127.0.0.1")
+	for name, after := range map[string]*corev1.Pod{
+		"unchanged": live,
+		"replaced":  executorPodAt("executor-env", "pod-2", "127.0.0.1"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			kube := podsAfterHandshake(live, after)
+			dialer := NewExecutorDialer(kube, "ns", srv.pki.clientDir, testProviderClientURI)
+			dialer.port = srv.port
+			err := statThrough(t, dialer, pin)
+			if (err == nil) != (name == "unchanged") {
+				t.Fatalf("StatFile with the Pod %s after the handshake = %v", name, err)
+			}
+		})
+	}
+}
+
+func TestExecutorDialerConnectFollowsThePinnedPod(t *testing.T) {
+	srv := startPinnedFileServer(t)
+	kube := kubefake.NewSimpleClientset(executorPodAt("executor-env", "pod-1", "127.0.0.1"))
+	dialer := NewExecutorDialer(kube, "ns", srv.pki.clientDir, testProviderClientURI)
+	dialer.port = srv.port
+	pin := ExecutorPin{PodName: "executor-env", PodUID: "pod-1", Fingerprint: srv.fingerprint}
+	if err := statThrough(t, dialer, pin); err != nil {
 		t.Fatalf("pinned executor = %v", err)
 	}
 	pods := kube.CoreV1().Pods("ns")
@@ -605,7 +765,7 @@ func TestExecutorDialerConnectFollowsThePinnedPod(t *testing.T) {
 	if _, err := pods.Create(t.Context(), replacement, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := stat(); status.Code(err) != codes.Unavailable {
+	if err := statThrough(t, dialer, pin); status.Code(err) != codes.Unavailable {
 		t.Fatalf("replaced Pod at the same address = %v", err)
 	}
 }
@@ -630,4 +790,83 @@ func reasonOf(err error) executorv1.ErrorReason {
 		}
 	}
 	return executorv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+}
+
+func TestCommandProxyRelaysAnUnservedCommandServiceAsNotStarted(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{})
+	f.connect.conn = memexecutor.Dial(t, memexecutor.Executor{
+		Files: memfs.NewWorkspaceOverFileSystem(f.files),
+	})
+	r := executorclient.NewRunner(
+		f.conn,
+		proxyRoot,
+		func(context.Context) (*executorv1.RequestContext, error) {
+			return proxyRequestContext(), nil
+		},
+	)
+	_, err := r.Run(t.Context(), "true")
+	if status.Code(err) != codes.Unimplemented || errors.Is(err, executorclient.ErrOutcomeUnknown) {
+		t.Fatalf("Run = %v, want Unimplemented and not started", err)
+	}
+}
+
+func TestLimiterRefusalsOfExecutorCallsAreNotForwarded(t *testing.T) {
+	stat := &executorv1.StatFileRequest{Context: proxyRequestContext(), Path: "a.txt"}
+	t.Run("at capacity", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{clientMax: 1})
+		f.runner.Script("block", memexecutor.Block("ready"))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stream := startCommand(ctx, t, f.conn, proxyRequestContext(), "block")
+		for range 2 {
+			if _, err := stream.Recv(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := executorv1.NewFileServiceClient(f.conn).StatFile(t.Context(), stat)
+		if status.Code(err) != codes.ResourceExhausted ||
+			reasonOf(err) != executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED {
+			t.Fatalf("StatFile at capacity = %v, want not forwarded", err)
+		}
+		r := executorclient.NewRunner(
+			f.conn,
+			proxyRoot,
+			func(context.Context) (*executorv1.RequestContext, error) {
+				return proxyRequestContext(), nil
+			},
+		)
+		_, err = r.Run(t.Context(), "true")
+		if err == nil || errors.Is(err, executorclient.ErrOutcomeUnknown) {
+			t.Fatalf("Run at capacity = %v, want not started", err)
+		}
+	})
+	t.Run("removed client", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{})
+		removed := f.manifest
+		removed.Generation++
+		removed.Clients = []securityClientManifest{{
+			URI:                "spiffe://mecatl.test/other",
+			MayAttestOwner:     true,
+			ExecutionTemplates: []string{"go"},
+		}}
+		writeManifest(t, f.manifestPath, removed)
+		if err := f.security.Reload(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		_, err := executorv1.NewFileServiceClient(f.conn).StatFile(t.Context(), stat)
+		if status.Code(err) != codes.Unauthenticated ||
+			reasonOf(err) != executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED ||
+			providerCode(err) != executionenv.CodeUnauthenticated {
+			t.Fatalf("StatFile from a removed client = %v, want an unauthenticated refusal", err)
+		}
+	})
+}
+
+func providerCode(err error) executionenv.ErrorCode {
+	for _, d := range status.Convert(err).Details() {
+		if detail, ok := d.(*executionv1.ErrorDetail); ok {
+			return executionenv.ErrorCode(detail.GetCode())
+		}
+	}
+	return ""
 }

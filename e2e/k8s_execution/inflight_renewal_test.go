@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -323,18 +324,25 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 			t.Errorf("release in-flight run: %v", err)
 		}
 	}()
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "renewal-writer", Data: []byte("before\n")}); err != nil {
+	workspace := client.Workspace(rc)
+	if _, err := workspace.CreateFile(ctx, "renewal-writer", []byte("before\n")); err != nil {
 		t.Fatal(err)
 	}
 	type result struct {
-		response executionenv.CommandStartResponse
+		response tool.CommandResult
 		err      error
 	}
 	var r result
 	done := make(chan struct{})
 	commandCtx, stopCommand := context.WithCancel(ctx)
 	go func() {
-		r.response, r.err = client.StartCommand(commandCtx, executionenv.CommandStartRequest{Context: rc, Command: inflightBarrierCommand, TimeoutMillis: 240000})
+		r.response, r.err = runCommand(
+			commandCtx,
+			client,
+			rc,
+			inflightBarrierCommand,
+			4*time.Minute,
+		)
 		close(done)
 	}()
 	defer func() { stopCommand(); <-done }()
@@ -491,15 +499,16 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 	}
 	select {
 	case <-done:
-		if r.err != nil || r.response.CommandID == "" || r.response.CommandID != r.response.Result.CommandID || r.response.State != executionenv.CommandSucceeded || r.response.Result.State != executionenv.CommandSucceeded || r.response.Result.ExitCode != 0 || r.response.Result.TerminalReceipt == "" || !strings.Contains(string(r.response.Result.Stdout), "renewal-terminal") {
-			t.Fatalf("in-flight command terminal proof: state=%s result=%s code=%d receipt=%t err=%v", r.response.State, r.response.Result.State, r.response.Result.ExitCode, r.response.Result.TerminalReceipt != "", r.err)
+		if r.err != nil || r.response.ExitCode != 0 ||
+			!strings.Contains(r.response.Stdout, "renewal-terminal") {
+			t.Fatalf("in-flight command terminal proof: code=%d err=%v", r.response.ExitCode, r.err)
 		}
 	case <-ctx.Done():
 		t.Fatal("in-flight operation did not return a terminal result")
 	}
-	written, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "renewal-writer"})
-	if err != nil || strings.TrimSpace(string(written.Data)) != "after" {
-		t.Fatalf("file mutation across renewal: value=%q err=%v", written.Data, err)
+	written, err := workspace.Read(ctx, "renewal-writer")
+	if err != nil || strings.TrimSpace(string(written)) != "after" {
+		t.Fatalf("file mutation across renewal: value=%q err=%v", written, err)
 	}
 	status := statusAt(ctx)
 	if status.FenceState == "FenceUnknown" || status.PVCUID != before.PVCUID ||
@@ -508,7 +517,7 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		t.Fatalf("renewal changed durable workspace: fence=%q pvc_preserved=%t",
 			status.FenceState, status.PVCUID == before.PVCUID)
 	}
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "after-renewal", Data: []byte("new-call\n")}); err != nil {
+	if _, err := workspace.CreateFile(ctx, "after-renewal", []byte("new-call\n")); err != nil {
 		t.Fatalf("post-renewal file mutation: %v", err)
 	}
 }

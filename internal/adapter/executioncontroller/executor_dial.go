@@ -105,6 +105,21 @@ func (d *ExecutorDialer) Resolve(ctx context.Context, pin ExecutorPin) (string, 
 	return pod.Status.PodIP, nil
 }
 
+// confirm re-reads the pinned Pod after the handshake. A workload that copied
+// its executor's key can answer at the IP once it moves to another Pod, so
+// the Pod must still be the pinned incarnation at the address dialled.
+func (d *ExecutorDialer) confirm(ctx context.Context, pin ExecutorPin, remote net.Addr) error {
+	ip, err := d.Resolve(ctx, pin)
+	if err != nil {
+		return err
+	}
+	tcp, ok := remote.(*net.TCPAddr)
+	if !ok || !tcp.IP.Equal(net.ParseIP(ip)) {
+		return errExecutorPodReplaced
+	}
+	return nil
+}
+
 // TLSConfig accepts only the pinned server certificate; CA validation is replaced by the pin.
 func (d *ExecutorDialer) TLSConfig(pin ExecutorPin) *tls.Config {
 	return &tls.Config{
@@ -137,16 +152,23 @@ func (d *ExecutorDialer) Dial(ctx context.Context, pin ExecutorPin, port int) (*
 		_ = raw.Close()
 		return nil, err
 	}
+	if err := d.confirm(ctx, pin, raw.RemoteAddr()); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
 
 // Connect is an ExecutorConnectFunc for the executor server port. Every dial
-// re-resolves the pinned Pod, so a replacement Pod reusing the address is
-// refused before the handshake.
+// resolves the pinned Pod before the handshake and confirms it after.
 func (d *ExecutorDialer) Connect(pin ExecutorPin) (grpc.ClientConnInterface, func(), error) {
 	conn, err := executorclient.Dial(
 		"passthrough:///"+pin.PodName,
-		credentials.NewTLS(d.TLSConfig(pin)),
+		confirmedCredentials{
+			TransportCredentials: credentials.NewTLS(d.TLSConfig(pin)),
+			dialer:               d,
+			pin:                  pin,
+		},
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return d.dialPod(ctx, pin, d.port)
 		}),
@@ -155,6 +177,38 @@ func (d *ExecutorDialer) Connect(pin ExecutorPin) (grpc.ClientConnInterface, fun
 		return nil, nil, err
 	}
 	return conn, func() { _ = conn.Close() }, nil
+}
+
+// confirmedCredentials completes the handshake, then confirms the pinned Pod
+// before gRPC sends anything on the connection.
+type confirmedCredentials struct {
+	credentials.TransportCredentials
+	dialer *ExecutorDialer
+	pin    ExecutorPin
+}
+
+func (c confirmedCredentials) ClientHandshake(
+	ctx context.Context,
+	authority string,
+	raw net.Conn,
+) (net.Conn, credentials.AuthInfo, error) {
+	conn, info, err := c.TransportCredentials.ClientHandshake(ctx, authority, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := c.dialer.confirm(ctx, c.pin, raw.RemoteAddr()); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	return conn, info, nil
+}
+
+func (c confirmedCredentials) Clone() credentials.TransportCredentials {
+	return confirmedCredentials{
+		TransportCredentials: c.TransportCredentials.Clone(),
+		dialer:               c.dialer,
+		pin:                  c.pin,
+	}
 }
 
 func (d *ExecutorDialer) dialPod(ctx context.Context, pin ExecutorPin, port int) (net.Conn, error) {

@@ -319,9 +319,9 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 		t.Fatalf("manual fire reference not attachable: ready=%t code=%s", fireAttach.Ready, remoteErrorCode(err))
 	}
 	fireClaim, release := acquireRun(t, ctx, provider, owner, fireSession, fireAttach, fmt.Sprintf("verify-manual-%d", id))
-	file, fileErr := provider.File(ctx, executionenv.FileRequest{Context: fireClaim, Operation: executionenv.OpFileRead, Path: proofPath("manual")})
+	file, fileErr := provider.Workspace(fireClaim).Read(ctx, proofPath("manual"))
 	release()
-	if fileErr != nil || string(file.Data) != "manual\n" {
+	if fileErr != nil || string(file) != "manual\n" {
 		t.Fatalf("manual fire did not write remote proof: code=%s", remoteErrorCode(fileErr))
 	}
 	if got := waitBorrowedFire(t, ctx, wire, manual, started); got != fireSession {

@@ -21,16 +21,35 @@ func lifecycleEnvironment(now time.Time) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment",
 		"metadata": map[string]any{"name": "env", "namespace": "ns"},
-		"spec":     map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"},
-		"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{
-			map[string]any{"bindingID": "source", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)},
-		}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+		"spec": map[string]any{
+			"schemaVersion":    int64(3),
+			"revision":         "rev",
+			"ownerHash":        "owner",
+			"clientHash":       hashText("client"),
+			"templateID":       "go",
+			"templateRevision": testProfiles().defaultRevision["go"],
+			"templateDigest":   testProfiles().byName["go"].Digest,
+			"desired":          "Active",
+		},
+		"status": map[string]any{
+			"schemaVersion":   int64(3),
+			"epoch":           int64(1),
+			"grantGeneration": int64(1),
+			"fenceState":      "Healthy",
+			"references": []any{map[string]any{
+				"bindingID":   "source",
+				"state":       "Published",
+				"operationID": "seed",
+				"createdAt":   now.Format(time.RFC3339Nano),
+			}},
+			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+		},
 	}}
 }
 
 func TestEnsurePendingOwnedPersistsOwnerAttestation(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
 	allocation, err := store.EnsurePendingOwnedRevision(
 		t.Context(),
@@ -59,7 +78,7 @@ func TestEnsurePendingOwnedPersistsOwnerAttestation(t *testing.T) {
 func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 	ctx := t.Context()
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	owner := executionenv.Owner{Issuer: "https://issuer.example", Subject: "alice"}
 	allocation, err := store.EnsurePendingOwnedRevision(
 		ctx,
@@ -138,7 +157,7 @@ func TestPublishedBindingReattachesWithoutNewEnsureOperation(t *testing.T) {
 func TestRunClaimIsEnvironmentWideAndExact(t *testing.T) {
 	now := time.Now().UTC()
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), lifecycleEnvironment(now))
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 	first, err := store.AcquireRun(t.Context(), ref, "client", "owner", "source", "run-a", "op-a", time.Minute)
 	if err != nil {
@@ -185,7 +204,7 @@ func TestExactReferenceIntentLookupIsNotTruncatedByGlobalLimit(t *testing.T) {
 		objects = append(objects, env)
 	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	target := executionenv.EnvironmentRef{ID: "env-65", Revision: "rev-65"}
 	intent, err := store.FindReferenceIntent(t.Context(), target, "client", ownerHash(owner), "binding-65")
 	if err != nil || intent.OperationID != "delete-65" {
@@ -233,7 +252,7 @@ func TestClientScopedIntentReconciliationRejectsEachOwnerMutationWithoutSideEffe
 			mutate(env)
 			before := env.DeepCopy()
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			store := NewStore(client, "ns", testProfiles(), nil)
+			store := NewStore(client, "ns", testProfiles())
 			intents, listErr := store.ListReferenceIntentsForClient(t.Context(), "client", 64)
 			if listErr == nil && len(intents) != 0 {
 				t.Fatalf("mutated identity exposed intents: %+v", intents)
@@ -263,7 +282,7 @@ func TestClientScopedIntentListReturnsAttestedOwnerOnlyToOwningClient(t *testing
 		t.Fatal(err)
 	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 	_, err := store.ReserveSuccessor(
 		t.Context(),
@@ -313,7 +332,7 @@ func TestReserveSuccessorReclaimsOnlyExpiredUnfencedRun(t *testing.T) {
 			}
 			before := env.DeepCopy()
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			store := NewStore(client, "ns", testProfiles(), nil)
+			store := NewStore(client, "ns", testProfiles())
 			ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 			_, err := store.ReserveSuccessor(
 				t.Context(),
@@ -348,7 +367,7 @@ func TestReserveSuccessorReclaimsOnlyExpiredUnfencedRun(t *testing.T) {
 func TestReferenceTransactionsRetainUnknownAndNeverChangeSource(t *testing.T) {
 	now := time.Now().UTC()
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), lifecycleEnvironment(now))
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 	_, err := store.ReserveSuccessor(
 		t.Context(),

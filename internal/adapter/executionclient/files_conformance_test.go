@@ -5,14 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"net"
 	"strings"
 	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/test/bufconn"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
@@ -20,7 +17,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/executionenv"
@@ -29,35 +25,8 @@ import (
 	"github.com/stacklok/mecatl/internal/executorrpc/memexecutor"
 )
 
-type executorBackend struct {
-	integrationBackend
-	executor executioncontroller.ExecutorTransport
-}
-
-func (b *executorBackend) File(
-	ctx context.Context,
-	_ string,
-	_ string,
-	q executionenv.FileRequest,
-) (executionenv.FileResponse, error) {
-	route := executioncontroller.ExecutorRoute{
-		MaxFileBytes:    executionenv.MaxFileBytes,
-		MaxCommandBytes: executionenv.MaxCommandBytes,
-	}
-	r, err := b.executor.Execute(ctx, route, executionenv.ExecutorRequest{
-		Operation:   q.Operation,
-		Path:        q.Path,
-		Destination: q.Destination,
-		Pattern:     q.Pattern,
-		Data:        q.Data,
-		Version:     q.Version,
-		Limit:       q.Limit,
-	})
-	return r.FileResponse, err
-}
-
-// osfsExecutorTransport serves the executor Files service over osfs at root.
-func osfsExecutorTransport(t *testing.T, root string) executioncontroller.ExecutorTransport {
+// osfsExecutor serves the executor Files service over osfs at root.
+func osfsExecutor(t *testing.T, root string) grpc.ClientConnInterface {
 	t.Helper()
 	ws, err := osfs.NewWorkspace(root)
 	if err != nil {
@@ -73,33 +42,12 @@ func osfsExecutorTransport(t *testing.T, root string) executioncontroller.Execut
 	if err != nil {
 		t.Fatal(err)
 	}
-	gs := grpc.NewServer()
-	executorv1.RegisterFileServiceServer(gs, srv)
-	lis := bufconn.Listen(1 << 20)
-	go func() { _ = gs.Serve(lis) }()
-	t.Cleanup(gs.Stop)
-	conn, err := grpc.NewClient(
-		"passthrough:///executor",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return lis.DialContext(ctx)
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return executioncontroller.NewServerTransport(
-		func(executioncontroller.ExecutorPin) (grpc.ClientConnInterface, func(), error) {
-			return conn, func() {}, nil
-		},
-	)
+	return serveExecutor(t, func(s *grpc.Server) { executorv1.RegisterFileServiceServer(s, srv) })
 }
 
 func remoteExecutorEnvironment(t *testing.T) tool.Environment {
 	t.Helper()
-	executor := osfsExecutorTransport(t, t.TempDir())
-	fx := startFixture(t, &executorBackend{executor: executor}, nil)
+	fx := startFixture(t, &integrationBackend{}, nil, osfsExecutor(t, t.TempDir()))
 	t.Cleanup(fx.stop)
 	return acquireRemoteRun(t, fx)
 }
@@ -137,22 +85,23 @@ func executorServicesEnvironment(
 	if err != nil {
 		t.Fatal(err)
 	}
-	fx := startFixture(t, &integrationBackend{}, nil, func(s *grpc.Server) {
+	executor := serveExecutor(t, func(s *grpc.Server) {
 		executorv1.RegisterFileServiceServer(s, files)
 		executorv1.RegisterCommandServiceServer(s, commands)
 	})
+	fx := startFixture(t, &integrationBackend{}, nil, executor)
 	t.Cleanup(fx.stop)
-	return acquireRemoteRun(t, fx, WithExecutorServices()), files
+	return acquireRemoteRun(t, fx), files
 }
 
-func acquireRemoteRun(t *testing.T, fx grpcFixture, opts ...ProviderOption) tool.Environment {
+func acquireRemoteRun(t *testing.T, fx grpcFixture) tool.Environment {
 	t.Helper()
 	client, err := New(fx.endpoint, fx.clientTLS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	provider, err := NewTemplateProvider(client, "coding", codingRevision, opts...)
+	provider, err := NewTemplateProvider(client, "coding", codingRevision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +131,8 @@ func acquireRemoteRun(t *testing.T, fx grpcFixture, opts ...ProviderOption) tool
 }
 
 var remoteTransports = map[string]func(t *testing.T) tool.Environment{
-	"ProviderFiles": remoteExecutorEnvironment,
-	"ExecutorServices": func(t *testing.T) tool.Environment {
+	"OSFS": remoteExecutorEnvironment,
+	"MemFS": func(t *testing.T) tool.Environment {
 		env, _ := executorServicesEnvironment(t, memexecutor.NewRunner())
 		return env
 	},
@@ -199,7 +148,7 @@ func TestRemoteWorkspaceConformanceThroughSignedGRPC(t *testing.T) {
 	}
 }
 
-func TestExecutorServicesCarryTheRunClaim(t *testing.T) {
+func TestProxiedCallsCarryTheRunClaim(t *testing.T) {
 	runner := memexecutor.NewRunner()
 	runner.Script("echo hi", memexecutor.Exit("hi\n", "", 0))
 	env, files := executorServicesEnvironment(t, runner)

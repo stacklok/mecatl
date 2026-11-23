@@ -26,6 +26,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -35,16 +36,18 @@ const scopeAdmin = "spiffe://example/operations"
 var scopeOwner = executionenv.Owner{Issuer: "https://issuer.example", Subject: "owner"}
 
 type adminScopeFixture struct {
-	client   executionv1.ExecutionProviderServiceClient
-	dynamic  *dynamicfake.FakeDynamicClient
-	manager  *SecurityManager
-	manifest securityManifest
-	path     string
+	client    executionv1.ExecutionProviderServiceClient
+	conn      *grpc.ClientConn
+	connector *recordingConnector
+	dynamic   *dynamicfake.FakeDynamicClient
+	manager   *SecurityManager
+	manifest  securityManifest
+	path      string
 }
 
 func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture {
 	t.Helper()
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	if route == "data" {
 		env = runFixtureEnvironment(4, 4)
 	}
@@ -64,7 +67,7 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 	_ = unstructured.SetNestedField(env.Object, int64(4), "status", "grantGeneration")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
-	store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
+	store := NewStore(d, "ns", testProfiles()).WithKubeClient(k)
 	dir, now := t.TempDir(), time.Now().UTC()
 	ca, cert, key, clientCert := rpcSecurityPKI(t, now, actor)
 	for name, data := range map[string][]byte{"server.crt": cert, "server.key": key, "clients.pem": ca} {
@@ -80,7 +83,10 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 		t.Fatal(err)
 	}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(manager.TLSConfig())))
-	executionv1.RegisterExecutionProviderServiceServer(server, NewHandler(HandlerConfig{Security: manager}, store))
+	handler := NewHandler(HandlerConfig{Security: manager}, store)
+	executionv1.RegisterExecutionProviderServiceServer(server, handler)
+	connector := &recordingConnector{}
+	RegisterExecutorServices(server, handler, connector.Connect)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +100,15 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &adminScopeFixture{client: executionv1.NewExecutionProviderServiceClient(conn), dynamic: d, manager: manager, manifest: mf, path: path}
+	return &adminScopeFixture{
+		client:    executionv1.NewExecutionProviderServiceClient(conn),
+		conn:      conn,
+		connector: connector,
+		dynamic:   d,
+		manager:   manager,
+		manifest:  mf,
+		path:      path,
+	}
 }
 
 func (f *adminScopeFixture) policy(t *testing.T, admin bool, scope []string) {
@@ -439,11 +453,14 @@ func TestScopedAdminDoesNotGrantAttestationOrDataPlane(t *testing.T) {
 			return err
 		},
 		"files": func() error {
-			_, err := f.client.Files(t.Context(), &executionv1.FileRequest{Context: request, Operation: executionv1.FileOperation_FILE_OPERATION_READ, Path: "file"})
+			_, err := executorv1.NewFileServiceClient(f.conn).StatFile(
+				t.Context(),
+				&executorv1.StatFileRequest{Context: executorRequest(request), Path: "file"},
+			)
 			return err
 		},
 		"shell": func() error {
-			_, err := f.client.StartCommand(t.Context(), &executionv1.CommandStartRequest{Context: request, Command: "true"})
+			_, err := startCommand(t.Context(), t, f.conn, executorRequest(request), "true").Recv()
 			return err
 		},
 	}
@@ -462,6 +479,9 @@ func TestScopedAdminDoesNotGrantAttestationOrDataPlane(t *testing.T) {
 		if err := call(); status.Code(err) != want {
 			t.Errorf("%s: want %v, got %v", name, want, err)
 		}
+	}
+	if f.connector.count() != 0 {
+		t.Fatal("scoped administrator reached an executor")
 	}
 	after, err := f.dynamic.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 	if err != nil {

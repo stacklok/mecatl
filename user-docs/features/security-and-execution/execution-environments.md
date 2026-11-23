@@ -215,7 +215,7 @@ provider workflow is unsupported. Do not remove the retention or executor
 finalizers manually; follow the operator's external-fencing runbook when the
 provider cannot independently observe terminal compute.
 
-Execution environments require schema version 2 in both spec and status. Missing,
+Execution environments require schema version 3 in both spec and status. Missing,
 unsupported, or mismatched versions fail closed. Preserve the objects, PVCs, and
 authority records when diagnosing a schema rejection; do not edit version fields,
 reset ledgers, or delete workspace data to bypass validation.
@@ -253,8 +253,8 @@ client authorization policy and names the TLS files:
 }
 ```
 
-The provider checks the original peer certificate and current client policy at
-admission, renewal, and completion. A policy change increments `generation`;
+The provider checks the peer certificate and current client policy when each
+call starts. A policy change increments `generation`;
 TLS certificate or trust renewal is independent of that generation. Service
 mTLS identifies `mecak8s` or an administrator; the session owner remains the
 user's verified OIDC issuer and subject. The workload helper receives no client
@@ -289,8 +289,7 @@ rejected. The provider reloads renewed valid TLS material independently of the
 client-policy manifest. For client-policy changes, publish a higher-generation
 manifest and verify provider readiness. A stale replica denies requests rather
 than using a rolled-back policy. TLS trust withdrawal or certificate expiry
-aborts affected in-flight operations; old RPCs drain only while their original
-peer identity remains authorized. See the
+refuses the affected client's new calls; calls in progress finish. See the
 [policy and TLS rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
 ### Template policy
@@ -352,7 +351,7 @@ same-release reinstalls. A missing ledger with retained allocations is not a new
 installation: do not bootstrap it at generation 1. See the
 [provider lifecycle procedure](/operating/mecak8s/execution-provider-lifecycle.md#upgrade-uninstall-and-reinstall-the-execution-provider)
 for ownership checks, retained network protection, and quiesced CRD/provider
-upgrade order. Verify that retained environments use schema version 2 before
+upgrade order. Verify that retained environments use schema version 3 before
 enabling new sessions.
 
 ## Limitations

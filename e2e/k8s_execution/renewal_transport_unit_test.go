@@ -30,7 +30,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 type renewalTestIdentity struct {
@@ -124,8 +126,7 @@ func TestFinalMockTLSSelectsCurrentIssuedIdentityAfterInitialExpiry(t *testing.T
 
 type renewalCatalogServer struct {
 	executionv1.UnimplementedExecutionProviderServiceServer
-	started, release chan struct{}
-	clientSerial     atomic.Value
+	clientSerial atomic.Value
 }
 
 func (s *renewalCatalogServer) ListExecutionTemplates(ctx context.Context, _ *executionv1.ListExecutionTemplatesRequest) (*executionv1.ListExecutionTemplatesResponse, error) {
@@ -141,14 +142,34 @@ func (s *renewalCatalogServer) ListExecutionTemplates(ctx context.Context, _ *ex
 	return &executionv1.ListExecutionTemplatesResponse{}, nil
 }
 
-func (s *renewalCatalogServer) StartCommand(ctx context.Context, _ *executionv1.CommandStartRequest) (*executionv1.CommandStartResponse, error) {
+type renewalCommandServer struct {
+	executorv1.UnimplementedCommandServiceServer
+	started, release chan struct{}
+}
+
+func (s *renewalCommandServer) RunCommand(
+	stream grpc.BidiStreamingServer[executorv1.RunCommandRequest, executorv1.RunCommandResponse],
+) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	err := stream.Send(&executorv1.RunCommandResponse{
+		Event: &executorv1.RunCommandResponse_Started{Started: &executorv1.CommandStarted{}},
+	})
+	if err != nil {
+		return err
+	}
 	close(s.started)
 	select {
 	case <-s.release:
-		return &executionv1.CommandStartResponse{}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-stream.Context().Done():
+		return stream.Context().Err()
 	}
+	return stream.Send(&executorv1.RunCommandResponse{
+		Event: &executorv1.RunCommandResponse_Result{Result: &executorv1.CommandResult{
+			State: executorv1.CommandState_COMMAND_STATE_SUCCEEDED,
+		}},
+	})
 }
 
 func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
@@ -166,9 +187,11 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	svc := &renewalCatalogServer{started: make(chan struct{}), release: make(chan struct{})}
+	svc := &renewalCatalogServer{}
+	commands := &renewalCommandServer{started: make(chan struct{}), release: make(chan struct{})}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return serverPair.Load(), nil }})))
 	executionv1.RegisterExecutionProviderServiceServer(server, svc)
+	executorv1.RegisterCommandServiceServer(server, commands)
 	go func() { _ = server.Serve(listener) }()
 	defer server.Stop()
 	dir := t.TempDir()
@@ -203,12 +226,12 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 	done := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		_, err := executionv1.NewExecutionProviderServiceClient(client).StartCommand(ctx, &executionv1.CommandStartRequest{})
+		_, err := client.Commands(executionenv.RequestContext{}).Run(ctx, "true")
 		result <- err
 		close(done)
 	}()
 	select {
-	case <-svc.started:
+	case <-commands.started:
 	case <-ctx.Done():
 		t.Fatal("command did not start")
 	}
@@ -252,7 +275,7 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 	if err := inflightRunning(ctx, done); err != nil {
 		t.Fatal(err)
 	}
-	close(svc.release)
+	close(commands.release)
 	select {
 	case err := <-result:
 		if err != nil {

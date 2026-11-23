@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptrace"
 	"os"
@@ -29,6 +30,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -260,7 +262,8 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	}
 	installQualificationHelper(ctx, t, client, rc)
 	beforeCommand := runQualificationTests(ctx, t, client, rc)
-	t.Logf("live stage=independent_typed_verification reason=ok artifact_count=%d command_exit_code=%d", len(before), beforeCommand.Result.ExitCode)
+	t.Logf("live stage=independent_typed_verification reason=ok "+
+		"artifact_count=%d command_exit_code=%d", len(before), beforeCommand.ExitCode)
 
 	// No verifier claim or connection may survive either deployment restart.
 	release()
@@ -313,7 +316,9 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	}
 	assertQualificationHelper(ctx, t, freshClient, postRestartRC)
 	afterCommand := runQualificationTests(ctx, t, freshClient, postRestartRC)
-	t.Logf("live stage=restart_verification reason=ok artifact_count=%d before_exit_code=%d after_exit_code=%d", len(after), beforeCommand.Result.ExitCode, afterCommand.Result.ExitCode)
+	t.Logf("live stage=restart_verification reason=ok artifact_count=%d "+
+		"before_exit_code=%d after_exit_code=%d",
+		len(after), beforeCommand.ExitCode, afterCommand.ExitCode)
 	releasePostRestart()
 	assertRunReleased(ctx, t, freshClient, postRestartRC)
 
@@ -380,8 +385,8 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 		ToolNames:             observedTools,
 		ArtifactCount:         len(after),
 		RestartVerified:       true,
-		BeforeRestartExitCode: beforeCommand.Result.ExitCode,
-		AfterRestartExitCode:  afterCommand.Result.ExitCode,
+		BeforeRestartExitCode: beforeCommand.ExitCode,
+		AfterRestartExitCode:  afterCommand.ExitCode,
 		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := writeLiveSummary(state, summary); err != nil {
@@ -444,9 +449,10 @@ func readQualificationArtifacts(ctx context.Context, t *testing.T, state string,
 	t.Helper()
 	artifacts := make(map[string][]byte, len(qualificationArtifactPaths))
 	for _, path := range qualificationArtifactPaths {
-		data, failure := readQualificationArtifact(ctx, phase, path, func(ctx context.Context) (executionenv.FileResponse, error) {
-			return client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: path})
-		})
+		read := func(ctx context.Context) ([]byte, error) {
+			return client.Workspace(rc).Read(ctx, path)
+		}
+		data, failure := readQualificationArtifact(ctx, phase, path, read)
 		if failure != nil {
 			writeLiveQualificationFailureSummary(t, state, rc, *failure)
 			t.Fatalf("typed gRPC artifact verification failed: %s", failure)
@@ -461,11 +467,24 @@ func readQualificationArtifacts(ctx context.Context, t *testing.T, state string,
 	return artifacts
 }
 
-func readQualificationArtifact(ctx context.Context, phase, path string, read func(context.Context) (executionenv.FileResponse, error)) ([]byte, *qualificationArtifactFailure) {
+func readQualificationArtifact(
+	ctx context.Context,
+	phase string,
+	path string,
+	read func(context.Context) ([]byte, error),
+) ([]byte, *qualificationArtifactFailure) {
 	return readQualificationArtifactWithRetry(ctx, phase, path, read, 30*time.Second, 60, waitQualificationArtifactRetry)
 }
 
-func readQualificationArtifactWithRetry(ctx context.Context, phase, path string, read func(context.Context) (executionenv.FileResponse, error), timeout time.Duration, maxAttempts int, wait func(context.Context) error) ([]byte, *qualificationArtifactFailure) {
+func readQualificationArtifactWithRetry(
+	ctx context.Context,
+	phase string,
+	path string,
+	read func(context.Context) ([]byte, error),
+	timeout time.Duration,
+	maxAttempts int,
+	wait func(context.Context) error,
+) ([]byte, *qualificationArtifactFailure) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -481,10 +500,10 @@ func readQualificationArtifactWithRetry(ctx context.Context, phase, path string,
 		}
 		file, err := read(ctx)
 		if err == nil {
-			if len(file.Data) == 0 {
+			if len(file) == 0 {
 				return nil, &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: "empty_response", ErrorClass: "none", ByteCount: 0, Attempts: attempt}
 			}
-			return bytes.Clone(file.Data), nil
+			return bytes.Clone(file), nil
 		}
 
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -500,9 +519,17 @@ func readQualificationArtifactWithRetry(ctx context.Context, phase, path string,
 			return nil, &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: qualificationRetryOutcome(termination), ErrorClass: "none", Attempts: attempt}
 		}
 
-		var remote *executionenv.Error
-		retryable := errors.As(err, &remote) && remote.Code == executionenv.CodeNotReady && remote.Retryable
-		failure := &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: "read_error", ErrorClass: remoteErrorCode(err), Retryable: retryable, ByteCount: len(file.Data), Attempts: attempt}
+		remote := remoteError(err)
+		retryable := remote != nil && remote.Code == executionenv.CodeNotReady && remote.Retryable
+		failure := &qualificationArtifactFailure{
+			Phase:      phase,
+			Path:       path,
+			Outcome:    "read_error",
+			ErrorClass: remoteErrorCode(err),
+			Retryable:  retryable,
+			ByteCount:  len(file),
+			Attempts:   attempt,
+		}
 		if !retryable {
 			return nil, failure
 		}
@@ -548,22 +575,19 @@ func containsExactLine(content []byte, want string) bool {
 
 func installQualificationHelper(ctx context.Context, t *testing.T, client *executionclient.Client, rc executionenv.RequestContext) {
 	t.Helper()
-	file, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: qualificationHelperPath})
+	file, err := client.Workspace(rc).Read(ctx, qualificationHelperPath)
 	if err == nil {
-		if !bytes.Equal(file.Data, []byte(qualificationHelperFile)) {
+		if !bytes.Equal(file, []byte(qualificationHelperFile)) {
 			t.Fatal("existing qualification helper differs; refusing overwrite")
 		}
 		return
 	}
-	if !isRemoteCode(err, executionenv.CodeNotFound) {
+	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal("inspect existing qualification helper failed")
 	}
-	if _, err := client.File(ctx, executionenv.FileRequest{
-		Context:   rc,
-		Operation: executionenv.OpFileCreate,
-		Path:      qualificationHelperPath,
-		Data:      []byte(qualificationHelperFile),
-	}); err != nil {
+	helper := []byte(qualificationHelperFile)
+	_, err = client.Workspace(rc).CreateFile(ctx, qualificationHelperPath, helper)
+	if err != nil {
 		t.Fatal("create fixed qualification semantics test failed")
 	}
 	assertQualificationHelper(ctx, t, client, rc)
@@ -571,16 +595,21 @@ func installQualificationHelper(ctx context.Context, t *testing.T, client *execu
 
 func assertQualificationHelper(ctx context.Context, t *testing.T, client *executionclient.Client, rc executionenv.RequestContext) {
 	t.Helper()
-	file, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: qualificationHelperPath})
-	if err != nil || !bytes.Equal(file.Data, []byte(qualificationHelperFile)) {
+	file, err := client.Workspace(rc).Read(ctx, qualificationHelperPath)
+	if err != nil || !bytes.Equal(file, []byte(qualificationHelperFile)) {
 		t.Fatal("fixed qualification semantics test changed or was unavailable")
 	}
 }
 
-func runQualificationTests(ctx context.Context, t *testing.T, client *executionclient.Client, rc executionenv.RequestContext) executionenv.CommandStartResponse {
+func runQualificationTests(
+	ctx context.Context,
+	t *testing.T,
+	client *executionclient.Client,
+	rc executionenv.RequestContext,
+) tool.CommandResult {
 	t.Helper()
-	command, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go test ./...", TimeoutMillis: 120000})
-	if err != nil || command.State != executionenv.CommandSucceeded || command.Result.ExitCode != 0 {
+	command, err := runCommand(ctx, client, rc, "go test ./...", 2*time.Minute)
+	if err != nil || command.ExitCode != 0 {
 		t.Fatal("typed gRPC independent go test failed")
 	}
 	return command

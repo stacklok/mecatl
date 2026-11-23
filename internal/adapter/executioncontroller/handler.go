@@ -59,18 +59,10 @@ type Allocation struct {
 	AdmittedCapabilities         []string
 }
 
-// Backend implements provider-side authorization state and executor dispatch.
+// Backend implements provider-side authorization state.
 type Backend interface {
 	Attach(context.Context, executionenv.EnvironmentRef, string, string, string) (Allocation, error)
 	ReleaseReference(context.Context, executionenv.EnvironmentRef, string, string, string) error
-	File(context.Context, string, string, executionenv.FileRequest) (executionenv.FileResponse, error)
-	StartCommand(context.Context, string, string, executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error)
-	CommandStatus(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error)
-	CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error)
-}
-
-type runClaimValidator interface {
-	ValidateRunClaim(context.Context, string, string, executionenv.RequestContext) error
 }
 
 type lifecycleBackend interface {
@@ -501,98 +493,6 @@ func (h *Handler) adminRequest(ctx context.Context, pRef *executionv1.Environmen
 	return adminLifecycleRequest{Environment: ref, OwnerHash: ownerHash(owner), Client: c.id, AdministratorFor: c.policy.AdministratorFor, ExpectedEpoch: epoch, ExpectedPodUID: podUID, ExpectedPVCUID: pvcUID, OperationID: operationID}, nil
 }
 
-// Files executes one bounded and authorized filesystem operation.
-func (h *Handler) Files(ctx context.Context, q *executionv1.FileRequest) (*executionv1.FileResponse, error) {
-	if _, err := h.client(ctx); err != nil {
-		return nil, err
-	}
-	op, ok := operationFromProto(q.GetOperation())
-	if q == nil || !ok || !validFileRequest(q) {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
-	c, owner, rc, err := h.authorize(ctx, q.Context, op)
-	if err != nil {
-		return nil, err
-	}
-	req := executionenv.FileRequest{Context: rc, Operation: op, Path: q.Path, Destination: q.Destination, Pattern: q.Pattern, Data: q.Data, Version: string(q.Version), Limit: int(q.Limit)}
-	out, err := h.backend.File(ctx, c.id, owner, req)
-	if err != nil {
-		return nil, backendError(err)
-	}
-	return fileResponse(out), nil
-}
-
-// StartCommand executes one authorized foreground command.
-func (h *Handler) StartCommand(ctx context.Context, q *executionv1.CommandStartRequest) (*executionv1.CommandStartResponse, error) {
-	if _, err := h.client(ctx); err != nil {
-		return nil, err
-	}
-	if q == nil || len(q.Command) == 0 || len(q.Command) > executionenv.MaxCommandBytes || q.TimeoutMillis < 0 {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
-	c, owner, rc, err := h.authorize(ctx, q.Context, executionenv.OpCommandStart)
-	if err != nil {
-		return nil, err
-	}
-	out, err := h.backend.StartCommand(ctx, c.id, owner, executionenv.CommandStartRequest{Context: rc, Command: q.Command, TimeoutMillis: q.TimeoutMillis})
-	if err != nil {
-		return nil, backendError(err)
-	}
-	response, ok := commandStartResponse(out)
-	if !ok {
-		return nil, wireError(executionenv.CodeInternal, false)
-	}
-	return response, nil
-}
-
-// CommandStatus authorizes then reports the detached API as unsupported.
-func (h *Handler) CommandStatus(ctx context.Context, q *executionv1.CommandQueryRequest) (*executionv1.CommandStatusResponse, error) {
-	return h.commandQuery(ctx, q, executionenv.OpCommandStatus)
-}
-
-// CancelCommand authorizes then reports the detached API as unsupported.
-func (h *Handler) CancelCommand(ctx context.Context, q *executionv1.CommandQueryRequest) (*executionv1.CommandStatusResponse, error) {
-	return h.commandQuery(ctx, q, executionenv.OpCommandCancel)
-}
-func (h *Handler) commandQuery(ctx context.Context, q *executionv1.CommandQueryRequest, op executionenv.Operation) (*executionv1.CommandStatusResponse, error) {
-	_, _, _, err := h.authorize(ctx, q.GetContext(), op)
-	if err != nil {
-		return nil, err
-	}
-	if q.CommandId == "" || q.Offset < 0 {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
-	return nil, status.Error(codes.Unimplemented, "foreground commands have no detached control API")
-}
-
-func (h *Handler) authorize(ctx context.Context, p *executionv1.RequestContext, op executionenv.Operation) (authenticatedClient, string, executionenv.RequestContext, error) {
-	switch op {
-	case executionenv.OpFileRead, executionenv.OpFileResolveAuthority, executionenv.OpFileStat, executionenv.OpFileCreate, executionenv.OpFileReplace, executionenv.OpFileList, executionenv.OpFileRemove, executionenv.OpFileRename, executionenv.OpFileCopy, executionenv.OpFileGlob, executionenv.OpFileGrep, executionenv.OpCommandStart, executionenv.OpCommandStatus, executionenv.OpCommandCancel:
-	default:
-		return authenticatedClient{}, "", executionenv.RequestContext{}, wireError(executionenv.CodePermissionDenied, false)
-	}
-	c, err := h.client(ctx)
-	if err != nil {
-		return c, "", executionenv.RequestContext{}, err
-	}
-	rc, ok := requestContextFromProto(p)
-	if !ok {
-		return c, "", rc, wireError(executionenv.CodePermissionDenied, false)
-	}
-	oh := ownerHash(rc.Owner)
-	if !c.policy.MayAttestOwner {
-		return c, "", rc, wireError(executionenv.CodePermissionDenied, false)
-	}
-	validator, ok := h.backend.(runClaimValidator)
-	if !ok {
-		return c, "", rc, wireError(executionenv.CodeNotReady, false)
-	}
-	if err := validator.ValidateRunClaim(ctx, c.id, oh, rc); err != nil {
-		return c, "", rc, backendError(err)
-	}
-	return c, oh, rc, nil
-}
-
 func requestContextFromProto(p *executionv1.RequestContext) (executionenv.RequestContext, bool) {
 	owner, ownerOK := ownerFromProto(p.GetOwner())
 	ref := refFromProto(p.GetEnvironment())
@@ -617,37 +517,6 @@ func refToProto(r executionenv.EnvironmentRef) *executionv1.EnvironmentRef {
 	return &executionv1.EnvironmentRef{Id: valid(r.ID), Revision: valid(r.Revision)}
 }
 
-func validFileRequest(q *executionv1.FileRequest) bool { //nolint:gocyclo // Closed operation/field matrix is intentionally explicit.
-	if len(q.Data) > executionenv.MaxFileBytes || len(q.Path) > executionenv.MaxPathBytes || len(q.Destination) > executionenv.MaxPathBytes || len(q.Pattern) > executionenv.MaxPathBytes || q.Limit < 0 || q.Limit > executionenv.MaxListEntries {
-		return false
-	}
-	path, dest, pattern, data, version, limit := q.Path != "", q.Destination != "", q.Pattern != "", len(q.Data) != 0, len(q.Version) != 0, q.Limit != 0
-	switch q.Operation {
-	case executionv1.FileOperation_FILE_OPERATION_READ, executionv1.FileOperation_FILE_OPERATION_RESOLVE_AUTHORITY, executionv1.FileOperation_FILE_OPERATION_STAT, executionv1.FileOperation_FILE_OPERATION_REMOVE:
-		return path && !dest && !pattern && !data && !version && !limit
-	case executionv1.FileOperation_FILE_OPERATION_CREATE:
-		return path && !dest && !pattern && !version && !limit
-	case executionv1.FileOperation_FILE_OPERATION_REPLACE:
-		return path && !dest && !pattern && version && !limit
-	case executionv1.FileOperation_FILE_OPERATION_LIST:
-		return path && !dest && !pattern && !data && !version
-	case executionv1.FileOperation_FILE_OPERATION_RENAME, executionv1.FileOperation_FILE_OPERATION_COPY:
-		return path && dest && !pattern && !data && !version && !limit
-	case executionv1.FileOperation_FILE_OPERATION_GLOB:
-		return !path && !dest && pattern && !data && !version
-	case executionv1.FileOperation_FILE_OPERATION_GREP:
-		return path && !dest && pattern && !data && !version
-	default:
-		return false
-	}
-}
-
-func operationFromProto(op executionv1.FileOperation) (executionenv.Operation, bool) {
-	m := map[executionv1.FileOperation]executionenv.Operation{executionv1.FileOperation_FILE_OPERATION_READ: executionenv.OpFileRead, executionv1.FileOperation_FILE_OPERATION_RESOLVE_AUTHORITY: executionenv.OpFileResolveAuthority, executionv1.FileOperation_FILE_OPERATION_STAT: executionenv.OpFileStat, executionv1.FileOperation_FILE_OPERATION_CREATE: executionenv.OpFileCreate, executionv1.FileOperation_FILE_OPERATION_REPLACE: executionenv.OpFileReplace, executionv1.FileOperation_FILE_OPERATION_LIST: executionenv.OpFileList, executionv1.FileOperation_FILE_OPERATION_REMOVE: executionenv.OpFileRemove, executionv1.FileOperation_FILE_OPERATION_RENAME: executionenv.OpFileRename, executionv1.FileOperation_FILE_OPERATION_COPY: executionenv.OpFileCopy, executionv1.FileOperation_FILE_OPERATION_GLOB: executionenv.OpFileGlob, executionv1.FileOperation_FILE_OPERATION_GREP: executionenv.OpFileGrep}
-	v, ok := m[op]
-	return v, ok
-}
-
 func ensureResponse(a Allocation) *executionv1.EnsureEnvironmentResponse {
 	return &executionv1.EnsureEnvironmentResponse{
 		Environment:          refToProto(a.Environment),
@@ -666,67 +535,6 @@ func attachResponse(a Allocation) *executionv1.AttachEnvironmentResponse {
 		AdmittedCapabilities: a.AdmittedCapabilities,
 	}
 }
-func fileResponse(v executionenv.FileResponse) *executionv1.FileResponse {
-	r := &executionv1.FileResponse{Data: v.Data, Version: []byte(v.Version), Paths: validAll(v.Paths), AuthorityTarget: valid(v.AuthorityTarget), AuthorityWorkspace: valid(v.AuthorityWorkspace)}
-	if v.Info != nil {
-		r.Info = fileInfoToProto(*v.Info)
-	}
-	for _, x := range v.Entries {
-		r.Entries = append(r.Entries, fileInfoToProto(x))
-	}
-	for _, x := range v.Matches {
-		r.Matches = append(r.Matches, &executionv1.GrepMatch{Path: valid(x.Path), Line: boundedInt32(x.Line), Text: valid(x.Text)})
-	}
-	return r
-}
-func fileInfoToProto(v executionenv.FileInfo) *executionv1.FileInfo {
-	return &executionv1.FileInfo{Name: valid(v.Name), Size: v.Size, Mode: v.Mode, ModTime: timestamppb.New(v.ModTime), IsDir: v.IsDir}
-}
-func commandStartResponse(v executionenv.CommandStartResponse) (*executionv1.CommandStartResponse, bool) {
-	state, ok := commandStateToProto(v.State)
-	if !ok {
-		return nil, false
-	}
-	result, ok := commandStatusResponse(v.Result)
-	if !ok {
-		return nil, false
-	}
-	return &executionv1.CommandStartResponse{CommandId: valid(v.CommandID), State: state, Result: result}, true
-}
-func commandStatusResponse(v executionenv.CommandStatusResponse) (*executionv1.CommandStatusResponse, bool) {
-	state, ok := commandStateToProto(v.State)
-	if !ok {
-		return nil, false
-	}
-	return &executionv1.CommandStatusResponse{CommandId: valid(v.CommandID), State: state, ExitCode: boundedInt32(v.ExitCode), Stdout: v.Stdout, Stderr: v.Stderr, NextOffset: v.NextOffset, Truncated: v.Truncated, TerminalReceipt: valid(v.TerminalReceipt)}, true
-}
-func boundedInt32(v int) int32 {
-	if v > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if v < math.MinInt32 {
-		return math.MinInt32
-	}
-	return int32(v) //nolint:gosec // bounds checked above
-}
-
-func commandStateToProto(v executionenv.CommandState) (executionv1.CommandState, bool) {
-	switch v {
-	case executionenv.CommandRunning:
-		return executionv1.CommandState_COMMAND_STATE_RUNNING, true
-	case executionenv.CommandSucceeded:
-		return executionv1.CommandState_COMMAND_STATE_SUCCEEDED, true
-	case executionenv.CommandFailed:
-		return executionv1.CommandState_COMMAND_STATE_FAILED, true
-	case executionenv.CommandCancelled:
-		return executionv1.CommandState_COMMAND_STATE_CANCELLED, true
-	case executionenv.CommandFenceUnknown:
-		return executionv1.CommandState_COMMAND_STATE_FENCE_UNKNOWN, true
-	default:
-		return executionv1.CommandState_COMMAND_STATE_UNSPECIFIED, false
-	}
-}
-
 func validIdentity(v string) bool    { return v != "" && len(v) <= executionenv.MaxIdentityBytes }
 func validBinding(v string) bool     { return v != "" && len(v) <= executionenv.MaxBindingBytes }
 func validOperationID(v string) bool { return validIdentity(v) }
@@ -842,13 +650,6 @@ func valid(s string) string {
 		return s
 	}
 	return strings.ToValidUTF8(s, "�")
-}
-func validAll(in []string) []string {
-	out := make([]string, len(in))
-	for i := range in {
-		out[i] = valid(in[i])
-	}
-	return out
 }
 
 // TLSConfig returns the provider's TLS 1.3 mutual-authentication policy.

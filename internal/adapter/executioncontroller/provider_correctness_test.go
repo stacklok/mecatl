@@ -17,6 +17,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -27,7 +28,7 @@ func TestRevokedFencedEnvironmentStopsExecutor(t *testing.T) {
 			name = "missing"
 		}
 		t.Run(name, func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 			profiles := testProfiles()
 			if missing {
@@ -73,7 +74,7 @@ func TestRevokedFencedEnvironmentStopsExecutor(t *testing.T) {
 			if _, err := kube.CoreV1().PersistentVolumeClaims("ns").Get(t.Context(), "workspace", metav1.GetOptions{}); err != nil {
 				t.Fatalf("workspace lost: %v", err)
 			}
-			store := NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kube)
+			store := NewStore(dynamicClient, "ns", profiles).WithKubeClient(kube)
 			q := adminRequestFixture()
 			if err := store.RecoverEnvironment(t.Context(), q); err == nil {
 				t.Fatal("deleted Pod incorrectly proved termination")
@@ -89,7 +90,7 @@ func TestRevokedFencedEnvironmentStopsExecutor(t *testing.T) {
 func TestRevokedFencedEnvironmentWithTerminalPodCanRecoverAndRetire(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(map[bool]string{true: "missing", false: "revoked"}[missing], func(t *testing.T) {
-			env := lifecycleAdminEnvironment(2, []any{})
+			env := lifecycleAdminEnvironment(3, []any{})
 			_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 			profiles := testProfiles()
 			if missing {
@@ -125,7 +126,7 @@ func TestRevokedFencedEnvironmentWithTerminalPodCanRecoverAndRetire(t *testing.T
 			if err := r.Reconcile(t.Context(), "env"); err != nil {
 				t.Fatal(err)
 			}
-			store := NewStore(client, "ns", profiles, nil).WithKubeClient(kube)
+			store := NewStore(client, "ns", profiles).WithKubeClient(kube)
 			q := adminRequestFixture()
 			if err := store.RecoverEnvironment(t.Context(), q); !codeIs(err, executionenv.CodeFenceUnknown) {
 				t.Fatalf("running executor incorrectly proved termination: %v", err)
@@ -141,7 +142,7 @@ func TestRevokedFencedEnvironmentWithTerminalPodCanRecoverAndRetire(t *testing.T
 			// A fresh reconciler and store must finish from persisted Kubernetes and CR state.
 			r = NewReconciler(client, kube, "ns", profiles)
 			t.Cleanup(r.queue.ShutDown)
-			store = NewStore(client, "ns", profiles, nil).WithKubeClient(kube)
+			store = NewStore(client, "ns", profiles).WithKubeClient(kube)
 			if err := store.RecoverEnvironment(t.Context(), q); err != nil {
 				t.Fatalf("terminal executor could not prove recovery: %v", err)
 			}
@@ -190,7 +191,7 @@ func TestRevokedFencedEnvironmentWithTerminalPodCanRecoverAndRetire(t *testing.T
 }
 
 func TestMissingRevokedExecutorCannotProveTermination(t *testing.T) {
-	env := lifecycleAdminEnvironment(2, []any{})
+	env := lifecycleAdminEnvironment(3, []any{})
 	_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	profiles := testProfiles()
 	profiles.eligibility["go"][profiles.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
@@ -201,7 +202,7 @@ func TestMissingRevokedExecutorCannotProveTermination(t *testing.T) {
 	if err := r.Reconcile(t.Context(), "env"); err != nil {
 		t.Fatal(err)
 	}
-	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kube)
+	store := NewStore(client, "ns", profiles).WithKubeClient(kube)
 	if err := store.RecoverEnvironment(t.Context(), adminRequestFixture()); !codeIs(err, executionenv.CodeFenceUnknown) {
 		t.Fatalf("missing Pod incorrectly proved terminal: %v", err)
 	}
@@ -218,7 +219,7 @@ func TestPendingEnsureAfterDeprecationAndRevocation(t *testing.T) {
 	profiles := testProfiles()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	store := NewStore(client, "ns", profiles, nil)
+	store := NewStore(client, "ns", profiles)
 	revision := profiles.defaultRevision["go"]
 	first, err := store.EnsurePendingOwnedRevision(
 		t.Context(),
@@ -318,11 +319,13 @@ func TestForeignPrivateRequestsDoNotDiscloseRunOrTemplateState(t *testing.T) {
 					objects = nil
 				}
 				dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...)
-				store := NewStore(dynamicClient, "ns", profiles, nil)
+				store := NewStore(dynamicClient, "ns", profiles)
 				h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{clientID: {MayAttestOwner: true}}}, store)
 				ctx := authenticatedContext(clientID)
 				rc := &executionv1.RequestContext{Environment: &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}, Owner: &executionv1.Owner{Issuer: owner.Issuer, Subject: owner.Subject}, BindingId: "binding", RunId: "run", ClaimId: "claim", Epoch: 7, GrantGeneration: 3}
-				if _, err := h.Files(ctx, &executionv1.FileRequest{Context: rc, Operation: executionv1.FileOperation_FILE_OPERATION_READ, Path: "file"}); status.Code(err) != codes.NotFound {
+				files := NewFileProxy(h, (&recordingConnector{}).Connect)
+				stat := &executorv1.StatFileRequest{Context: executorRequest(rc), Path: "file"}
+				if _, err := files.StatFile(ctx, stat); status.Code(err) != codes.NotFound {
 					t.Fatalf("file disclosed foreign state: %v", err)
 				}
 				if _, err := h.AcquireRun(ctx, &executionv1.AcquireRunRequest{Environment: rc.Environment, Owner: rc.Owner, BindingId: rc.BindingId, RunId: rc.RunId, OperationId: "new-run", TtlMillis: 60000}); status.Code(err) != codes.NotFound {
@@ -359,7 +362,10 @@ func TestMatchingOwnerSeesActualRunAndTemplateState(t *testing.T) {
 				delete(profiles.revisions["go"], profiles.defaultRevision["go"])
 			}
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{clientID: {MayAttestOwner: true}}}, NewStore(client, "ns", profiles, nil))
+			h := NewHandler(
+				HandlerConfig{Clients: map[string]ClientPolicy{clientID: {MayAttestOwner: true}}},
+				NewStore(client, "ns", profiles),
+			)
 			_, err := h.AcquireRun(authenticatedContext(clientID), &executionv1.AcquireRunRequest{Environment: &executionv1.EnvironmentRef{Id: "env", Revision: "rev"}, Owner: &executionv1.Owner{Issuer: owner.Issuer, Subject: owner.Subject}, BindingId: "binding", RunId: "new-run", OperationId: "new-run", TtlMillis: 60000})
 			if got := status.Code(err); got != tc.want {
 				t.Fatalf("matching owner %s: got %s, want %s: %v", tc.state, got, tc.want, err)
@@ -380,7 +386,28 @@ func TestInitializeStatusRechecksImmutableSelectorUnderCAS(t *testing.T) {
 	other := "v1-other-revision"
 	profiles.revisions["go"][other] = profiles.revisions["go"][revision]
 	profiles.eligibility["go"][other] = TemplatePolicy{}
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": allocationName("client", ownerHash(owner), "binding"), "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "allocation-rev", "ownerHash": ownerHash(owner), "clientHash": hashText("client"), "bindingID": "binding", "requestFingerprint": "old-fp", "templateID": "go", "templateRevision": revision, "templateDigest": profiles.revisions["go"][revision].Digest, "desired": "Active"}}}
+	env := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "execution.mecatl.dev/v1alpha1",
+			"kind":       "ExecutionEnvironment",
+			"metadata": map[string]any{
+				"name":      allocationName("client", ownerHash(owner), "binding"),
+				"namespace": "ns",
+			},
+			"spec": map[string]any{
+				"schemaVersion":      int64(3),
+				"revision":           "allocation-rev",
+				"ownerHash":          ownerHash(owner),
+				"clientHash":         hashText("client"),
+				"bindingID":          "binding",
+				"requestFingerprint": "old-fp",
+				"templateID":         "go",
+				"templateRevision":   revision,
+				"templateDigest":     profiles.revisions["go"][revision].Digest,
+				"desired":            "Active",
+			},
+		},
+	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	resources := client.Resource(ExecutionEnvironmentGVR).Namespace("ns")
 	stale := env.DeepCopy()
@@ -393,7 +420,7 @@ func TestInitializeStatusRechecksImmutableSelectorUnderCAS(t *testing.T) {
 	if _, err := resources.Update(t.Context(), current, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	store := NewStore(client, "ns", profiles, nil)
+	store := NewStore(client, "ns", profiles)
 	if err := store.initializeStatus(t.Context(), stale, "client", ownerHash(owner), "binding", "go", revision, "old-fp", "loser-op"); !codeIs(err, executionenv.CodeConflict) {
 		t.Fatalf("stale selector initialized winner: %v", err)
 	}
@@ -428,10 +455,31 @@ func TestCompetingPendingEnsureCannotInitializeWinnersReference(t *testing.T) {
 	other := "v1-other-revision"
 	profiles.revisions["go"][other] = profiles.revisions["go"][revision]
 	profiles.eligibility["go"][other] = TemplatePolicy{}
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": allocationName("client", ownerHash(owner), "binding"), "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "allocation-rev", "ownerHash": ownerHash(owner), "clientHash": hashText("client"), "bindingID": "binding", "requestFingerprint": "winner-fp", "templateID": "go", "templateRevision": revision, "templateDigest": profiles.revisions["go"][revision].Digest, "desired": "Active"}}}
+	env := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "execution.mecatl.dev/v1alpha1",
+			"kind":       "ExecutionEnvironment",
+			"metadata": map[string]any{
+				"name":      allocationName("client", ownerHash(owner), "binding"),
+				"namespace": "ns",
+			},
+			"spec": map[string]any{
+				"schemaVersion":      int64(3),
+				"revision":           "allocation-rev",
+				"ownerHash":          ownerHash(owner),
+				"clientHash":         hashText("client"),
+				"bindingID":          "binding",
+				"requestFingerprint": "winner-fp",
+				"templateID":         "go",
+				"templateRevision":   revision,
+				"templateDigest":     profiles.revisions["go"][revision].Digest,
+				"desired":            "Active",
+			},
+		},
+	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	barrier := make(chan struct{})
-	store := NewStore(client, "ns", profiles, nil)
+	store := NewStore(client, "ns", profiles)
 	results := make(chan error, 2)
 	for _, tc := range []struct{ rev, fp, op string }{{revision, "winner-fp", "winner-op"}, {other, "loser-fp", "loser-op"}} {
 		go func() {

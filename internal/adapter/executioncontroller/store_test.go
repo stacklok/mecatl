@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,7 +31,7 @@ func TestReleaseReferenceChecksIdentityBeforeLifecycle(t *testing.T) {
 					}
 				}
 				dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-				store := NewStore(dynamic, "ns", testProfiles(), nil)
+				store := NewStore(dynamic, "ns", testProfiles())
 				ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 				client, owner := "client", "owner"
 				switch identity {
@@ -100,7 +99,7 @@ func TestRenewRunRejectsActiveRunOwnerClientTupleDrift(t *testing.T) {
 			env := runFixtureEnvironment(7, 3)
 			tc.plant(env)
 			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			store := NewStore(client, "ns", testProfiles(), nil)
+			store := NewStore(client, "ns", testProfiles())
 			ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
 			req := executionenv.RunClaimRequest{BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 7, GrantGeneration: 3, OperationID: "renew", TTL: executionenv.MinRunTTL}
 			if _, err := store.RenewRun(t.Context(), ref, "client", "owner", req); err == nil {
@@ -112,9 +111,43 @@ func TestRenewRunRejectsActiveRunOwnerClientTupleDrift(t *testing.T) {
 
 func TestRenewRunRejectsExpiredClaimAtBoundary(t *testing.T) {
 	now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Format(time.RFC3339Nano)}}}}
+	env := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "execution.mecatl.dev/v1alpha1",
+			"kind":       "ExecutionEnvironment",
+			"metadata":   map[string]any{"name": "env", "namespace": "ns"},
+			"spec": map[string]any{
+				"schemaVersion":    int64(3),
+				"revision":         "rev",
+				"ownerHash":        "owner",
+				"clientHash":       hashText("client"),
+				"templateID":       "go",
+				"templateRevision": testProfiles().defaultRevision["go"],
+				"templateDigest":   testProfiles().byName["go"].Digest,
+				"desired":          "Active",
+			},
+			"status": map[string]any{
+				"schemaVersion":   int64(3),
+				"epoch":           int64(7),
+				"grantGeneration": int64(3),
+				"fenceState":      fenceHealthy,
+				"references":      []any{},
+				"activeRun": map[string]any{
+					"bindingID":       "binding",
+					"runID":           "run",
+					"claimID":         "claim",
+					"operationID":     "acquire",
+					"ownerHash":       "owner",
+					"clientHash":      hashText("client"),
+					"epoch":           int64(7),
+					"grantGeneration": int64(3),
+					"expiresAt":       now.Format(time.RFC3339Nano),
+				},
+			},
+		},
+	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	store.now = func() time.Time { return now }
 	req := executionenv.RunClaimRequest{BindingID: "binding", RunID: "run", ClaimID: "claim", Epoch: 7, GrantGeneration: 3, OperationID: "renew", TTL: executionenv.MinRunTTL}
 	if _, err := store.RenewRun(t.Context(), executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, "client", "owner", req); err == nil {
@@ -131,9 +164,43 @@ func TestRenewRunRejectsExpiredClaimAtBoundary(t *testing.T) {
 
 func TestRenewRunReplaysExactOperationWithoutExtendingLease(t *testing.T) {
 	now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}}}}
+	env := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "execution.mecatl.dev/v1alpha1",
+			"kind":       "ExecutionEnvironment",
+			"metadata":   map[string]any{"name": "env", "namespace": "ns"},
+			"spec": map[string]any{
+				"schemaVersion":    int64(3),
+				"revision":         "rev",
+				"ownerHash":        "owner",
+				"clientHash":       hashText("client"),
+				"templateID":       "go",
+				"templateRevision": testProfiles().defaultRevision["go"],
+				"templateDigest":   testProfiles().byName["go"].Digest,
+				"desired":          "Active",
+			},
+			"status": map[string]any{
+				"schemaVersion":   int64(3),
+				"epoch":           int64(7),
+				"grantGeneration": int64(3),
+				"fenceState":      fenceHealthy,
+				"references":      []any{},
+				"activeRun": map[string]any{
+					"bindingID":       "binding",
+					"runID":           "run",
+					"claimID":         "claim",
+					"operationID":     "acquire",
+					"ownerHash":       "owner",
+					"clientHash":      hashText("client"),
+					"epoch":           int64(7),
+					"grantGeneration": int64(3),
+					"expiresAt":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				},
+			},
+		},
+	}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	store := NewStore(client, "ns", testProfiles(), nil)
+	store := NewStore(client, "ns", testProfiles())
 	clock := now
 	store.now = func() time.Time { return clock }
 	ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
@@ -168,7 +235,7 @@ func TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift(t *testing.T) {
 	profiles.revisions["other"] = map[string]resolvedProfile{otherRevision: other}
 	profiles.eligibility["other"] = map[string]TemplatePolicy{otherRevision: {}}
 	profiles.defaultRevision["other"] = otherRevision
-	s := NewStore(client, "ns", profiles, nil)
+	s := NewStore(client, "ns", profiles)
 	ctx := context.Background()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	a, err := s.EnsurePendingOwnedRevision(
@@ -228,63 +295,6 @@ func TestAllocationNameExcludesMutableProfile(t *testing.T) {
 	}
 }
 
-type recordingTransport struct {
-	mu      sync.Mutex
-	routes  []ExecutorRoute
-	entered chan struct{}
-	gate    chan struct{}
-}
-
-func (e *recordingTransport) Execute(
-	ctx context.Context,
-	route ExecutorRoute,
-	req executionenv.ExecutorRequest,
-) (executionenv.ExecutorResponse, error) {
-	e.mu.Lock()
-	e.routes = append(e.routes, route)
-	e.mu.Unlock()
-	if e.entered != nil {
-		e.entered <- struct{}{}
-	}
-	if e.gate != nil {
-		select {
-		case <-e.gate:
-		case <-ctx.Done():
-			return executionenv.ExecutorResponse{}, ctx.Err()
-		}
-	}
-	if req.Operation == executionenv.OpCommandStart {
-		return executionenv.ExecutorResponse{Command: &executionenv.CommandStatusResponse{
-			CommandID: req.CommandID,
-			State:     executionenv.CommandSucceeded,
-		}}, nil
-	}
-	return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{
-		Data:    []byte("ok"),
-		Version: "v1",
-	}}, nil
-}
-
-func (e *recordingTransport) calls() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return len(e.routes)
-}
-
-type terminalErrorExecutor struct{ called int }
-
-func (e *terminalErrorExecutor) Execute(
-	context.Context,
-	ExecutorRoute,
-	executionenv.ExecutorRequest,
-) (executionenv.ExecutorResponse, error) {
-	e.called++
-	return executionenv.ExecutorResponse{}, &executionenv.Error{
-		Code:    executionenv.CodeNotFound,
-		Message: "path not found",
-	}
-}
-
 func runFixtureContext() executionenv.RequestContext {
 	return executionenv.RequestContext{
 		Environment:     executionenv.EnvironmentRef{ID: "env", Revision: "rev"},
@@ -306,92 +316,52 @@ func requireOnlyReads(t *testing.T, client *dynamicfake.FakeDynamicClient) {
 	}
 }
 
-func TestToolCallsWriteNoEnvironmentStatus(t *testing.T) {
+func TestExecutorRouteWritesNoEnvironmentStatus(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
-	exec := &recordingTransport{}
-	s := NewStore(client, "ns", testProfiles(), exec)
-	file, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
-		Context:   runFixtureContext(),
-		Operation: executionenv.OpFileRead,
-		Path:      "main.go",
-	})
-	if err != nil || string(file.Data) != "ok" {
-		t.Fatalf("file=%v err=%v", file, err)
-	}
-	command, err := s.StartCommand(t.Context(), "client", "owner", executionenv.CommandStartRequest{
-		Context: runFixtureContext(),
-		Command: "true",
-	})
-	if err != nil || command.State != executionenv.CommandSucceeded {
-		t.Fatalf("command=%v err=%v", command, err)
-	}
-	requireOnlyReads(t, client)
+	s := NewStore(client, "ns", testProfiles())
 	want := ExecutorPin{PodName: "pod", PodUID: "pod-uid", Fingerprint: fixtureFingerprint}
-	if exec.calls() != 2 || exec.routes[0].Pin != want || exec.routes[1].MaxCommandDuration <= 0 {
-		t.Fatalf("routes=%+v", exec.routes)
-	}
-}
-
-func TestConcurrentReadsOnOneEnvironment(t *testing.T) {
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
-	exec := &recordingTransport{entered: make(chan struct{}, 2), gate: make(chan struct{})}
-	s := NewStore(client, "ns", testProfiles(), exec)
-	done := make(chan error, 2)
-	for range 2 {
-		go func() {
-			_, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
-				Context:   runFixtureContext(),
-				Operation: executionenv.OpFileRead,
-				Path:      "main.go",
-			})
-			done <- err
-		}()
-	}
-	for range 2 {
-		select {
-		case <-exec.entered:
-		case err := <-done:
-			t.Fatalf("read refused while another was in flight: %v", err)
-		}
-	}
-	close(exec.gate)
-	for range 2 {
-		if err := <-done; err != nil {
-			t.Fatal(err)
+	for _, capability := range []string{CapabilityFilesystem, CapabilityForegroundCommand} {
+		route, err := s.ExecutorRoute(
+			t.Context(),
+			"client",
+			"owner",
+			runFixtureContext(),
+			capability,
+		)
+		if err != nil || route.Pin != want || route.MaxCommandDuration <= 0 {
+			t.Fatalf("%s route=%+v err=%v", capability, route, err)
 		}
 	}
 	requireOnlyReads(t, client)
 }
 
-func TestControlledExecutorErrorLeavesEnvironmentHealthy(t *testing.T) {
-	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
-	exec := &terminalErrorExecutor{}
-	s := NewStore(client, "ns", testProfiles(), exec)
-	_, err := s.File(t.Context(), "client", "owner", executionenv.FileRequest{
-		Context:   runFixtureContext(),
-		Operation: executionenv.OpFileRead,
-		Path:      "missing",
-	})
-	var pe *executionenv.Error
-	if !errors.As(err, &pe) || pe.Code != executionenv.CodeNotFound || exec.called != 1 {
-		t.Fatalf("error=%v calls=%d", err, exec.called)
-	}
-	requireOnlyReads(t, client)
-}
-
-func TestToolCallRefusesUnadmittedCapabilityBeforeDispatch(t *testing.T) {
+func TestExecutorRouteRefusesUnadmittedCapability(t *testing.T) {
 	env := runFixtureEnvironment(1, 1)
 	filesOnly := []string{"filesystem"}
 	_ = unstructured.SetNestedStringSlice(env.Object, filesOnly, "spec", admittedCapabilitiesField)
-	exec := &recordingTransport{}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	s := NewStore(client, "ns", testProfiles(), exec)
-	_, err := s.StartCommand(t.Context(), "client", "owner", executionenv.CommandStartRequest{
-		Context: runFixtureContext(),
-		Command: "true",
-	})
+	s := NewStore(client, "ns", testProfiles())
+	_, err := s.ExecutorRoute(
+		t.Context(),
+		"client",
+		"owner",
+		runFixtureContext(),
+		CapabilityForegroundCommand,
+	)
 	var pe *executionenv.Error
-	if !errors.As(err, &pe) || pe.Code != executionenv.CodePermissionDenied || exec.calls() != 0 {
-		t.Fatalf("error=%v calls=%d", err, exec.calls())
+	if !errors.As(err, &pe) || pe.Code != executionenv.CodePermissionDenied {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExecutorRouteDeniesAStaleClaimAsRetryable(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), runFixtureEnvironment(1, 1))
+	s := NewStore(client, "ns", testProfiles())
+	stale := runFixtureContext()
+	stale.ClaimID = "superseded"
+	_, err := s.ExecutorRoute(t.Context(), "client", "owner", stale, CapabilityFilesystem)
+	var pe *executionenv.Error
+	if !errors.As(err, &pe) || pe.Code != executionenv.CodeUnauthenticated || !pe.Retryable {
+		t.Fatalf("error=%v", err)
 	}
 }

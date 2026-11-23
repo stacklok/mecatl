@@ -63,7 +63,7 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	initial, _ := templateFixture(t, map[string]TemplateRevision{oldRev: old}, oldRev)
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
-	store := NewStore(dyn, "ns", initial, nil)
+	store := NewStore(dyn, "ns", initial)
 	a, err := store.EnsurePendingOwnedRevision(
 		t.Context(),
 		"client",
@@ -94,7 +94,7 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	if _, ok := updated.selectRevision("go", oldRev); ok {
 		t.Fatal("deprecated revision remains selectable")
 	}
-	store = NewStore(dyn, "ns", updated, nil)
+	store = NewStore(dyn, "ns", updated)
 	_, err = store.EnsurePendingOwnedRevision(
 		t.Context(),
 		"client",
@@ -129,10 +129,22 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	if _, ok := revoked.forEnvironment(env); ok || !revoked.isRevoked(env) {
 		t.Fatal("revocation did not fence retained definition")
 	}
-	if _, err := NewStore(dyn, "ns", revoked, nil).Attach(t.Context(), a.Environment, "client", ownerHash(owner), "binding"); err == nil {
+	revokedStore := NewStore(dyn, "ns", revoked)
+	_, err = revokedStore.Attach(t.Context(), a.Environment, "client", ownerHash(owner), "binding")
+	if err == nil {
 		t.Fatal("revoked environment reattached")
 	}
-	if _, err := NewStore(dyn, "ns", revoked, nil).AcquireRun(t.Context(), a.Environment, "client", ownerHash(owner), "binding", "run", "acquire", executionenv.MinRunTTL); err == nil {
+	_, err = revokedStore.AcquireRun(
+		t.Context(),
+		a.Environment,
+		"client",
+		ownerHash(owner),
+		"binding",
+		"run",
+		"acquire",
+		executionenv.MinRunTTL,
+	)
+	if err == nil {
 		t.Fatal("revoked environment admitted a new run")
 	}
 	removed, _ := templateFixture(t, map[string]TemplateRevision{newRev: newer}, newRev)
@@ -157,7 +169,11 @@ func TestHistoricalDefinitionsDoNotConsumeSelectableSlots(t *testing.T) {
 		revisions[revision] = entry
 	}
 	profiles, _ := templateFixture(t, revisions, current)
-	items := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", profiles, nil).CatalogTemplates()
+	items := NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		"ns",
+		profiles,
+	).CatalogTemplates()
 	if len(profiles.revisions["go"]) != 65 || len(items) != 1 || items[0].GetTemplate().GetRevision() != current {
 		t.Fatal("historical revisions consumed public selectable catalog slots")
 	}
@@ -182,9 +198,19 @@ func TestExecutionTemplateDisplayDoesNotChangeRevision(t *testing.T) {
 	if p.capacity("go") != 100 {
 		t.Fatal("capacity is not pooled by template ID")
 	}
-	display := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", p, nil).CatalogTemplates()[0]
+	display := NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		"ns",
+		p,
+	).CatalogTemplates()[0]
 	p2, _ := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec, Display: TemplateDisplay{Name: "Changed"}}}, revision)
-	if NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", p2, nil).CatalogTemplates()[0].DisplayToken == display.DisplayToken || p2.revisions["go"][revision].Digest != p.revisions["go"][revision].Digest {
+	changed := NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		"ns",
+		p2,
+	).CatalogTemplates()[0]
+	if changed.DisplayToken == display.DisplayToken ||
+		p2.revisions["go"][revision].Digest != p.revisions["go"][revision].Digest {
 		t.Fatal("display token and execution revision are coupled")
 	}
 	bad := strings.Replace(string(mustReadTemplate(t, path)), "templates:", "profiles:", 1)
@@ -208,7 +234,7 @@ func TestExecutionTemplateRetainedOnlyLastRevisionReload(t *testing.T) {
 	initial, path := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec}}, revision)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	allocation, err := NewStore(dyn, "ns", initial, nil).EnsurePendingOwnedRevision(
+	allocation, err := NewStore(dyn, "ns", initial).EnsurePendingOwnedRevision(
 		t.Context(),
 		"client",
 		ownerHash(owner),
@@ -235,7 +261,9 @@ func TestExecutionTemplateRetainedOnlyLastRevisionReload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if reloaded.DefaultRevision("go") != "" || len(reloaded.revisions["go"]) != 1 || len(NewStore(dyn, "ns", reloaded, nil).CatalogTemplates()) != 0 {
+		catalog := NewStore(dyn, "ns", reloaded).CatalogTemplates()
+		if reloaded.DefaultRevision("go") != "" || len(reloaded.revisions["go"]) != 1 ||
+			len(catalog) != 0 {
 			t.Fatal("retained-only revision became selectable or disappeared")
 		}
 		env, err := dyn.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), allocation.Environment.ID, metav1.GetOptions{})
@@ -271,7 +299,11 @@ func TestExecutionTemplateMetadataAggregateBound(t *testing.T) {
 	}
 	display := TemplateDisplay{Extensions: map[string]map[string]string{namespace: {"schema_version": "1", "custom": "opaque"}}}
 	p, _ := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec, Display: display}}, revision)
-	items := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", p, nil).CatalogTemplates()
+	items := NewStore(
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		"ns",
+		p,
+	).CatalogTemplates()
 	if len(items) != 1 || items[0].Extensions[namespace+"/custom"] != "opaque" {
 		t.Fatal("valid metadata lost in private catalog")
 	}

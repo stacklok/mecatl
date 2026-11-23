@@ -25,12 +25,6 @@ func generationMatches(o *unstructured.Unstructured, generation uint64) bool {
 	return generation > 0 && generation <= math.MaxInt64 && intNested(o.Object, "status", "grantGeneration") == int64(generation)
 }
 
-// ValidateRunClaim checks the durable run, binding, client and current policy before dispatch.
-func (s *Store) ValidateRunClaim(ctx context.Context, client, owner string, rc executionenv.RequestContext) error {
-	_, err := s.validateRunClaim(ctx, client, owner, rc)
-	return err
-}
-
 //nolint:gocyclo // Every durable claim, reference, and policy precondition is checked.
 func (s *Store) validateRunClaim(
 	ctx context.Context,
@@ -68,10 +62,7 @@ func (s *Store) validateRunClaim(
 	}
 	claim, _, expiry, ok := activeRunFrom(o)
 	if !ok || !s.now().Before(expiry) || claim.Environment != rc.Environment || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
-		return nil, &executionenv.Error{
-			Code:    executionenv.CodeConflict,
-			Message: "run claim is not current",
-		}
+		return nil, errRunClaimNotCurrent
 	}
 	refs, err := referenceRecords(o)
 	if err != nil {

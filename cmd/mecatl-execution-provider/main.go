@@ -107,8 +107,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		return fmt.Errorf("load executor client certificate: %w", err)
 	}
 	diagnostics := slogdiag.New(os.Stderr, true, port.LevelInfo)
-	transport := executioncontroller.NewServerTransport(dialer.Connect)
-	store := executioncontroller.NewStore(dyn, namespace, templates, transport).
+	store := executioncontroller.NewStore(dyn, namespace, templates).
 		WithKubeClient(kube).
 		WithSecurityManager(security)
 	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates).
@@ -141,10 +140,11 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		grpc.MaxRecvMsgSize(executionenv.MaxMessageBytes),
 		grpc.MaxSendMsgSize(executionenv.MaxMessageBytes),
 		grpc.MaxConcurrentStreams(uint32(maxConcurrentStreams)), //nolint:gosec // validated to 1..1024 above.
-		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: 30 * time.Minute, MaxConnectionAgeGrace: 2 * time.Minute, Time: 2 * time.Minute, Timeout: 20 * time.Second}),
+		grpc.KeepaliveParams(serverKeepalive()),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 30 * time.Second, PermitWithoutStream: false}),
 	)
 	executionv1.RegisterExecutionProviderServiceServer(server, handler)
+	executioncontroller.RegisterExecutorServices(server, handler, dialer.Connect)
 	var healthServer *http.Server
 	if healthAddr != "" {
 		mux := http.NewServeMux()
@@ -201,5 +201,15 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 			server.Stop()
 		}
 		return nil
+	}
+}
+
+func serverKeepalive() keepalive.ServerParameters {
+	return keepalive.ServerParameters{
+		MaxConnectionAge: 30 * time.Minute,
+		// A command started just before the age limit may still run to its template maximum.
+		MaxConnectionAgeGrace: executioncontroller.MaxCommandDuration + 2*time.Minute,
+		Time:                  2 * time.Minute,
+		Timeout:               20 * time.Second,
 	}
 }

@@ -63,7 +63,7 @@ spec:
               message: admittedCapabilities is immutable
             required: [schemaVersion, allocationID, revision, ownerHash, clientHash, bindingID, requestFingerprint, templateID, templateRevision, templateDigest, image, storageClass, storageSize, resources, desired]
             properties:
-              schemaVersion: {type: integer, format: int64, enum: [2]}
+              schemaVersion: {type: integer, format: int64, enum: [3]}
               allocationID: {type: string, minLength: 1, maxLength: 63}
               revision: {type: string, minLength: 1, maxLength: 64}
               ownerHash: {type: string, pattern: "^[0-9a-f]{64}$"}
@@ -96,7 +96,7 @@ spec:
           status:
             type: object
             properties:
-              schemaVersion: {type: integer, format: int64, enum: [2]}
+              schemaVersion: {type: integer, format: int64, enum: [3]}
               observedGeneration: {type: integer, format: int64}
               epoch: {type: integer, format: int64, minimum: 1}
               fenceState: {type: string, enum: [Healthy, FenceUnknown]}

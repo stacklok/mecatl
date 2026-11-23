@@ -135,7 +135,10 @@ func TestSelectedTemplateListThenDeprecationRejectsAtAllocationSeam(t *testing.T
 	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	kube := kubefake.NewSimpleClientset()
-	backend := &selectedTemplateBackend{Store: executioncontroller.NewStore(dyn, "ns", profiles, nil).WithKubeClient(kube), dyn: dyn}
+	backend := &selectedTemplateBackend{
+		Store: executioncontroller.NewStore(dyn, "ns", profiles).WithKubeClient(kube),
+		dyn:   dyn,
+	}
 	backend.admission.Store(backend.Store)
 	fixture := startFixture(t, backend, nil)
 	defer fixture.stop()
@@ -157,7 +160,13 @@ func TestSelectedTemplateListThenDeprecationRejectsAtAllocationSeam(t *testing.T
 		t.Fatalf("catalog=%+v err=%v", items, err)
 	}
 	// Reload policy after discovery, preserving the same real allocation store.
-	backend.admission.Store(executioncontroller.NewStore(dyn, "ns", explicitIDProfilesWithPolicy(t, true), nil).WithKubeClient(kube))
+	backend.admission.Store(
+		executioncontroller.NewStore(
+			dyn,
+			"ns",
+			explicitIDProfilesWithPolicy(t, true),
+		).WithKubeClient(kube),
+	)
 	selection := server.ExecutionSelection{Kind: server.PlacementSelectorTemplate, ID: items[0].ID, Revision: items[0].Revision}
 	created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithExecutionSelection(selection))
 	if !errors.Is(err, server.ErrPlacementNotFound) || created != nil {
@@ -187,15 +196,15 @@ func TestSelectedTemplateAmbiguousPublicationRetainsReferenceAndRecovers(t *test
 				if err := os.WriteFile(filepath.Join(workspace, "sentinel"), []byte("retained workspace\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				executor := osfsExecutorTransport(t, workspace)
+				executor := osfsExecutor(t, workspace)
 				backend := &selectedTemplateBackend{
-					Store:         executioncontroller.NewStore(dyn, "ns", profiles, executor),
+					Store:         executioncontroller.NewStore(dyn, "ns", profiles),
 					dyn:           dyn,
 					publishCommit: failure == "commit_published",
 				}
 				backend.admission.Store(backend.Store)
 				backend.loseCommit.Store(failure != "session_published")
-				fixture := startFixture(t, backend, nil)
+				fixture := startFixture(t, backend, nil, executor)
 				defer fixture.stop()
 				client, err := New(fixture.endpoint, fixture.clientTLS)
 				if err != nil {
@@ -266,9 +275,9 @@ func TestSelectedTemplateAmbiguousPublicationRetainsReferenceAndRecovers(t *test
 					t.Fatal(err)
 				}
 				rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: string(recovered.ID), RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
-				content, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "sentinel"})
-				if err != nil || string(content.Data) != "retained workspace\n" {
-					t.Fatalf("recovered workspace lost sentinel: %q, %v", content.Data, err)
+				content, err := client.Workspace(rc).Read(ctx, "sentinel")
+				if err != nil || string(content) != "retained workspace\n" {
+					t.Fatalf("recovered workspace lost sentinel: %q, %v", content, err)
 				}
 				if err := client.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: claim.Environment, Owner: owner, BindingID: string(recovered.ID), RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, OperationID: "release-recovered"}); err != nil {
 					t.Fatal(err)

@@ -48,8 +48,8 @@ type Error struct {
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Message }
 
-// DecodeStrict decodes exactly one bounded JSON value for the credential-free
-// provider-to-workload stdin protocol, without unknown or duplicate fields.
+// DecodeStrict decodes exactly one bounded JSON value without unknown or
+// duplicate fields.
 func DecodeStrict(data []byte, dst any) error {
 	if len(data) > MaxJSONBody {
 		return &Error{Code: CodeResourceExhausted, Message: "request body exceeds limit"}

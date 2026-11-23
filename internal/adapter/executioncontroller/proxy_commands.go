@@ -35,7 +35,7 @@ type commandStream = grpc.BidiStreamingServer[
 	executorv1.RunCommandResponse,
 ]
 
-// RunCommand authorizes the first message, bounds the command by its template,
+// RunCommand authorizes the first message, caps the command's timeout at its template's,
 // and relays the executor's events, clipping output at MaxCommandBytes.
 func (p *CommandProxy) RunCommand(stream commandStream) error {
 	first, err := stream.Recv()
@@ -85,11 +85,11 @@ func boundedStart(
 	}
 	timeout := route.MaxCommandDuration
 	if d := start.GetTimeout(); d != nil {
-		if d.CheckValid() != nil || d.AsDuration() < 0 || d.AsDuration() > timeout {
+		if d.CheckValid() != nil || d.AsDuration() < 0 {
 			return nil, wireError(executionenv.CodeInvalidArgument, false)
 		}
 		if d.AsDuration() > 0 {
-			timeout = d.AsDuration()
+			timeout = min(d.AsDuration(), timeout)
 		}
 	}
 	forward := proto.CloneOf(first)

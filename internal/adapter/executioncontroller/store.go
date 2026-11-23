@@ -30,27 +30,17 @@ var ExecutionEnvironmentGVR = schema.GroupVersionResource{Group: "execution.meca
 const (
 	maxReferences              = 64
 	environmentNotFoundMessage = "environment not found"
-	currentSchemaVersion       = int64(2)
+	currentSchemaVersion       = int64(3)
 	transitioningMessage       = "environment is transitioning"
 	templateRevokedMessage     = "execution template revoked or missing"
 	operationIDField           = "operationID"
 	activeDesired              = "Active"
 )
 
-// ExecutorTransport performs one authorized request on the executor at route.
-type ExecutorTransport interface {
-	Execute(
-		ctx context.Context,
-		route ExecutorRoute,
-		req executionenv.ExecutorRequest,
-	) (executionenv.ExecutorResponse, error)
-}
-
 // Store persists authorization and fencing state in ExecutionEnvironment status.
 type Store struct {
 	resources dynamic.ResourceInterface
 	profiles  *Profiles
-	executor  ExecutorTransport
 	kube      kubernetes.Interface
 	security  *SecurityManager
 	namespace string
@@ -58,11 +48,10 @@ type Store struct {
 }
 
 // NewStore constructs a namespace-scoped execution state store.
-func NewStore(client dynamic.Interface, namespace string, profiles *Profiles, executor ExecutorTransport) *Store {
+func NewStore(client dynamic.Interface, namespace string, profiles *Profiles) *Store {
 	return &Store{
 		resources: client.Resource(ExecutionEnvironmentGVR).Namespace(namespace),
 		profiles:  profiles,
-		executor:  executor,
 		namespace: namespace,
 		now:       func() time.Time { return time.Now().UTC() },
 	}
@@ -505,108 +494,6 @@ func (s *Store) ReleaseReference(ctx context.Context, ref executionenv.Environme
 	})
 }
 
-// File performs one authorized filesystem operation on the session's executor.
-func (s *Store) File(ctx context.Context, client, owner string, q executionenv.FileRequest) (executionenv.FileResponse, error) {
-	req := executionenv.ExecutorRequest{Operation: q.Operation, Path: q.Path, Destination: q.Destination, Pattern: q.Pattern, Data: q.Data, Version: q.Version, Limit: q.Limit}
-	capability := executionenv.CapabilityFilesystem
-	resp, err := s.execute(ctx, client, owner, q.Context, capability, req)
-	return resp.FileResponse, err
-}
-
-// StartCommand runs one authorized foreground command to its result.
-func (s *Store) StartCommand(ctx context.Context, client, owner string, q executionenv.CommandStartRequest) (executionenv.CommandStartResponse, error) {
-	id, err := randomID()
-	if err != nil {
-		return executionenv.CommandStartResponse{}, err
-	}
-	req := executionenv.ExecutorRequest{
-		Operation:     executionenv.OpCommandStart,
-		Command:       q.Command,
-		CommandID:     id,
-		TimeoutMillis: q.TimeoutMillis,
-	}
-	capability := executionenv.CapabilityForegroundCommand
-	resp, err := s.execute(ctx, client, owner, q.Context, capability, req)
-	if err != nil {
-		return executionenv.CommandStartResponse{}, err
-	}
-	if resp.Command == nil {
-		return executionenv.CommandStartResponse{}, &executionenv.Error{
-			Code:    executionenv.CodeFenceUnknown,
-			Message: "executor returned no command result",
-		}
-	}
-	return executionenv.CommandStartResponse{CommandID: id, State: resp.Command.State, Result: *resp.Command}, nil
-}
-
-// CommandStatus reports that foreground-only commands have no detached status API.
-func (*Store) CommandStatus(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "foreground commands have no resumable status stream"}
-}
-
-// CancelCommand refuses cancellation without an attached foreground control stream.
-func (*Store) CancelCommand(context.Context, string, string, executionenv.CommandQueryRequest) (executionenv.CommandStatusResponse, error) {
-	return executionenv.CommandStatusResponse{}, &executionenv.Error{Code: executionenv.CodeFenceUnknown, Message: "no active foreground stream is attached; external fencing is required"}
-}
-
-// execute authorizes from a read of the environment and writes nothing to it.
-func (s *Store) execute(
-	ctx context.Context,
-	client string,
-	owner string,
-	rc executionenv.RequestContext,
-	capability string,
-	req executionenv.ExecutorRequest,
-) (executionenv.ExecutorResponse, error) {
-	if s.executor == nil {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{
-			Code:      executionenv.CodeNotReady,
-			Message:   "executor transport unavailable",
-			Retryable: true,
-		}
-	}
-	route, err := s.ExecutorRoute(ctx, client, owner, rc, capability)
-	if err != nil {
-		return executionenv.ExecutorResponse{}, err
-	}
-	if int64(len(req.Data)) > route.MaxFileBytes ||
-		int64(len(req.Command)) > route.MaxCommandBytes {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{
-			Code:    executionenv.CodeResourceExhausted,
-			Message: "operation exceeds profile bounds",
-		}
-	}
-	if req.Operation == executionenv.OpCommandStart {
-		maxMillis := route.MaxCommandDuration.Milliseconds()
-		if req.TimeoutMillis <= 0 {
-			req.TimeoutMillis = maxMillis
-		} else if req.TimeoutMillis > maxMillis {
-			return executionenv.ExecutorResponse{}, &executionenv.Error{
-				Code:    executionenv.CodeInvalidArgument,
-				Message: "command timeout exceeds profile bound",
-			}
-		}
-	}
-	resp, err := s.executor.Execute(ctx, route, req)
-	if err != nil {
-		return executionenv.ExecutorResponse{}, err
-	}
-	if int64(len(resp.Data)) > route.MaxFileBytes ||
-		commandOutputBytes(resp) > route.MaxCommandBytes {
-		return executionenv.ExecutorResponse{}, &executionenv.Error{
-			Code:    executionenv.CodeResourceExhausted,
-			Message: "executor response exceeds profile bound",
-		}
-	}
-	return resp, nil
-}
-func commandOutputBytes(resp executionenv.ExecutorResponse) int64 {
-	if resp.Command == nil {
-		return 0
-	}
-	return int64(len(resp.Command.Stdout) + len(resp.Command.Stderr))
-}
-
 func (s *Store) retryUpdateStatus(ctx context.Context, name string, mutate func(*unstructured.Unstructured) error) error {
 	return s.retryUpdateStatusRaw(ctx, name, func(o *unstructured.Unstructured) error {
 		if err := requireCurrentSchema(o); err != nil {
@@ -646,7 +533,10 @@ func requireCurrentSchema(o *unstructured.Unstructured) error {
 }
 
 func incompatibleSchemaError() error {
-	return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment schema is incompatible; only schema version 2 is supported"}
+	return &executionenv.Error{
+		Code:    executionenv.CodeNotReady,
+		Message: "environment schema is incompatible; only schema version 3 is supported",
+	}
 }
 
 func epochValue(o *unstructured.Unstructured) (uint64, bool) {

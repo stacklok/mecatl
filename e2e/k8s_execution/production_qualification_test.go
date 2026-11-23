@@ -20,6 +20,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -109,15 +110,16 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 
 	assertProductionExecutorPod(t, ctx, kubeconfig, attached.Environment.ID)
 	probeSource := []byte("package main\nimport (\"net\";\"os\";\"time\")\nfunc main(){c,e:=net.DialTimeout(\"tcp\",os.Args[1],2*time.Second);if e!=nil{os.Exit(42)};c.Close()}\n")
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "network_probe.go", Data: probeSource}); err != nil {
+	if _, err := client.Workspace(rc).CreateFile(ctx, "network_probe.go", probeSource); err != nil {
 		t.Fatalf("install network probe in owned workspace: %v", err)
 	}
-	built, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go build -o network-probe network_probe.go", TimeoutMillis: 120000})
-	if err != nil || built.State != executionenv.CommandSucceeded || built.Result.ExitCode != 0 {
-		t.Fatalf("build network probe: state=%q exit=%d err=%v", built.State, built.Result.ExitCode, err)
+	build := "go build -o network-probe network_probe.go"
+	built, err := runCommand(ctx, client, rc, build, 2*time.Minute)
+	if err != nil || built.ExitCode != 0 {
+		t.Fatalf("build network probe: exit=%d err=%v", built.ExitCode, err)
 	}
 	fixtureIP := kubeValue(t, ctx, kubeconfig, "get", "pod/network-fixture", "-n", namespace, "-o", "jsonpath={.status.podIP}")
-	if out := runOwnedProbe(t, ctx, client, rc, fixtureIP+":8080"); out.State != executionenv.CommandSucceeded || out.Result.ExitCode != 0 {
+	if out := runOwnedProbe(t, ctx, client, rc, fixtureIP+":8080"); out.ExitCode != 0 {
 		t.Fatal("profile-specific package endpoint was not reachable")
 	}
 	providerIP := kubeValue(t, ctx, kubeconfig, "get", "service/mecatl-execution", "-n", namespace, "-o", "jsonpath={.spec.clusterIP}")
@@ -127,8 +129,8 @@ func TestKindExecutionProductionNetworkPolicyEnforced(t *testing.T) {
 		"dns": "10.96.0.10:53", "metadata": "169.254.169.254:80", "internet": "1.1.1.1:443",
 	} {
 		out := runOwnedProbe(t, ctx, client, rc, endpoint)
-		if out.State != executionenv.CommandFailed || out.Result.State != executionenv.CommandFailed || out.Result.ExitCode != 42 {
-			t.Fatalf("default-denied executor probe %s state=%q result_state=%q exit=%d, want failed/failed/42", name, out.State, out.Result.State, out.Result.ExitCode)
+		if out.ExitCode != 42 {
+			t.Fatalf("default-denied executor probe %s exit=%d, want 42", name, out.ExitCode)
 		}
 	}
 
@@ -197,16 +199,13 @@ func TestKindExecutionProductionExecutorServerRestartsInPlace(t *testing.T) {
 		runID,
 		executionenv.MaxRunTTL,
 	)
+	release = cleanupOnce(release)
 	defer release()
-	sentinel := executionenv.FileRequest{
-		Context:   rc,
-		Operation: executionenv.OpFileCreate,
-		Path:      "restart-sentinel.txt",
-		Data:      []byte("kept\n"),
-	}
-	if _, err := client.File(ctx, sentinel); err != nil {
+	files := client.Workspace(rc)
+	if _, err := files.CreateFile(ctx, "restart-sentinel.txt", []byte("kept\n")); err != nil {
 		t.Fatal(err)
 	}
+	assertRestartShell(ctx, t, client, rc, "before restart")
 	id := attached.Environment.ID
 	before := readExecutionStatus(t, ctx, kubeconfig, id)
 	pod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace,
@@ -234,17 +233,48 @@ func TestKindExecutionProductionExecutorServerRestartsInPlace(t *testing.T) {
 		after.Epoch != before.Epoch || after.FenceState != before.FenceState {
 		t.Fatalf("server restart replaced the executor: before=%+v after=%+v", before, after)
 	}
-	read := sentinel
-	read.Operation, read.Data = executionenv.OpFileRead, nil
-	got, err := client.File(ctx, read)
-	if err != nil || string(got.Data) != "kept\n" {
-		t.Fatalf("workspace changed across the server restart: %q err=%v", got.Data, err)
+	got, err := files.Read(ctx, "restart-sentinel.txt")
+	if err != nil || string(got) != "kept\n" {
+		t.Fatalf("workspace changed across the server restart: %q err=%v", got, err)
+	}
+	assertRestartShell(ctx, t, client, rc, "same run after restart")
+	release()
+	reattached := waitReady(t, ctx, client, owner, binding, attached.Environment)
+	if reattached.Environment != attached.Environment {
+		t.Fatalf("reattach changed the environment: %+v", reattached.Environment)
+	}
+	fresh, releaseFresh := acquireRun(t, ctx, client, owner, binding, reattached, runID+"-reattach")
+	defer releaseFresh()
+	got, err = client.Workspace(fresh).Read(ctx, "restart-sentinel.txt")
+	if err != nil || string(got) != "kept\n" {
+		t.Fatalf("reattached run lost the workspace: %q err=%v", got, err)
+	}
+	assertRestartShell(ctx, t, client, fresh, "reattached run")
+}
+
+func assertRestartShell(
+	ctx context.Context,
+	t *testing.T,
+	client *executionclient.Client,
+	rc executionenv.RequestContext,
+	phase string,
+) {
+	t.Helper()
+	out, err := runCommand(ctx, client, rc, "cat restart-sentinel.txt", 30*time.Second)
+	if err != nil || out.ExitCode != 0 || out.Stdout != "kept\n" {
+		t.Fatalf("%s Shell: exit=%d stdout=%q err=%v", phase, out.ExitCode, out.Stdout, err)
 	}
 }
 
-func runOwnedProbe(t *testing.T, ctx context.Context, c *executionclient.Client, rc executionenv.RequestContext, endpoint string) executionenv.CommandStartResponse {
+func runOwnedProbe(
+	t *testing.T,
+	ctx context.Context,
+	c *executionclient.Client,
+	rc executionenv.RequestContext,
+	endpoint string,
+) tool.CommandResult {
 	t.Helper()
-	out, err := c.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "./network-probe " + endpoint, TimeoutMillis: 15000})
+	out, err := runCommand(ctx, c, rc, "./network-probe "+endpoint, 15*time.Second)
 	if err != nil {
 		t.Fatalf("network probe RPC failed: %v", err)
 	}
@@ -308,7 +338,9 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldRun := executionenv.RequestContext{Environment: oldClaim.Environment, Owner: owner, BindingID: binding, RunID: oldClaim.RunID, ClaimID: oldClaim.ClaimID, Epoch: oldClaim.Epoch, GrantGeneration: oldClaim.GrantGeneration}
-	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileCreate, Path: "rotation-sentinel.txt", Data: []byte("old-authority\n")}); err != nil {
+	sentinel := []byte("old-authority\n")
+	_, err = oldClient.Workspace(oldRun).CreateFile(ctx, "rotation-sentinel.txt", sentinel)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -341,7 +373,7 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "apply_invalid")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 0, "invalid_and_recovery")
 	logQualificationStep(t, &stepStarted, "invalid_and_recovery", "wait_unready")
-	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: oldRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); err == nil {
+	if _, err := oldClient.Workspace(oldRun).Read(ctx, "rotation-sentinel.txt"); err == nil {
 		t.Fatal("same-generation changed policy continued authorizing an existing gRPC connection")
 	}
 	applySecurityCandidate(t, ctx, kubeconfig, filepath.Join(state, "pki"), filepath.Join(state, "pki", "manifest.json"), "initial")
@@ -412,16 +444,17 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	finalRequest := executionenv.RunClaimRequest{Environment: finalAttached.Environment, Owner: owner, BindingID: binding, RunID: "rotation-final-grant", OperationID: "rotation-acquire-final", TTL: time.Minute}
 	finalClaim, err := acquireCurrentAuthorityRun(ctx, finalRequest, newClient.AcquireRun, 500*time.Millisecond)
 	if err != nil {
-		var remote *executionenv.Error
-		t.Fatalf("acquire final-authority claim: errorCode=%s retryable=%t", remoteErrorCode(err), errors.As(err, &remote) && remote.Retryable)
+		t.Fatalf("acquire final-authority claim: errorCode=%s retryable=%t",
+			remoteErrorCode(err), remoteRetryable(err))
 	}
 	finalRun := executionenv.RequestContext{Environment: finalClaim.Environment, Owner: owner, BindingID: binding, RunID: finalClaim.RunID, ClaimID: finalClaim.ClaimID, Epoch: finalClaim.Epoch, GrantGeneration: finalClaim.GrantGeneration}
 	waitFileContent(t, ctx, newClient, finalRun, "rotation-sentinel.txt", "old-authority\n", "final authority")
 	// Both fixture certificates attest the same URI. Only the CA differs; the
 	// current claim below has just succeeded and has not been released.
-	if _, err := oldClient.File(ctx, executionenv.FileRequest{Context: finalRun, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); !isRemoteCode(err, executionenv.CodeUnauthenticated) {
-		var remote *executionenv.Error
-		t.Fatalf("removed client CA rejection: errorCode=%s retryable=%t", remoteErrorCode(err), errors.As(err, &remote) && remote.Retryable)
+	_, err = oldClient.Workspace(finalRun).Read(ctx, "rotation-sentinel.txt")
+	if !isRemoteCode(err, executionenv.CodeUnauthenticated) {
+		t.Fatalf("removed client CA rejection: errorCode=%s retryable=%t",
+			remoteErrorCode(err), remoteRetryable(err))
 	}
 	waitFileContent(t, ctx, newClient, finalRun, "rotation-sentinel.txt", "old-authority\n", "final run after CA rotation")
 	freshClient, err := executionclient.New(forward.addr, newTLS)
@@ -471,8 +504,10 @@ func TestKindExecutionProductionSecurityRotation(t *testing.T) {
 	stale := currentRun
 	stale.GrantGeneration = newAttached.GrantGeneration
 	waitFileContent(t, ctx, postRestartClient, currentRun, "rotation-sentinel.txt", "old-authority\n", "post-restart revocation positive control")
-	if _, err := postRestartClient.File(ctx, executionenv.FileRequest{Context: stale, Operation: executionenv.OpFileRead, Path: "rotation-sentinel.txt"}); !isRemoteCode(err, executionenv.CodeConflict) {
-		t.Fatalf("revoked claim generation rejection: code=%s, want conflict", remoteErrorCode(err))
+	_, err = postRestartClient.Workspace(stale).Read(ctx, "rotation-sentinel.txt")
+	if !isRemoteCode(err, executionenv.CodeUnauthenticated) {
+		t.Fatalf("revoked claim generation rejection: code=%s, want unauthenticated",
+			remoteErrorCode(err))
 	}
 	waitFileContent(t, ctx, postRestartClient, currentRun, "rotation-sentinel.txt", "old-authority\n", "post-restart revocation positive control after probe")
 	releaseCurrent()
@@ -525,8 +560,12 @@ func acquireCurrentAuthorityRun(ctx context.Context, req executionenv.RunClaimRe
 }
 
 func isRetryableAuthorityConvergence(err error) bool {
-	var remote *executionenv.Error
-	return errors.As(err, &remote) && remote.Code == executionenv.CodeNotReady && remote.Retryable
+	return isRemoteCode(err, executionenv.CodeNotReady) && remoteRetryable(err)
+}
+
+func remoteRetryable(err error) bool {
+	remote := remoteError(err)
+	return remote != nil && remote.Retryable
 }
 
 func TestAcquireCurrentAuthorityRunRetriesOnlyRetryableNotReady(t *testing.T) {
@@ -602,16 +641,20 @@ func TestAcquireCurrentAuthorityRunStopsAtBoundAndHonorsContext(t *testing.T) {
 
 func waitFileContent(t *testing.T, ctx context.Context, client *executionclient.Client, rc executionenv.RequestContext, path, want, proof string) {
 	t.Helper()
-	if err := readCurrentAuthorityContent(ctx, func(ctx context.Context) (executionenv.FileResponse, error) {
-		return client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: path})
+	if err := readCurrentAuthorityContent(ctx, func(ctx context.Context) ([]byte, error) {
+		return client.Workspace(rc).Read(ctx, path)
 	}, want, 500*time.Millisecond); err != nil {
-		var remote *executionenv.Error
-		retryable := errors.As(err, &remote) && remote.Retryable
-		t.Fatalf("%s did not authorize preserved data: errorCode=%s retryable=%t", proof, remoteErrorCode(err), retryable)
+		t.Fatalf("%s did not authorize preserved data: errorCode=%s retryable=%t",
+			proof, remoteErrorCode(err), remoteRetryable(err))
 	}
 }
 
-func readCurrentAuthorityContent(ctx context.Context, read func(context.Context) (executionenv.FileResponse, error), want string, delay time.Duration) error {
+func readCurrentAuthorityContent(
+	ctx context.Context,
+	read func(context.Context) ([]byte, error),
+	want string,
+	delay time.Duration,
+) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	const maxAttempts = 60
@@ -621,7 +664,7 @@ func readCurrentAuthorityContent(ctx context.Context, read func(context.Context)
 		}
 		got, err := read(ctx)
 		if err == nil {
-			if string(got.Data) != want {
+			if string(got) != want {
 				return errors.New("authority read returned unexpected content")
 			}
 			return nil
@@ -657,12 +700,12 @@ func TestReadCurrentAuthorityContentRetriesOnlyPreDispatchLag(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			err := readCurrentAuthorityContent(t.Context(), func(context.Context) (executionenv.FileResponse, error) {
+			err := readCurrentAuthorityContent(t.Context(), func(context.Context) ([]byte, error) {
 				calls++
 				if calls == 1 {
-					return executionenv.FileResponse{Data: []byte(tc.content)}, tc.err
+					return []byte(tc.content), tc.err
 				}
-				return executionenv.FileResponse{Data: []byte("sentinel")}, nil
+				return []byte("sentinel"), nil
 			}, "sentinel", 0)
 			if calls != tc.wantCalls || (err != nil) != tc.wantErr {
 				t.Fatalf("calls=%d error=%t", calls, err != nil)
@@ -674,9 +717,9 @@ func TestReadCurrentAuthorityContentRetriesOnlyPreDispatchLag(t *testing.T) {
 func TestReadCurrentAuthorityContentBoundAndCancellation(t *testing.T) {
 	t.Run("persistent lag", func(t *testing.T) {
 		calls := 0
-		err := readCurrentAuthorityContent(t.Context(), func(context.Context) (executionenv.FileResponse, error) {
+		err := readCurrentAuthorityContent(t.Context(), func(context.Context) ([]byte, error) {
 			calls++
-			return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true}
+			return nil, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true}
 		}, "sentinel", 0)
 		if calls != 60 || !isRetryableAuthorityConvergence(err) {
 			t.Fatalf("calls=%d errorCode=%s", calls, remoteErrorCode(err))
@@ -688,13 +731,13 @@ func TestReadCurrentAuthorityContentBoundAndCancellation(t *testing.T) {
 			cancel()
 		}
 		calls := 0
-		err := readCurrentAuthorityContent(ctx, func(ctx context.Context) (executionenv.FileResponse, error) {
+		err := readCurrentAuthorityContent(ctx, func(ctx context.Context) ([]byte, error) {
 			calls++
 			if _, ok := ctx.Deadline(); !ok {
 				t.Fatal("read has no bounded deadline")
 			}
 			cancel()
-			return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true}
+			return nil, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true}
 		}, "sentinel", time.Hour)
 		cancel()
 		wantCalls := 0
@@ -848,14 +891,14 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	client := replicas[0]
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "lifecycle")
 	first := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	if first.SpecSchema != 2 || first.StatusSchema != 2 || first.PodUID == "" || first.PVCUID == "" {
-		t.Fatal("schema-v2 exact runtime identities were not persisted")
+	if first.SpecSchema != 3 || first.StatusSchema != 3 || first.PodUID == "" || first.PVCUID == "" {
+		t.Fatal("schema-v3 exact runtime identities were not persisted")
 	}
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":2}}`)
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":3}}`)
 	for _, tc := range []struct {
 		name, patch, want string
 	}{
-		{"old", `{"spec":{"schemaVersion":1}}`, "Unsupported value"},
+		{"old", `{"spec":{"schemaVersion":2}}`, "Unsupported value"},
 		{"omitted", `{"spec":{"schemaVersion":null}}`, "Required value"},
 	} {
 		t.Run("schema-version-"+tc.name, func(t *testing.T) {
@@ -904,7 +947,8 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 		t.Fatal("stale renewal unexpectedly succeeded")
 	}
 	rc := executionenv.RequestContext{Environment: claim1.Environment, Owner: owner, BindingID: binding, RunID: claim1.RunID, ClaimID: claim1.ClaimID, Epoch: claim1.Epoch, GrantGeneration: claim1.GrantGeneration}
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "lifecycle-proof.txt", Data: []byte("preserved\n")}); err != nil {
+	_, err := client.Workspace(rc).CreateFile(ctx, "lifecycle-proof.txt", []byte("preserved\n"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := client.ReleaseRun(ctx, executionenv.RunClaimRequest{Environment: claim1.Environment, Owner: owner, BindingID: binding, RunID: claim1.RunID, ClaimID: claim1.ClaimID, Epoch: claim1.Epoch, GrantGeneration: claim1.GrantGeneration, OperationID: "release-a"}); err != nil {
@@ -931,8 +975,8 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	}
 	reattached := waitReady(t, ctx, client, owner, binding, attached.Environment)
 	rc2, release2 := acquireRun(t, ctx, client, owner, binding, reattached, "verify-replacement")
-	proof, err := client.File(ctx, executionenv.FileRequest{Context: rc2, Operation: executionenv.OpFileRead, Path: "lifecycle-proof.txt"})
-	if err != nil || string(proof.Data) != "preserved\n" {
+	proof, err := client.Workspace(rc2).Read(ctx, "lifecycle-proof.txt")
+	if err != nil || string(proof) != "preserved\n" {
 		t.Fatal("replacement lost PVC data")
 	}
 	release2()
@@ -965,7 +1009,7 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 		}
 		newGeneration = result.generation
 	}
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc2, Operation: executionenv.OpFileRead, Path: "lifecycle-proof.txt"}); err == nil {
+	if _, err := client.Workspace(rc2).Read(ctx, "lifecycle-proof.txt"); err == nil {
 		t.Fatal("revoked run claim remained usable")
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)

@@ -76,7 +76,8 @@ owner when the session binds.
 The provider persists an exact environment reference, owner binding, execution
 epoch, run claim, and revocation generation. A resumed session reattaches that
 same reference rather than using the current default. Provider replicas use
-Kubernetes compare-and-swap operations and claims to serialize environment work.
+Kubernetes compare-and-swap operations and claims to serialize environment
+lifecycle and run ownership; file and command calls write no Kubernetes state.
 A lost claim or unprovable executor state fences the environment. Recovery and
 retirement require the administrator to supply the recorded environment, epoch,
 Pod UID, and PVC UID. Workspace PVCs remain retained until the separate delete
@@ -116,7 +117,7 @@ and projects the provider and client certificates and trust bundles, including
 the client certificate the provider presents to executors. Executor server
 certificates are self-signed per Pod by the provider, which holds no signing key
 and dials only the Pod UID and certificate fingerprint pinned in the
-environment's status. The provider
+environment's status, and rechecks the Pod after the handshake. The provider
 reloads valid projected TLS files independently of the client-policy manifest.
 The manifest generation changes only for authorization policy updates. A valid
 mTLS client still needs the manifest's exact client URI, template scope, owner
@@ -148,8 +149,8 @@ verified handshake against the provider's renewed projected identity. The test
 atomically publishes the issued host client pair and calls `ReloadTLS` on the
 same client during the active RPC. Fixture-admin exec releases the barrier on
 the captured executor Pod, with its name, UID, and environment verified before
-release. The original RPC must return a successful terminal
-receipt, output, and workspace mutation with unchanged Pod/PVC, epoch, and grant.
+release. The original RPC must return a successful result with a known
+outcome, output, and workspace mutation with unchanged Pod/PVC, epoch, and grant.
 
 The active-renewal budget is 180 seconds; the command's self-barrier expires
 after 210 seconds, its timeout is 240 seconds, and the run claim lasts five
@@ -241,9 +242,8 @@ Coverage is split by the regression each layer can establish:
 | `executioncontroller/security_rotation_test.go` | Coherent `..data` reads despite projection switches; incomplete or mismatched TLS fails closed; ordinary TLS reload preserves policy. Injected `SecurityManager.now` checks snapshot readiness, TLS admission, and authorization immediately before, at, and after expiry, then recovery without a policy change. |
 | `executionclient/client_test.go` | Invalid or mismatched client reload closes the stale transport and valid material restores a fresh transport. |
 | `executionclient/renewal_test.go` | Verified same-identity RPCs drain across replacement; synctest advances retired-channel expiry and checks reference cleanup; withdrawn trust terminates active RPCs. |
-| `executioncontroller/operation_peer_test.go` | Original-peer expiry and CA/policy withdrawal fail closed at admission, during a command, and at completion; ordinary renewal preserves authority. |
 | `e2e/k8s_execution/production_qualification_test.go` | Real projected Secret/policy updates, invalid-generation denial and recovery, trust withdrawal, durable authorization, and operation fencing across deployed replicas. Included in the unchanged serial suite. |
-| Mandatory in-flight controlled renewal | Real cmctl-triggered issuer/client and projected provider renewal behind an active command barrier; explicit mirrored-client reload before release; terminal receipt, exit status and output, workspace mutation, preserved Pod/PVC, epoch and grant, and a later mutation without fencing. Session continuity is also covered by the serial mock journey. |
+| Mandatory in-flight controlled renewal | Real cmctl-triggered issuer/client and projected provider renewal behind an active command barrier; explicit mirrored-client reload before release; known-outcome result, exit status and output, workspace mutation, preserved Pod/PVC, epoch and grant, and a later mutation without fencing. Session continuity is also covered by the serial mock journey. |
 | Explicit natural-expiry renewal | Deployed `mecak8s` automatic client reload across repeated issuer renewals and original expiry; remote-tool session/PVC continuity and unchanged policy. |
 | Full mock qualification | Ordinary runs execute it in the serial suite. Native handoff executes it exactly once after all serial/renewal mutations, proving the final installed authority/catalog and leaving the qualified reattach deployment. |
 | `deploy/mecatl-execution-kind/{fixture_tls,repair,ci}_test.go` | Behavioral shell fixtures exercise proof ordering and failure publication, clean-environment selectors, valid no-rebuild reuse, standalone mock-before-stage, and rejection of SHA/run/attempt/state/cluster/config/spec/image/catalog/authority drift before credentialloader. |

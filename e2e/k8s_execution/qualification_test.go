@@ -23,10 +23,15 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
+
 	tuiClient "github.com/stacklok/mecatl/cmd/mecatui/client"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
+	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 )
 
 const namespace = "execution-qualification"
@@ -114,24 +119,41 @@ func TestKindExecutionQualification(t *testing.T) {
 	if err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeNotFound)) {
 		t.Fatalf("different client attach error = %v, want an existence-hiding denial", err)
 	}
-	rc := executionenv.RequestContext{Environment: first.Environment, Owner: owner, BindingID: binding, Epoch: ready.Epoch}
+	rc, releaseIntruderTarget := acquireRun(
+		t,
+		ctx,
+		providerClient,
+		owner,
+		binding,
+		ready,
+		"intruder-target",
+	)
 	for name, call := range map[string]func() error{
-		"command status": func() error {
-			_, err := intruder.CommandStatus(ctx, executionenv.CommandQueryRequest{Context: rc, CommandID: "not-owned"})
+		"command": func() error {
+			_, err := runCommand(ctx, intruder, rc, "true", 30*time.Second)
 			return err
 		},
-		"command cancel": func() error {
-			_, err := intruder.CancelCommand(ctx, executionenv.CommandQueryRequest{Context: rc, CommandID: "not-owned"})
+		"file read": func() error {
+			_, err := intruder.Workspace(rc).Read(ctx, "not-owned")
+			return err
+		},
+		"file create": func() error {
+			_, err := intruder.Workspace(rc).CreateFile(ctx, "not-owned", []byte("x\n"))
 			return err
 		},
 		"environment retire": func() error {
 			return intruder.RetireEnvironment(ctx, executionenv.RetireEnvironmentRequest{Environment: rc.Environment, Owner: rc.Owner, ExpectedEpoch: rc.Epoch, ExpectedPodUID: "wrong-pod", ExpectedPVCUID: "wrong-pvc", OperationID: "unauthorized-retire"})
 		},
 	} {
-		if err := call(); err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeUnauthenticated)) {
-			t.Fatalf("different client %s error = %v, want denial", name, err)
+		err := call()
+		denied := isRemoteCode(err, executionenv.CodePermissionDenied) ||
+			isRemoteCode(err, executionenv.CodeUnauthenticated) ||
+			name != "environment retire" && isRemoteCode(err, executionenv.CodeNotFound)
+		if err == nil || !denied {
+			t.Fatalf("different client %s error = %v, want an existence-hiding denial", name, err)
 		}
 	}
+	releaseIntruderTarget()
 	providerForward.stop()
 	providerClient.Close()
 	unreachable, err := executionclient.New(providerForward.addr, providerTLS)
@@ -224,14 +246,14 @@ func TestKindExecutionQualification(t *testing.T) {
 	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
 	waitAgentRunReleased(t, ctx, kubeconfig, lookup.ID)
 	rc, releaseVerification := acquireRun(t, ctx, providerClient, owner, sessionID, attached, fmt.Sprintf("independent-verify-%d", time.Now().UnixNano()))
-	proof, err := providerClient.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "proof.txt"})
-	if err != nil || string(proof.Data) != "beta\n" {
+	proof, err := providerClient.Workspace(rc).Read(ctx, "proof.txt")
+	if err != nil || string(proof) != "beta\n" {
 		t.Fatalf("independent file proof failed: err=%v", err)
 	}
 	logQualificationStep(t, &stepStarted, "independent_verification", "attach_and_read")
-	verification, err := providerClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go test ./...", TimeoutMillis: 120000})
-	if err != nil || verification.State != executionenv.CommandSucceeded || verification.Result.ExitCode != 0 {
-		t.Fatalf("independent go test proof failed: err=%v state=%s", err, verification.State)
+	verification, err := runCommand(ctx, providerClient, rc, "go test ./...", 2*time.Minute)
+	if err != nil || verification.ExitCode != 0 {
+		t.Fatalf("independent go test proof failed: err=%v exit=%d", err, verification.ExitCode)
 	}
 	logQualificationStep(t, &stepStarted, "independent_verification", "go_test")
 	releaseVerification()
@@ -246,19 +268,23 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatalf("sessions share a PVC or lack a PVC: first=%q second=%q", firstPVC, secondPVC)
 	}
 	secondRun, releaseSecond := acquireRun(t, ctx, providerClient, owner, secondSession, secondReady, "second-session-sentinel")
-	if _, err := providerClient.File(ctx, executionenv.FileRequest{Context: secondRun, Operation: executionenv.OpFileCreate, Path: "second-sentinel", Data: []byte("isolated-second\n")}); err != nil {
+	secondFiles := providerClient.Workspace(secondRun)
+	_, err = secondFiles.CreateFile(ctx, "second-sentinel", []byte("isolated-second\n"))
+	if err != nil {
 		t.Fatal("write second session sentinel:", err)
 	}
-	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: secondRun, Operation: executionenv.OpFileRead, Path: "proof.txt"}); err == nil || len(content.Data) != 0 {
+	if content, err := secondFiles.Read(ctx, "proof.txt"); err == nil || len(content) != 0 {
 		t.Fatal("second session read first session's sentinel")
 	}
 	releaseSecond()
 	firstReady := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
 	firstRun, releaseFirst := acquireRun(t, ctx, providerClient, owner, sessionID, firstReady, "first-session-isolation")
-	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: firstRun, Operation: executionenv.OpFileRead, Path: "proof.txt"}); err != nil || string(content.Data) != "beta\n" {
+	firstFiles := providerClient.Workspace(firstRun)
+	content, err := firstFiles.Read(ctx, "proof.txt")
+	if err != nil || string(content) != "beta\n" {
 		t.Fatal("first session lost its sentinel")
 	}
-	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: firstRun, Operation: executionenv.OpFileRead, Path: "second-sentinel"}); err == nil || len(content.Data) != 0 {
+	if content, err := firstFiles.Read(ctx, "second-sentinel"); err == nil || len(content) != 0 {
 		t.Fatal("first session read second session's sentinel")
 	}
 	releaseFirst()
@@ -323,16 +349,19 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 		ref := environmentForBinding(t, ctx, kubeconfig, sessionID)
 		ready := waitReady(t, ctx, client, owner, sessionID, ref)
 		rc, release := acquireRun(t, ctx, client, owner, sessionID, ready, "operator-utility-"+tc.id)
-		result, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "/usr/local/bin/mecatl-operator-utility", TimeoutMillis: 30000})
+		utility := "/usr/local/bin/mecatl-operator-utility"
+		result, err := runCommand(ctx, client, rc, utility, 30*time.Second)
 		release()
 		if err != nil {
 			t.Fatalf("%s bound Shell: %v", tc.id, err)
 		}
 		if tc.present {
-			if result.State != executionenv.CommandSucceeded || result.Result.ExitCode != 0 || string(result.Result.Stdout) != "mecatl-operator-utility-v1\n" {
-				t.Fatalf("derivative utility not executed through bound Shell: state=%s exit=%d output=%q", result.State, result.Result.ExitCode, result.Result.Stdout)
+			if result.ExitCode != 0 || result.Stdout != "mecatl-operator-utility-v1\n" {
+				t.Fatalf("derivative utility not executed through bound Shell: exit=%d output=%q",
+					result.ExitCode, result.Stdout)
 			}
-		} else if result.State == executionenv.CommandSucceeded || result.Result.ExitCode == 0 || bytes.Contains(result.Result.Stdout, []byte("mecatl-operator-utility-v1")) {
+		} else if result.ExitCode == 0 ||
+			strings.Contains(result.Stdout, "mecatl-operator-utility-v1") {
 			t.Fatal("unique utility is present in supported base image")
 		}
 	}
@@ -353,18 +382,15 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 			t.Fatal(err)
 		}
 		rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: sessionID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
-		result, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "/usr/local/bin/mecatl-operator-utility && printf 'corrupted\\n' > qualification-sentinel", TimeoutMillis: 30000})
-		if !isRemoteCode(err, executionenv.CodeNotReady) ||
-			result.State == executionenv.CommandSucceeded {
-			t.Fatalf("executor without Commands ran a command: state=%s code=%s",
-				result.State, remoteErrorCode(err))
+		corrupt := "/usr/local/bin/mecatl-operator-utility && " +
+			"printf 'corrupted\\n' > qualification-sentinel"
+		_, err = runCommand(ctx, client, rc, corrupt, 30*time.Second)
+		if grpcstatus.Code(err) != codes.Unimplemented ||
+			errors.Is(err, executorclient.ErrOutcomeUnknown) {
+			t.Fatalf("executor without Commands: err=%v, want unimplemented and not started", err)
 		}
-		read, err := client.File(ctx, executionenv.FileRequest{
-			Context:   rc,
-			Operation: executionenv.OpFileRead,
-			Path:      "qualification-sentinel",
-		})
-		if err != nil || string(read.Data) != "retained-negative-control\n" {
+		read, err := client.Workspace(rc).Read(ctx, "qualification-sentinel")
+		if err != nil || string(read) != "retained-negative-control\n" {
 			t.Fatalf("Files service lost the retained workspace: %s", remoteErrorCode(err))
 		}
 		after := readExecutionStatus(t, ctx, kubeconfig, ref.ID)
@@ -629,20 +655,42 @@ func waitAgentRunReleased(t *testing.T, ctx context.Context, kubeconfig, name st
 		time.Sleep(250 * time.Millisecond)
 	}
 }
-func isRemoteCode(err error, code executionenv.ErrorCode) bool {
+func remoteError(err error) *executionenv.Error {
+	if refusal := executionclient.Refusal(err); refusal != nil {
+		return refusal
+	}
 	var remote *executionenv.Error
-	return errors.As(err, &remote) && remote.Code == code
+	if errors.As(err, &remote) {
+		return remote
+	}
+	return nil
+}
+
+func isRemoteCode(err error, code executionenv.ErrorCode) bool {
+	remote := remoteError(err)
+	return remote != nil && remote.Code == code
 }
 
 func remoteErrorCode(err error) string {
 	if err == nil {
 		return "none"
 	}
-	var remote *executionenv.Error
-	if errors.As(err, &remote) && remote.Code.Valid() {
+	if remote := remoteError(err); remote != nil && remote.Code.Valid() {
 		return string(remote.Code)
 	}
 	return "transport"
+}
+
+func runCommand(
+	ctx context.Context,
+	c *executionclient.Client,
+	rc executionenv.RequestContext,
+	command string,
+	timeout time.Duration,
+) (tool.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return c.Commands(rc).Run(ctx, command)
 }
 
 func kindTemplateRevision(t *testing.T, ctx context.Context, client *executionclient.Client, id string) string {

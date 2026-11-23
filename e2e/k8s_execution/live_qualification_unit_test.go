@@ -142,7 +142,7 @@ func TestLiveRestartArtifactDiagnosticsClassifyAndRedact(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		responses []struct {
-			file executionenv.FileResponse
+			file []byte
 			err  error
 		}
 		wantCalls   int
@@ -154,15 +154,22 @@ func TestLiveRestartArtifactDiagnosticsClassifyAndRedact(t *testing.T) {
 		{
 			name: "retryable not ready replays read only",
 			responses: []struct {
-				file executionenv.FileResponse
+				file []byte
 				err  error
-			}{{err: &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true, Message: private}}, {file: executionenv.FileResponse{Data: []byte("artifact")}}},
+			}{
+				{err: &executionenv.Error{
+					Code:      executionenv.CodeNotReady,
+					Retryable: true,
+					Message:   private,
+				}},
+				{file: []byte("artifact")},
+			},
 			wantCalls: 2,
 		},
 		{
 			name: "nonretryable not ready fails immediately",
 			responses: []struct {
-				file executionenv.FileResponse
+				file []byte
 				err  error
 			}{{err: &executionenv.Error{Code: executionenv.CodeNotReady, Message: private}}},
 			wantCalls: 1, wantOutcome: "read_error", wantClass: "not_ready",
@@ -170,15 +177,19 @@ func TestLiveRestartArtifactDiagnosticsClassifyAndRedact(t *testing.T) {
 		{
 			name: "stale authority fails immediately",
 			responses: []struct {
-				file executionenv.FileResponse
+				file []byte
 				err  error
-			}{{err: &executionenv.Error{Code: executionenv.CodeConflict, Retryable: true, Message: private}}},
-			wantCalls: 1, wantOutcome: "read_error", wantClass: "conflict",
+			}{{err: &executionenv.Error{
+				Code:      executionenv.CodeUnauthenticated,
+				Retryable: true,
+				Message:   private,
+			}}},
+			wantCalls: 1, wantOutcome: "read_error", wantClass: "unauthenticated",
 		},
 		{
 			name: "remote error",
 			responses: []struct {
-				file executionenv.FileResponse
+				file []byte
 				err  error
 			}{{err: &executionenv.Error{Code: executionenv.CodeInternal, Message: private}}},
 			wantCalls: 1, wantOutcome: "read_error", wantClass: "internal",
@@ -186,19 +197,25 @@ func TestLiveRestartArtifactDiagnosticsClassifyAndRedact(t *testing.T) {
 		{
 			name: "empty success",
 			responses: []struct {
-				file executionenv.FileResponse
+				file []byte
 				err  error
-			}{{file: executionenv.FileResponse{}}},
+			}{{file: nil}},
 			wantCalls: 1, wantOutcome: "empty_response", wantClass: "none",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			data, failure := readQualificationArtifact(t.Context(), "post_restart", "arithmetic/sum_test.go", func(context.Context) (executionenv.FileResponse, error) {
+			read := func(context.Context) ([]byte, error) {
 				calls++
 				response := tc.responses[calls-1]
 				return response.file, response.err
-			})
+			}
+			data, failure := readQualificationArtifact(
+				t.Context(),
+				"post_restart",
+				"arithmetic/sum_test.go",
+				read,
+			)
 			if calls != tc.wantCalls {
 				t.Fatalf("calls=%d want=%d", calls, tc.wantCalls)
 			}
@@ -219,13 +236,17 @@ func TestLiveRestartArtifactDiagnosticsClassifyAndRedact(t *testing.T) {
 }
 
 func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) {
-	notReady := func() (executionenv.FileResponse, error) {
-		return executionenv.FileResponse{Data: []byte("partial")}, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true, Message: "PRIVATE-REMOTE-DETAIL"}
+	notReady := func() ([]byte, error) {
+		return []byte("partial"), &executionenv.Error{
+			Code:      executionenv.CodeNotReady,
+			Retryable: true,
+			Message:   "PRIVATE-REMOTE-DETAIL",
+		}
 	}
 	for _, tc := range []struct {
 		name         string
 		ctx          func() (context.Context, context.CancelFunc)
-		read         func(context.Context) (executionenv.FileResponse, error)
+		read         func(context.Context) ([]byte, error)
 		maxAttempts  int
 		wait         func(context.Context, context.CancelFunc) error
 		wantCalls    int
@@ -239,9 +260,9 @@ func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) 
 				cancel()
 				return ctx, func() {}
 			},
-			read: func(context.Context) (executionenv.FileResponse, error) {
+			read: func(context.Context) ([]byte, error) {
 				t.Fatal("read called after cancellation")
-				return executionenv.FileResponse{}, nil
+				return nil, nil
 			},
 			maxAttempts: 2, wait: func(context.Context, context.CancelFunc) error { return nil },
 			wantOutcome: "context_canceled",
@@ -249,14 +270,14 @@ func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) 
 		{
 			name:        "timeout during backoff",
 			ctx:         func() (context.Context, context.CancelFunc) { return context.WithCancel(t.Context()) },
-			read:        func(context.Context) (executionenv.FileResponse, error) { return notReady() },
+			read:        func(context.Context) ([]byte, error) { return notReady() },
 			maxAttempts: 2, wait: func(context.Context, context.CancelFunc) error { return context.DeadlineExceeded },
 			wantCalls: 1, wantOutcome: "retry_timeout", wantAttempts: 1,
 		},
 		{
 			name:        "cancel during backoff",
 			ctx:         func() (context.Context, context.CancelFunc) { return context.WithCancel(t.Context()) },
-			read:        func(context.Context) (executionenv.FileResponse, error) { return notReady() },
+			read:        func(context.Context) ([]byte, error) { return notReady() },
 			maxAttempts: 2,
 			wait: func(ctx context.Context, cancel context.CancelFunc) error {
 				cancel()
@@ -267,11 +288,11 @@ func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) 
 		{
 			name: "deadline returned by final in flight read",
 			ctx:  func() (context.Context, context.CancelFunc) { return context.WithCancel(t.Context()) },
-			read: func(ctx context.Context) (executionenv.FileResponse, error) {
+			read: func(ctx context.Context) ([]byte, error) {
 				if ctx.Err() == nil {
 					return notReady()
 				}
-				return executionenv.FileResponse{}, ctx.Err()
+				return nil, ctx.Err()
 			},
 			maxAttempts: 2,
 			wait: func(context.Context, context.CancelFunc) error {
@@ -282,7 +303,7 @@ func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) 
 		{
 			name:        "retry exhaustion",
 			ctx:         func() (context.Context, context.CancelFunc) { return context.WithCancel(t.Context()) },
-			read:        func(context.Context) (executionenv.FileResponse, error) { return notReady() },
+			read:        func(context.Context) ([]byte, error) { return notReady() },
 			maxAttempts: 2, wait: func(context.Context, context.CancelFunc) error { return nil },
 			wantCalls: 2, wantOutcome: "retry_exhausted", wantAttempts: 2,
 		},
@@ -291,13 +312,22 @@ func TestLiveRestartArtifactRetryTerminationRetainsLastDiagnostic(t *testing.T) 
 			ctx, cancel := tc.ctx()
 			defer cancel()
 			calls := 0
-			_, failure := readQualificationArtifactWithRetry(ctx, "post_restart", "arithmetic/sum.go", func(ctx context.Context) (executionenv.FileResponse, error) {
+			read := func(ctx context.Context) ([]byte, error) {
 				calls++
 				if tc.name == "deadline returned by final in flight read" && calls == 2 {
-					return executionenv.FileResponse{}, context.DeadlineExceeded
+					return nil, context.DeadlineExceeded
 				}
 				return tc.read(ctx)
-			}, time.Hour, tc.maxAttempts, func(ctx context.Context) error { return tc.wait(ctx, cancel) })
+			}
+			_, failure := readQualificationArtifactWithRetry(
+				ctx,
+				"post_restart",
+				"arithmetic/sum.go",
+				read,
+				time.Hour,
+				tc.maxAttempts,
+				func(ctx context.Context) error { return tc.wait(ctx, cancel) },
+			)
 			if calls != tc.wantCalls || failure == nil || failure.Outcome != tc.wantOutcome || failure.Attempts != tc.wantAttempts {
 				t.Fatalf("calls=%d failure=%+v", calls, failure)
 			}
@@ -313,9 +343,23 @@ func TestWriteLiveQualificationFailureSummaryRedactsArtifactData(t *testing.T) {
 	t.Setenv("MECATL_EXECUTION_TEMPLATE_REVISION", "fixture-revision")
 	state := t.TempDir()
 	rc := executionenv.RequestContext{Environment: executionenv.EnvironmentRef{ID: "environment"}}
-	_, failure := readQualificationArtifactWithRetry(t.Context(), "post_restart", "arithmetic/sum.go", func(context.Context) (executionenv.FileResponse, error) {
-		return executionenv.FileResponse{Data: []byte(sentinel)}, &executionenv.Error{Code: executionenv.CodeNotReady, Retryable: true, Message: sentinel}
-	}, time.Hour, 2, func(context.Context) error { return context.DeadlineExceeded })
+	read := func(context.Context) ([]byte, error) {
+		remote := &executionenv.Error{
+			Code:      executionenv.CodeNotReady,
+			Retryable: true,
+			Message:   sentinel,
+		}
+		return []byte(sentinel), remote
+	}
+	_, failure := readQualificationArtifactWithRetry(
+		t.Context(),
+		"post_restart",
+		"arithmetic/sum.go",
+		read,
+		time.Hour,
+		2,
+		func(context.Context) error { return context.DeadlineExceeded },
+	)
 	if failure == nil {
 		t.Fatal("expected retry failure")
 	}

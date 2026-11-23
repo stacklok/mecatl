@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
@@ -31,17 +32,20 @@ func qualifyDistinctAdministrator(t *testing.T, ctx context.Context, state, kube
 		clients[name] = client
 	}
 	rc, release := acquireRun(t, ctx, creator, owner, binding, attached, "admin-data-"+phase)
-	if _, err := creator.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "admin-sentinel", Data: []byte("creator-only\n")}); err != nil {
+	_, err := creator.Workspace(rc).CreateFile(ctx, "admin-sentinel", []byte("creator-only\n"))
+	if err != nil {
 		t.Fatal("creator data-plane positive:", remoteErrorCode(err))
 	}
 	admin := clients["operations"]
 	if _, err := admin.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding}, Purpose: executionenv.PurposeSession}); !isRemoteCode(err, executionenv.CodeNotFound) {
 		t.Fatal("scoped administrator acquired creator attach privilege:", remoteErrorCode(err))
 	}
-	if _, err := admin.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "admin-sentinel"}); !isRemoteCode(err, executionenv.CodeNotFound) {
+	_, err = admin.Workspace(rc).Read(ctx, "admin-sentinel")
+	if !isRemoteCode(err, executionenv.CodeNotFound) {
 		t.Fatal("scoped administrator used creator's run:", remoteErrorCode(err))
 	}
-	if _, err := admin.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "true"}); !isRemoteCode(err, executionenv.CodeNotFound) {
+	_, err = runCommand(ctx, admin, rc, "true", 30*time.Second)
+	if !isRemoteCode(err, executionenv.CodeNotFound) {
 		t.Fatal("scoped administrator used creator's command authority:", remoteErrorCode(err))
 	}
 	release()

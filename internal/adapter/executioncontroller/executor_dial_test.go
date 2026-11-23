@@ -15,14 +15,17 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/stacklok/mecatl/internal/executionexecutor"
 )
@@ -285,5 +288,46 @@ func TestExecutorPinFromEnvironmentRequiresCurrentPodPin(t *testing.T) {
 		if _, err := ExecutorPinFromEnvironment(env); !errors.Is(err, errExecutorUnpinned) {
 			t.Fatalf("%s: %v", name, err)
 		}
+	}
+}
+
+// podsAfterHandshake serves first for the dial's resolve and then for every later read.
+func podsAfterHandshake(first, then *corev1.Pod) *kubefake.Clientset {
+	kube := kubefake.NewSimpleClientset()
+	var reads atomic.Int32
+	kube.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if reads.Add(1) == 1 {
+			return true, first, nil
+		}
+		return true, then, nil
+	})
+	return kube
+}
+
+func TestExecutorDialConfirmsThePodAfterTheHandshake(t *testing.T) {
+	pki := newPlatformPKI(t, testProviderClientURI)
+	server := startExecutorServer(t, "exec-a", pki)
+	pin := ExecutorPin{PodName: "executor-a", PodUID: "pod-a", Fingerprint: server.fingerprint}
+	live := executorPodAt("executor-a", "pod-a", "127.0.0.1")
+	deleting := live.DeepCopy()
+	deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	for name, after := range map[string]*corev1.Pod{
+		"replaced":    executorPodAt("executor-a", "pod-b", "127.0.0.1"),
+		"terminating": deleting,
+		"moved":       executorPodAt("executor-a", "pod-a", "10.0.0.9"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			kube := podsAfterHandshake(live, after)
+			dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
+			err := dialAndRead(t, dialer, pin, server.port)
+			if !errors.Is(err, errExecutorPodReplaced) {
+				t.Fatalf("Pod %s after the handshake accepted: %v", name, err)
+			}
+		})
+	}
+	kube := podsAfterHandshake(live, live)
+	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
+	if err := dialAndRead(t, dialer, pin, server.port); err != nil {
+		t.Fatalf("unchanged Pod refused: %v", err)
 	}
 }

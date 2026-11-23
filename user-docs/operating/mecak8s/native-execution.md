@@ -58,7 +58,7 @@ For the **`v1-` execution-template contract**, preserve these runtime requiremen
 
 | Requirement | Downstream image contract |
 | --- | --- |
-| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider API version is `execution-grpc/1`; the provider calls the executor's private gRPC server, which has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
+| Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider calls the executor's private gRPC server, which has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
 | Identity | The Pod runs as UID **65532**, GID **65532**, with filesystem group **65532**. Added programs must be executable by that identity without privilege escalation or Linux capabilities. |
 | Startup | The provider overrides the image entrypoint and runs `/mecatl-executor serve` as the container's main process, listening on TCP port 7443. Kubernetes restarts the container in the same Pod if the server exits. Keep `/bin/sh`; foreground commands use it. |
 | Writable paths | `/workspace` is the retained workspace PVC; `/tmp` is a size-bounded ephemeral `emptyDir`. The image root filesystem is read-only. Put caches and generated files on those writable mounts, and install utilities into the image at build time. Image contents under the mount points are hidden by the mounts. |
@@ -457,9 +457,10 @@ kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
 
 Add the following block to the existing `mecak8s` values. The endpoint is a
 `host:port` gRPC target (no URL scheme) and must use the provider certificate's
-DNS identity. The private `mecatl.execution.v1.ExecutionProviderService` uses
-protocol `execution-grpc/1` with mandatory mTLS. Keep OIDC caller authentication
-enabled; the remote binding is scoped to the verified issuer and subject.
+DNS identity. The provider's private gRPC services use mandatory mTLS; run
+`mecak8s` and the provider from the same release. Keep OIDC caller
+authentication enabled; the remote binding is scoped to the verified issuer and
+subject.
 
 ```yaml
 execution:
@@ -601,6 +602,13 @@ to apply configuration; retain the immutable recipe unless explicit pruning is
 safe. A deprecated or revoked revision with an allocation still requires its
 classes. There is no runtime fallback or per-allocation startup isolation.
 
+### mecak8s or an environment reports a version mismatch
+
+If `mecak8s` fails to start with `execution provider does not serve the executor
+file and command services`, or an environment reports `IncompatibleSchema`, the
+provider or the environment comes from v0.0.52 or earlier. Follow
+[Upgrade from v0.0.52 or earlier](execution-provider-lifecycle.md#upgrade-from-v0052-or-earlier).
+
 ### Allocation or image startup fails
 
 If allocation reports `Ready=false` with `PVCUnavailable` or
@@ -663,10 +671,17 @@ Follow
 [execution-provider recovery](execution-provider-lifecycle.md#recover-a-fenced-environment)
 when terminal proof is required.
 
+After an executor container restart, the session reattaches once the server is
+ready. A command that was running ends with an unknown outcome and isn't
+retried. The executor writes files without `fsync`, so a node or storage failure
+can lose a recent write, and a restart during a write can leave the file partly
+written.
+
 Run claims renew before expiry while the exact peer identity and current
 client policy remain valid. Exact retained retries preserve the claim and
 original expiry. Conflicting or expired replay cannot extend or resurrect the
-claim. Withdrawn trust or expired certificates abort affected in-flight RPCs.
+claim. Withdrawn trust or an expired certificate refuses new calls; calls already
+in progress finish.
 
 ## Next steps
 
