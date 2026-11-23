@@ -1163,7 +1163,11 @@ func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now 
 	s.emitScheduleMetrics(claimed, payload, s.cfg.Clock.Now().Sub(now))
 	// RecordFire is idempotent per fire id; a transient failure is best-effort
 	// (the fire already ran — we lose the outcome record, not the at-most-once
-	// guarantee).
+	// guarantee). It deliberately has no timeout: while the claim is still
+	// pending (the fire failed before RecordFireStart, or that record was lost),
+	// giving up would leave the claim pending, and a lease-backed scheduler
+	// quarantines a pending claim, stopping the schedule for good. Waiting holds
+	// the fire's slot only until the store answers.
 	if err := s.cfg.Store.RecordFire(ctx, fire); err != nil && !errors.Is(err, port.ErrScheduleNotFound) {
 		s.diag.Log(ctx, port.LevelWarn, "scheduler: RecordFire failed",
 			"schedule", claimed.Spec.Name, "fire", fire.ID, "err", err.Error())
