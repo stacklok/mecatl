@@ -244,3 +244,30 @@ func TestNoFSDefinedMemberKeepsToItsToolLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestNoFSDefinedMemberCloseWithoutGeneration pins that closing a file-less
+// defined member does not panic when the harness instructions are not
+// generation-backed (retainHarnessGeneration then returns a nil close) while
+// the definition opened its own MCP server, so the member's close joins both.
+func TestNoFSDefinedMemberCloseWithoutGeneration(t *testing.T) {
+	a := noFSTeamAssets(t)
+	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
+	if _, ok := cfg.harnessInstructions.(generationInstructions); ok {
+		t.Fatal("test needs non-generation harness instructions")
+	}
+	def := agents.AgentDef{
+		Name:        "inline",
+		Description: "a member that opens its own MCP server",
+		MCPServers:  []agents.AgentMCPServer{{Name: "own", URL: newMCPTestServerWithResource(t)}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("ok"))
+	factory := buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
+		nil, regOf(def), nil, nil, nil, false, a.globalMgr, a, true)
+	build := factory(team.New("nofs-team"), agent.MemberSpec{Name: "scout", AgentType: "inline", InitialPrompt: "go"}, "")
+	if build.Engine == nil || build.Close == nil {
+		t.Fatalf("defined member build = %+v, want an engine and a close", build)
+	}
+	if err := build.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}

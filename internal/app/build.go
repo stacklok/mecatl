@@ -8522,7 +8522,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
-						_ = generationClose()
+						if generationClose != nil {
+							_ = generationClose()
+						}
 						return agent.MemberBuild{}
 					}
 					childProvider, childProviderID = entry.provider, selectedProvider
@@ -8557,9 +8559,17 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
 			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, nil)
+			// retainHarnessGeneration returns a nil close when the harness
+			// instructions are not generation-backed, so guard it.
 			memberClose := generationClose
 			if defClose != nil {
-				memberClose = sync.OnceValue(func() error { return errors.Join(defClose(), generationClose()) })
+				memberClose = sync.OnceValue(func() error {
+					var generationErr error
+					if generationClose != nil {
+						generationErr = generationClose()
+					}
+					return errors.Join(defClose(), generationErr)
+				})
 			}
 			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: memberClose, MCPToolNames: exempt, DefinitionName: definitionName}
 		}
@@ -8740,7 +8750,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
-						_ = generationClose()
+						if generationClose != nil {
+							_ = generationClose()
+						}
 						return agent.MemberBuild{}
 					}
 					childProvider, childProviderID = entry.provider, selectedProvider
