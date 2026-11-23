@@ -447624,6 +447624,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795443302135,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6e2a0a9f1a557552fbceca91bf73a22bd65020a7",
+          "message": "test(mecatui): pin the scroll-keys label in the connect test model (#2957)",
+          "timestamp": "2026-11-23T15:51:47+01:00",
+          "tree_id": "d8e703f883f60f5ed4d1deae2798e1b77b09be10",
+          "url": "https://github.com/stacklok/mecatl/commit/6e2a0a9f1a557552fbceca91bf73a22bd65020a7"
+        },
+        "date": 1795446289147,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -582752,6 +582791,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795446283835,
+  "lastUpdate": 1795446290175,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
