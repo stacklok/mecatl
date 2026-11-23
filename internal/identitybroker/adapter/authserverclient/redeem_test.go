@@ -28,7 +28,7 @@ const grantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 // embedded AS-2, set up to trust that AS-1 through mcpbrokertest. Not
 // parallel: StartAS2 sets an environment variable.
 func TestRedeemAtRealAS2(t *testing.T) {
-	as2Issuer, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
+	as2Issuer, _, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
 	if err != nil {
 		t.Fatal(err)
 	}

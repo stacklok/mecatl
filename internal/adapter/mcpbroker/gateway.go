@@ -128,8 +128,8 @@ type GatewayCalls struct {
 	SendOnce SendOnceRecord
 	// ListLimits bound each listing of a server's tools through the gateway;
 	// a zero field takes the mcp package's default. Production leaves it zero:
-	// it lets tests lower a limit until operator gateway entries (#2538) need
-	// their own.
+	// it lets tests lower a limit until external gateways (#2812) need their
+	// own.
 	ListLimits mcpadapter.GatewayListLimits
 }
 

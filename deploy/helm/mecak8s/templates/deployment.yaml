@@ -10,6 +10,7 @@
 {{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
 {{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}
 {{- include "mecak8s.validateMCP" . -}}
+{{- include "mecak8s.validateGatewayEntries" . -}}
 {{- $mcpOAuth := false -}}
 {{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $mcpOAuth = true -}}{{- end -}}{{- end -}}
 {{- $mcpSettings := or $mcpOAuth (not .Values.mcp.servers) -}}
@@ -374,6 +375,9 @@ spec:
             {{- if $mcpSettings }}
             - {name: mcp-profile, mountPath: /etc/mecatl-mcp, readOnly: true}
             {{- end }}
+            {{- if (.Values.mcp.broker.signingKey | default dict).secretName }}
+            - {name: mcp-broker-signing-key, mountPath: {{ include "mecak8s.mcpSigningKeyDir" . }}, readOnly: true}
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -488,6 +492,26 @@ spec:
             defaultMode: 0444
             items:
               - {key: settings.yaml, path: settings.yaml}
+        {{- end }}
+        {{- with .Values.mcp.broker.signingKey }}
+        {{- if .secretName }}
+        # The embedded MCP gateway's signing key and fallbacks, at the paths
+        # settings.yaml names.
+        - name: mcp-broker-signing-key
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ .secretName }}
+                  items:
+                    - {key: {{ .key | quote }}, path: {{ printf "signing-key/%s" .key | quote }}}
+              {{- range $i, $ref := .fallbacks }}
+              - secret:
+                  name: {{ $ref.secretName }}
+                  items:
+                    - {key: {{ $ref.key | quote }}, path: {{ printf "fallback-%d/%s" $i $ref.key | quote }}}
+              {{- end }}
+        {{- end }}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

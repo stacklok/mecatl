@@ -135,6 +135,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			return nil, fmt.Errorf("%w: broker client: %w", ErrInvalidCatalogue, err)
 		}
 	}
+	signingKeys, err := config.signingKeyRunConfig()
+	if err != nil {
+		return nil, err
+	}
 	diag := config.Diagnostics
 	if diag == nil {
 		diag = port.NopDiagnostics{}
@@ -236,9 +240,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
 		}
-		// Shortcut: the embedded authorization server sets no signing key and no HMAC secret, so ToolHive generates both at each start and the tokens, authorization codes, and refresh tokens they protect do not survive a restart; removed by #2538 (mecak8s supplies the signing key with the identity broker on) and #2869 (the HMAC secret).
+		// Shortcut: the embedded authorization server sets no HMAC secret, and no signing key unless config.SigningKeyFile names one, which mecak8s allows only with the identity broker on and an embedded gateway entry, so ToolHive generates them at each start and the authorization codes and refresh tokens, and without the key the tokens, they protect do not survive a restart; removed by #2869 (the HMAC secret, and the signing key with the identity broker off).
 		runConfig := &authserver.RunConfig{
 			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{resource}, Upstreams: construction.upstreams,
+			SigningKeyConfig: signingKeys,
 		}
 		if as2 {
 			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)

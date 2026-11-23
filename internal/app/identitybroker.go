@@ -2,13 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -131,54 +130,134 @@ type identityBrokerAS2 struct {
 	HTTPClient *http.Client
 }
 
-// gatewayIDJAGTarget is the AS-2 a hosted AS-1 issues the gateway's ID-JAGs
-// for: the issuer and vMCP resource the bundled MCP broker gives AS-2, derived
-// before either is built.
-type gatewayIDJAGTarget struct {
-	Issuer, Resource string
+// embeddedGateway is the embedded gateway the bundled MCP broker runs, as an
+// embedded gateway entry must describe it: AS-2's issuer, token endpoint, and
+// vMCP resource, derived from mcp.broker.callback_url before either broker is
+// built, and the OAuth routes it can route.
+type embeddedGateway struct {
+	Issuer, TokenEndpoint, Resource string
+	// Routes are the names of the MCP broker's OAuth routes.
+	Routes []string
 }
 
-// errAS2IssuerIsAS1s refuses an AS-2 that would share AS-1's issuer.
-var errAS2IssuerIsAS1s = errors.New("the MCP gateway's authorization server (AS-2) would have the same issuer as AS-1")
+// as2SigningKey is the embedded gateway's signing key and its fallbacks
+// (mcp.broker.signing_key_file and fallback_key_files). The identity broker
+// never holds it; startup only checks it is not one of the broker's keys.
+type as2SigningKey struct {
+	file      string
+	fallbacks []string
+}
 
-// errAS2IsNotIDJAGTarget refuses an AS-2 other than the one AS-1 issues the
-// gateway's ID-JAGs for.
-var errAS2IsNotIDJAGTarget = errors.New("the MCP gateway's authorization server (AS-2) is not the one AS-1 issues ID-JAGs for")
+// errEmbeddedEntryWithoutEmbeddedGateway refuses an embedded gateway entry in
+// a process that runs no embedded gateway.
+var errEmbeddedEntryWithoutEmbeddedGateway = errors.New("the identity broker's configuration file declares an embedded gateway, but this process runs none: the embedded gateway needs the bundled MCP broker (mcp.mode: broker) with an OAuth server and an https mcp.broker.callback_url")
+
+// errEmbeddedEntryDisagrees refuses an embedded gateway entry whose AS-2
+// differs from the embedded gateway's.
+var errEmbeddedEntryDisagrees = errors.New("the identity broker's embedded gateway entry disagrees with the embedded gateway this process runs")
+
+// errEmbeddedEntryServerIsNotARoute refuses an embedded gateway entry routing
+// a server the MCP broker does not route through its embedded gateway.
+var errEmbeddedEntryServerIsNotARoute = errors.New("the identity broker's embedded gateway entry routes a server that is not one of the MCP broker's OAuth servers (mcp.servers with auth.mode: oauth; names match exactly)")
+
+// errGatewayServersBeforeAS2TrustsAS1 refuses an entry routing servers while
+// AS-2 trusts no ID-JAG issuer, which would refuse every call's ID-JAG.
+//
+// Shortcut: production's gateway entry routes no servers; removed by #2533 (AS-2 trusts AS-1).
+var errGatewayServersBeforeAS2TrustsAS1 = errors.New("the identity broker's gateway entry routes servers, but the embedded gateway's authorization server (AS-2) does not trust AS-1's ID-JAGs yet (#2533); list no servers until it does")
+
+// errGatewayServersWithoutAS1 refuses an entry routing servers without the
+// AS-1 that issues their calls' ID-JAGs.
+var errGatewayServersWithoutAS1 = errors.New("the identity broker's gateway entry routes servers, which requires AS-1 (--identity-broker-as1-issuer) to issue their calls' ID-JAGs")
+
+// errNoAS2SigningKey refuses an embedded gateway entry without the embedded
+// gateway's signing key.
+var errNoAS2SigningKey = errors.New("the identity broker's embedded gateway entry requires the embedded gateway's signing key (mcp.broker.signing_key_file)")
+
+// errAS2SigningKeyWithoutEntry refuses the embedded gateway's signing key
+// without the identity broker and its embedded gateway entry.
+//
+// Shortcut: the key is allowed only with the identity broker on; removed by #2869 (the embedded gateway's keys survive a restart with the identity broker off).
+var errAS2SigningKeyWithoutEntry = errors.New("mcp.broker.signing_key_file requires the identity broker (--enable-identity-broker) with an embedded gateway entry in its configuration file")
+
+// errAS2SigningKeyIsABrokerKey refuses an embedded gateway signing key that
+// is also one of the identity broker's keys.
+var errAS2SigningKeyIsABrokerKey = errors.New("the embedded gateway's signing key (mcp.broker.signing_key_file or a fallback) is also one of the identity broker's keys; each role needs its own key")
+
+// errAS2IsNotTheEntry refuses an AS-2 other than the one the identity
+// broker's gateway entry names.
+var errAS2IsNotTheEntry = errors.New("the MCP gateway's authorization server (AS-2) is not the one the identity broker's gateway entry names")
 
 // errGatewayIsNotAS2Resource refuses gateway calls sent to a gateway whose
 // resource is not the one AS-2 issues their tokens for.
 var errGatewayIsNotAS2Resource = errors.New("the MCP gateway's resource is not the one its authorization server (AS-2) issues tokens for")
 
-// sameIssuer reports whether two issuer URLs name the same server: scheme and
-// host compare case-insensitively, a default port equals none, and a trailing
-// slash is ignored. Unparseable URLs compare byte for byte.
-func sameIssuer(a, b string) bool {
-	if a == b {
-		return true
-	}
-	ua, errA := url.Parse(a)
-	ub, errB := url.Parse(b)
-	if errA != nil || errB != nil {
-		return false
-	}
-	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
-		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
-		effectivePort(ua) == effectivePort(ub) &&
-		strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/")
-}
-
-// effectivePort is u's port, or its scheme's default when it names none.
-func effectivePort(u *url.URL) string {
-	if p := u.Port(); p != "" {
-		return p
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "https":
-		return "443"
-	case "http":
-		return "80"
+// as1Issuer is the issuer of the AS-1 the identity broker uses, hosted or
+// not; empty without one.
+func as1Issuer(cfg Config) string {
+	switch {
+	case cfg.IdentityBrokerHostedAS1 != nil:
+		return cfg.IdentityBrokerHostedAS1.Issuer
+	case cfg.IdentityBrokerAS1 != nil:
+		return cfg.IdentityBrokerAS1.Issuer
 	}
 	return ""
+}
+
+// checkGatewayEntry returns the embedded gateway entry of file, after
+// checking it against the embedded gateway this process runs and the
+// embedded gateway's signing key against the broker's keys; nil when file
+// has none, which then refuses a signing key. It runs before AS-1 is built.
+func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGateway, key as2SigningKey) (*identitybroker.GatewayEntry, error) {
+	if len(file.Gateways) == 0 {
+		if key.file != "" {
+			return nil, errAS2SigningKeyWithoutEntry
+		}
+		return nil, nil
+	}
+	// The broker accepts one embedded entry (identitybroker.ValidateGatewayEntries).
+	entry := file.Gateways[0]
+	entry.Servers = slices.Clone(entry.Servers)
+	if embedded == nil {
+		return nil, errEmbeddedEntryWithoutEmbeddedGateway
+	}
+	for _, f := range []struct{ name, entry, embedded string }{
+		{"as2_issuer", entry.AS2Issuer, embedded.Issuer},
+		{"token_endpoint", entry.TokenEndpoint, embedded.TokenEndpoint},
+		{"resource", entry.Resource, embedded.Resource},
+	} {
+		if f.entry != f.embedded {
+			return nil, fmt.Errorf("%w: its %s is %q, the embedded gateway's is %q", errEmbeddedEntryDisagrees, f.name, f.entry, f.embedded)
+		}
+	}
+	for _, server := range entry.Servers {
+		if !slices.Contains(embedded.Routes, server) {
+			return nil, fmt.Errorf("%w: %q", errEmbeddedEntryServerIsNotARoute, server)
+		}
+	}
+	if len(entry.Servers) != 0 {
+		if !cfg.IdentityBrokerAS2Trust.TrustsAnIssuer() {
+			return nil, errGatewayServersBeforeAS2TrustsAS1
+		}
+		if cfg.IdentityBrokerHostedAS1 == nil && cfg.IdentityBrokerAS1 == nil {
+			return nil, errGatewayServersWithoutAS1
+		}
+	}
+	if key.file == "" {
+		return nil, errNoAS2SigningKey
+	}
+	as2Keys, err := as2SigningPublicKeys(key)
+	if err != nil {
+		return nil, fmt.Errorf("the embedded gateway's signing key: %w", err)
+	}
+	brokerKeys := file.Keys.PublicKeys()
+	for _, pub := range as2Keys {
+		eq, ok := pub.(interface{ Equal(crypto.PublicKey) bool })
+		if ok && slices.ContainsFunc(brokerKeys, eq.Equal) {
+			return nil, errAS2SigningKeyIsABrokerKey
+		}
+	}
+	return &entry, nil
 }
 
 // hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
@@ -210,8 +289,12 @@ type identityBrokerParts struct {
 	// recorder holds the core's decision and ID-JAG records; nil for an
 	// injected core.
 	recorder *identitybroker.MemoryRecorder
+	// gatewayEntry is the configuration file's embedded gateway entry, which
+	// startup checked against the embedded gateway; nil without one, and then
+	// the MCP broker sets up no AS-2.
+	gatewayEntry *identitybroker.GatewayEntry
 	// gateway reports whether the core has a gateway, whose AS-2 bindAS2
-	// binds.
+	// binds: the entry routes servers.
 	gateway bool
 	// gatewayServers are the servers the gateway routes; set only with
 	// gateway.
@@ -248,18 +331,17 @@ func (p identityBrokerParts) bindAS2(as2 *identityBrokerAS2) (unbind func(), err
 // as does a configuration that gives sessions a shell.
 //
 // The real broker starts from its configuration file and the operator keys it
-// names; no key is generated. With a hosted AS-1 and no test override, session
-// open converts users' access tokens at that AS-1 in process:
-// buildBrokerWithHostedAS1 registers the file's broker client key set there
-// for the confidential delegate, which may obtain ID-JAGs for target when it
-// is set.
-func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
+// names; no key is generated. Its embedded gateway entry, if any, must agree
+// with embedded, the embedded gateway this process runs, and needs the
+// embedded gateway's signing key, as2Key, which is refused without one. With
+// a hosted AS-1 and no test override, session open converts users' access
+// tokens at that AS-1 in process: buildBrokerWithHostedAS1 registers the
+// file's broker client key set there for the confidential delegate, which may
+// obtain ID-JAGs for the entry when it routes servers.
+func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGateway, as2Key as2SigningKey) (identityBrokerParts, error) {
 	if !cfg.IdentityBroker {
-		switch {
-		case cfg.IdentityBrokerHostedAS1 != nil:
-			return identityBrokerParts{}, errIdentityBrokerAS1WithoutBroker
-		case cfg.IdentityBrokerConfigFile != "":
-			return identityBrokerParts{}, errIdentityBrokerConfigFileWithoutBroker
+		if err := checkIdentityBrokerOff(cfg, as2Key); err != nil {
+			return identityBrokerParts{}, err
 		}
 		return identityBrokerParts{release: func() {}}, nil
 	}
@@ -273,24 +355,31 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 	// An injected test core needs no file; its hosted AS-1 generates its
 	// signing key.
 	var file brokerconfig.File
+	var entry *identitybroker.GatewayEntry
 	if core == nil {
 		if cfg.IdentityBrokerConfigFile == "" {
 			return identityBrokerParts{}, errNoIdentityBrokerConfigFile
 		}
 		var err error
-		if file, err = brokerconfig.Load(cfg.IdentityBrokerConfigFile, brokerconfig.Host{AS1: cfg.IdentityBrokerHostedAS1 != nil}); err != nil {
+		if file, err = brokerconfig.Load(cfg.IdentityBrokerConfigFile, brokerconfig.Host{AS1: cfg.IdentityBrokerHostedAS1 != nil, AS1Issuer: as1Issuer(cfg)}); err != nil {
 			return identityBrokerParts{}, err
 		}
+		if entry, err = checkGatewayEntry(cfg, file, embedded, as2Key); err != nil {
+			return identityBrokerParts{}, err
+		}
+	} else if as2Key.file != "" {
+		// An injected test core has no configuration file, so no entry.
+		return identityBrokerParts{}, errAS2SigningKeyWithoutEntry
 	}
 	// Production wiring: host AS-1 with the broker client as the delegate,
 	// then point the broker's session open at that AS-1. A test that replaces
 	// the core or sets IdentityBrokerAS1 explicitly keeps the paths below.
 	if core == nil && cfg.IdentityBrokerAS1 == nil && cfg.IdentityBrokerHostedAS1 != nil {
-		return buildBrokerWithHostedAS1(ctx, cfg, file, target)
+		return buildBrokerWithHostedAS1(ctx, cfg, file, entry)
 	}
 	var parts identityBrokerParts
 	if core == nil {
-		broker, err := newIdentityBroker(ctx, cfg, file)
+		broker, err := newIdentityBroker(ctx, cfg, file, entry)
 		if err != nil {
 			return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
 		}
@@ -324,6 +413,20 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 	return parts, nil
 }
 
+// checkIdentityBrokerOff refuses configuration that needs the identity
+// broker when it is off.
+func checkIdentityBrokerOff(cfg Config, as2Key as2SigningKey) error {
+	switch {
+	case cfg.IdentityBrokerHostedAS1 != nil:
+		return errIdentityBrokerAS1WithoutBroker
+	case cfg.IdentityBrokerConfigFile != "":
+		return errIdentityBrokerConfigFileWithoutBroker
+	case as2Key.file != "":
+		return errAS2SigningKeyWithoutEntry
+	}
+	return nil
+}
+
 // localWorkspace reports whether sessions' file tools can reach this
 // process's own filesystem: a workspace served by the local placement, alone
 // or as remote execution's local fallback. The Redis filesystem excludes a
@@ -336,10 +439,11 @@ func localWorkspace(cfg Config) bool {
 // AS-1 are both enabled: it hosts AS-1 with the file's broker client key set
 // registered for the confidential delegate client
 // identitybroker.BrokerClientID, and builds the broker with its session open
-// pointed at that AS-1 in process. With target, the delegate also obtains
-// per-call ID-JAGs for it there, whose actor tokens AS-1 checks with the
-// broker's CredentialVerifier.
-func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig.File, target *gatewayIDJAGTarget) (identityBrokerParts, error) {
+// pointed at that AS-1 in process. With an entry that routes servers, the
+// delegate also obtains per-call ID-JAGs for its AS-2 there, whose actor
+// tokens AS-1 checks with the broker's CredentialVerifier; AS-1 issues none
+// for any other audience or resource.
+func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig.File, entry *identitybroker.GatewayEntry) (identityBrokerParts, error) {
 	as1 := cfg.IdentityBrokerHostedAS1
 	sources := make([]string, len(as1.PublicClients))
 	for i, c := range as1.PublicClients {
@@ -351,12 +455,12 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig
 		AllowedSourceClients: sources,
 		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
 	}
-	if target != nil {
-		// Shortcut: AS-1 issues ID-JAGs only for the AS-2 the test-only gateway servers configure, so production configures no target and no actor profile; removed by #2533 and #2538.
+	if entry != nil && len(entry.Servers) != 0 {
+		// Shortcut: AS-1 issues ID-JAGs only for a gateway entry that routes servers, and production's routes none until AS-2 trusts AS-1, so production configures no target and no actor profile; removed by #2533.
 		delegate.IDJAG = &as1server.IDJAGIssuance{
 			ActIssuer: identitybroker.ActorIssuer(identityBrokerConfig(cfg, file).TrustDomain),
 			// Lifetime stays zero, ToolHive's default of a minute.
-			Targets: []as1server.IDJAGTarget{{Issuer: target.Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{target.Resource}}},
+			Targets: []as1server.IDJAGTarget{{Issuer: entry.AS2Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{entry.Resource}}},
 		}
 	}
 	server, err := buildHostedAS1(ctx, as1, file, delegate)
@@ -373,7 +477,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig
 	if delegate.IDJAG != nil {
 		cfg.IdentityBrokerAS1.ActorTokens = server
 	}
-	broker, err := newIdentityBroker(ctx, cfg, file)
+	broker, err := newIdentityBroker(ctx, cfg, file, entry)
 	if err != nil {
 		_ = server.Close()
 		return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
@@ -441,7 +545,10 @@ type identityBroker struct {
 	// clientKeySetFile is the broker client's public key set file.
 	clientKeySetFile string
 	recorder         *identitybroker.MemoryRecorder
-	gateway          bool
+	// gatewayEntry is the configuration file's checked embedded gateway
+	// entry; nil without one.
+	gatewayEntry *identitybroker.GatewayEntry
+	gateway      bool
 	// gatewayServers are the servers the gateway routes.
 	gatewayServers []string
 }
@@ -451,7 +558,7 @@ type identityBroker struct {
 func (b identityBroker) parts() identityBrokerParts {
 	return identityBrokerParts{
 		client: b.client, clientKeySetFile: b.clientKeySetFile, core: b.core, definitions: b.definitions,
-		recorder: b.recorder, gateway: b.gateway, gatewayServers: b.gatewayServers,
+		recorder: b.recorder, gatewayEntry: b.gatewayEntry, gateway: b.gateway, gatewayServers: b.gatewayServers,
 	}
 }
 
@@ -498,17 +605,17 @@ var errNoBrokerClientKey = errors.New("the identity broker's configuration file 
 // cannot be read fails startup, and each definition left out or adjusted is
 // logged. With cfg.IdentityBrokerAS1, session open converts access tokens at
 // that AS-1, authenticating with the broker client key, and calls get their
-// ID-JAGs there; a gateway is configured only then, and only when a test sets
-// cfg.IdentityBrokerGatewayServers.
-func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) (identityBroker, error) {
+// ID-JAGs there; a gateway is configured only then, and only when entry, the
+// checked gateway entry, routes servers.
+func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, entry *identitybroker.GatewayEntry) (identityBroker, error) {
 	config := identityBrokerConfig(cfg, file)
 	as1 := cfg.IdentityBrokerAS1
 	// A gateway needs AS-1 to issue its ID-JAGs, so without an AS-1 there is
-	// none.
-	// Shortcut: production configures no gateway entry, so gateway calls are refused as not configured; removed by #2533 (AS-2 trusts AS-1 in production, gateway from configuration).
+	// none; checkGatewayEntry refuses an entry routing servers then.
+	// Shortcut: production's gateway entry routes no servers, so gateway calls are refused as not configured; removed by #2533 (AS-2 trusts AS-1).
 	var gatewayServers []string
-	if as1 != nil {
-		gatewayServers = slices.Clone(cfg.IdentityBrokerGatewayServers)
+	if as1 != nil && entry != nil && len(entry.Servers) != 0 {
+		gatewayServers = slices.Clone(entry.Servers)
 	}
 	// Each definition's ceiling is resolved against the servers the gateway
 	// routes.
@@ -540,7 +647,7 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) 
 			opts = append(opts, identitybroker.WithClock(as1.Now))
 		}
 		if gatewayServers != nil {
-			opts = append(opts, identitybroker.WithGateway(identitybroker.Gateway{Servers: gatewayServers}))
+			opts = append(opts, identitybroker.WithGateway(identitybroker.Gateway{Issuer: entry.AS2Issuer, Resource: entry.Resource, Servers: gatewayServers}))
 		}
 	}
 	core, err := identitybroker.New(config, definitions, file.Keys.AgentIssuer, opts...)
@@ -554,7 +661,7 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) 
 	}
 	return identityBroker{
 		core: core, definitions: definitions, client: client, clientKeySetFile: file.BrokerClientKeySetFile,
-		recorder: recorder, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
+		recorder: recorder, gatewayEntry: entry, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
 	}, nil
 }
 

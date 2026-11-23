@@ -27,7 +27,7 @@ const as2TokenPath = toolHiveBasePath + "/oauth/token"
 // embedded, the embedded authorization server's handler as mounted under
 // toolHiveBasePath.
 func newAS2(issuer, resource string, embedded http.Handler) *AS2 {
-	return &AS2{Issuer: issuer, TokenEndpoint: issuer + "/oauth/token", Resource: resource, handler: tokenEndpointOnly(embedded)}
+	return &AS2{Issuer: issuer, TokenEndpoint: as2TokenEndpoint(issuer), Resource: resource, handler: tokenEndpointOnly(embedded)}
 }
 
 // Handler serves AS-2's token endpoint, for composition to reach AS-2 in

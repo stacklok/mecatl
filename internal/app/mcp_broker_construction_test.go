@@ -6,10 +6,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -129,6 +132,29 @@ func protectedBrokerAuthority() *mcpauthority.Result {
 	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL, Routes: []permconfig.MCPServerProfile{protectedToolHiveRoute("calendar")}})
 }
 
+// protectedBrokerAuthorityWithKey is protectedBrokerAuthority with a new
+// signing key for the embedded gateway, which an embedded gateway entry
+// requires.
+func protectedBrokerAuthorityWithKey(t *testing.T) *mcpauthority.Result {
+	t.Helper()
+	declaration, _ := protectedBrokerAuthority().Broker()
+	declaration.SigningKeyFile = writeAS2Key(t, brokerconfigtest.NewKey(t))
+	return mcpauthority.NewBroker(declaration)
+}
+
+// writeAS2Key writes key as the embedded gateway's signing key and returns
+// its path.
+func writeAS2Key(t *testing.T, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	return brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "as2.pem"), key)
+}
+
+// embeddedEntry is the embedded gateway entry for protectedBrokerAuthority's
+// embedded gateway, routing servers.
+func embeddedEntry(servers ...string) []identitybroker.GatewayEntry {
+	return []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(as2TestIssuer, servers...)}
+}
+
 // unusedAS1 points the identity broker's session open at an AS-1 startup
 // never calls.
 func unusedAS1(issuer string) *IdentityBrokerAS1 {
@@ -144,21 +170,27 @@ func newBrokerClientKey(t *testing.T) *ecdsa.PrivateKey {
 	return key
 }
 
-// TestBuildRecordsAS2 sets AS-2 up with the identity broker on and a
-// protected route, for each AS-1 the broker may have: startup records AS-2's
-// issuer, token endpoint, resource, and an in-process client, and AS-2 knows
-// the key the broker signs its client assertions with.
+// TestBuildRecordsAS2 sets AS-2 up with the identity broker on, an embedded
+// gateway entry routing no servers, and a protected route, for each AS-1 the
+// broker may have: startup records AS-2's issuer, token endpoint, resource,
+// and an in-process client, AS-2 knows the key the broker signs its client
+// assertions with, and it publishes the operator's signing key.
 func TestBuildRecordsAS2(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	for name, cfg := range map[string]Config{
 		"external AS-1": {IdentityBrokerAS1: unusedAS1("https://as1.example")},
 		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, "https://as1.mecatl.test/as1")},
-		"no AS-1":       {},
+		// AS-1 on AS-2's host, under another path, has another issuer.
+		"hosted AS-1 on AS-2's host": {IdentityBrokerHostedAS1: hostedAS1Config(t, h, "https://broker.example/as1")},
+		"no AS-1":                    {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg.UseMock, cfg.NoSoul = true, true
-			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
-			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
+			as2Key := newBrokerClientKey(t)
+			declaration, _ := protectedBrokerAuthority().Broker()
+			declaration.SigningKeyFile = writeAS2Key(t, as2Key)
+			cfg.IdentityBroker, cfg.MCPAuthority = true, mcpauthority.NewBroker(declaration)
+			cfg.IdentityBrokerConfigFile = brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: cfg.IdentityBrokerHostedAS1 != nil, Gateways: embeddedEntry()}).Path
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -221,8 +253,33 @@ func TestBuildRecordsAS2(t *testing.T) {
 			if status, code := exchange(other); status != http.StatusUnauthorized || code != "invalid_client" {
 				t.Fatalf("another key at AS-2: %d %q, want 401 invalid_client", status, code)
 			}
+			if !as2PublishesKey(t, built, as2Key) {
+				t.Fatal("AS-2 does not publish the operator's signing key")
+			}
 		})
 	}
+}
+
+// as2PublishesKey reports whether built's embedded authorization server
+// publishes key in its key set.
+func as2PublishesKey(t *testing.T, built *Built, key *ecdsa.PrivateKey) bool {
+	t.Helper()
+	mux := http.NewServeMux()
+	if err := built.MountMCPBrokerHandlers(mux); err != nil {
+		t.Fatalf("MountMCPBrokerHandlers: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, as2TestIssuer+"/.well-known/jwks.json", nil))
+	var set identitybroker.JWKSet
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &set) != nil {
+		t.Fatalf("AS-2 key set: status %d", recorder.Code)
+	}
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := signer.JWKS().Keys[0]
+	return slices.ContainsFunc(set.Keys, func(k identitybroker.JWK) bool { return k.X == want.X && k.Y == want.Y })
 }
 
 // TestBuildMCPBrokerSetsNoAS2WithoutAKeySetFile pins that no broker client
@@ -238,10 +295,13 @@ func TestBuildMCPBrokerSetsNoAS2WithoutAKeySetFile(t *testing.T) {
 	}
 }
 
+// TestBuildRecordsNoAS2: without an embedded gateway entry, the MCP broker
+// sets no AS-2 up, as with the identity broker off.
 func TestBuildRecordsNoAS2(t *testing.T) {
 	for name, cfg := range map[string]Config{
 		"identity broker off":   {MCPAuthority: protectedBrokerAuthority()},
 		"injected core":         {IdentityBroker: true, identityBrokerCore: newClosableCore(t), MCPAuthority: protectedBrokerAuthority()},
+		"no gateway entry":      {IdentityBroker: true, MCPAuthority: protectedBrokerAuthority()},
 		"no protected route":    {IdentityBroker: true, MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL})},
 		"identity broker alone": {IdentityBroker: true},
 	} {
@@ -262,25 +322,27 @@ func TestBuildRecordsNoAS2(t *testing.T) {
 	}
 }
 
+// TestBuildRefusesAS2WithAS1sIssuer: the identity broker refuses a gateway
+// entry whose AS-2 issuer is AS-1's.
 func TestBuildRefusesAS2WithAS1sIssuer(t *testing.T) {
 	h := identityharness.New(t, identityharness.Options{})
 	for name, cfg := range map[string]Config{
 		"hosted AS-1":   {IdentityBrokerHostedAS1: hostedAS1Config(t, h, as2TestIssuer)},
 		"external AS-1": {IdentityBrokerAS1: unusedAS1(as2TestIssuer)},
-		// The same server spelled differently is still AS-2's issuer.
+		// The same issuer spelled differently is still AS-2's issuer.
 		"external AS-1, other spelling": {IdentityBrokerAS1: unusedAS1("HTTPS://Broker.Example:443/v1/mcp/broker/")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg.UseMock, cfg.NoSoul = true, true
-			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthority()
-			cfg.IdentityBrokerConfigFile = testBrokerConfigFileFor(t, cfg)
+			cfg.IdentityBroker, cfg.MCPAuthority = true, protectedBrokerAuthorityWithKey(t)
+			cfg.IdentityBrokerConfigFile = brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: cfg.IdentityBrokerHostedAS1 != nil, Gateways: embeddedEntry()}).Path
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err == nil {
 				built.Close()
 				t.Fatal("Build gave AS-2 AS-1's issuer")
 			}
-			if !errors.Is(err, errAS2IssuerIsAS1s) {
-				t.Fatalf("Build error = %v, want %v", err, errAS2IssuerIsAS1s)
+			if !strings.Contains(err.Error(), "gateways[0].as2_issuer") || !strings.Contains(err.Error(), "names AS-1's issuer") {
+				t.Fatalf("Build error = %v, want the entry's AS-2 issuer refused as AS-1's", err)
 			}
 		})
 	}

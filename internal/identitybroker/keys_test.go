@@ -222,3 +222,18 @@ func TestWithAgentIssuerFallbacksRefusesANonP256Key(t *testing.T) {
 		}
 	}
 }
+
+func TestKeysPublicKeysListsEveryRole(t *testing.T) {
+	t.Parallel()
+	k := validKeys(t)
+	got := k.PublicKeys()
+	want := []string{"agent issuer", "old agent issuer", "next broker client", "broker client", "AS-1", "old AS-1"}
+	if len(got) != len(want) {
+		t.Fatalf("PublicKeys = %d keys, want %d", len(got), len(want))
+	}
+	for i, label := range want {
+		if !testKey(t, label).PublicKey.Equal(got[i]) {
+			t.Errorf("PublicKeys[%d] is not the %s key", i, label)
+		}
+	}
+}

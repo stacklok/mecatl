@@ -299,15 +299,20 @@ const (
 	// gatewayClientSecretEnv names the protected route's client secret,
 	// which ToolHive reads at construction.
 	gatewayClientSecretEnv = "MECATL_TEST_CALENDAR_CLIENT_SECRET" // #nosec G101 -- environment variable name, not a credential.
+	// gatewaySigningKeyPlaceholder stands in gatewaySettings for the path of
+	// the embedded gateway's signing key, which each test writes.
+	gatewaySigningKeyPlaceholder = "/GATEWAY-SIGNING-KEY.pem"
 )
 
 // gatewaySettings declares the protected calendar route the gateway routes,
-// in broker mode, the way an operator configures mecak8s's MCP servers. The
+// in broker mode, the way an operator configures mecak8s's MCP servers, with
+// the embedded gateway's signing key at gatewaySigningKeyPlaceholder. The
 // upstream is never dialled: the vMCP holds no upstream token for it.
 const gatewaySettings = `mcp:
   mode: broker
   broker:
     callback_url: ` + gatewayCallbackURL + `
+    signing_key_file: ` + gatewaySigningKeyPlaceholder + `
   servers:
     - name: calendar
       url: https://mcp.example/calendar
@@ -344,13 +349,13 @@ const gatewaySettings = `mcp:
 // TestIdentityBrokerSessionToolCallThroughGateway:
 //
 //	stand-in                                       retired by
-//	test-only AS-2 trust and gateway seam          #2533 and #2538
-//	  (IdentityBrokerAS2Trust,
-//	  IdentityBrokerGatewayServers); AS-2's test
-//	  trust names Alice's AS-1 subject, which
-//	  exists only after her sign-in, so these
-//	  tests run the real AS-1 outside mecak8s
-//	  rather than the one mecak8s hosts
+//	test-only AS-2 trust (IdentityBrokerAS2Trust),  #2533
+//	  which a gateway entry routing servers
+//	  requires; AS-2's test trust names Alice's
+//	  AS-1 subject, which exists only after her
+//	  sign-in, so these tests run the real AS-1
+//	  outside mecak8s rather than the one
+//	  mecak8s hosts
 //	the embedded vMCP as the gateway, reached      #2812
 //	  in process
 //	no gateway stand-in: the vMCP is real, but     #2537
@@ -648,7 +653,8 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 	as1HTTP.Transport = faults
 	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
-	if err := os.WriteFile(settings, []byte(gatewaySettings+extraSettings), 0o600); err != nil {
+	signingKey := brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "gateway-signing-key.pem"), brokerconfigtest.NewKey(t))
+	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey, 1)+extraSettings), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	caFile := h.WriteCACert(t, t.TempDir())
@@ -661,9 +667,9 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		Now: func() time.Time { return time.Now().Add(time.Duration(gw.clockOffset.Load())) },
 	}, identityBrokerServeOptions{
 		clientKey: a.Key,
+		gateways:  []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(gatewayAS2Issuer, "calendar")},
 		args:      append([]string{"--permission-config", settings}, extraArgs...),
 		edit: func(cfg *app.Config) {
-			cfg.IdentityBrokerGatewayServers = []string{"calendar"}
 			cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
 				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile,
 				Subjects: []string{as1servertest.Subject(t, alice)},
@@ -675,6 +681,40 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 	})
 	gw.api, gw.built, gw.as1, gw.alice = api, built, faults, alice.Value()
 	return gw
+}
+
+// TestGatewaySigningKeySettingNeedsAnEmbeddedGatewayEntry: mecak8s reads the
+// embedded gateway's signing key from settings.yaml and refuses it without
+// the identity broker and an embedded gateway entry in its configuration
+// file. It is not parallel: the protected route's client secret is read from
+// an environment variable.
+func TestGatewaySigningKeySettingNeedsAnEmbeddedGatewayEntry(t *testing.T) {
+	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	signingKey := brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "gateway-signing-key.pem"), brokerconfigtest.NewKey(t))
+	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"--mock", "--no-shell", "--permission-mode=yolo", "--guardrails=off", "--session-lease-k8s-namespace", "", "--permission-config", settings}
+	for name, args := range map[string][]string{
+		"identity broker off": base,
+		"no gateway entry":    append(slices.Clone(base), "--enable-identity-broker", "--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := parseFlags(args)
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			built, err := buildIsolated(t, t.Context(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
+			if err == nil {
+				built.Close()
+				t.Fatal("app.Build accepted the signing key")
+			}
+			if !strings.Contains(err.Error(), "mcp.broker.signing_key_file requires the identity broker") {
+				t.Fatalf("app.Build error = %v, want the signing key refused", err)
+			}
+		})
+	}
 }
 
 // gatewayToolScript is a mock model whose first and third turns call the
@@ -1003,6 +1043,8 @@ type identityBrokerServeOptions struct {
 	// clientKey is the broker client key, the key the AS-1 registered; nil
 	// generates one.
 	clientKey *ecdsa.PrivateKey
+	// gateways are the configuration file's gateway entries.
+	gateways []identitybroker.GatewayEntry
 	// args are further flags.
 	args []string
 	// edit, when set, changes the application configuration before the
@@ -1018,7 +1060,7 @@ type identityBrokerServeOptions struct {
 // the built application; both stop when t ends.
 func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1, opts identityBrokerServeOptions) (string, *app.Built) {
 	t.Helper()
-	brokerFile := brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: opts.clientKey}).Path
+	brokerFile := brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: opts.clientKey, Gateways: opts.gateways}).Path
 	cfg, err := parseFlags(append([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell

@@ -381,6 +381,60 @@ AS-1's signing key is part of this file: `mecak8s` refuses to start with the
 removed `--identity-broker-as1-signing-key-file` flag, so set
 `keys.as1_signing.key_file` instead.
 
+### Declare the embedded gateway
+
+The configuration file can list the MCP gateway the broker authorizes agent
+calls through. The list is optional and takes at most one entry, which
+describes the embedded gateway `mecak8s` runs for MCP servers with
+`auth.mode: oauth`. With the chart, set `identityBroker.gateways`; without it,
+add `gateways` to the file:
+
+```json
+"gateways": [{
+  "kind": "embedded",
+  "as2_issuer": "https://mecatl.example.com/v1/mcp/broker",
+  "token_endpoint": "https://mecatl.example.com/v1/mcp/broker/oauth/token",
+  "resource": "https://mecatl.example.com/v1/mcp/broker/mcp",
+  "servers": []
+}]
+```
+
+|Field|Meaning|
+|-|-|
+|`kind`|`embedded`. `mecak8s` refuses `external`: external gateways are not supported yet.|
+|`as2_issuer`|The issuer of the gateway's authorization server: the scheme and host of `mcp.broker.callback_url` followed by `/v1/mcp/broker`. It must differ from AS-1's issuer, comparing the path too, because the broker authenticates to both with the same key.|
+|`token_endpoint`|That issuer followed by `/oauth/token`, as the authorization server advertises it.|
+|`resource`|That issuer followed by `/mcp`.|
+|`servers`|MCP server names, matched exactly, each with `auth.mode: oauth`. Leave it empty for now.|
+
+`mecak8s` derives the embedded gateway's issuer, token endpoint, and resource
+from `mcp.broker.callback_url` and refuses to start when the entry names
+others, when it runs no embedded gateway, or when the file names no broker
+client key. An entry also requires the gateway's own signing key, below.
+Without an entry, the MCP broker runs as it does with the identity broker off.
+
+An entry that lists servers is refused until the gateway's authorization
+server accepts AS-1's tokens, which is not available yet. An entry with no
+servers routes no calls through the gateway: it registers the broker as a
+client of the gateway's authorization server and keeps that server's signing
+key across restarts.
+
+#### Set the gateway's signing key
+
+The embedded gateway's authorization server signs its tokens with the key in
+the `mcp.broker.signing_key_file` setting. Earlier keys listed in
+`mcp.broker.fallback_key_files` keep verifying the tokens they signed, so the
+key can rotate the same way as the broker's keys. Both take absolute paths to
+PEM private keys. `mecak8s` requires the key with the identity broker on and a
+gateway entry, refuses it otherwise, and refuses a key, or a fallback, that is
+also one of the broker's keys. With the chart, name an existing Secret key in
+`mcp.broker.signingKey` and its fallbacks in `mcp.broker.signingKey.fallbacks`;
+the chart projects them read-only and renders the setting. See the
+[configuration reference](/reference/configuration.md) for the setting.
+
+`mecak8s` reads the key at startup, so restart the Deployment after changing it
+in a Secret.
+
 ### Keep the broker's keys out of sessions
 
 The broker reads its keys from files in the `mecak8s` pod, so it runs only
@@ -438,9 +492,10 @@ comes from a Secret, so the access tokens AS-1 issued before a restart keep
 verifying until they expire. AS-1 accepts each access token for one session
 open, but it forgets which tokens it has accepted when the pod restarts. A token
 used before a restart can open one more session after it, until the token
-expires. The MCP gateway's embedded authorization server generates its own
-signing key at each start, so the tokens it issued stop verifying after a
-restart.
+expires. Without a gateway entry, the MCP gateway's embedded authorization
+server generates its own signing key at each start, so the tokens it issued
+stop verifying after a restart; with one, it signs with
+[the key you supply](#set-the-gateways-signing-key).
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see

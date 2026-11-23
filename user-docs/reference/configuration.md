@@ -411,6 +411,8 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.mode` | `string` | `(empty)` | Mode selects global or broker authority. Empty uses the command-root default. |
 | `mcp.broker` | `mcpbrokerprofile` | `(absent)` | Broker contains options meaningful only in broker mode. |
 | `mcp.broker.callback_url` | `string` | `(empty)` | CallbackURL is required exactly when broker mode contains an OAuth route. It must be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or / is normalized to /. |
+| `mcp.broker.signing_key_file` | `string` | `(empty)` | SigningKeyFile is the absolute path of the PEM private key (RSA, ECDSA, or Ed25519; PKCS #1, SEC 1, or PKCS #8) the embedded MCP gateway's authorization server signs its tokens with, so they survive a restart. mecak8s requires it with the identity broker on and an embedded gateway entry in the identity broker's configuration file, and refuses it otherwise; it must differ from every identity broker key. It is read at startup, so a new key takes effect on restart. |
+| `mcp.broker.fallback_key_files` | `[]string` | `(absent)` | FallbackKeyFiles are absolute paths of earlier signing keys, PEM private keys like SigningKeyFile: tokens they signed still verify while they are listed, so the key can rotate. They require SigningKeyFile. |
 | `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of neutral Streamable HTTP route declarations. |
 | `mcp.servers[].name` | `string` | `(empty)` | Name is an ASCII [A-Za-z0-9_]+ identifier, unique case-insensitively. |
 | `mcp.servers[].url` | `string` | `(empty)` | URL is an absolute HTTP(S) endpoint without userinfo or a fragment. |

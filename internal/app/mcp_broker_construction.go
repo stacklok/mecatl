@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -72,38 +73,51 @@ type mcpBrokerParts struct {
 }
 
 // mcpBrokerIdentity is what the identity broker gives the MCP broker; the
-// zero value is no identity broker.
+// zero value is no identity broker, or one without an embedded gateway
+// entry, and leaves the MCP broker as it is without the identity broker.
 type mcpBrokerIdentity struct {
 	// clientKeySetFile is the path of the broker client's public JWK Set, the
-	// identity broker's operator file. With a protected route, the bundled
-	// process registers the broker client with it at its authorization
-	// server, which becomes AS-2. Empty sets up no AS-2.
+	// identity broker's operator file. The bundled process registers the
+	// broker client with it at its authorization server, which becomes AS-2.
+	// It is set only with entry.
 	clientKeySetFile string
-	// as1Issuer is AS-1's issuer, which AS-2's must differ from; empty when
-	// the identity broker has no AS-1.
-	as1Issuer string
+	// entry is the identity broker's embedded gateway entry, which the AS-2
+	// set up must be; nil sets up no AS-2.
+	entry *identitybroker.GatewayEntry
 	// gatewayCalls is nil when the identity broker has no gateway path.
 	gatewayCalls *mcpBrokerGatewayCalls
-	// idjagTarget is the AS-2 AS-1 issues the gateway's ID-JAGs for, which
-	// the AS-2 set up must be; nil when none was derived.
-	idjagTarget *gatewayIDJAGTarget
 }
 
-// deriveGatewayIDJAGTarget is the AS-2 the bundled MCP broker will set up for
-// declaration, derived before the identity broker is built so a hosted AS-1
-// can issue the gateway's ID-JAGs for it. It is nil without the test-only
-// gateway servers, without a bundled broker with routes, or for a callback URL
-// AS-2 cannot derive its issuer from, which the bundled broker refuses anyway
-// when a route is protected.
-func deriveGatewayIDJAGTarget(cfg Config, declaration mcpauthority.BrokerConfig, selected bool) *gatewayIDJAGTarget {
-	if cfg.IdentityBrokerGatewayServers == nil || !selected || cfg.selectsConfiguredMCPBroker() || len(declaration.Routes) == 0 {
+// deriveEmbeddedGateway is the embedded gateway the bundled MCP broker will
+// run for declaration, derived before the identity broker is built so its
+// gateway entry can be checked against it: AS-2's endpoints for the callback
+// URL and the OAuth routes. It is nil without the bundled broker, without an
+// OAuth route, or for a callback URL AS-2 cannot derive its issuer from,
+// which the bundled broker refuses anyway.
+func deriveEmbeddedGateway(cfg Config, declaration mcpauthority.BrokerConfig, selected bool) *embeddedGateway {
+	if !selected || cfg.selectsConfiguredMCPBroker() {
 		return nil
 	}
-	issuer, resource, err := mcpbroker.AS2Endpoints(declaration.CallbackURL)
+	var routes []string
+	for _, route := range declaration.Routes {
+		if route.Auth.Mode == "oauth" {
+			routes = append(routes, route.Name)
+		}
+	}
+	if len(routes) == 0 {
+		return nil
+	}
+	issuer, tokenEndpoint, resource, err := mcpbroker.AS2Endpoints(declaration.CallbackURL)
 	if err != nil {
 		return nil
 	}
-	return &gatewayIDJAGTarget{Issuer: issuer, Resource: resource}
+	return &embeddedGateway{Issuer: issuer, TokenEndpoint: tokenEndpoint, Resource: resource, Routes: routes}
+}
+
+// as2SigningPublicKeys reads the embedded gateway's signing key and its
+// fallbacks as its authorization server does, and returns their public keys.
+func as2SigningPublicKeys(key as2SigningKey) ([]crypto.PublicKey, error) {
+	return mcpbroker.SigningPublicKeys(key.file, key.fallbacks)
 }
 
 // mcpBrokerGatewayCalls is what the MCP broker needs to send gateway calls
@@ -181,12 +195,15 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
 	}
 	config := toolHiveBrokerConfig(declaration.Routes, declaration.CallbackURL, occupied, authRedisClient, cfg.diag())
-	if identity.clientKeySetFile != "" {
+	// Startup allows a signing key only with an embedded gateway entry
+	// (checkGatewayEntry).
+	config.SigningKeyFile, config.FallbackKeyFiles = declaration.SigningKeyFile, append([]string(nil), declaration.FallbackKeyFiles...)
+	if identity.entry != nil && identity.clientKeySetFile != "" {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: identity.clientKeySetFile}
 	}
 	config.AS2Trust = cfg.IdentityBrokerAS2Trust
 	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {
-		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production configures none until AS-2 trusts AS-1, so production is unchanged; removed by #2533 (production gateway) and #2538 (operator gateway entries).
+		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production's routes none until AS-2 trusts AS-1, so production is unchanged; removed by #2533.
 		config.GatewayCalls = &mcpbroker.GatewayCalls{
 			Authorizer:  calls.service,
 			Credentials: calls.credentials,
@@ -208,18 +225,16 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	if process.Gateway != nil {
 		gatewayServers = config.GatewayCalls.Servers
 	}
+	// Startup checked the entry against the AS-2 it derived; this checks the
+	// AS-2 the process set up is that one.
+	if entry := identity.entry; entry != nil && (process.AS2 == nil || process.AS2.Issuer != entry.AS2Issuer ||
+		process.AS2.TokenEndpoint != entry.TokenEndpoint || process.AS2.Resource != entry.Resource) {
+		_ = process.Close()
+		authStorageClose()
+		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errAS2IsNotTheEntry)
+	}
 	var as2 *identityBrokerAS2
 	if process.AS2 != nil {
-		if identity.as1Issuer != "" && sameIssuer(process.AS2.Issuer, identity.as1Issuer) {
-			_ = process.Close()
-			authStorageClose()
-			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w: %s", errAS2IssuerIsAS1s, identity.as1Issuer)
-		}
-		if target := identity.idjagTarget; target != nil && (process.AS2.Issuer != target.Issuer || process.AS2.Resource != target.Resource) {
-			_ = process.Close()
-			authStorageClose()
-			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errAS2IsNotIDJAGTarget)
-		}
 		httpClient, err := as2InProcessClient(process.AS2)
 		if err != nil {
 			_ = process.Close()

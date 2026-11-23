@@ -73,27 +73,44 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
 	}
 	as2 := identitybroker.GatewayAS2{Issuer: "https://as2.example.com", Resource: "https://vmcp.example.com/mcp", AuthServer: &fakeAS2{}}
+	entry := func(servers ...string) identitybroker.Gateway {
+		return identitybroker.Gateway{Issuer: as2.Issuer, Resource: as2.Resource, Servers: servers}
+	}
+	withAS2 := func(a identitybroker.GatewayAS2) identitybroker.Gateway {
+		g := entry("github")
+		g.AS2 = a
+		return g
+	}
 	for name, g := range map[string]identitybroker.Gateway{
-		"no servers":      {},
-		"an empty server": {Servers: []string{""}},
-		"a spaced server": {Servers: []string{"git hub"}},
+		"no issuer":       {Resource: as2.Resource, Servers: []string{"github"}},
+		"no resource":     {Issuer: as2.Issuer, Servers: []string{"github"}},
+		"a spaced issuer": {Issuer: "as 2", Resource: as2.Resource, Servers: []string{"github"}},
+		"no servers":      entry(),
+		"an empty server": entry(""),
+		"a spaced server": entry("git hub"),
 		// A dot or a double underscore would let one server's name begin
 		// another's in "<server>.<tool>" and "mcp__<server>__<tool>".
-		"a dotted server":        {Servers: []string{"github", "github.ent"}},
-		"a double underscore":    {Servers: []string{"github__ent"}},
-		"a hyphenated server":    {Servers: []string{"git-hub"}},
-		"a non-ASCII letter":     {Servers: []string{"gíthub"}},
-		"a repeat":               {Servers: []string{"github", "calendar", "github"}},
-		"an AS-2 issuer only":    {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer}},
-		"an AS-2 without a port": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource}},
-		"a spaced AS-2 resource": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: "a b", AuthServer: as2.AuthServer}},
+		"a dotted server":                 entry("github", "github.ent"),
+		"a double underscore":             entry("github__ent"),
+		"a hyphenated server":             entry("git-hub"),
+		"a non-ASCII letter":              entry("gíthub"),
+		"a repeat":                        entry("github", "calendar", "github"),
+		"an AS-2 issuer only":             withAS2(identitybroker.GatewayAS2{Issuer: as2.Issuer}),
+		"an AS-2 without a port":          withAS2(identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource}),
+		"a spaced AS-2 resource":          withAS2(identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: "a b", AuthServer: as2.AuthServer}),
+		"another AS-2's issuer":           withAS2(identitybroker.GatewayAS2{Issuer: "https://other.example.com", Resource: as2.Resource, AuthServer: as2.AuthServer}),
+		"another AS-2's resource":         withAS2(identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: "https://other.example.com/mcp", AuthServer: as2.AuthServer}),
+		"the issuer and resource swapped": withAS2(identitybroker.GatewayAS2{Issuer: as2.Resource, Resource: as2.Issuer, AuthServer: as2.AuthServer}),
 	} {
 		_, err := identitybroker.New(config, nil, key, append(collaborators, identitybroker.WithGateway(g))...)
 		if !errors.Is(err, identitybroker.ErrInvalidConfig) {
 			t.Errorf("New with %s = %v, want ErrInvalidConfig", name, err)
 		}
 	}
-	gateway := identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"github"}})
+	if _, err := identitybroker.New(config, nil, key, append(collaborators, identitybroker.WithGateway(withAS2(as2)))...); err != nil {
+		t.Errorf("New with the entry's AS-2 = %v", err)
+	}
+	gateway := identitybroker.WithGateway(entry("github"))
 	for name, opts := range map[string][]identitybroker.Option{
 		"no recorder":         {identitybroker.WithIDJAGIssuer(&fakeIssuer{}), gateway},
 		"no ID-JAG issuer":    {identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), gateway},
@@ -107,7 +124,7 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 	}
 	_, err = identitybroker.New(config, nil, key,
 		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()), identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
-		gateway, identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"calendar"}}))
+		gateway, identitybroker.WithGateway(entry("calendar")))
 	if !errors.Is(err, identitybroker.ErrInvalidConfig) {
 		t.Errorf("New with two gateways = %v, want ErrInvalidConfig", err)
 	}

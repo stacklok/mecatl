@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -228,6 +229,27 @@ func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 	}
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "global", Broker: permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback"}}, DefaultMode: mcpauthority.Global}); !errors.Is(err, ErrMCPProfileInvalid) {
 		t.Fatalf("global callback error = %v", err)
+	}
+}
+
+// TestMCPAuthorityBrokerSigningKeyRules carries the embedded authorization
+// server's signing key into the broker declaration, and refuses it where no
+// embedded authorization server runs.
+func TestMCPAuthorityBrokerSigningKeyRules(t *testing.T) {
+	key := permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback", SigningKeyFile: "/keys/as2/key.pem", FallbackKeyFiles: []string{"/keys/as2-old/key.pem"}}
+	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Broker: key, Servers: []permconfig.MCPServerProfile{brokerOAuthRoute()}}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
+	if err != nil {
+		t.Fatalf("broker with a signing key: %v", err)
+	}
+	if broker, ok := got.Broker(); !ok || broker.SigningKeyFile != key.SigningKeyFile || !reflect.DeepEqual(broker.FallbackKeyFiles, key.FallbackKeyFiles) {
+		t.Fatalf("broker declaration = %#v, want the signing key paths", broker)
+	}
+	noOAuth := permconfig.MCPBrokerProfile{SigningKeyFile: key.SigningKeyFile}
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Broker: noOAuth}, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "signing_key_file requires a broker OAuth server") {
+		t.Fatalf("signing key without an OAuth server error = %v", err)
+	}
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "global", Broker: noOAuth}, DefaultMode: mcpauthority.Global}); !errors.Is(err, ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "signing_key_file is inert in global mode") {
+		t.Fatalf("global signing key error = %v", err)
 	}
 }
 
