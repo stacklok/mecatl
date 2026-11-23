@@ -13,7 +13,7 @@ or useful on its own, though, so the work runs across five themes:
 - **Bounded autonomy:** give agents room to work without giving them
   unrestricted access.
 - **Dependable, long-running work:** make agent work something teams can
-  operate, not babysit.
+  operate, inspect, and recover when interrupted.
 - **Where you work:** bring agents to the tools people already use, from the
   terminal to team chat.
 - **An open foundation:** make Mecatl easy to build on and integrate with.
@@ -106,7 +106,7 @@ developers can build on Mecatl.
 ## Now
 
 Agents with their own identities and derived authority, isolated execution, and
-sessions that resume safely in the middle of an action.
+session history that supports inspection and safe recovery.
 
 ### Identity and accountability
 
@@ -143,10 +143,14 @@ sessions that resume safely in the middle of an action.
 
 ### Dependable, long-running work
 
-- **Resuming without repeating work.** Sessions already keep their history
-  across restarts. This work makes it safe to resume in the middle of an
-  action: a command or API call that may already have happened is reconciled
-  rather than blindly run again.
+- **Recovering without blindly repeating actions.** Reconstruct accepted
+  session state after an interruption and distinguish known outcomes from
+  actions whose effects are uncertain. A command or API call that may already
+  have happened isn't automatically run again.
+- **History that explains the work.** Retain the instructions, context, tool
+  definitions, and model interactions behind an action, even after
+  configuration changes. Reducing the model's working context doesn't erase
+  the retained conversation and activity.
 - **Scheduled agents with their own identity.** A recurring job, such as a
   nightly review, runs unattended on a time-limited grant from the user who
   scheduled it. The user's provider credentials stay at the gateway.
@@ -208,9 +212,10 @@ in Slack.
 ### An open foundation
 
 - **SDK testkit.** A fake server lets apps built on the SDK be tested offline.
-- **A smaller core with more extension points.** A minimal core agent loop with
-  well-defined extension points, so developers can add or replace behavior
-  without forking, and many built-in features become extensions themselves.
+- **Specialized agents on a shared runtime.** Cleaner explicit extension points
+  let developers add or replace capabilities without forking the engine. The
+  execution kernel keeps permission checks, cancellation, and history rules
+  consistent as those capabilities change.
 
 ## Later
 
