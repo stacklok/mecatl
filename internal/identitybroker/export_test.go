@@ -5,6 +5,10 @@ import "time"
 // ClockSkew is the interim clock-skew allowance.
 const ClockSkew = credentialClockSkew
 
+// MaxRunsPerSession is how many run records, and how many delegation
+// records, a session keeps before forgetting the oldest.
+const MaxRunsPerSession = maxRunsPerSession
+
 // SetClock replaces b's clock. Call it before b is used.
 func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
 

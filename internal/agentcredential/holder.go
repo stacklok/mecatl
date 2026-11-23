@@ -2,7 +2,9 @@
 // agents, in memory only, for the server, which registers a session's main
 // agent at run entry and each helper agent when it is created, and the MCP
 // broker, which presents them on gateway calls. A credential is
-// never persisted and never given to the engine or the model.
+// never persisted and never given to the engine or the model. It also holds
+// the run each helper acts in, delegated to it, and carries the main agent's
+// run on the context, so a gateway call names its run.
 package agentcredential
 
 import (
@@ -27,8 +29,7 @@ type Credential struct {
 	// credential verifies only there.
 	BrokerSessionID string
 	Agent           identitybroker.AgentRef
-	// Owner is the owner the agent was registered with: the run owner under
-	// the #2557 shortcut.
+	// Owner is the owner the agent was registered with.
 	Owner     identitybroker.Owner
 	Token     identitybroker.Token
 	ExpiresAt time.Time
@@ -73,6 +74,10 @@ func (e *entry) credential() Credential {
 // root's identity is its epoch.
 type root struct {
 	entries map[string]*entry
+	// current is each helper's current delegation, by helper session, and
+	// delegations every delegation in the order recorded.
+	current     map[string]Delegation
+	delegations []HelperDelegation
 }
 
 // renewalTimeout bounds a renewal, which runs apart from any one lookup's
@@ -292,16 +297,26 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target s
 	if err == nil {
 		err = checkRegistration(reg, e, now)
 	}
+	// A moved helper's calls name its current delegation, which the new
+	// broker session has not seen: report it there before the move is
+	// stored, so a failed report leaves the helper to move again on its next
+	// lookup.
+	var reported Delegation
+	if err == nil && target != "" {
+		reported, err = h.reportCurrent(ctx, key, r, reg.Agent, target)
+	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.closed || h.roots[key.RootSessionID] != r {
+		h.mu.Unlock()
 		return Credential{}, ErrDropped
 	}
 	// Run entry may have stored a newer registration meanwhile; it wins.
 	if current := r.entries[key.AgentSessionID]; current != e {
+		h.mu.Unlock()
 		return current.credential(), nil
 	}
 	if err != nil {
+		defer h.mu.Unlock()
 		if e.reg.ExpiresAt.After(h.now()) {
 			return e.credential(), err
 		}
@@ -309,7 +324,119 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target s
 	}
 	n := newEntry(req, reg, now)
 	r.entries[key.AgentSessionID] = n
+	// A delegation set while the move was in flight was reported to the old
+	// broker session: report it to the new one too.
+	again := target != "" && r.current[key.AgentSessionID] != reported
+	h.mu.Unlock()
+	if again {
+		if _, err := h.reportCurrent(ctx, key, r, reg.Agent, target); err != nil {
+			return n.credential(), err
+		}
+	}
 	return n.credential(), nil
+}
+
+// ReportDelegationAgain reports key's helper's current delegation, and the
+// delegations its delegating run descends from, into the broker session its
+// credential is held in now. A caller that set the delegation after reporting
+// it to a broker session the helper has since left calls it, so the session
+// the helper moved to sees the delegation its calls name. It returns
+// ErrNoCredential when nothing is held for key.
+func (h *Holder) ReportDelegationAgain(ctx context.Context, key Key) error {
+	h.mu.Lock()
+	r := h.roots[key.RootSessionID]
+	var e *entry
+	if r != nil {
+		e = r.entries[key.AgentSessionID]
+	}
+	h.mu.Unlock()
+	if e == nil {
+		return ErrNoCredential
+	}
+	_, err := h.reportCurrent(ctx, key, r, e.reg.Agent, e.req.SessionID)
+	return err
+}
+
+// reportLink is one delegation to report, with the agents it names.
+type reportLink struct {
+	d                     Delegation
+	delegating, receiving identitybroker.AgentRef
+}
+
+// reportCurrent reports the current delegation of key's helper, whose agent
+// is agent, into broker session target, after each delegation its delegating
+// run descends from, so target can check every run in the chain: a helper's
+// run may have been delegated from an earlier run of its parent, not the
+// parent's current one. It returns the delegation reported, the zero
+// Delegation when the helper has none. Reporting a delegation target already
+// has succeeds, so the chain is reported whole each time. An ancestor the
+// holder no longer keeps is skipped; target then refuses the report if it
+// does not know the run.
+func (h *Holder) reportCurrent(ctx context.Context, key Key, r *root, agent identitybroker.AgentRef, target string) (Delegation, error) {
+	h.mu.Lock()
+	d, ok := r.current[key.AgentSessionID]
+	if !ok {
+		h.mu.Unlock()
+		return Delegation{}, nil
+	}
+	links, err := r.chainLocked(key, agent, d)
+	h.mu.Unlock()
+	if err != nil {
+		return d, err
+	}
+	for _, l := range links {
+		err := h.broker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
+			SessionID:    target,
+			DelegationID: l.d.ID, DelegatingRun: l.d.DelegatingRun, DelegatingAgent: l.delegating,
+			ReceivingRun: l.d.Run.ID, ReceivingAgent: l.receiving, Owner: l.d.Run.Owner,
+		})
+		if err != nil {
+			return d, fmt.Errorf("report delegation %s again: %w", l.d.ID, err)
+		}
+	}
+	return d, nil
+}
+
+// chainLocked returns d, the delegation of key's helper whose agent is
+// agent, after the delegations its delegating run descends from, oldest
+// first. The caller holds h.mu.
+func (r *root) chainLocked(key Key, agent identitybroker.AgentRef, d Delegation) ([]reportLink, error) {
+	agentOf := func(session string) (identitybroker.AgentRef, error) {
+		if session == key.AgentSessionID {
+			return agent, nil
+		}
+		if e := r.entries[session]; e != nil {
+			return e.reg.Agent, nil
+		}
+		return identitybroker.AgentRef{}, fmt.Errorf("%w: agent %s of a delegation to report", ErrNoCredential, session)
+	}
+	chain := []HelperDelegation{{AgentSessionID: key.AgentSessionID, Delegation: d}}
+	// Each step goes to an older delegation, so the walk ends; the bound
+	// guards against a log that names a cycle.
+	for cur := d; cur.DelegatingAgentSession != key.RootSessionID && len(chain) <= len(r.delegations); {
+		i := slices.IndexFunc(r.delegations, func(p HelperDelegation) bool {
+			return p.AgentSessionID == cur.DelegatingAgentSession && p.Run.ID == cur.DelegatingRun
+		})
+		if i < 0 {
+			break
+		}
+		chain = append(chain, r.delegations[i])
+		cur = r.delegations[i].Delegation
+	}
+	slices.Reverse(chain)
+	links := make([]reportLink, len(chain))
+	for i, c := range chain {
+		delegating, err := agentOf(c.DelegatingAgentSession)
+		if err != nil {
+			return nil, err
+		}
+		receiving, err := agentOf(c.AgentSessionID)
+		if err != nil {
+			return nil, err
+		}
+		links[i] = reportLink{d: c.Delegation, delegating: delegating, receiving: receiving}
+	}
+	return links, nil
 }
 
 // MoveHelpers registers every helper agent held for root's session tree into

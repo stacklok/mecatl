@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +27,9 @@ const helperGatewayScript = `{"turns":[
 // test through mecak8s's startup, offline: a subagent the main agent creates
 // is registered as its own agent, gets the session's gateway tools but no
 // other broker tool, and its gateway call reaches AS-1 with its own SPIFFE ID
-// as the actor, not the main agent's. Its stand-ins are listed on
+// as the actor, not the main agent's. The helper's call names the run its
+// reported delegation started (#2557), which the broker's run and owner
+// checks refuse without that report. Its stand-ins are listed on
 // TestIdentityBrokerGatewayCallAgainstRealAS1.
 func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "script.json")
@@ -39,16 +39,7 @@ func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 	gw := serveGatewayIdentityBroker(t, notesRoute(t), []string{"--mock-script", script}, nil)
 	h, api, built, alice := gw.h, gw.api, gw.built, gw.alice
 
-	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", alice, "{}")
-	if status != http.StatusCreated && status != http.StatusOK {
-		t.Fatalf("Alice creates a session: status %d: %s", status, body)
-	}
-	var created struct {
-		ID string `json:"session_id"`
-	}
-	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
-		t.Fatalf("create session response %s: %v", body, err)
-	}
+	created := createSession(t, api, alice)
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice, GrantType: session.GrantTypeUser})
 	toolResult := func(id session.SessionID, call session.ToolCallID) session.ToolResult {
 		t.Helper()
@@ -65,8 +56,8 @@ func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 		return session.ToolResult{}
 	}
 
-	promptApprovingAsks(t, api, alice, created.ID, "delegate", nil)
-	child := session.SessionID("subagent-" + created.ID + "-delegate")
+	promptApprovingAsks(t, api, alice, created, "delegate", nil)
+	child := session.SessionID("subagent-" + created + "-delegate")
 	// A non-gateway broker tool acts as the session, so the helper's catalog
 	// has none. Its authority, derived from the main agent's, still names the
 	// tool, so the engine reports it unavailable rather than unknown.
@@ -76,8 +67,8 @@ func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 	if res := toolResult(child, "child-call"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
 		t.Fatalf("the helper's gateway call was refused: %q", res.Content)
 	}
-	promptApprovingAsks(t, api, alice, created.ID, "call it yourself", nil)
-	if res := toolResult(session.SessionID(created.ID), "main-call"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
+	promptApprovingAsks(t, api, alice, created, "call it yourself", nil)
+	if res := toolResult(session.SessionID(created), "main-call"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
 		t.Fatalf("the main agent's gateway call was refused: %q", res.Content)
 	}
 

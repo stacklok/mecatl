@@ -39,16 +39,52 @@ func (c *clock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// fakeBroker answers RegisterAgent only. By default it returns the agent of
-// the request's incarnation with a fresh credential valid for ten minutes;
-// register, if set, answers instead.
+// fakeBroker answers RegisterAgent and ReportDelegation only. By default it
+// returns the agent of the request's incarnation with a fresh credential
+// valid for ten minutes; register, if set, answers instead. It records each
+// delegation report and fails them with reportErr while it is set.
 type fakeBroker struct {
 	identitybroker.Service
 	clock *clock
 
-	mu       sync.Mutex
-	reqs     []identitybroker.RegisterAgentRequest
-	register func(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error)
+	mu        sync.Mutex
+	reqs      []identitybroker.RegisterAgentRequest
+	register  func(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error)
+	reports   []identitybroker.ReportDelegationRequest
+	reportErr error
+	// onReport, when set, runs after each report is recorded, without the
+	// fake's lock.
+	onReport func(identitybroker.ReportDelegationRequest)
+}
+
+func (b *fakeBroker) ReportDelegation(_ context.Context, req identitybroker.ReportDelegationRequest) error {
+	b.mu.Lock()
+	b.reports = append(b.reports, req)
+	err, onReport := b.reportErr, b.onReport
+	b.mu.Unlock()
+	if onReport != nil {
+		onReport(req)
+	}
+	return err
+}
+
+func (b *fakeBroker) setReportErr(err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reportErr = err
+}
+
+// reportsTo returns the delegation IDs reported into brokerSession, in order.
+func (b *fakeBroker) reportsTo(brokerSession string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var ids []string
+	for _, r := range b.reports {
+		if r.SessionID == brokerSession {
+			ids = append(ids, r.DelegationID)
+		}
+	}
+	return ids
 }
 
 func (b *fakeBroker) RegisterAgent(ctx context.Context, req identitybroker.RegisterAgentRequest) (identitybroker.Registration, error) {

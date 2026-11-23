@@ -309,7 +309,8 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - A call naming a delegation that was not reported is denied.
 - Registration into a closed session, or a session bound to another workload, is refused.
 - A call whose SVID instance differs from the run record's instance is denied; a new run naming no delegation from a child instance is denied; two replicas recording the same new run keep one record.
-- `ReportDelegation` for a delegating root run with no record yet records it and succeeds.
+- `ReportDelegation` for a delegating root run with no record yet records it and succeeds when the reported owner is the session's owner, and is refused otherwise.
+- `ReportDelegation` naming a receiving run that already has a record is refused, so one run is never bound to two delegations.
 - Re-registering an instance into a new session for the same host session keeps its incarnation and `ag_` identifier; re-registering an incarnation with a different host session, owner, definition revision, or parent is refused; a repeated registration with the same content returns the same reference, with different content `ALREADY_EXISTS`.
 
 Test the checks at each hop:

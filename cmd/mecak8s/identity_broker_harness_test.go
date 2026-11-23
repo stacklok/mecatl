@@ -565,6 +565,8 @@ type gatewayServe struct {
 	built *app.Built
 	// as1 is in front of the broker's transport to AS-1.
 	as1 *identityharness.FaultTransport
+	// as1Server is AS-1, where a test can sign Alice in again.
+	as1Server *as1servertest.AS1
 	// alice is Alice's access token from her sign-in before the build.
 	alice string
 	// clockOffset moves the broker's clock from wall time, which AS-1, AS-2,
@@ -637,7 +639,7 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		issueIDJAGs(c, d)
 		d.IDJAGMaxLifetime = gatewayGrantLifetime
 	})
-	gw := &gatewayServe{h: h}
+	gw := &gatewayServe{h: h, as1Server: a}
 	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at her
 	// first sign-in, so she signs in before the build.
 	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
@@ -1125,6 +1127,23 @@ func unsignedToken(t *testing.T, issued string) string {
 		t.Fatalf("sign alg none: %v", err)
 	}
 	return signed
+}
+
+// createSession creates a session over the HTTP API with token and returns
+// its ID.
+func createSession(t *testing.T, api, token string) string {
+	t.Helper()
+	status, body := apiCall(t, http.MethodPost, api+"/v1/sessions", token, "{}")
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("create session: status %d: %s", status, body)
+	}
+	var created struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &created); err != nil || created.ID == "" {
+		t.Fatalf("create session response %s: %v", body, err)
+	}
+	return created.ID
 }
 
 // listSessionOwners maps each listed session to its owner.

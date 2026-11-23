@@ -118,7 +118,16 @@ type Service interface {
 	//     ReasonNoGrant;
 	//   - a credential that does not verify for the session: as
 	//     VerifyCredential refuses it;
+	//   - a run the broker knows bound to another agent or acting under
+	//     another delegation; a new run naming no delegation from an agent
+	//     that is not a root instance; a run naming a delegation not reported
+	//     for this run and agent; or a run owner that is not the run's owner
+	//     and the grant's owner: CodePermissionDenied, ReasonDenied;
 	//   - a server no gateway routes: CodePermissionDenied, ReasonDenied.
+	//
+	// A call that passes the run checks records a run the broker had not
+	// seen: as a root run of the acting agent with the reported owner, or, for
+	// a call naming a reported delegation, as that delegation's run.
 	//
 	// Then the broker obtains a fresh gateway token for this call alone,
 	// failing as shown:
@@ -136,6 +145,28 @@ type Service interface {
 	//     ReasonConsentRequired;
 	//   - any other failure: CodeInternal.
 	AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) (Authorization, error)
+	// ReportDelegation reports that a run of one agent delegated work to a
+	// run of another, so the receiving run may make calls. An accepted report
+	// records the delegation and the receiving run, and records the
+	// delegating run as a root run when the broker has not seen it.
+	//
+	// The checks run in order, each failing as shown:
+	//   - an invalid request: CodeInvalidArgument;
+	//   - an unknown session: as for any call;
+	//   - a closed session: its closing reason;
+	//   - a delegating run bound to another agent, or itself delegated by a
+	//     delegation not reported for it; or, unseen, from an agent that is
+	//     not a root instance registered to the session:
+	//     CodePermissionDenied, ReasonDenied;
+	//   - a receiving agent not registered to the session:
+	//     CodePermissionDenied, ReasonDenied;
+	//   - an owner that is not the delegating run's owner:
+	//     CodePermissionDenied, ReasonDenied;
+	//   - a delegation already reported with different content:
+	//     CodeAlreadyExists; with the same content the report succeeds;
+	//   - a receiving run already recorded: CodePermissionDenied,
+	//     ReasonDenied.
+	ReportDelegation(ctx context.Context, req ReportDelegationRequest) error
 }
 
 // Owner is a session owner: the user's company identity, such as issuer
@@ -444,6 +475,41 @@ func (r AuthorizeCallRequest) Validate() error {
 		return invalid(fmt.Sprintf("method %q is not supported", r.Method))
 	}
 	return nil
+}
+
+// ReportDelegationRequest reports a delegation from a run of one agent to a
+// new run of another, both in one broker session.
+type ReportDelegationRequest struct {
+	SessionID string
+	// DelegationID identifies the delegation within the session. Calls of the
+	// receiving run name it in AuthorizeCallRequest.DelegationID.
+	DelegationID string
+	// DelegatingRun is the run that delegates, and DelegatingAgent the agent
+	// it is bound to.
+	DelegatingRun   string
+	DelegatingAgent AgentRef
+	// ReceivingRun is the new run that receives the work, and ReceivingAgent
+	// the agent it is bound to.
+	ReceivingRun   string
+	ReceivingAgent AgentRef
+	// Owner is the receiving run's owner. It must equal the delegating run's.
+	Owner Owner
+}
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r ReportDelegationRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID, "delegation", r.DelegationID,
+		"delegating run", r.DelegatingRun, "receiving run", r.ReceivingRun); err != nil {
+		return err
+	}
+	if !isToken(r.DelegatingAgent.Subject) || !isToken(r.ReceivingAgent.Subject) {
+		return invalid("delegating and receiving agents must be non-empty printable text without spaces")
+	}
+	if r.DelegatingRun == r.ReceivingRun {
+		return invalid("the receiving run must differ from the delegating run")
+	}
+	return r.Owner.validate()
 }
 
 // isSHA256Hex reports whether s is 64 lowercase hex characters.

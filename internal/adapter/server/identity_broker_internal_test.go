@@ -256,7 +256,7 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 	unlock := svc.runEntryMu.lock(sess.ID)
 	done := make(chan error, 1)
-	go func() { done <- svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID) }()
+	go func() { _, err := svc.startTeamRootRun(t.Context(), sess.ID); done <- err }()
 	select {
 	case err := <-done:
 		unlock()
@@ -273,7 +273,7 @@ func TestTeamRootRegistrationForADeletedRootIsNotFound(t *testing.T) {
 	svc, sess := newRegisteringService(t)
 	// The root is gone from the store, as a delete that won run entry's lock
 	// leaves it: the team run is refused as not found, not as a server fault.
-	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	_, err := svc.startTeamRootRun(t.Context(), sess.ID)
 	if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrInternal) {
 		t.Fatalf("team root registration for a deleted root = %v, want ErrNotFound", err)
 	}
@@ -283,7 +283,7 @@ func TestTeamRootRegistrationReportsAStoreFailureAsInternal(t *testing.T) {
 	store := &oneSessionFailsStore{Store: memstore.New()}
 	svc, sess := newRegisteringService(t, func(cfg *Config) { cfg.Store = store })
 	store.failID = sess.ID
-	err := svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID)
+	_, err := svc.startTeamRootRun(t.Context(), sess.ID)
 	if !errors.Is(err, ErrInternal) || errors.Is(err, ErrNotFound) {
 		t.Fatalf("team root registration with a failing store = %v, want ErrInternal", err)
 	}
@@ -449,7 +449,7 @@ func TestTeamRootRegistrationIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- svc.openTeamRootIdentityBrokerSession(t.Context(), sess.ID) }()
+	go func() { _, err := svc.startTeamRootRun(t.Context(), sess.ID); done <- err }()
 	select {
 	case err := <-done:
 		if !errors.Is(err, ErrIdentityBrokerUnavailable) {
@@ -574,4 +574,42 @@ func TestNewServiceRequiresIdentityDefinitionsWithABroker(t *testing.T) {
 		t.Fatalf("NewService with definitions: %v", err)
 	}
 	svc.Close()
+}
+
+// TestRootedRunContextCarriesTheSessionRun pins the run every server engine
+// entry hands the engine (a new run, a retry, an approval resume, and an
+// authorization continuation all pass through rootedRunContext): the
+// session's run ID and owner, and no run, masking any the caller's context
+// carried, when the session has no owner or no run ID.
+func TestRootedRunContextCarriesTheSessionRun(t *testing.T) {
+	alice := &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
+	outer := agentcredential.WithRun(t.Context(), agentcredential.Run{ID: "run_outer", Owner: identitybroker.Owner{Issuer: "https://login.example.com", Subject: "bob-117"}})
+	newSession := func(t *testing.T, owner *session.Principal, runID string) *session.Session {
+		t.Helper()
+		sess := session.New("root-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "r1"}, session.Limits{}, time.Unix(1, 0))
+		if owner != nil {
+			if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sess.BeginRun(runID)
+		return sess
+	}
+
+	ctx := rootedRunContext(outer, newSession(t, alice, "run_a"), "/ws")
+	want := agentcredential.Run{ID: "run_a", Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject}}
+	if got, ok := agentcredential.RunFromContext(ctx); !ok || got != want {
+		t.Fatalf("run = %+v, %v; want %+v", got, ok, want)
+	}
+	if root, _ := port.RootSessionIDFromContext(ctx); root != "root-1" {
+		t.Fatalf("root = %q, want root-1", root)
+	}
+	for name, sess := range map[string]*session.Session{
+		"no owner":  newSession(t, nil, "run_a"),
+		"no run ID": newSession(t, alice, ""),
+	} {
+		if got, ok := agentcredential.RunFromContext(rootedRunContext(outer, sess, "/ws")); ok {
+			t.Errorf("%s: run = %+v, want none, masking the caller's", name, got)
+		}
+	}
 }

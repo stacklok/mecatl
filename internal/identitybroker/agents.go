@@ -277,17 +277,17 @@ func (b *Broker) VerifyCredential(_ context.Context, req VerifyCredentialRequest
 	t.mu.Unlock()
 	switch {
 	case !registered:
-		return VerifiedAgent{}, credentialDenied("the credential's subject is not a registered agent")
+		return VerifiedAgent{}, deniedError("the credential's subject is not a registered agent")
 	case !bound:
-		return VerifiedAgent{}, credentialDenied("the agent is not registered to the broker session")
+		return VerifiedAgent{}, deniedError("the agent is not registered to the broker session")
 	case !current:
-		return VerifiedAgent{}, credentialDenied("the credential was not issued since the agent moved to the broker session")
+		return VerifiedAgent{}, deniedError("the credential was not issued since the agent moved to the broker session")
 	case !open && closed != "":
 		// The design reports a closed session by its closing reason, so the
 		// caller opens a new session on the user's next request.
 		return VerifiedAgent{}, ReasonError(closed, "the broker session is closed")
 	case !open:
-		return VerifiedAgent{}, credentialDenied("the broker session is closed")
+		return VerifiedAgent{}, deniedError("the broker session is closed")
 	}
 	return verifiedAgent(cred, agentID), nil
 }
@@ -321,7 +321,7 @@ func ActorIssuer(trustDomain string) string { return "spiffe://" + trustDomain }
 // so an error passed on whole tells AS-1 nothing about the session's state.
 func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentialForOwnerRequest) (VerifiedAgent, error) {
 	if req.Credential.IsZero() || req.Owner.validate() != nil {
-		return VerifiedAgent{}, credentialDenied("the request has no credential or no valid owner")
+		return VerifiedAgent{}, deniedError("the request has no credential or no valid owner")
 	}
 	t := b.sessions
 	cred, err := b.issuer.verify(req.Credential, t.now())
@@ -343,7 +343,7 @@ func (b *Broker) VerifyCredentialForOwner(_ context.Context, req VerifyCredentia
 	}
 	t.mu.Unlock()
 	if !registered || !owned || !current || !open {
-		return VerifiedAgent{}, credentialDenied("the credential is not current for an open broker session of the owner")
+		return VerifiedAgent{}, deniedError("the credential is not current for an open broker session of the owner")
 	}
 	return verifiedAgent(cred, agentID), nil
 }

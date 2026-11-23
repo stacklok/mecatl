@@ -195,6 +195,14 @@ func (f *harnessFixture) open(t *testing.T, host, user string) (identitybroker.S
 	return s, reg.Credential
 }
 
+// ownerCall is callRequest in s, reporting s's owner as the run owner, as
+// mecak8s does while a session has one owner.
+func ownerCall(s identitybroker.Session, credential identitybroker.Token) identitybroker.AuthorizeCallRequest {
+	req := callRequest(s.ID, credential)
+	req.RunOwner = s.Owner
+	return req
+}
+
 func (f *harnessFixture) authorize(req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
 	return f.b.AuthorizeCall(context.Background(), testWorkload, req)
 }
@@ -278,7 +286,7 @@ func TestAuthorizeCallGetsOneGatewayTokenPerCallAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	seen := map[string]bool{}
 	for i := range 2 {
-		req := callRequest(f.s.ID, f.cred)
+		req := ownerCall(f.s, f.cred)
 		req.OperationID = fmt.Sprintf("op-%d", i)
 		got, err := f.authorize(req)
 		if err != nil {
@@ -325,7 +333,7 @@ func TestAuthorizeCallGetsOneGatewayTokenPerCallAtAS2(t *testing.T) {
 // ID-JAG it was redeemed for (#2535 done-when 2).
 func TestAuthorizeCallGatewayTokenExpiresWithTheIDJAGAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
-	got, err := f.authorize(callRequest(f.s.ID, f.cred))
+	got, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
@@ -350,7 +358,7 @@ func TestAuthorizeCallGatewayTokenExpiresWithTheIDJAGAtAS2(t *testing.T) {
 // and the broker records it with that operation.
 func TestAuthorizeCallIDJAGShapeAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
-	req := callRequest(f.s.ID, f.cred)
+	req := ownerCall(f.s, f.cred)
 	req.OperationID = "op-pr42-001"
 	if _, err := f.authorize(req); err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
@@ -385,7 +393,7 @@ func TestAuthorizeCallWriteOrderAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	var atRedemption []identitybroker.IDJAGRecord
 	f.as2.OnNext(identityharness.KindRedemption, func() { atRedemption = f.rec.IDJAGs() })
-	if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
+	if _, err := f.authorize(ownerCall(f.s, f.cred)); err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
 	redeemed := requests(f.as2, identityharness.KindRedemption)
@@ -430,12 +438,12 @@ func TestAuthorizeCallRejectedTokenRetryAtGateway(t *testing.T) {
 		return errors.New("not a gateway token AS-2 issued")
 	}})
 	report := func(id string) identitybroker.AuthorizeCallRequest {
-		req := callRequest(f.s.ID, f.cred)
+		req := ownerCall(f.s, f.cred)
 		req.RejectedAttemptID = id
 		return req
 	}
 
-	first, err := f.authorize(callRequest(f.s.ID, f.cred))
+	first, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
@@ -471,7 +479,7 @@ func TestAuthorizeCallRejectedTokenRetryAtGateway(t *testing.T) {
 	f.wantCounts(t, 2, 2)
 
 	// A call that reports nothing is authorized as before.
-	if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
+	if _, err := f.authorize(ownerCall(f.s, f.cred)); err != nil {
 		t.Fatalf("an unflagged AuthorizeCall after the refusals: %v", err)
 	}
 	f.wantCounts(t, 3, 3)
@@ -497,13 +505,13 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		if err := f.as1Server.RevokeGrant(t.Context(), grant.RefreshToken.Value()); err != nil {
 			t.Fatalf("AS-1 RevokeGrant: %v", err)
 		}
-		_, err := f.authorize(callRequest(f.s.ID, f.cred))
+		_, err := f.authorize(ownerCall(f.s, f.cred))
 		closesSession(t, f, err)
 		f.wantCounts(t, 1, 0)
 		if r := requests(f.as1, identityharness.KindIDJAG); r[0].Reason != "revoked" || !r[0].Reached {
 			t.Fatalf("AS-1 answered %+v, want its own revoked", r[0])
 		}
-		_, err = f.authorize(callRequest(f.s.ID, f.cred))
+		_, err = f.authorize(ownerCall(f.s, f.cred))
 		closesSession(t, f, err)
 		f.wantCounts(t, 1, 0)
 	})
@@ -515,7 +523,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		// grant, it derives child grants only from grants that issue refresh
 		// tokens, and the broker's session-open grants issue only ID-JAGs.
 		f.as1.FailNext(identityharness.KindIDJAG, identityharness.Fault{Error: "invalid_request", Reason: "parent_revoked"})
-		_, err := f.authorize(callRequest(f.s.ID, f.cred))
+		_, err := f.authorize(ownerCall(f.s, f.cred))
 		closesSession(t, f, err)
 		f.wantCounts(t, 1, 0)
 	})
@@ -530,7 +538,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 			_, reopenErr = f.openToken(openHost, identityharness.Alice)
 			revokeErr = f.as1Server.RevokeGrant(context.Background(), old.RefreshToken.Value())
 		})
-		got, err := f.authorize(callRequest(f.s.ID, f.cred))
+		got, err := f.authorize(ownerCall(f.s, f.cred))
 		if reopenErr != nil || revokeErr != nil {
 			t.Fatalf("reopen: %v; revoke: %v", reopenErr, revokeErr)
 		}
@@ -551,7 +559,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		f := newHarnessFixture(t)
 		var closeErr error
 		f.as1.OnNext(identityharness.KindIDJAG, func() { closeErr = f.closeSession(f.s.ID) })
-		got, err := f.authorize(callRequest(f.s.ID, f.cred))
+		got, err := f.authorize(ownerCall(f.s, f.cred))
 		if closeErr != nil {
 			t.Fatalf("CloseSession: %v", closeErr)
 		}
@@ -574,7 +582,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		f := newHarnessFixture(t)
 		var closeErr error
 		f.as2.OnNext(identityharness.KindRedemption, func() { closeErr = f.closeSession(f.s.ID) })
-		got, err := f.authorize(callRequest(f.s.ID, f.cred))
+		got, err := f.authorize(ownerCall(f.s, f.cred))
 		if closeErr != nil {
 			t.Fatalf("CloseSession: %v", closeErr)
 		}
@@ -618,7 +626,7 @@ func TestAuthorizeCallLostResponsesAtAS2(t *testing.T) {
 	t.Run("a lost ID-JAG", func(t *testing.T) {
 		f := newHarnessFixture(t)
 		f.as1.LoseNextResponse(identityharness.KindIDJAG)
-		if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
+		if _, err := f.authorize(ownerCall(f.s, f.cred)); err != nil {
 			t.Fatalf("AuthorizeCall: %v", err)
 		}
 		f.wantCounts(t, 2, 1)
@@ -636,7 +644,7 @@ func TestAuthorizeCallLostResponsesAtAS2(t *testing.T) {
 	t.Run("a lost gateway token", func(t *testing.T) {
 		f := newHarnessFixture(t)
 		f.as2.LoseNextResponse(identityharness.KindRedemption)
-		got, err := f.authorize(callRequest(f.s.ID, f.cred))
+		got, err := f.authorize(ownerCall(f.s, f.cred))
 		if err != nil {
 			t.Fatalf("AuthorizeCall: %v", err)
 		}
@@ -687,7 +695,7 @@ func TestAuthorizeCallMapsAS1RefusalsAtAS1(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			exchanges, redemptions, decisions := f.as1.Count(identityharness.KindIDJAG), f.as2.Count(identityharness.KindRedemption), len(f.rec.Decisions())
 			f.as1.FailNext(identityharness.KindIDJAG, tc.fault)
-			_, err := f.authorize(callRequest(f.s.ID, f.cred))
+			_, err := f.authorize(ownerCall(f.s, f.cred))
 			wantError(t, err, tc.code, tc.reason, f.cred)
 			if tc.code == identitybroker.CodeInternal && tc.fault.Reason != "" && !strings.Contains(err.Error(), "("+tc.fault.Reason+")") {
 				t.Fatalf("AuthorizeCall = %v, want the reason %s named", err, tc.fault.Reason)
@@ -698,7 +706,7 @@ func TestAuthorizeCallMapsAS1RefusalsAtAS1(t *testing.T) {
 				t.Fatalf("decisions = %+v, want one more with %s %q", d[decisions:], tc.code, tc.reason)
 			}
 			// The session stays open and its grant still works at AS-1.
-			if _, err := f.authorize(callRequest(f.s.ID, f.cred)); err != nil {
+			if _, err := f.authorize(ownerCall(f.s, f.cred)); err != nil {
 				t.Fatalf("AuthorizeCall after the refusal: %v", err)
 			}
 			f.wantCounts(t, exchanges+2, redemptions+1)
@@ -711,7 +719,7 @@ func TestAuthorizeCallMapsAS1RefusalsAtAS1(t *testing.T) {
 func TestAS2RefusesTheBrokersReusedIDJAG(t *testing.T) {
 	f := newHarnessFixture(t)
 	f.as2.DuplicateNext(identityharness.KindRedemption)
-	got, err := f.authorize(callRequest(f.s.ID, f.cred))
+	got, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
@@ -779,7 +787,7 @@ func TestRealVMCPAcceptsTheBrokersGatewayToken(t *testing.T) {
 	if f.vmcp == nil {
 		t.Fatal("the MCP broker process serves no vMCP")
 	}
-	got, err := f.authorize(callRequest(f.s.ID, f.cred))
+	got, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
@@ -815,7 +823,7 @@ func TestRealVMCPAcceptsTheBrokersGatewayToken(t *testing.T) {
 func TestAuthorizeCallMapsRealAS2Refusals(t *testing.T) {
 	t.Run("a user AS-2 does not trust", func(t *testing.T) {
 		f := newHarnessFixtureWith(t, harnessOptions{distrustAlice: true})
-		_, err := f.authorize(callRequest(f.s.ID, f.cred))
+		_, err := f.authorize(ownerCall(f.s, f.cred))
 		wantError(t, err, identitybroker.CodeInternal, "", f.cred)
 		// A reasonless invalid_grant is retried once with a new ID-JAG.
 		f.wantCounts(t, 2, 2)
@@ -835,7 +843,7 @@ func TestAuthorizeCallMapsRealAS2Refusals(t *testing.T) {
 
 	t.Run("a client key AS-2 does not know", func(t *testing.T) {
 		f := newHarnessFixtureWith(t, harnessOptions{unknownAS2Key: true})
-		_, err := f.authorize(callRequest(f.s.ID, f.cred))
+		_, err := f.authorize(ownerCall(f.s, f.cred))
 		wantError(t, err, identitybroker.CodeInternal, "", f.cred)
 		f.wantCounts(t, 1, 1)
 		if r := requests(f.as2, identityharness.KindRedemption)[0]; !r.Reached || r.Code != "invalid_client" || r.IssuedToken != "" {
@@ -850,11 +858,11 @@ func TestAuthorizeCallMapsRealAS2Refusals(t *testing.T) {
 func TestAuthorizeCallNeverSharesTokensAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	bobSession, bobCred := f.open(t, "hostS43", identityharness.Bob)
-	alice, err := f.authorize(callRequest(f.s.ID, f.cred))
+	alice, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("Alice's AuthorizeCall: %v", err)
 	}
-	bob, err := f.authorize(callRequest(bobSession.ID, bobCred))
+	bob, err := f.authorize(ownerCall(bobSession, bobCred))
 	if err != nil {
 		t.Fatalf("Bob's AuthorizeCall: %v", err)
 	}
@@ -867,14 +875,14 @@ func TestAuthorizeCallNeverSharesTokensAtAS2(t *testing.T) {
 		t.Fatalf("AS-1 issued %d ID-JAGs, want one for Alice and one for Bob", len(issued))
 	}
 	// An agent of one session cannot act in the other.
-	_, err = f.authorize(callRequest(bobSession.ID, f.cred))
+	_, err = f.authorize(ownerCall(bobSession, f.cred))
 	wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied, f.cred)
 	f.wantCounts(t, 2, 2)
 
 	if err := f.closeSession(f.s.ID); err != nil {
 		t.Fatalf("CloseSession: %v", err)
 	}
-	_, err = f.authorize(callRequest(f.s.ID, f.cred))
+	_, err = f.authorize(ownerCall(f.s, f.cred))
 	wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, f.cred)
 	f.wantCounts(t, 2, 2)
 }
@@ -884,11 +892,11 @@ func TestAuthorizeCallNeverSharesTokensAtAS2(t *testing.T) {
 func TestAuthorizeCallSessionsOfOneUserGetTheirOwnTokensAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
 	otherSession, otherCred := f.open(t, "hostS43", identityharness.Alice)
-	first, err := f.authorize(callRequest(f.s.ID, f.cred))
+	first, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall in the first session: %v", err)
 	}
-	second, err := f.authorize(callRequest(otherSession.ID, otherCred))
+	second, err := f.authorize(ownerCall(otherSession, otherCred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall in the second session: %v", err)
 	}
@@ -907,7 +915,7 @@ func TestAuthorizeCallSessionsOfOneUserGetTheirOwnTokensAtAS2(t *testing.T) {
 // done-when 8, the core part). No client assertion may carry a token.
 func TestAuthorizeCallKeepsTokensSecretAtAS2(t *testing.T) {
 	f := newHarnessFixture(t)
-	auth, err := f.authorize(callRequest(f.s.ID, f.cred))
+	auth, err := f.authorize(ownerCall(f.s, f.cred))
 	if err != nil {
 		t.Fatalf("AuthorizeCall: %v", err)
 	}
@@ -916,17 +924,17 @@ func TestAuthorizeCallKeepsTokensSecretAtAS2(t *testing.T) {
 	// issued and dropped.
 	f.as2.FailNext(identityharness.KindRedemption, identityharness.Fault{Error: "invalid_grant"})
 	f.as2.FailNext(identityharness.KindRedemption, identityharness.Fault{Error: "invalid_grant"})
-	_, err = f.authorize(callRequest(f.s.ID, f.cred))
+	_, err = f.authorize(ownerCall(f.s, f.cred))
 	errs = append(errs, err)
 	f.as1.FailNext(identityharness.KindIDJAG, identityharness.Fault{Error: "invalid_request", Reason: "denied"})
-	_, err = f.authorize(callRequest(f.s.ID, f.cred))
+	_, err = f.authorize(ownerCall(f.s, f.cred))
 	errs = append(errs, err)
 	f.as2.OnNext(identityharness.KindRedemption, func() {
 		if err := f.closeSession(f.s.ID); err != nil {
 			panic(err)
 		}
 	})
-	_, err = f.authorize(callRequest(f.s.ID, f.cred))
+	_, err = f.authorize(ownerCall(f.s, f.cred))
 	errs = append(errs, err)
 
 	secrets := []string{f.cred.Value()}

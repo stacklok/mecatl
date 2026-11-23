@@ -105,10 +105,12 @@ type CallAuthorizer interface {
 	AuthorizeCall(context.Context, identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error)
 }
 
-// AgentCredentials looks up the acting agent's credential; *agentcredential.Holder
-// implements it. renew asks for a renewed credential after svid_expired.
+// AgentCredentials looks up the acting agent's credential and, for a helper,
+// its current delegation; *agentcredential.Holder implements it. renew asks
+// for a renewed credential after svid_expired.
 type AgentCredentials interface {
 	Credential(ctx context.Context, key agentcredential.Key, renew bool) (agentcredential.Credential, error)
+	Delegation(key agentcredential.Key) (agentcredential.Delegation, bool)
 }
 
 // GatewayCalls is what the gateway path needs besides the gateway.

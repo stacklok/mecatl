@@ -132,25 +132,27 @@ func (c credentialIssuer) verify(credential Token, now time.Time) (verifiedCrede
 		return key, nil
 	}, jwt.WithoutClaimsValidation())
 	if err != nil {
-		return verifiedCredential{}, credentialDenied("the credential is not valid")
+		return verifiedCredential{}, deniedError("the credential is not valid")
 	}
 	if len(claims.Audience) != 1 || claims.Audience[0] != c.audience {
-		return verifiedCredential{}, credentialDenied("the credential's audience is not the broker's alone")
+		return verifiedCredential{}, deniedError("the credential's audience is not the broker's alone")
 	}
 	if claims.ExpiresAt == nil {
-		return verifiedCredential{}, credentialDenied("the credential has no expiry")
+		return verifiedCredential{}, deniedError("the credential has no expiry")
 	}
 	exp := claims.ExpiresAt.Time
 	if !now.Before(exp.Add(credentialClockSkew)) {
 		return verifiedCredential{}, ReasonError(ReasonSVIDExpired, "the credential has expired")
 	}
 	if exp.After(now.Add(c.lifetime + credentialClockSkew)) {
-		return verifiedCredential{}, credentialDenied("the credential's expiry exceeds the credential lifetime")
+		return verifiedCredential{}, deniedError("the credential's expiry exceeds the credential lifetime")
 	}
 	return verifiedCredential{subject: claims.Subject, expiresAt: exp}, nil
 }
 
-func credentialDenied(detail string) error {
+// deniedError is a PERMISSION_DENIED refusal of a credential, run, or
+// delegation check, with detail saying which.
+func deniedError(detail string) error {
 	return ReasonError(ReasonDenied, detail)
 }
 
