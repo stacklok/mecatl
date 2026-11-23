@@ -448021,6 +448021,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795446289147,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0f766f77c64925df06c98b3a384b447a3c7beb0",
+          "message": "fix(scheduler): bound the steps a scheduled fire waits on (#2955) (#2958)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:57:09+01:00",
+          "tree_id": "6a51611b25edbf0110e5de8de3166a075116b1be",
+          "url": "https://github.com/stacklok/mecatl/commit/c0f766f77c64925df06c98b3a384b447a3c7beb0"
+        },
+        "date": 1795450259650,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -583263,6 +583302,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795450253814,
+  "lastUpdate": 1795450261576,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
