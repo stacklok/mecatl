@@ -145,8 +145,12 @@ func TestKindExecutionQualification(t *testing.T) {
 			return intruder.RetireEnvironment(ctx, executionenv.RetireEnvironmentRequest{Environment: rc.Environment, Owner: rc.Owner, ExpectedEpoch: rc.Epoch, ExpectedPodUID: "wrong-pod", ExpectedPVCUID: "wrong-pvc", OperationID: "unauthorized-retire"})
 		},
 	} {
-		if err := call(); err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeUnauthenticated)) {
-			t.Fatalf("different client %s error = %v, want denial", name, err)
+		err := call()
+		denied := isRemoteCode(err, executionenv.CodePermissionDenied) ||
+			isRemoteCode(err, executionenv.CodeUnauthenticated) ||
+			name != "environment retire" && isRemoteCode(err, executionenv.CodeNotFound)
+		if err == nil || !denied {
+			t.Fatalf("different client %s error = %v, want an existence-hiding denial", name, err)
 		}
 	}
 	releaseIntruderTarget()

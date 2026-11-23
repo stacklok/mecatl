@@ -29,6 +29,7 @@ import (
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/internal/executionenv"
 	"github.com/stacklok/mecatl/internal/executorrpc/commandconformance"
 	"github.com/stacklok/mecatl/internal/executorrpc/executorclient"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileconformance"
@@ -52,6 +53,10 @@ type proxyFixture struct {
 	runner  *memexecutor.Runner
 	pin     ExecutorPin
 	connect *recordingConnector
+
+	security     *SecurityManager
+	manifestPath string
+	manifest     securityManifest
 }
 
 type recordingConnector struct {
@@ -223,6 +228,10 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		runner:  runner,
 		pin:     pin,
 		connect: connector,
+
+		security:     manager,
+		manifestPath: manifestPath,
+		manifest:     manifest,
 	}
 }
 
@@ -799,4 +808,65 @@ func TestCommandProxyRelaysAnUnservedCommandServiceAsNotStarted(t *testing.T) {
 	if status.Code(err) != codes.Unimplemented || errors.Is(err, executorclient.ErrOutcomeUnknown) {
 		t.Fatalf("Run = %v, want Unimplemented and not started", err)
 	}
+}
+
+func TestLimiterRefusalsOfExecutorCallsAreNotForwarded(t *testing.T) {
+	stat := &executorv1.StatFileRequest{Context: proxyRequestContext(), Path: "a.txt"}
+	t.Run("at capacity", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{clientMax: 1})
+		f.runner.Script("block", memexecutor.Block("ready"))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stream := startCommand(ctx, t, f.conn, proxyRequestContext(), "block")
+		for range 2 {
+			if _, err := stream.Recv(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := executorv1.NewFileServiceClient(f.conn).StatFile(t.Context(), stat)
+		if status.Code(err) != codes.ResourceExhausted ||
+			reasonOf(err) != executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED {
+			t.Fatalf("StatFile at capacity = %v, want not forwarded", err)
+		}
+		r := executorclient.NewRunner(
+			f.conn,
+			proxyRoot,
+			func(context.Context) (*executorv1.RequestContext, error) {
+				return proxyRequestContext(), nil
+			},
+		)
+		_, err = r.Run(t.Context(), "true")
+		if err == nil || errors.Is(err, executorclient.ErrOutcomeUnknown) {
+			t.Fatalf("Run at capacity = %v, want not started", err)
+		}
+	})
+	t.Run("removed client", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{})
+		removed := f.manifest
+		removed.Generation++
+		removed.Clients = []securityClientManifest{{
+			URI:                "spiffe://mecatl.test/other",
+			MayAttestOwner:     true,
+			ExecutionTemplates: []string{"go"},
+		}}
+		writeManifest(t, f.manifestPath, removed)
+		if err := f.security.Reload(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		_, err := executorv1.NewFileServiceClient(f.conn).StatFile(t.Context(), stat)
+		if status.Code(err) != codes.Unauthenticated ||
+			reasonOf(err) != executorv1.ErrorReason_ERROR_REASON_NOT_FORWARDED ||
+			providerCode(err) != executionenv.CodeUnauthenticated {
+			t.Fatalf("StatFile from a removed client = %v, want an unauthenticated refusal", err)
+		}
+	})
+}
+
+func providerCode(err error) executionenv.ErrorCode {
+	for _, d := range status.Convert(err).Details() {
+		if detail, ok := d.(*executionv1.ErrorDetail); ok {
+			return executionenv.ErrorCode(detail.GetCode())
+		}
+	}
+	return ""
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -32,10 +33,15 @@ func NewRPCLimiter(security *SecurityManager, globalMax, clientMax int) (*RPCLim
 }
 
 // UnaryInterceptor authenticates against current policy before reserving capacity.
-func (l *RPCLimiter) UnaryInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+func (l *RPCLimiter) UnaryInterceptor(
+	ctx context.Context,
+	req any,
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (any, error) {
 	id, err := l.admit(ctx)
 	if err != nil {
-		return nil, err
+		return nil, limiterRefusal(info.FullMethod, err)
 	}
 	defer l.release(id)
 	return handler(ctx, req)
@@ -45,15 +51,25 @@ func (l *RPCLimiter) UnaryInterceptor(ctx context.Context, req any, _ *grpc.Unar
 func (l *RPCLimiter) StreamInterceptor(
 	srv any,
 	ss grpc.ServerStream,
-	_ *grpc.StreamServerInfo,
+	info *grpc.StreamServerInfo,
 	handler grpc.StreamHandler,
 ) error {
 	id, err := l.admit(ss.Context())
 	if err != nil {
-		return err
+		return limiterRefusal(info.FullMethod, err)
 	}
 	defer l.release(id)
 	return handler(srv, ss)
+}
+
+// limiterRefusal tags executor-service refusals as not forwarded; lifecycle errors keep one detail.
+func limiterRefusal(method string, err error) error {
+	for _, service := range executorServiceNames() {
+		if strings.HasPrefix(method, "/"+service+"/") {
+			return notForwarded(err)
+		}
+	}
+	return err
 }
 
 func (l *RPCLimiter) admit(ctx context.Context) (string, error) {
