@@ -402786,6 +402786,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795282285857,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7996e5eba3c2065894d8e55ca4d80d12ff3c6709",
+          "message": "chore(identitybroker): mark the gateway output-schema shortcut and update the M3 row (#2944)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-23T13:03:58+01:00",
+          "tree_id": "37abaf5cf89118857dfd734fcf9ac855be29f42f",
+          "url": "https://github.com/stacklok/mecatl/commit/7996e5eba3c2065894d8e55ca4d80d12ff3c6709"
+        },
+        "date": 1795436162215,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -581185,6 +581219,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795436158871,
+  "lastUpdate": 1795436163250,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
