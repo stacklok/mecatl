@@ -447227,6 +447227,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795437103141,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50bb37805a8a9a15ace1ed321347b6994676e79",
+          "message": "feat(identitybroker): limit each agent's gateway calls to its definition's tools (#2937)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-23T15:01:14+01:00",
+          "tree_id": "34f7437fc34f66f9e2db57873d9b66b029967ce1",
+          "url": "https://github.com/stacklok/mecatl/commit/f50bb37805a8a9a15ace1ed321347b6994676e79"
+        },
+        "date": 1795443302135,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13421,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12914.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -582241,6 +582280,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795443298236,
+  "lastUpdate": 1795443302986,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
