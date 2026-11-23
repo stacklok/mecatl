@@ -127,6 +127,26 @@ func TestAuthorizeCallChecksTheEffectiveCeiling(t *testing.T) {
 	f.wantCeilingDenied(t, f.call(f.toolLessCred, "R46", "D4", "op-tool-less", "pull_request_read"), "none")
 }
 
+// list is a tools/list of github by the agent with cred, in run under
+// delegation, as operation.
+func (f ceilingFixture) list(cred identitybroker.Token, run, delegation, operation string) identitybroker.AuthorizeCallRequest {
+	req := f.call(cred, run, delegation, operation, "")
+	req.Method, req.Tool, req.ArgumentsSHA256 = identitybroker.MethodToolsList, "", ""
+	return req
+}
+
+// TestAuthorizeCallListingFollowsTheCeilingsServers pins check 7 for
+// tools/list through AuthorizeCall: a listing is allowed on a server the
+// effective ceiling grants, even one with excluded tools, and refused when
+// the ceiling grants no server.
+func TestAuthorizeCallListingFollowsTheCeilingsServers(t *testing.T) {
+	f := newCeilingFixture(t)
+	const narrowed = "calendar; github except " + conformance.ReviewerExcludedTool
+	f.wantAllowed(t, f.list(f.reviewerCred, "R43", "D1", "op-reviewer-list"), narrowed)
+	f.wantAllowed(t, f.list(f.explorerCred, "R45", "D3", "op-explorer-list"), narrowed)
+	f.wantCeilingDenied(t, f.list(f.toolLessCred, "R46", "D4", "op-tool-less-list"), "none")
+}
+
 // TestAuthorizeCallToolMustBeNamedForItsServer pins that a call names the
 // exact pair: a tool named for another server, or with no server, is an
 // invalid request, refused before any check, so check 7 always sees a tool
