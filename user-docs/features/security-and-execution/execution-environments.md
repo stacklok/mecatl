@@ -289,7 +289,8 @@ rejected. The provider reloads renewed valid TLS material independently of the
 client-policy manifest. For client-policy changes, publish a higher-generation
 manifest and verify provider readiness. A stale replica denies requests rather
 than using a rolled-back policy. TLS trust withdrawal or certificate expiry
-refuses the affected client's new calls; calls in progress finish. See the
+refuses the affected client's new calls and
+[closes its calls in progress](#calls-in-progress). See the
 [policy and TLS rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
 ### Template policy
@@ -299,17 +300,35 @@ allocations to use it. Revocation blocks use as well as selection. Run acquisiti
 renewal, and exact replay check current template and client policy; a retained
 claim cannot bypass withdrawn authority. Reference release and authorized
 administrative cleanup remain available, subject to their identity and fencing
-checks. Policy withdrawal does not prove that an executor has stopped.
+checks. The provider deletes the executor Pod of an environment whose revision is
+revoked and [closes its calls in progress](#calls-in-progress). Policy
+withdrawal does not prove that an executor has stopped.
 
 ### Revocation
 
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
 current positive `grant_generation` (the wire name for the durable revocation
 fence); success increments it without changing the execution epoch. The provider
-then refuses calls under the old generation; calls already in progress are not
-stopped.
+then refuses calls under the old generation. The replica that served the
+revocation closes that environment's calls in progress at once; other replicas
+close them at their next [policy recheck](#calls-in-progress).
 Revocation is not executor termination proof; a new run needs a fresh claim
 after the old claim is released or fenced.
+
+### Calls in progress
+
+The provider rechecks every file and command call it is forwarding at the
+policy recheck interval, 10 seconds by default, using the same checks as a new
+call. Once revocation, a lapsed run claim, a revoked template, or a client policy
+or TLS trust change would refuse a new call, the provider closes the call in
+progress and the executor stops the command and every process it started. A
+call survives one recheck that can't confirm its authority, for example because
+the Kubernetes API is unreachable or this replica hasn't loaded a newer security
+policy yet, and closes if the next recheck can't confirm it either. The caller
+receives the same status a new call would; a closed command ends with an unknown
+outcome and isn't retried, and files written before the close stay written.
+Operators set the interval with the
+[`provider.policyRecheckInterval` chart value](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
 ### Network and resource limits
 

@@ -40,6 +40,9 @@ type HandlerConfig struct {
 	Ready       func() bool
 	Security    *SecurityManager
 	Diagnostics port.Diagnostics
+	// PolicyRecheckInterval is how often each forwarded call is reauthorized;
+	// zero means DefaultPolicyRecheckInterval.
+	PolicyRecheckInterval time.Duration
 }
 
 // Profile is the externally visible immutable execution profile.
@@ -106,13 +109,26 @@ type Handler struct {
 	backend               Backend
 	lifecycleBackend      lifecycleBackend
 	adminLifecycleBackend adminLifecycleBackend
+	flights               *inflightCalls
+	recheckTicks          func() (<-chan time.Time, func())
+	swept                 func()
 }
 
 // NewHandler constructs the authenticated private gRPC service.
 func NewHandler(cfg HandlerConfig, b Backend) *Handler {
 	lifecycle, _ := b.(lifecycleBackend)
 	adminLifecycle, _ := b.(adminLifecycleBackend)
-	return &Handler{cfg: cfg, backend: b, lifecycleBackend: lifecycle, adminLifecycleBackend: adminLifecycle}
+	if cfg.PolicyRecheckInterval <= 0 {
+		cfg.PolicyRecheckInterval = DefaultPolicyRecheckInterval
+	}
+	return &Handler{
+		cfg:                   cfg,
+		backend:               b,
+		lifecycleBackend:      lifecycle,
+		adminLifecycleBackend: adminLifecycle,
+		flights:               newInflightCalls(),
+		recheckTicks:          intervalTicks(cfg.PolicyRecheckInterval),
+	}
 }
 
 type authenticatedClient struct {
@@ -477,6 +493,7 @@ func (h *Handler) RevokeEnvironment(ctx context.Context, q *executionv1.RevokeEn
 	if err != nil {
 		return nil, backendError(err)
 	}
+	h.withdrawBelow(ctx, ref.ID, generation)
 	return &executionv1.RevokeEnvironmentResponse{GrantGeneration: generation}, nil
 }
 

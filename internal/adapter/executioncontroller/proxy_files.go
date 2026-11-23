@@ -38,14 +38,14 @@ func forwardUnary[Req contextual, Resp any](
 	call func(executorv1.FileServiceClient, context.Context, Req, ...grpc.CallOption) (Resp, error),
 ) (Resp, error) {
 	var zero Resp
-	a, err := p.proxy.open(ctx, req.GetContext())
+	ctx, a, err := p.proxy.open(ctx, req.GetContext())
 	if err != nil {
 		return zero, err
 	}
 	defer a.release()
 	resp, err := call(executorv1.NewFileServiceClient(a.conn), ctx, req)
 	if err != nil {
-		return zero, executorError(err)
+		return zero, withdrawnOr(ctx, executorError(err))
 	}
 	return resp, nil
 }
@@ -119,8 +119,7 @@ func (p *FileProxy) ReadFile(
 	req *executorv1.ReadFileRequest,
 	stream grpc.ServerStreamingServer[executorv1.ReadFileResponse],
 ) error {
-	ctx := stream.Context()
-	a, err := p.proxy.open(ctx, req.GetContext())
+	ctx, a, err := p.proxy.open(stream.Context(), req.GetContext())
 	if err != nil {
 		return err
 	}
@@ -129,7 +128,7 @@ func (p *FileProxy) ReadFile(
 	defer cancel()
 	up, err := executorv1.NewFileServiceClient(a.conn).ReadFile(ctx, req)
 	if err != nil {
-		return executorError(err)
+		return withdrawnOr(ctx, executorError(err))
 	}
 	var total int64
 	for {
@@ -138,7 +137,7 @@ func (p *FileProxy) ReadFile(
 			return nil
 		}
 		if err != nil {
-			return executorError(err)
+			return withdrawnOr(ctx, executorError(err))
 		}
 		total += int64(len(msg.GetData()))
 		if total > a.route.MaxFileBytes {
@@ -193,8 +192,7 @@ func forwardUpload[Req any, Resp any, PReq uploadMessage[Req]](
 	if err != nil {
 		return err
 	}
-	ctx := stream.Context()
-	a, err := p.proxy.open(ctx, PReq(first).GetContext())
+	ctx, a, err := p.proxy.open(stream.Context(), PReq(first).GetContext())
 	if err != nil {
 		return err
 	}
@@ -203,7 +201,7 @@ func forwardUpload[Req any, Resp any, PReq uploadMessage[Req]](
 	defer cancel()
 	up, err := open(executorv1.NewFileServiceClient(a.conn), ctx)
 	if err != nil {
-		return executorError(err)
+		return withdrawnOr(ctx, executorError(err))
 	}
 	var total int64
 	for msg := first; ; {
@@ -215,7 +213,7 @@ func forwardUpload[Req any, Resp any, PReq uploadMessage[Req]](
 			if _, err = up.CloseAndRecv(); err == nil {
 				err = io.ErrUnexpectedEOF
 			}
-			return executorError(err)
+			return withdrawnOr(ctx, executorError(err))
 		}
 		msg, err = stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -227,7 +225,7 @@ func forwardUpload[Req any, Resp any, PReq uploadMessage[Req]](
 	}
 	resp, err := up.CloseAndRecv()
 	if err != nil {
-		return executorError(err)
+		return withdrawnOr(ctx, executorError(err))
 	}
 	return stream.SendAndClose(resp)
 }

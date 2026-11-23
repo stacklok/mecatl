@@ -51,7 +51,7 @@ func (p *CommandProxy) RunCommand(stream commandStream) error {
 	if err != nil {
 		return notForwarded(err)
 	}
-	a, err := p.proxy.connect(route)
+	ctx, a, err := p.proxy.connect(ctx, first.GetContext(), route)
 	if err != nil {
 		return notForwarded(err)
 	}
@@ -60,16 +60,16 @@ func (p *CommandProxy) RunCommand(stream commandStream) error {
 	defer cancel()
 	up, err := executorv1.NewCommandServiceClient(a.conn).RunCommand(ctx)
 	if err != nil {
-		return notForwarded(executorError(err))
+		return notForwarded(withdrawnOr(ctx, executorError(err)))
 	}
 	if err := up.Send(forward); err != nil {
 		if _, err = up.Recv(); err == nil {
 			err = io.ErrUnexpectedEOF
 		}
-		return executorError(err)
+		return withdrawnOr(ctx, executorError(err))
 	}
 	go relayCommandControl(stream, up, cancel)
-	return relayCommandOutput(stream, up, route.MaxCommandBytes)
+	return withdrawnOr(ctx, relayCommandOutput(stream, up, route.MaxCommandBytes))
 }
 
 func boundedStart(

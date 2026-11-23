@@ -3,11 +3,13 @@ package executioncontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -38,12 +40,22 @@ func (s *Store) validateRunClaim(
 			Message: "run claim identity is invalid",
 		}
 	}
-	o, err := s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
+	o, err := recheckRead(
+		ctx,
+		environmentRead(rc.Environment.ID),
+		func() (*unstructured.Unstructured, error) {
+			return s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
+		},
+	)
 	if err != nil {
-		return nil, &executionenv.Error{
+		refusal := &executionenv.Error{
 			Code:    executionenv.CodeNotFound,
 			Message: environmentNotFoundMessage,
 		}
+		if !apierrors.IsNotFound(err) {
+			return nil, &unconfirmedRefusal{refusal}
+		}
+		return nil, refusal
 	}
 	if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
 		return nil, &executionenv.Error{
@@ -74,13 +86,23 @@ func (s *Store) validateRunClaim(
 			Message: "run binding is not ready",
 		}
 	}
-	if !s.clientPolicyCurrent(ctx, client, o) {
-		return nil, &executionenv.Error{
-			Code:    executionenv.CodeNotReady,
-			Message: "client policy is unavailable or revoked",
-		}
+	if err := s.clientPolicyRefusal(ctx, client, o); err != nil {
+		return nil, err
 	}
 	return o, nil
+}
+
+type environmentRead string
+
+// unconfirmedRefusal is a refusal because authorization state could not be read.
+type unconfirmedRefusal struct{ refusal *executionenv.Error }
+
+func (e *unconfirmedRefusal) Error() string { return e.refusal.Error() }
+func (e *unconfirmedRefusal) Unwrap() error { return e.refusal }
+
+func unconfirmed(err error) bool {
+	var u *unconfirmedRefusal
+	return errors.As(err, &u)
 }
 
 func (s *Store) clientPolicyCurrent(
@@ -88,18 +110,36 @@ func (s *Store) clientPolicyCurrent(
 	client string,
 	o *unstructured.Unstructured,
 ) bool {
+	return s.clientPolicyRefusal(ctx, client, o) == nil
+}
+
+func (s *Store) clientPolicyRefusal(
+	ctx context.Context,
+	client string,
+	o *unstructured.Unstructured,
+) error {
 	if s.security == nil {
-		return true
+		return nil
+	}
+	refusal := &executionenv.Error{
+		Code:    executionenv.CodeNotReady,
+		Message: "client policy is unavailable or revoked",
 	}
 	chain, _, err := clientCertificates(ctx)
 	if err != nil {
-		return false
+		return refusal
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	id, policy, err := s.security.authorize(checkCtx, chain)
-	return err == nil && id == client && policy.MayAttestOwner &&
-		slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID"))
+	if errors.Is(err, errAuthorityUnavailable) {
+		return &unconfirmedRefusal{refusal}
+	}
+	if err != nil || id != client || !policy.MayAttestOwner ||
+		!slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID")) {
+		return refusal
+	}
+	return nil
 }
 
 func activeRunFrom(o *unstructured.Unstructured) (executionenv.RunClaim, string, time.Time, bool) {

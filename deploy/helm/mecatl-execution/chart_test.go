@@ -80,3 +80,19 @@ func TestProductionHardeningIsFailClosed(t *testing.T) {
 		t.Fatal("chart permits an unsafe replica or egress default")
 	}
 }
+
+func TestChartPassesThePolicyRecheckInterval(t *testing.T) {
+	provider, err := os.ReadFile("templates/provider.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := os.ReadFile("values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arg := "--policy-recheck-interval={{ .Values.provider.policyRecheckInterval }}"
+	if !strings.Contains(string(provider), arg) ||
+		!strings.Contains(string(values), "\n  policyRecheckInterval: 10s\n") {
+		t.Fatal("chart must pass provider.policyRecheckInterval, default 10s")
+	}
+}

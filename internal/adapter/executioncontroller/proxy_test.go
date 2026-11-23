@@ -44,6 +44,9 @@ type proxyOptions struct {
 	clientMax       int
 	maxFileBytes    int64
 	maxCommandBytes int64
+	administrator   bool
+	recheck         time.Duration
+	manualTicks     bool
 }
 
 type proxyFixture struct {
@@ -54,6 +57,10 @@ type proxyFixture struct {
 	pin     ExecutorPin
 	connect *recordingConnector
 
+	handler      *Handler
+	ticks        chan time.Time
+	swept        chan struct{}
+	kube         *kubefake.Clientset
 	security     *SecurityManager
 	manifestPath string
 	manifest     securityManifest
@@ -163,6 +170,7 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		Clients: []securityClientManifest{{
 			URI:                scopeCreator,
 			MayAttestOwner:     true,
+			Administrator:      opts.administrator,
 			ExecutionTemplates: []string{"go"},
 		}},
 	}
@@ -175,7 +183,17 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 	}
 	dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(dynamic, "ns", proxyProfiles(opts)).WithSecurityManager(manager)
-	handler := NewHandler(HandlerConfig{Security: manager}, store)
+	handler := NewHandler(
+		HandlerConfig{Security: manager, PolicyRecheckInterval: opts.recheck},
+		store,
+	)
+	var ticks chan time.Time
+	var swept chan struct{}
+	if opts.manualTicks {
+		ticks, swept = make(chan time.Time), make(chan struct{})
+		handler.recheckTicks = func() (<-chan time.Time, func()) { return ticks, func() {} }
+		handler.swept = func() { swept <- struct{}{} }
+	}
 
 	files := memfs.NewFileSystem(proxyRoot)
 	runner := memexecutor.NewRunner()
@@ -198,6 +216,7 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		grpc.ChainUnaryInterceptor(limiter.UnaryInterceptor),
 		grpc.ChainStreamInterceptor(limiter.StreamInterceptor),
 	)
+	executionv1.RegisterExecutionProviderServiceServer(server, handler)
 	RegisterExecutorServices(server, handler, connector.Connect)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -229,6 +248,10 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 		pin:     pin,
 		connect: connector,
 
+		handler:      handler,
+		ticks:        ticks,
+		swept:        swept,
+		kube:         kube,
 		security:     manager,
 		manifestPath: manifestPath,
 		manifest:     manifest,
