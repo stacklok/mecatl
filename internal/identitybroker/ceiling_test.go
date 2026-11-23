@@ -196,3 +196,62 @@ func TestAuthorizeCallChildCannotGainAServerItsParentLacks(t *testing.T) {
 		t.Fatalf("decision = %+v, want a refusal under ceiling none", d[len(d)-1])
 	}
 }
+
+// TestAuthorizeCallCeilingSurvivesReRegistrationInAReopenedSession pins that
+// an instance registering again in the broker session that replaces its
+// own keeps the effective ceiling computed when it first registered: the
+// reviewer and the deployer under it still cannot call the tool the reviewer
+// excludes, and still get the same agent identity.
+func TestAuthorizeCallCeilingSurvivesReRegistrationInAReopenedSession(t *testing.T) {
+	f := newCeilingFixture(t)
+	ctx := context.Background()
+	if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: f.s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
+		HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner, AccessToken: unsignedToken(t, testOwner),
+	})
+	if err != nil || reopened.ID == f.s.ID || !reopened.HoldsRefreshToken {
+		t.Fatalf("reopen = %+v, %v; want a new session holding a grant", reopened, err)
+	}
+	register := func(host, incarnation string, def identitybroker.DefinitionRef, parent identitybroker.AgentRef, parentHost string) identitybroker.Registration {
+		t.Helper()
+		reg, err := f.b.RegisterAgent(ctx, testWorkload, identitybroker.RegisterAgentRequest{
+			SessionID: reopened.ID, HostSessionID: host, Owner: testOwner, Incarnation: incarnation,
+			Definition: def, Parent: parent, ParentHostSessionID: parentHost,
+		})
+		if err != nil {
+			t.Fatalf("RegisterAgent %s again: %v", def.Name, err)
+		}
+		return reg
+	}
+	main, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(reopened))
+	if err != nil || main.Agent != f.main {
+		t.Fatalf("RegisterAgent main again = %+v, %v; want the same agent", main, err)
+	}
+	reviewer := register("hostS-reviewer", "inc_cbcdefghijklmnopqrstuvwxya", conformance.ReviewerDefinition, f.main, reopened.HostSessionID)
+	deployer := register("hostS-deployer", "inc_dbcdefghijklmnopqrstuvwxya", conformance.DeployerDefinition, reviewer.Agent, "hostS-reviewer")
+	if reviewer.Agent != f.reviewer || deployer.Agent != f.deployer {
+		t.Fatalf("registered again as %v and %v, want the agents %v and %v", reviewer.Agent, deployer.Agent, f.reviewer, f.deployer)
+	}
+	for _, d := range []identitybroker.ReportDelegationRequest{
+		{DelegationID: "D1", DelegatingRun: "R42", DelegatingAgent: f.main, ReceivingRun: "R43", ReceivingAgent: f.reviewer},
+		{DelegationID: "D2", DelegatingRun: "R43", DelegatingAgent: f.reviewer, ReceivingRun: "R44", ReceivingAgent: f.deployer},
+	} {
+		d.SessionID, d.Owner = reopened.ID, testOwner
+		if err := f.b.ReportDelegation(ctx, testWorkload, d); err != nil {
+			t.Fatalf("ReportDelegation(%s): %v", d.DelegationID, err)
+		}
+	}
+
+	const narrowed = "calendar; github except " + conformance.ReviewerExcludedTool
+	call := func(cred identitybroker.Token, run, delegation, operation, tool string) identitybroker.AuthorizeCallRequest {
+		req := f.call(cred, run, delegation, operation, tool)
+		req.SessionID = reopened.ID
+		return req
+	}
+	f.wantAllowed(t, call(reviewer.Credential, "R43", "D1", "op-reviewer-read", "pull_request_read"), narrowed)
+	f.wantCeilingDenied(t, call(reviewer.Credential, "R43", "D1", "op-reviewer-merge", conformance.ReviewerExcludedTool), narrowed)
+	f.wantAllowed(t, call(deployer.Credential, "R44", "D2", "op-deployer-read", "pull_request_read"), narrowed)
+	f.wantCeilingDenied(t, call(deployer.Credential, "R44", "D2", "op-deployer-merge", conformance.ReviewerExcludedTool), narrowed)
+}
