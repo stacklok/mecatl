@@ -23,6 +23,10 @@ type agentRecord struct {
 	incarnation   string
 	definition    DefinitionRef
 	parent        AgentRef
+	// ceiling is the instance's effective ceiling: its definition's, narrowed
+	// by its parent's effective ceiling, computed when the instance first
+	// registers and never recomputed or widened.
+	ceiling Ceiling
 	// credentials holds the credentials issued since the instance last moved
 	// to another broker session, by SHA-256 of the token, with their expiry;
 	// at most maxIssuedCredentials. Only these verify, so reopening a session
@@ -141,14 +145,35 @@ func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest,
 			return Registration{}, true, nil
 		}
 	}
-	t.recordLocked(identity, s.ID, req, credential, expiresAt)
+	// A new instance's effective ceiling is computed once, here; one
+	// registered before keeps its own.
+	var ceiling Ceiling
+	if _, registered := t.agents[identity.subject]; !registered {
+		ceiling = b.effectiveCeilingLocked(req)
+	}
+	t.recordLocked(identity, s.ID, req, ceiling, credential, expiresAt)
 	return Registration{Agent: AgentRef{Subject: identity.subject}, Credential: credential, ExpiresAt: expiresAt}, false, nil
 }
 
+// effectiveCeilingLocked returns the effective ceiling of a new instance
+// registering with req: its definition's ceiling, intersected with its
+// parent's effective ceiling when it has a parent. The caller holds t.mu and
+// has checked req, so the definition is loaded and the parent registered.
+//
+// Shortcut: broker state is in memory, so after a restart each instance registers again and its ceiling is computed afresh against the definitions and gateway servers loaded then; a longer server list can widen it under the same definition revision; removed by #2563 (durable broker state keeps each effective ceiling and its resolution inputs).
+func (b *Broker) effectiveCeilingLocked(req RegisterAgentRequest) Ceiling {
+	ceiling := b.definitions[req.Definition].Ceiling
+	if req.Parent.IsZero() {
+		return ceiling
+	}
+	return ceiling.intersect(b.sessions.agents[req.Parent.Subject].ceiling)
+}
+
 // recordLocked records a registration of identity in session sessionID, with
-// the credential just issued, which always verifies afterwards. The caller
-// holds t.mu.
-func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, req RegisterAgentRequest, credential Token, expiresAt time.Time) {
+// the credential just issued, which always verifies afterwards. A new
+// instance gets ceiling as its effective ceiling; one registered before
+// keeps its own. The caller holds t.mu.
+func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, req RegisterAgentRequest, ceiling Ceiling, credential Token, expiresAt time.Time) {
 	rec, ok := t.agents[identity.subject]
 	switch {
 	case !ok:
@@ -159,6 +184,7 @@ func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, re
 			incarnation:   req.Incarnation,
 			definition:    req.Definition,
 			parent:        req.Parent,
+			ceiling:       ceiling,
 		}
 		t.agents[identity.subject] = rec
 		t.incarnations[req.Incarnation] = identity.subject

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
@@ -185,6 +186,134 @@ func TestNoFSTeamLeadSynthesisSmoke(t *testing.T) {
 		// from the main-engine posture test applies here too).
 		if !strings.Contains(sys, noFSMemberNote) {
 			t.Errorf("member request %d system prompt missing the no-FS member posture note:\n%s", i, sys)
+		}
+	}
+}
+
+// TestNoFSDefinedMemberKeepsToItsToolLimit pins that a file-less team member
+// that names a definition keeps to the definition's tool limit, as it does
+// with a filesystem: the gateway tools of the server it references minus the
+// one it excludes, its own MCP servers instead of the server-global ones and
+// CallMcpWithQuery, the core tools it does not exclude, and the definition
+// reported for the identity broker. A generic member keeps the whole file-less
+// surface.
+func TestNoFSDefinedMemberKeepsToItsToolLimit(t *testing.T) {
+	a := noFSTeamAssets(t)
+	var calls atomic.Int32
+	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
+	cfg.helperTools = []tool.Tool{
+		countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &calls},
+		countingGatewayTool{fakeGatewayTool{"calendar", "echo"}, &calls},
+	}
+	def := agents.AgentDef{
+		Name:            "scoped",
+		Description:     "a member whose definition limits its tools",
+		DisallowedTools: []string{"mcp__calendar__echo", "WebFetch"},
+		MCPServers:      []agents.AgentMCPServer{{Name: "calendar"}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("ok"))
+	factory := buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
+		nil, regOf(def), nil, nil, nil, false, a.globalMgr, a, true)
+	tm := team.New("nofs-team")
+
+	defined := factory(tm, agent.MemberSpec{Name: "scout", AgentType: "scoped", InitialPrompt: "go"}, "")
+	if defined.Engine == nil {
+		t.Fatal("no engine for the defined member")
+	}
+	if defined.DefinitionName != "scoped" {
+		t.Fatalf("DefinitionName = %q, want the definition the member keeps to", defined.DefinitionName)
+	}
+	for _, name := range []string{"mcp__calendar__lookup", "Remember"} {
+		if !defined.Engine.HasTool(name) {
+			t.Errorf("the defined member lacks %q", name)
+		}
+	}
+	for _, name := range []string{"mcp__calendar__echo", "WebFetch", "mcp__globe__echo", "CallMcpWithQuery"} {
+		if defined.Engine.HasTool(name) {
+			t.Errorf("the defined member has %q, which its definition does not allow", name)
+		}
+	}
+
+	generic := factory(tm, agent.MemberSpec{Name: "generic", InitialPrompt: "go"}, "")
+	if generic.DefinitionName != "" {
+		t.Fatalf("a generic member reports definition %q", generic.DefinitionName)
+	}
+	for _, name := range []string{"mcp__calendar__lookup", "mcp__calendar__echo", "WebFetch", "mcp__globe__echo", "CallMcpWithQuery"} {
+		if !generic.Engine.HasTool(name) {
+			t.Errorf("the generic member lacks %q", name)
+		}
+	}
+}
+
+// TestNoFSDefinedMemberCloseWithoutGeneration pins that closing a file-less
+// defined member does not panic when the harness instructions are not
+// generation-backed (retainHarnessGeneration then returns a nil close) while
+// the definition opened its own MCP server, so the member's close joins both.
+func TestNoFSDefinedMemberCloseWithoutGeneration(t *testing.T) {
+	a := noFSTeamAssets(t)
+	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
+	def := agents.AgentDef{
+		Name:        "inline",
+		Description: "a member that opens its own MCP server",
+		MCPServers:  []agents.AgentMCPServer{{Name: "own", URL: newMCPTestServerWithResource(t)}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("ok"))
+	factory := buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
+		nil, regOf(def), nil, nil, nil, false, a.globalMgr, a, true)
+	build := factory(team.New("nofs-team"), agent.MemberSpec{Name: "scout", AgentType: "inline", InitialPrompt: "go"}, "")
+	if build.Engine == nil || build.Close == nil {
+		t.Fatalf("defined member build = %+v, want an engine and a close", build)
+	}
+	if err := build.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestNoFSDefinedMemberHonoursToolsAllowlist pins that a definition's `tools`
+// allowlist narrows the file-less core and memory tools as it does with a
+// filesystem, while the definition's MCP and gateway tools stay; a definition
+// without `tools` keeps every file-less tool it does not exclude.
+func TestNoFSDefinedMemberHonoursToolsAllowlist(t *testing.T) {
+	a := noFSTeamAssets(t)
+	var calls atomic.Int32
+	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
+	cfg.helperTools = []tool.Tool{countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &calls}}
+	limited := agents.AgentDef{
+		Name:        "limited",
+		Description: "a member limited to Remember (Read is not a file-less tool)",
+		Tools:       []string{"Remember", "Read"},
+		MCPServers:  []agents.AgentMCPServer{{Name: "calendar"}},
+	}
+	open := agents.AgentDef{
+		Name:        "open",
+		Description: "a member with no tools allowlist",
+		MCPServers:  []agents.AgentMCPServer{{Name: "calendar"}},
+	}
+	provider := mockllm.New(mockllm.TextTurn("ok"))
+	factory := buildMemberEngine(cfg, regForTest(provider, providerMock, cfg.Model), provider, providerMock, cfg.Model,
+		nil, regOf(limited, open), nil, nil, nil, false, a.globalMgr, a, true)
+	tm := team.New("nofs-team")
+
+	got := factory(tm, agent.MemberSpec{Name: "narrow", AgentType: "limited", InitialPrompt: "go"}, "")
+	if got.Engine == nil {
+		t.Fatal("no engine for the limited member")
+	}
+	for _, name := range []string{"Remember", "mcp__calendar__lookup"} {
+		if !got.Engine.HasTool(name) {
+			t.Errorf("the limited member lacks %q", name)
+		}
+	}
+	// Read is not a file-less tool, so naming it cannot resurrect it.
+	for _, name := range []string{"WebFetch", "WebSearch", "Recall", "RememberUser", "FetchMcpResource", "Read"} {
+		if got.Engine.HasTool(name) {
+			t.Errorf("the limited member has %q, which its tools allowlist does not name", name)
+		}
+	}
+
+	all := factory(tm, agent.MemberSpec{Name: "wide", AgentType: "open", InitialPrompt: "go"}, "")
+	for _, name := range []string{"WebFetch", "Remember", "Recall", "RememberUser", "mcp__calendar__lookup"} {
+		if !all.Engine.HasTool(name) {
+			t.Errorf("the member without a tools allowlist lacks %q", name)
 		}
 	}
 }

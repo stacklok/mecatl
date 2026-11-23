@@ -403,7 +403,7 @@ func TestIdentityBrokerGatewayCallAgainstRealAS1(t *testing.T) {
 	call := func(operation string) (identitybroker.Authorization, error) {
 		return built.IdentityBroker.AuthorizeCall(t.Context(), identitybroker.AuthorizeCallRequest{
 			SessionID: opened.ID, Credential: agent.Credential, OperationID: operation, RunID: "R1", RunOwner: opened.Owner,
-			Method: identitybroker.MethodToolsCall, Server: "calendar", Tool: "echo", ArgumentsSHA256: strings.Repeat("ab", 32),
+			Method: identitybroker.MethodToolsCall, Server: "calendar", Tool: "calendar.echo", ArgumentsSHA256: strings.Repeat("ab", 32),
 		})
 	}
 	first, err := call("op-1")
@@ -1144,6 +1144,24 @@ func createSession(t *testing.T, api, token string) string {
 		t.Fatalf("create session response %s: %v", body, err)
 	}
 	return created.ID
+}
+
+// toolResult returns the result of call in Alice's session id, failing t if
+// it has none.
+func (gw *gatewayServe) toolResult(t *testing.T, id session.SessionID, call session.ToolCallID) session.ToolResult {
+	t.Helper()
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: gw.h.IdP.Issuer(), Subject: identityharness.Alice, GrantType: session.GrantTypeUser})
+	sess, err := gw.built.Service.GetSession(owner, id)
+	if err != nil {
+		t.Fatalf("GetSession(%s): %v", id, err)
+	}
+	for _, m := range sess.Conversation.Messages {
+		if m.ToolResult != nil && m.ToolResult.CallID == call {
+			return *m.ToolResult
+		}
+	}
+	t.Fatalf("session %s has no result for %s", id, call)
+	return session.ToolResult{}
 }
 
 // listSessionOwners maps each listed session to its owner.

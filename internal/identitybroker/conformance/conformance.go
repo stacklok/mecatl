@@ -41,6 +41,10 @@ type Factory func(t *testing.T, now func() time.Time) Implementation
 var (
 	MainDefinition     = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinMain, Revision: "v1"}
 	ReviewerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "code-reviewer", Revision: "r1"}
+	// DeployerDefinition's ceiling allows every github tool, merge included.
+	DeployerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "deployer", Revision: "d1"}
+	// ToolLessDefinition's ceiling grants nothing.
+	ToolLessDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceGlobal, Name: "tool-less", Revision: "t1"}
 	// The built-ins of helper agents that run no named definition.
 	ExplorerDefinition = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinExplorer, Revision: "v1"}
 	BranchDefinition   = identitybroker.DefinitionRef{Source: identitybroker.SourceSystem, Name: identitybroker.BuiltinBranch, Revision: "v1"}
@@ -51,21 +55,36 @@ var (
 // in the same order: what an implementation under test has loaded. Each call
 // returns a new slice.
 func DefinitionRefs() []identitybroker.DefinitionRef {
-	return []identitybroker.DefinitionRef{MainDefinition, ReviewerDefinition, ExplorerDefinition, BranchDefinition, MemberDefinition}
+	return []identitybroker.DefinitionRef{MainDefinition, ReviewerDefinition, DeployerDefinition, ToolLessDefinition, ExplorerDefinition, BranchDefinition, MemberDefinition}
 }
 
+// ReviewerExcludedTool is the one tool the code reviewer's ceiling excludes,
+// by its name on the github server.
+const ReviewerExcludedTool = "pull_request_merge"
+
 // Definitions returns the definition records an implementation under test
-// loads: one for each of DefinitionRefs, the built-ins a release ships and a
-// global code reviewer. Each call returns new records.
+// loads: one for each of DefinitionRefs, the built-ins a release ships, a
+// global code reviewer, deployer, and tool-less agent. Every ceiling but the
+// tool-less agent's, which grants nothing, grants the github and calendar
+// servers; the reviewer's excludes ReviewerExcludedTool on github. Each call
+// returns new records.
 func Definitions() []identitybroker.DefinitionRecord {
 	record := func(ref identitybroker.DefinitionRef) identitybroker.DefinitionRecord {
 		source := sha256.Sum256([]byte("source " + ref.Name))
 		accepted := sha256.Sum256([]byte("definition " + ref.Name))
+		github := identitybroker.CeilingServer{Server: "github"}
+		if ref == ReviewerDefinition {
+			github.ExceptTools = []string{ReviewerExcludedTool}
+		}
+		ceiling := identitybroker.NewCeiling(github, identitybroker.CeilingServer{Server: "calendar"})
+		if ref == ToolLessDefinition {
+			ceiling = identitybroker.Ceiling{}
+		}
 		return identitybroker.DefinitionRecord{Ref: ref, Provenance: identitybroker.Provenance{
 			Profile:          "conformance/v1",
 			SourceDigest:     identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(source[:])},
 			DefinitionDigest: identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: hex.EncodeToString(accepted[:])},
-		}}
+		}, Ceiling: ceiling}
 	}
 	refs := DefinitionRefs()
 	records := make([]identitybroker.DefinitionRecord, len(refs))

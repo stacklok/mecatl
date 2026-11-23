@@ -491,7 +491,7 @@ Local permissions and hooks run before each call.
 }
 ```
 
-The request names the tool as the gateway routes it, exactly as the MCP client sends it in `params.name` (`github.pull_request_read`, where the embedded vMCP prefixes each backend's tools), and the server as the gateway's name for the backend that route resolves to (`github`). It also names the method: `tools/call`, or a list method such as `tools/list`, which names the server but no tool or argument hash. The request carries the agent's SVID and no separate acting-session field.
+The request names the tool as the gateway routes it, exactly as the MCP client sends it in `params.name` (`github.pull_request_read`, where the embedded vMCP prefixes each backend's tools), and the server as the gateway's name for the backend that route resolves to (`github`). The tool must be the server's name, a dot, and the tool's name on that server, so the ceiling check sees exactly one server and tool; a gateway that names tools another way maps them to this form before it asks. It also names the method: `tools/call`, or a list method such as `tools/list`, which names the server but no tool or argument hash. The request carries the agent's SVID and no separate acting-session field.
 
 **Checks, at the broker,** before any exchange or dispatch:
 
@@ -511,6 +511,7 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 
 | Check | Response | Retry |
 | --- | --- | --- |
+| Request, a `tools/call` tool not named `<server>.<tool>` | `INVALID_ARGUMENT` | No; a gateway naming fault. |
 | 1 | Step (2)'s codes | Only an expired workload credential. |
 | 2, session closed | The closing reason the broker recorded, with that reason's status from [error reasons](#error-reasons) | mecak8s acts on the reason; see [error reasons](#error-reasons). |
 | 2, no refresh token | `FAILED_PRECONDITION` with `no_grant` | No. The session gets a refresh token when a request carrying the user's access token opens it again ([step (3)](#3-session-open-and-the-broker-refresh-token)). |

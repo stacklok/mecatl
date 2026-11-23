@@ -119,6 +119,10 @@ type Config struct {
 	// BuildID is the Mecatl build stamp (buildinfo.BuildID); see
 	// BuiltinRevision.
 	BuildID string
+	// Servers are the gateway servers, by name: the registered MCP servers
+	// each definition's ceiling is resolved against (see resolveCeiling).
+	// With none, every ceiling allows no call.
+	Servers []string
 }
 
 // Problem reports one definition that was left out or adjusted while loading.
@@ -160,8 +164,9 @@ func Load(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, [
 		problems []Problem
 	)
 	revision := BuiltinRevision(cfg.BuildID)
+	servers := serverSet(cfg.Servers)
 	for _, def := range builtins() {
-		rec, err := builtinRecord(def, revision)
+		rec, err := builtinRecord(def, revision, servers)
 		if err != nil {
 			// The built-ins are fixed; a failure here is a programming error
 			// that every test run would catch.
@@ -197,7 +202,7 @@ func Load(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, [
 			// runs this file's definition under the name, so the broker must
 			// not record a later file's definition for it.
 			kept[f.def.Name] = f.path
-			rec, err := globalRecord(f)
+			rec, err := globalRecord(f, servers)
 			if err != nil {
 				problems = append(problems, Problem{Location: f.path, Reason: err.Error(), Dropped: true})
 				continue
@@ -281,7 +286,12 @@ func readFile(path string) ([]byte, time.Time, error) {
 	return content, info.ModTime(), nil
 }
 
-func builtinRecord(def agentdef.Definition, revision string) (identitybroker.DefinitionRecord, error) {
+func builtinRecord(def agentdef.Definition, revision string, servers map[string]bool) (identitybroker.DefinitionRecord, error) {
+	// builtinCeiling gives a built-in every gateway server, so a built-in
+	// that set tool fields would have them ignored without a word.
+	if len(def.Tools) != 0 || len(def.DisallowedTools) != 0 || len(def.MCPServers) != 0 {
+		return identitybroker.DefinitionRecord{}, fmt.Errorf("built-in definition %s sets tool fields, which builtinCeiling does not resolve", def.Name)
+	}
 	digest, err := definitionDigest(def)
 	if err != nil {
 		return identitybroker.DefinitionRecord{}, err
@@ -296,6 +306,7 @@ func builtinRecord(def agentdef.Definition, revision string) (identitybroker.Def
 			SourceDigest:     digest,
 			DefinitionDigest: digest,
 		},
+		Ceiling: builtinCeiling(servers),
 	}
 	return rec, rec.Validate()
 }
@@ -304,7 +315,7 @@ func builtinRecord(def agentdef.Definition, revision string) (identitybroker.Def
 // SourceDigest covers the bytes read; its DefinitionDigest covers the
 // definition (agentdef.Digest), so reformatting the file changes only
 // SourceDigest.
-func globalRecord(f file) (identitybroker.DefinitionRecord, error) {
+func globalRecord(f file, servers map[string]bool) (identitybroker.DefinitionRecord, error) {
 	// The YAML parser reads an invalid byte in the frontmatter as U+FFFD, so
 	// two different files could parse to one definition. The parser itself
 	// accepts them, as the harness's copy does, so the whole file is checked
@@ -328,8 +339,61 @@ func globalRecord(f file) (identitybroker.DefinitionRecord, error) {
 			SourceDigest:     sha256Digest(f.content),
 			DefinitionDigest: digest,
 		},
+		Ceiling: resolveCeiling(f.def, servers),
 	}
 	return rec, rec.Validate()
+}
+
+// serverSet returns the non-blank names in servers as a set.
+func serverSet(servers []string) map[string]bool {
+	set := make(map[string]bool, len(servers))
+	for _, s := range servers {
+		if s = strings.TrimSpace(s); s != "" {
+			set[s] = true
+		}
+	}
+	return set
+}
+
+// builtinCeiling is a built-in definition's ceiling: every gateway server,
+// whole, as the harness gives a built-in helper every gateway tool
+// (readOnlyExplorerCatalog, writableExplorerCatalog). Built-ins set no tool
+// fields; builtinRecord refuses one that does. The main agent of a session started without a named definition
+// calls any of them, as the main conversation does; a built-in helper's
+// parent's ceiling narrows it at registration.
+func builtinCeiling(servers map[string]bool) identitybroker.Ceiling {
+	grants := make([]identitybroker.CeilingServer, 0, len(servers))
+	for s := range servers {
+		grants = append(grants, identitybroker.CeilingServer{Server: s})
+	}
+	return identitybroker.NewCeiling(grants...)
+}
+
+// resolveCeiling resolves a global definition's ceiling against the gateway
+// servers, with the harness's meaning (internal/app/agentdefs.go): each
+// server the definition's mcpServers names by reference is granted with all
+// its tools, except each tool its disallowedTools names by its catalog name,
+// mcp__<server>__<tool>. tools cannot select MCP tools in the harness, so it
+// grants none here. An inline server, or a reference to a server the gateway
+// does not route, grants nothing. A disallowed name is matched against every
+// granted server, so one that could belong to two servers is excluded from
+// both: an exclusion only ever narrows.
+func resolveCeiling(def agentdef.Definition, servers map[string]bool) identitybroker.Ceiling {
+	var grants []identitybroker.CeilingServer
+	for _, ref := range def.MCPServers {
+		name := strings.TrimSpace(ref.Name)
+		if !ref.IsReference() || !servers[name] {
+			continue
+		}
+		grant := identitybroker.CeilingServer{Server: name}
+		for _, disallowed := range def.DisallowedTools {
+			if tool, ok := strings.CutPrefix(disallowed, "mcp__"+name+"__"); ok {
+				grant.ExceptTools = append(grant.ExceptTools, tool)
+			}
+		}
+		grants = append(grants, grant)
+	}
+	return identitybroker.NewCeiling(grants...)
 }
 
 // definitionDigest returns the agentdef digest of d as a broker digest.

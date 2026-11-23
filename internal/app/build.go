@@ -693,11 +693,11 @@ type Config struct {
 	// delegation engines. Internal-purpose classifier/reviewer/judge engines clear it.
 	operatorProfileSource prompt.OperatorProfileSource
 	// helperTools are the identity broker gateway tools of the session whose
-	// catalog is being assembled, which its def-less helper agents (the
-	// default and writable explorers, parallel branches, and generic team
-	// members) also get (#2555). Empty outside such a per-session catalog.
-	//
-	// Shortcut: helpers that run a named definition get no gateway tools, since their definition decides their tools; removed by #2842.
+	// catalog is being assembled. Its def-less helper agents (the default and
+	// writable explorers, parallel branches, and generic team members) get
+	// them all (#2555); a helper that runs a named definition gets those of
+	// the servers its definition references (defGatewayTools, #2842). Empty
+	// outside such a per-session catalog.
 	helperTools []tool.Tool
 	// enableDurableEvidence is derived from the actual EventLog selected by Build.
 	// Every user-facing engine inherits it; Sink is deliberately not a proxy.
@@ -2382,6 +2382,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
 		}
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
+			// One list for both sides: the MCP broker sends only these
+			// servers' tools through the gateway, so they are the only helper
+			// gateway tools defGatewayTools can pick, and the identity broker
+			// resolved every definition's ceiling against the same list.
 			identity.gatewayCalls = &mcpBrokerGatewayCalls{service: ib.service, credentials: agentCredentials, servers: ib.gatewayServers}
 		}
 		broker, err = buildMCPBroker(ctx, cfg, brokerDeclaration, occupied, identity)
@@ -8472,12 +8476,16 @@ func modelCfgFor(cfg Config, model string) Config {
 // buildForceCopyRunner), so untrust withholds ONLY the worktree shell — the
 // asymmetry the trust-gate tests pin.
 // NO-FS PROFILE (issue #55): with noFS true every member — lead included,
-// Mutating or not, def or not — gets the SAME file-less surface: the no-FS child
-// catalog (memory six + WebFetch + global MCP) + the team coordination tools,
-// with the noFSMemberNote prompt posture and no cwd/shell/git in its <env>.
-// Agent-def adoption is deliberately SKIPPED on this branch (a def's scoped
-// catalog is file-oriented — same rationale as buildNoFSSubagentTool); the
-// member still resolves its model through the def-less chain. The catalog's
+// Mutating or not — gets the file-less surface: the no-FS child catalog
+// (memory six + WebFetch + global MCP) + the team coordination tools, with the
+// noFSMemberNote prompt posture and no cwd/shell/git in its <env>. A member
+// that names a def keeps to the def's tool limit (newNoFSDefinedMemberCatalog:
+// its `tools` allowlist, its exclusions, its own MCP servers, its servers'
+// gateway tools) and reports
+// the def, so the identity broker checks the same limit; the rest of the def
+// (prompt, model, hooks) stays file-oriented and is SKIPPED, the same rationale
+// as buildNoFSSubagentTool, and the member resolves its model through the
+// def-less chain. The catalog's
 // non-read-only tools (Remember/RememberUser, MCP) ride MemberBuild.MCPToolNames
 // — the supervisor's documented exemption for non-WORKSPACE mutators — so the
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
@@ -8515,14 +8523,30 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
-						_ = generationClose()
+						if generationClose != nil {
+							_ = generationClose()
+						}
 						return agent.MemberBuild{}
 					}
 					childProvider, childProviderID = entry.provider, selectedProvider
 				}
 				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 			}
-			classified := newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
+			// A member that names a definition keeps to its tool limit even
+			// without a filesystem: its catalog follows the definition's
+			// `tools` allowlist, exclusions and MCP servers, and it reports the
+			// definition, so the identity broker checks its calls against the
+			// same limit. The rest of the definition (prompt, model, hooks)
+			// stays file-oriented and is not applied here.
+			var classified *classifiedCatalog
+			var defClose func() error
+			var definitionName string
+			if def, defined := lookupMemberDef(cfg.diag(), reg, spec); defined {
+				classified, defClose = newNoFSDefinedMemberCatalog(context.Background(), cfg, a, spec.Name, def, mainMgr)
+				definitionName = def.Name
+			} else {
+				classified = newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
+			}
 			cat := classified.catalog
 			// Exempt the catalog's non-workspace mutators (memory writers, MCP
 			// tools) BEFORE the coordination tools are added (those are exempted
@@ -8536,7 +8560,19 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
 			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, nil)
-			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: generationClose, MCPToolNames: exempt}
+			// retainHarnessGeneration returns a nil close when the harness
+			// instructions are not generation-backed, so guard it.
+			memberClose := generationClose
+			if defClose != nil {
+				memberClose = sync.OnceValue(func() error {
+					var generationErr error
+					if generationClose != nil {
+						generationErr = generationClose()
+					}
+					return errors.Join(defClose(), generationErr)
+				})
+			}
+			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: memberClose, MCPToolNames: exempt, DefinitionName: definitionName}
 		}
 		classified := newClassifiedCatalog()
 		cat := classified.catalog
@@ -8649,6 +8685,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				}
 				registered = append(registered, mt.Spec().Name)
 			}
+			// Gateway tools, like the def's own MCP tools, touch only the remote
+			// server, so the read-only-member backstop exempts them too.
+			registered = append(registered, registerHelperTools(classified, defGatewayTools(def, cfg.helperTools), cfg.diag())...)
 			mcpClose, mcpNames = cl, registered
 			memberLimits = defLimits(def, session.Limits{}) // only def-set fields; AddMember merges with the team default
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
@@ -8712,7 +8751,9 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 				if selectedProvider != "" && selectedProvider != childProviderID {
 					entry, ok := provReg.Lookup(selectedProvider)
 					if !ok {
-						_ = generationClose()
+						if generationClose != nil {
+							_ = generationClose()
+						}
 						return agent.MemberBuild{}
 					}
 					childProvider, childProviderID = entry.provider, selectedProvider

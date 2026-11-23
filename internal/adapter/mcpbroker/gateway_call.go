@@ -134,6 +134,13 @@ func (g *gatewayCall) run(ctx context.Context) (session.ToolResult, string, erro
 		g.cause = "route: " + err.Error()
 		return fail(outcomeInternal)
 	}
+	// The harness gives a helper the tools of the servers its definition
+	// names by backend, and the broker checks the server Route names, so the
+	// two must be the same name.
+	if g.server != g.t.route.backend {
+		g.cause = "route: the gateway named a server other than the tool's backend"
+		return fail(outcomeInternal)
+	}
 	// The argument hash is checked before anything is authorized.
 	if g.args, g.hash, err = argumentsSHA256(g.call.Args); err != nil {
 		return fail(refused(err))

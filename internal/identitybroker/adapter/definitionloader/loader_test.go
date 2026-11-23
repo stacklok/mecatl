@@ -592,3 +592,68 @@ func digestOf(s string) identitybroker.Digest {
 func sha256Value(v string) identitybroker.Digest {
 	return identitybroker.Digest{Algorithm: identitybroker.DigestSHA256, Value: v}
 }
+
+// TestLoadResolvesCeilings pins how a definition's ceiling is resolved
+// against the gateway servers: every built-in gets every server whole; a
+// global definition gets each server it references that the gateway routes,
+// minus the tools its disallowedTools names by catalog name; an inline
+// server, an unrouted reference, and tools, even naming a routed server's
+// tool, grant nothing.
+func TestLoadResolvesCeilings(t *testing.T) {
+	dir := t.TempDir()
+	writeDef(t, dir, "reviewer.md", "---\nname: reviewer\ndescription: Reviews\n"+
+		"tools: [mcp__calendar__lookup, mcp__slack__post]\n"+
+		"disallowedTools: [mcp__github__merge_pr, mcp__github__delete_repo, mcp__calendar__unused, Write]\n"+
+		"mcpServers:\n  - github\n  - jira\n  - name: inline\n    url: https://inline.example.com/mcp\n---\n")
+	writeDef(t, dir, "plain.md", "---\nname: plain\ndescription: No servers\n---\n")
+	records, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}, Servers: []string{"github", "calendar", "inline", " "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range records {
+		got[r.Ref.Source+"/"+r.Ref.Name] = r.Ceiling.String()
+	}
+	want := map[string]string{
+		"system/main":     "calendar; github; inline",
+		"system/explorer": "calendar; github; inline",
+		"system/branch":   "calendar; github; inline",
+		"system/member":   "calendar; github; inline",
+		"global/reviewer": "github except delete_repo,merge_pr",
+		"global/plain":    "none",
+	}
+	for name, ceiling := range want {
+		if got[name] != ceiling {
+			t.Errorf("%s ceiling = %q, want %q", name, got[name], ceiling)
+		}
+	}
+
+	// Exclusions match exactly: case and dots are part of a name,
+	// and an exclusion that could belong to git or git_ narrows both.
+	names := t.TempDir()
+	writeDef(t, names, "names.md", "---\nname: names\ndescription: Names\n"+
+		"disallowedTools: [mcp__git___x, mcp__github__pr.merge, mcp__GitHub__read]\n"+
+		"mcpServers: [git, git_, github]\n---\n")
+	records, _, err = definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{names}, Servers: []string{"git", "git_", "github"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range records {
+		if r.Ref.Name == "names" {
+			if got, want := r.Ceiling.String(), `git except _x; git_ except x; github except pr.merge`; got != want {
+				t.Errorf("names ceiling = %s, want %s", got, want)
+			}
+		}
+	}
+
+	// With no gateway servers, every ceiling allows nothing.
+	records, _, err = definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{dir}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range records {
+		if c := r.Ceiling.String(); c != "none" {
+			t.Errorf("%s ceiling with no gateway servers = %q, want none", r.Ref.Name, c)
+		}
+	}
+}

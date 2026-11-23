@@ -805,3 +805,89 @@ func TestCheckGatewayResource(t *testing.T) {
 		}
 	}
 }
+
+// TestGatewayCallsFollowALoadedDefinitionsCeiling shows the ceiling the
+// loader resolves from a definition's files bounds the calls of a helper
+// running it, through the real build: the definition references the calendar
+// server and excludes one of its tools, so the helper may call the server's
+// other tool, and is refused the excluded one and a server it does not
+// reference, before the broker asks AS-1 for an ID-JAG.
+func TestGatewayCallsFollowALoadedDefinitionsCeiling(t *testing.T) {
+	const github = "github"
+	dir := t.TempDir()
+	def := "---\nname: scheduler\ndescription: Reads calendars.\nmcpServers: [calendar]\ndisallowedTools: [mcp__calendar__echo]\n---\nRead the calendar.\n"
+	if err := os.WriteFile(filepath.Join(dir, "scheduler.md"), []byte(def), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	servers := []string{gatewayTestServer, github}
+	g := buildWithRealAS1(t, true, func(cfg *Config) {
+		cfg.AgentsDirs = []string{dir}
+		cfg.IdentityBrokerGatewayServers = servers
+	})
+
+	// The reference the broker holds for the definition, through the loader
+	// startup used.
+	records, err := loadIdentityBrokerDefinitions(t.Context(), Config{AgentsDirs: []string{dir}, Diagnostics: port.NopDiagnostics{}}, servers)
+	if err != nil {
+		t.Fatalf("loadIdentityBrokerDefinitions: %v", err)
+	}
+	var ref identitybroker.DefinitionRef
+	for _, rec := range records {
+		if rec.Ref.Source == identitybroker.SourceGlobal && rec.Ref.Name == "scheduler" {
+			ref = rec.Ref
+		}
+	}
+	if ref == (identitybroker.DefinitionRef{}) {
+		t.Fatalf("the loader returned no global/scheduler record in %+v", definitionRefs(records))
+	}
+	if _, ok := g.built.identityBrokerCore.Definition(ref); !ok {
+		t.Fatalf("the built broker did not load %+v", ref)
+	}
+
+	s, _, _ := g.open(t)
+	main, err := g.built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+		SessionID: s.ID, HostSessionID: s.HostSessionID, Owner: s.Owner, Incarnation: s.Incarnation,
+		Definition: builtinMainRef(),
+	})
+	if err != nil {
+		t.Fatalf("registering the main agent again: %v", err)
+	}
+	helper, err := g.built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+		SessionID: s.ID, HostSessionID: "hostS42-helper", Owner: s.Owner, Incarnation: string(session.NewIncarnationID()),
+		Definition: ref, Parent: main.Agent, ParentHostSessionID: s.HostSessionID,
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent(helper): %v", err)
+	}
+	// The main agent's run delegates to the helper's, which then calls
+	// under that delegation.
+	if err := g.built.IdentityBroker.ReportDelegation(t.Context(), identitybroker.ReportDelegationRequest{
+		SessionID: s.ID, DelegationID: "D1", DelegatingRun: "R42", DelegatingAgent: main.Agent,
+		ReceivingRun: "R43", ReceivingAgent: helper.Agent, Owner: s.Owner,
+	}); err != nil {
+		t.Fatalf("ReportDelegation: %v", err)
+	}
+	call := func(op, server, name string) (identitybroker.Authorization, error) {
+		req := g.call(s, helper.Credential)
+		req.OperationID, req.Server, req.Tool = op, server, server+"."+name
+		req.RunID, req.DelegationID = "R43", "D1"
+		return g.built.IdentityBroker.AuthorizeCall(t.Context(), req)
+	}
+
+	for _, tc := range []struct{ op, server, name string }{
+		{"op-excluded", gatewayTestServer, "echo"},
+		{"op-unreferenced", github, "list_issues"},
+	} {
+		_, err := call(tc.op, tc.server, tc.name)
+		wantBrokerError(t, err, identitybroker.CodePermissionDenied, "")
+		if n := g.as1.Count(identityharness.KindIDJAG); n != 0 {
+			t.Fatalf("%s.%s sent %d ID-JAG exchanges, want none", tc.server, tc.name, n)
+		}
+	}
+	if _, err := call("op-allowed", gatewayTestServer, "lookup"); err != nil {
+		t.Fatalf("calendar.lookup: %v", err)
+	}
+	if n := g.as1.Count(identityharness.KindIDJAG); n != 1 {
+		t.Fatalf("sent %d ID-JAG exchanges, want 1 for the allowed call", n)
+	}
+}

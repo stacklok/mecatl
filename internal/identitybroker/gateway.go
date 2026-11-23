@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -225,8 +226,8 @@ func (g *Gateway) validate() error {
 	}
 	seen := make(map[string]bool, len(g.Servers))
 	for _, s := range g.Servers {
-		if !isToken(s) {
-			return fmt.Errorf("gateway server %q must be non-empty printable text without spaces", s)
+		if !isGatewayServerName(s) {
+			return fmt.Errorf("gateway server %q must be letters, digits, and single underscores", s)
 		}
 		if seen[s] {
 			return fmt.Errorf("gateway server %q is listed twice", s)
@@ -234,6 +235,27 @@ func (g *Gateway) validate() error {
 		seen[s] = true
 	}
 	return nil
+}
+
+// isGatewayServerName reports whether s is a server name the gateway may
+// route: letters, digits, and underscores, never two underscores together, as
+// Mecatl's MCP configuration requires of server names. A call's tool is named
+// "<server>.<tool>", so with no dot in a server name a call names exactly one
+// server and tool. A definition excludes a tool as "mcp__<server>__<tool>",
+// which one rule cannot keep unambiguous while the configuration allows a
+// trailing underscore: "mcp__git___x" is tool "_x" on git and tool "x" on
+// git_. The loader then excludes it from both, so an ambiguous exclusion only
+// narrows.
+func isGatewayServerName(s string) bool {
+	if s == "" || strings.Contains(s, "__") {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // routes reports whether g routes server. A nil g routes nothing.

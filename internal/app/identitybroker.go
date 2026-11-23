@@ -299,8 +299,9 @@ func buildIdentityBroker(ctx context.Context, cfg Config, target *gatewayIDJAGTa
 	} else {
 		// An injected core is a test's; the server still sends the references
 		// of the definitions this configuration loads, as it does for the
-		// real broker.
-		definitions, err := loadIdentityBrokerDefinitions(ctx, cfg)
+		// real broker. Only the references are used, so no ceiling is
+		// resolved.
+		definitions, err := loadIdentityBrokerDefinitions(ctx, cfg, nil)
 		if err != nil {
 			return identityBrokerParts{}, fmt.Errorf("build identity broker: %w", err)
 		}
@@ -501,11 +502,20 @@ var errNoBrokerClientKey = errors.New("the identity broker's configuration file 
 // cfg.IdentityBrokerGatewayServers.
 func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) (identityBroker, error) {
 	config := identityBrokerConfig(cfg, file)
-	definitions, err := loadIdentityBrokerDefinitions(ctx, cfg)
+	as1 := cfg.IdentityBrokerAS1
+	// A gateway needs AS-1 to issue its ID-JAGs, so without an AS-1 there is
+	// none.
+	// Shortcut: production configures no gateway entry, so gateway calls are refused as not configured; removed by #2533 (AS-2 trusts AS-1 in production, gateway from configuration).
+	var gatewayServers []string
+	if as1 != nil {
+		gatewayServers = slices.Clone(cfg.IdentityBrokerGatewayServers)
+	}
+	// Each definition's ceiling is resolved against the servers the gateway
+	// routes.
+	definitions, err := loadIdentityBrokerDefinitions(ctx, cfg, gatewayServers)
 	if err != nil {
 		return identityBroker{}, err
 	}
-	as1 := cfg.IdentityBrokerAS1
 	var client *identitybroker.ClientAssertionSigner
 	if file.Keys.BrokerClient != nil {
 		if client, err = identitybroker.NewClientAssertionSigner(file.Keys.BrokerClient, 0); err != nil {
@@ -515,8 +525,6 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) 
 	// Records are kept in memory (the shortcut on identitybroker.MemoryRecorder).
 	recorder := identitybroker.NewMemoryRecorder()
 	opts := []identitybroker.Option{identitybroker.WithRecorder(recorder), identitybroker.WithAgentIssuerFallbacks(file.Keys.AgentIssuerFallbacks...)}
-	gateway := false
-	var gatewayServers []string
 	if as1 != nil {
 		if client == nil {
 			return identityBroker{}, errNoBrokerClientKey
@@ -531,12 +539,8 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) 
 		if as1.Now != nil {
 			opts = append(opts, identitybroker.WithClock(as1.Now))
 		}
-		// A gateway needs AS-1 to issue its ID-JAGs, so without an AS-1 there
-		// is none.
-		// Shortcut: production configures no gateway entry, so gateway calls are refused as not configured; removed by #2533 (AS-2 trusts AS-1 in production, gateway from configuration).
-		if cfg.IdentityBrokerGatewayServers != nil {
-			opts = append(opts, identitybroker.WithGateway(identitybroker.Gateway{Servers: cfg.IdentityBrokerGatewayServers}))
-			gateway, gatewayServers = true, append([]string(nil), cfg.IdentityBrokerGatewayServers...)
+		if gatewayServers != nil {
+			opts = append(opts, identitybroker.WithGateway(identitybroker.Gateway{Servers: gatewayServers}))
 		}
 	}
 	core, err := identitybroker.New(config, definitions, file.Keys.AgentIssuer, opts...)
@@ -550,16 +554,17 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File) 
 	}
 	return identityBroker{
 		core: core, definitions: definitions, client: client, clientKeySetFile: file.BrokerClientKeySetFile,
-		recorder: recorder, gateway: gateway, gatewayServers: gatewayServers,
+		recorder: recorder, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
 	}, nil
 }
 
 // loadIdentityBrokerDefinitions loads the identity broker's definition
 // records: the built-ins of this build and the global definitions in
-// cfg.AgentsDirs. A definition left out or adjusted is logged, without its
-// contents; a directory that cannot be read fails the load.
-func loadIdentityBrokerDefinitions(ctx context.Context, cfg Config) ([]identitybroker.DefinitionRecord, error) {
-	records, problems, err := definitionloader.Load(ctx, definitionloader.Config{Dirs: cfg.AgentsDirs, BuildID: buildinfo.BuildID})
+// cfg.AgentsDirs, with ceilings resolved against gatewayServers. A definition
+// left out or adjusted is logged, without its contents; a directory that
+// cannot be read fails the load.
+func loadIdentityBrokerDefinitions(ctx context.Context, cfg Config, gatewayServers []string) ([]identitybroker.DefinitionRecord, error) {
+	records, problems, err := definitionloader.Load(ctx, definitionloader.Config{Dirs: cfg.AgentsDirs, BuildID: buildinfo.BuildID, Servers: gatewayServers})
 	for _, p := range problems {
 		outcome := "definition adjusted and loaded"
 		if p.Dropped {

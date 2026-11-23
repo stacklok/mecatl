@@ -54,12 +54,22 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 		return Authorization{}, b.refuse(ctx, rec, err)
 	}
 
-	// Shortcut: step (6) check 7 (ceiling) accepts its input; removed by the authority work (docs/drafts/agent-identity/README.md, "Order of work").
-
 	// Check 6: the gateway routes the server.
 	// Shortcut: check 6 matches the call's server, not the tool's route; removed by #2538 (gateway entries carry their routed tools, or the design moves the tool check to the vMCP).
 	if !b.gateway.routes(req.Server) {
 		return Authorization{}, b.refuse(ctx, rec, ReasonError(ReasonDenied, "no gateway routes the server"))
+	}
+
+	// Check 7: the agent's stored effective ceiling allows the exact server
+	// and tool.
+	// Shortcut: the ceiling follows the definition the agent reported at registration, so a root reporting system/main gets every gateway server, and a child reporting a built-in gets its parent's whole ceiling rather than a narrower one; removed by #2551 (root eligibility and nesting checks).
+	t.mu.Lock()
+	ceiling := t.agents[agent.Agent.Subject].ceiling
+	t.mu.Unlock()
+	rec.Ceiling = ceiling.String()
+	// Validate checked that a call's tool is named for its server.
+	if err := checkCeiling(ceiling, req.Method, req.Server, strings.TrimPrefix(req.Tool, req.Server+".")); err != nil {
+		return Authorization{}, b.refuse(ctx, rec, err)
 	}
 
 	// AS-2 may not be bound yet (the #2560 shortcut on BindGatewayAS2).

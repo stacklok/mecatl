@@ -834,6 +834,62 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 	return classified
 }
 
+// newNoFSDefinedMemberCatalog is the file-less catalog of a team member
+// that runs def: the file-less core and memory tools def allows (its
+// `tools` allowlist, when set, and not its `disallowedTools`, resolved by
+// scopedToolNamesMode as for a member with a filesystem),
+// def's own MCP tools (defMCPTools: its referenced and inline servers, minus
+// its exclusions) in place of the server-global ones and CallMcpWithQuery,
+// and the session's gateway tools of the servers def references
+// (defGatewayTools). As with a filesystem, `tools` narrows only the core and
+// memory tools; the MCP and gateway tools follow def's server references and
+// exclusions. So the definition narrows the member the same way either way.
+// The returned func closes def's inline MCP servers; it may be nil.
+func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAssets, member string, def agents.AgentDef, mainMgr *mcp.Manager) (*classifiedCatalog, func() error) {
+	base, baseAssets := cfg, a
+	base.helperTools, baseAssets.globalMgr = nil, nil
+	generic := newNoFSClassifiedChildCatalog(ctx, base, baseAssets)
+	out := newClassifiedCatalog()
+	available := map[string]tool.Tool{}
+	for _, t := range generic.catalog.Tools() {
+		available[t.Spec().Name] = t
+	}
+	// No filesystem means nothing here mutates a workspace, so the
+	// memory writers stay allowed and there is no shell to withhold.
+	names, diags := scopedToolNamesMode(def, available, true, false, "")
+	// Filesystem tools named in `tools` do not exist without a filesystem; that
+	// is the profile working as designed, not a typo, so it logs at Debug.
+	fsTools := map[string]struct{}{tool.ShellToolName: {}}
+	for _, t := range tools.All() {
+		if _, ok := available[t.Spec().Name]; !ok {
+			fsTools[t.Spec().Name] = struct{}{}
+		}
+	}
+	for _, d := range diags {
+		level := port.LevelWarn
+		if _, fs := fsTools[d.tool]; fs {
+			level = port.LevelDebug
+		}
+		cfg.diag().Log(ctx, level, "no-FS team member agent def tool scoping",
+			"member", member, "agent", def.Name, "tool", d.tool, "reason", d.reason)
+	}
+	for _, name := range names {
+		entry := generic.entries[name]
+		out.mustRegister(available[name], &entry)
+	}
+	mcpTools, _, _, closeFn := defMCPTools(ctx, cfg.diag(), def, mainMgr)
+	mcpEntry := classification(server.KindDerived,
+		"member agent-definition MCP tools are scoped to this already authorized team member")
+	for _, mt := range mcpTools {
+		if err := out.register(mt, mcpEntry); err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "no-FS team member agent def MCP tool registration failed; skipped",
+				"agent", def.Name, "tool", mt.Spec().Name, "err", err)
+		}
+	}
+	registerHelperTools(out, defGatewayTools(def, cfg.helperTools), cfg.diag())
+	return out, closeFn
+}
+
 func noFSChildCatalog(ctx context.Context, cfg Config, a catalogAssets) *tool.Catalog {
 	classified := newNoFSClassifiedChildCatalog(ctx, cfg, a)
 	mustValidateClassifiedCatalog(classified, "no-FS child tool catalog")

@@ -588,6 +588,38 @@ func shellScopeMissReason(cfg Config) string {
 	}
 }
 
+// gatewayServerTool is a gateway tool that names the gateway server its calls
+// are routed to.
+type gatewayServerTool interface {
+	GatewayServer() string
+}
+
+// defGatewayTools returns the gateway tools in helperTools, a session's, that
+// a helper running def gets (#2842): those of each server def's mcpServers
+// names by reference, minus each tool its disallowedTools names. The identity
+// broker resolves def's ceiling to the same servers and tools
+// (definitionloader.resolveCeiling) and refuses any other call, so this keeps
+// the helper's catalog to what it may call.
+//
+// Shortcut: the harness resolves the definition's gateway tools again rather than reading the ceiling the broker recorded; removed by #2548 (the harness builds agents from the broker's records).
+func defGatewayTools(def agents.AgentDef, helperTools []tool.Tool) []tool.Tool {
+	referenced := map[string]bool{}
+	for _, e := range def.MCPServers {
+		if e.IsReference() {
+			referenced[strings.TrimSpace(e.Name)] = true
+		}
+	}
+	var out []tool.Tool
+	for _, t := range helperTools {
+		g, ok := t.(gatewayServerTool)
+		if !ok || !referenced[g.GatewayServer()] || defDisallowsTool(def, t.Spec().Name) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // defDisallowsTool reports whether def explicitly excludes the named tool. It is
 // the one exclusion test shared by name scoping's callers for tools registered
 // after scoping (MCP tools and the automatic ShellStatus companion).
@@ -1096,7 +1128,7 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// A Subagent-delegate child has no placement of its own distinct from its
 	// parent's, so "project" memory binds to cfg.Workspace — unchanged from
 	// pre-ADR-0353 behavior (see resolveAgentMemoryHead's sessionRoot docs).
-	cat, pc, hooks, mcpClose, names, resourceCapabilities, skillCount := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr, cfg.Workspace)
+	cat, pc, hooks, mcpClose, names, resourceCapabilities, skillCount := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr, cfg.Workspace, defGatewayTools(def, cfg.helperTools))
 	// ProgressiveTools deliberately OFF: child catalogs are tiny and a ToolSearch
 	// tool would not be in the def allowlist. newChildEngineForProvider leaves it at
 	// its zero value (off), matching the original explicit omission, AND routes the
@@ -1127,7 +1159,11 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 // sessionRoot is threaded straight through to resolveAgentMemoryHead (see its
 // docs): a Subagent-delegate caller passes cfg.Workspace, a session-root
 // caller passes THIS session's own bound placement root.
-func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager, sessionRoot string) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
+//
+// gatewayTools are the identity broker gateway tools a helper running def
+// gets (defGatewayTools); a session root passes none, since a session bound
+// to a named agent definition does not attach to the MCP broker.
+func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager, sessionRoot string, gatewayTools []tool.Tool) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
 	var diags []scopeDiag
 	names, diags = scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
@@ -1181,6 +1217,7 @@ func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDe
 		}
 		names = append(names, mt.Spec().Name)
 	}
+	names = append(names, registerHelperTools(classified, gatewayTools, cfg.diag())...)
 	mustValidateClassifiedCatalog(classified, "specialist agent tool catalog", mcpClose)
 
 	bodies, missing := preloadedSkillBodies(def, skillIdx)
