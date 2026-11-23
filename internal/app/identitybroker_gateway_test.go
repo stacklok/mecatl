@@ -557,13 +557,11 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	// An AS-2 trusting another issuer answers invalid_grant without a reason
 	// (the #2533 shortcut on Config.IdentityBrokerAS2Trust), which the broker
 	// retries once with a new ID-JAG before failing the call.
-	if err == nil {
-		t.Fatal("AS-2 redeemed an ID-JAG from an issuer it does not trust")
-	}
+	wantBrokerError(t, err, identitybroker.CodeInternal, "")
 	jags := g.built.identityBrokerRecorder.IDJAGs()
 	redeemed := hb.as2.Requests()
-	if len(jags) == 0 || len(redeemed) != len(jags) {
-		t.Fatalf("%d ID-JAG records and %d redemptions, want one redemption per ID-JAG", len(jags), len(redeemed))
+	if len(jags) != 2 || len(redeemed) != 2 {
+		t.Fatalf("%d ID-JAG records and %d redemptions, want two of each: the call and its one retry", len(jags), len(redeemed))
 	}
 	issuer := hb.issuer
 	for i, r := range redeemed {

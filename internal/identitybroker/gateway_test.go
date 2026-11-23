@@ -43,6 +43,9 @@ func TestValidateGatewayEntries(t *testing.T) {
 		"a control character": {[]identitybroker.GatewayEntry{embedded(func(e *identitybroker.GatewayEntry) { e.Resource = as2Resource + "\x00" })}, "resource"},
 		"an empty server":     {[]identitybroker.GatewayEntry{embedded(func(e *identitybroker.GatewayEntry) { e.Servers = []string{""} })}, "gateway server"},
 		"a repeated server":   {[]identitybroker.GatewayEntry{embedded(func(e *identitybroker.GatewayEntry) { e.Servers = []string{"github", "github"} })}, "listed twice"},
+		// An entry's servers follow the gateway's server-name rule.
+		"a dotted server":     {[]identitybroker.GatewayEntry{embedded(func(e *identitybroker.GatewayEntry) { e.Servers = []string{"github.ent"} })}, "single underscores"},
+		"a double underscore": {[]identitybroker.GatewayEntry{embedded(func(e *identitybroker.GatewayEntry) { e.Servers = []string{"github__ent"} })}, "single underscores"},
 	} {
 		err := identitybroker.ValidateGatewayEntries(tc.entries)
 		if !errors.Is(err, identitybroker.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.want) {
