@@ -508,6 +508,8 @@ func TestLoadRefusesAGatewayEntry(t *testing.T) {
 		"no token endpoint":    {gateways: entry(func(e map[string]any) { delete(e, "token_endpoint") }), want: "token endpoint"},
 		"a repeated server":    {gateways: set("servers", []string{"calendar", "calendar"}), want: "listed twice"},
 		"an empty server":      {gateways: set("servers", []string{""}), want: "gateway server"},
+		"a dotted server":      {gateways: set("servers", []string{"github.ent"}), want: "single underscores"},
+		"a double underscore":  {gateways: set("servers", []string{"github__ent"}), want: "single underscores"},
 		"an unknown field":     {gateways: set("dial_address", "https://10.0.0.1"), want: `unknown field "dial_address"`},
 		"a relative issuer":    {gateways: set("as2_issuer", "/v1/mcp/broker"), want: "gateways[0].as2_issuer"},
 		"an http issuer":       {gateways: set("as2_issuer", "http://mecatl.example.com/v1/mcp/broker"), want: "gateways[0].as2_issuer"},

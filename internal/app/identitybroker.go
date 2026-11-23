@@ -250,14 +250,25 @@ func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGat
 	if err != nil {
 		return nil, fmt.Errorf("the embedded gateway's signing key: %w", err)
 	}
-	brokerKeys := file.Keys.PublicKeys()
-	for _, pub := range as2Keys {
-		eq, ok := pub.(interface{ Equal(crypto.PublicKey) bool })
-		if ok && slices.ContainsFunc(brokerKeys, eq.Equal) {
-			return nil, errAS2SigningKeyIsABrokerKey
-		}
+	if err := checkAS2KeysAreNotBrokerKeys(as2Keys, file.Keys.PublicKeys()); err != nil {
+		return nil, err
 	}
 	return &entry, nil
+}
+
+// checkAS2KeysAreNotBrokerKeys refuses an AS-2 signing key that is one of
+// brokerKeys, and, failing closed, a key it cannot compare.
+func checkAS2KeysAreNotBrokerKeys(as2Keys, brokerKeys []crypto.PublicKey) error {
+	for _, pub := range as2Keys {
+		eq, ok := pub.(interface{ Equal(crypto.PublicKey) bool })
+		if !ok {
+			return fmt.Errorf("the embedded gateway's signing key: a %T key cannot be compared with the identity broker's keys", pub)
+		}
+		if slices.ContainsFunc(brokerKeys, eq.Equal) {
+			return errAS2SigningKeyIsABrokerKey
+		}
+	}
+	return nil
 }
 
 // hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
@@ -293,6 +304,10 @@ type identityBrokerParts struct {
 	// startup checked against the embedded gateway; nil without one, and then
 	// the MCP broker sets up no AS-2.
 	gatewayEntry *identitybroker.GatewayEntry
+	// brokerPublicKeys are the public keys of the identity broker's
+	// configuration file, which the AS-2 the MCP broker builds must not sign
+	// with; set only with gatewayEntry.
+	brokerPublicKeys []crypto.PublicKey
 	// gateway reports whether the core has a gateway, whose AS-2 bindAS2
 	// binds: the entry routes servers.
 	gateway bool
@@ -374,8 +389,14 @@ func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGate
 	// Production wiring: host AS-1 with the broker client as the delegate,
 	// then point the broker's session open at that AS-1. A test that replaces
 	// the core or sets IdentityBrokerAS1 explicitly keeps the paths below.
+	var brokerKeys []crypto.PublicKey
+	if entry != nil {
+		brokerKeys = file.Keys.PublicKeys()
+	}
 	if core == nil && cfg.IdentityBrokerAS1 == nil && cfg.IdentityBrokerHostedAS1 != nil {
-		return buildBrokerWithHostedAS1(ctx, cfg, file, entry)
+		parts, err := buildBrokerWithHostedAS1(ctx, cfg, file, entry)
+		parts.brokerPublicKeys = brokerKeys
+		return parts, err
 	}
 	var parts identityBrokerParts
 	if core == nil {
@@ -410,6 +431,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGate
 		parts.release = releaseServerThen(server, parts.release)
 	}
 	parts.service = identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)
+	parts.brokerPublicKeys = brokerKeys
 	return parts, nil
 }
 

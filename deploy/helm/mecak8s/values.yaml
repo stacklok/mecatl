@@ -340,10 +340,12 @@ identityBroker:
     agentIssuer:
       secretName: ""
       key: ""
-    # PEM EC P-256 private key the broker authenticates with at AS-1 and the
-    # MCP gateway, and keySet, its public JWK Set (RFC 7517), which must hold
-    # this key's public key under its RFC 7638 thumbprint kid. Required with
-    # as1.issuer. The key set may also hold the next key during a rotation.
+    # PEM EC P-256 private key the broker authenticates with at AS-1, and at
+    # the MCP gateway when gateways has an entry, and keySet, its public JWK
+    # Set (RFC 7517), which must hold this key's public key under its RFC 7638
+    # thumbprint kid. Every key in the set must be EC P-256. Required with
+    # as1.issuer or a gateways entry. The key set may also hold the next key
+    # during a rotation.
     brokerClient:
       secretName: ""
       key: ""

@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -374,7 +375,15 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.Handlers.JWKS = embedded
 		process.Handlers.ProtectedResource = authInfo
 		if as2 {
-			process.AS2 = newAS2(issuer, resource, embedded)
+			loaded, err := auth.KeyProvider().PublicKeys(processCtx)
+			if err != nil {
+				return rollback(fmt.Errorf("mcpbroker: read the embedded authorization server's signing keys: %w", err))
+			}
+			signingKeys := make([]crypto.PublicKey, len(loaded))
+			for i, k := range loaded {
+				signingKeys[i] = k.PublicKey
+			}
+			process.AS2 = newAS2(issuer, resource, embedded, signingKeys)
 		}
 	}
 	if config.CallbackURL != "" {

@@ -171,7 +171,14 @@ func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
 		"no signing key":                     {[]string{"mcp.broker.signingKey.secretName=", "mcp.broker.signingKey.key=", "mcp.broker.signingKey.fallbacks=null"}, "identityBroker.gateways requires mcp.broker.signingKey"},
 		"a signing key without an entry":     {[]string{"identityBroker.gateways=null"}, "mcp.broker.signingKey requires identityBroker.enabled with an identityBroker.gateways entry"},
 		"a signing key that is a broker key": {[]string{"mcp.broker.signingKey.secretName=identity-broker-agent-issuer"}, "name the same Secret key identity-broker-agent-issuer/key.pem"},
-		"no embedded gateway":                {[]string{"mcp.broker.callbackURL="}, ""},
+		// Without a callback URL no embedded gateway runs; the chart refuses
+		// that before the gateway rule, which tests/identity_broker_test.yaml
+		// covers.
+		"no callback URL":                  {[]string{"mcp.broker.callbackURL="}, "mcp.broker.callbackURL is required with an OAuth MCP server"},
+		"a signing key with no Secret":     {[]string{"mcp.broker.signingKey.secretName="}, "mcp.broker.signingKey.secretName is required when mcp.broker.signingKey.key is set"},
+		"a signing key Secret with no key": {[]string{"mcp.broker.signingKey.key="}, "mcp.broker.signingKey.key is required when mcp.broker.signingKey.secretName is set"},
+		"fallbacks without a signing key":  {[]string{"mcp.broker.signingKey.secretName=", "mcp.broker.signingKey.key="}, "mcp.broker.signingKey.fallbacks requires mcp.broker.signingKey"},
+		"a fallback that is a broker key":  {[]string{"mcp.broker.signingKey.fallbacks[0].secretName=identity-broker-agent-issuer"}, "name the same Secret key identity-broker-agent-issuer/key.pem"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, err := renderGatewayEntry(t, tc.set...)
@@ -190,5 +197,12 @@ func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
 		"--set", "mcp.broker.signingKey.secretName=mcp-gateway-signing,mcp.broker.signingKey.key=key.pem")
 	if err == nil || !strings.Contains(output, "mcp.broker.signingKey requires identityBroker.enabled") {
 		t.Fatalf("render with the broker off = %v, want the signing key refused:\n%s", err, output)
+	}
+	// With the broker off, a gateway entry fails the render.
+	output, err = helm(t, "template", "off", ".", "--set", "mockProvider=true,permissionMode=yolo,redis.local.enabled=true",
+		"--set", "identityBroker.gateways[0].kind=embedded,identityBroker.gateways[0].as2Issuer=https://mecatl.example.com/v1/mcp/broker",
+		"--set", "identityBroker.gateways[0].tokenEndpoint=https://mecatl.example.com/v1/mcp/broker/oauth/token,identityBroker.gateways[0].resource=https://mecatl.example.com/v1/mcp/broker/mcp")
+	if err == nil || !strings.Contains(output, "identityBroker.gateways requires identityBroker.enabled=true") {
+		t.Fatalf("render with the broker off = %v, want the gateway entry refused:\n%s", err, output)
 	}
 }

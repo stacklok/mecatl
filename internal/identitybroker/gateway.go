@@ -118,8 +118,9 @@ type GatewayEntry struct {
 
 // ValidateGatewayEntries checks entries as the broker accepts them: at most
 // one entry, of kind GatewayEmbedded; its issuer, token endpoint, and
-// resource non-empty printable text without spaces; and its servers the same,
-// each listed once. The loader checks the URLs. Errors wrap ErrInvalidConfig.
+// resource non-empty printable text without spaces; and its servers letters,
+// digits, and single underscores (isGatewayServerName), each listed once.
+// The loader checks the URLs. Errors wrap ErrInvalidConfig.
 //
 // Shortcut: at most one gateway entry, of kind embedded; removed by #2812 (external gateways, and several gateways).
 func ValidateGatewayEntries(entries []GatewayEntry) error {
@@ -177,8 +178,9 @@ func (a GatewayAS2) validate() error {
 // WithGateway has AuthorizeCall authorize calls through g. Without it every
 // call that reaches the server check is denied. New refuses a second
 // WithGateway, a gateway without an issuer or resource, with no servers, with
-// a server name that is not printable text without spaces or that appears
-// twice, or with a partly set AS2 or one naming another issuer or resource,
+// a server name that is not letters, digits, and single underscores or that
+// appears twice, or with a partly set AS2 or one naming another issuer or
+// resource,
 // and a gateway without WithRecorder and WithIDJAGIssuer. New binds a non-zero
 // AS2.
 //
