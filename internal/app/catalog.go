@@ -835,25 +835,35 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 }
 
 // newNoFSDefinedMemberCatalog is the file-less catalog of a team member
-// that runs def: the file-less core and memory tools def does not exclude,
+// that runs def: the file-less core and memory tools def allows (its
+// `tools` allowlist, when set, and not its `disallowedTools`, resolved by
+// scopedToolNamesMode as for a member with a filesystem),
 // def's own MCP tools (defMCPTools: its referenced and inline servers, minus
 // its exclusions) in place of the server-global ones and CallMcpWithQuery,
 // and the session's gateway tools of the servers def references
-// (defGatewayTools). It is the tool limit a defined member keeps with a
-// filesystem, so the definition narrows the member the same way either way.
+// (defGatewayTools). As with a filesystem, `tools` narrows only the core and
+// memory tools; the MCP and gateway tools follow def's server references and
+// exclusions. So the definition narrows the member the same way either way.
 // The returned func closes def's inline MCP servers; it may be nil.
 func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAssets, def agents.AgentDef, mainMgr *mcp.Manager) (*classifiedCatalog, func() error) {
 	base, baseAssets := cfg, a
 	base.helperTools, baseAssets.globalMgr = nil, nil
 	generic := newNoFSClassifiedChildCatalog(ctx, base, baseAssets)
 	out := newClassifiedCatalog()
+	available := map[string]tool.Tool{}
 	for _, t := range generic.catalog.Tools() {
-		name := t.Spec().Name
-		if defDisallowsTool(def, name) {
-			continue
-		}
+		available[t.Spec().Name] = t
+	}
+	// No filesystem means nothing here mutates a workspace, so the
+	// memory writers stay allowed and there is no shell to withhold.
+	names, diags := scopedToolNamesMode(def, available, true, false, "")
+	for _, d := range diags {
+		cfg.diag().Log(ctx, port.LevelWarn, "no-FS team member agent def tool scoping",
+			"agent", def.Name, "tool", d.tool, "reason", d.reason)
+	}
+	for _, name := range names {
 		entry := generic.entries[name]
-		out.mustRegister(t, &entry)
+		out.mustRegister(available[name], &entry)
 	}
 	mcpTools, _, _, closeFn := defMCPTools(ctx, cfg.diag(), def, mainMgr)
 	mcpEntry := classification(server.KindDerived,

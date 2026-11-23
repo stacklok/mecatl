@@ -208,9 +208,10 @@ A session created with `execution: {none: {}}` removes
 `Read`/`ListDir`/`Write`/`Edit`/`Copy`/`Move`/`Remove`/`Grep`/`Glob`/`Shell`/`ShellStatus`/`Parallel`/`SkillDraft`
 from the catalog. `WebFetch`, `WebSearch`, memory, and MCP tools remain.
 Children inherit the file-less catalog. A team member that names an agent
-definition still keeps to its tool limits: its `disallowedTools` and its own
-`mcpServers` apply, and the rest of the definition does not. Clients choose execution when creating
-the session; the model cannot change it. See
+definition still keeps to its tool limits: its `tools` and `disallowedTools`
+narrow the file-less core and memory tools, and its own `mcpServers` apply. The
+rest of the definition does not. Clients choose execution when creating the
+session; the model cannot change it. See
 [Execution environments](/features/security-and-execution/execution-environments.md)
 for filesystem and no-filesystem placement.
 
