@@ -20,6 +20,9 @@ type Ceiling struct {
 	// servers maps each granted server to the tools on it that are excluded,
 	// by their name on the server. A nil set excludes nothing.
 	servers map[string]map[string]struct{}
+	// text is String's result, computed when c is made; empty only for the
+	// zero Ceiling, which prints as "none".
+	text string
 }
 
 // CeilingServer is one server a ceiling grants and the tools on it the
@@ -55,6 +58,7 @@ func NewCeiling(servers ...CeilingServer) Ceiling {
 		}
 		c.servers[name] = except
 	}
+	c.text = c.render()
 	return c
 }
 
@@ -98,6 +102,7 @@ func (c Ceiling) intersect(o Ceiling) Ceiling {
 		maps.Copy(union, other)
 		out.servers[name] = union
 	}
+	out.text = out.render()
 	return out
 }
 
@@ -113,6 +118,15 @@ func (c Ceiling) equal(o Ceiling) bool {
 // read as two. Server names are gateway server names, which hold none. It
 // is "none" for a ceiling that grants nothing.
 func (c Ceiling) String() string {
+	if c.text == "" {
+		return "none"
+	}
+	return c.text
+}
+
+// render builds String's canonical form from c's servers; a Ceiling is
+// immutable, so it is built once, where c is made.
+func (c Ceiling) render() string {
 	servers := c.Servers()
 	if len(servers) == 0 {
 		return "none"
