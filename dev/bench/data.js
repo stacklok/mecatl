@@ -404576,6 +404576,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795450252668,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "515496656b00692726021d21a588fd3f4e8fb872",
+          "message": "feat(executionclient): move file and command calls to the executor (#2954)\n\n`mecak8s` now sends file and command calls through the provider's\nauthorizing `FileService` and `CommandService` proxies to each\nexecutor's server, and checks at startup that the provider serves\nthem. `ExecutionProviderService` keeps only its lifecycle RPCs.\nRead-only calls renew a stale run claim and retry once. The provider\nre-checks the pinned Pod after each TLS handshake, and environments\nmove to `schemaVersion` 3.\n\nRelease notes:\n\n- Breaking: upgrade `mecak8s` and the execution provider together.\n  Every environment must be retired and deleted through the old\n  provider first; see the upgrade runbook.\n- The provider no longer needs `pods/exec`.\n- Known gaps: revocation does not withdraw calls in progress (#2708),\n  and an unknown command outcome does not fence the environment\n  (#2709).\n\nCloses: #2718\nCloses: #2714",
+          "timestamp": "2026-11-23T18:34:51+01:00",
+          "tree_id": "3327542f7a9883833006642d6f20de3fb45dc070",
+          "url": "https://github.com/stacklok/mecatl/commit/515496656b00692726021d21a588fd3f4e8fb872"
+        },
+        "date": 1795456130416,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -583740,6 +583774,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795456126303,
+  "lastUpdate": 1795456131506,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
