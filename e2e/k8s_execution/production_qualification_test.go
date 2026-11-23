@@ -891,14 +891,14 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	client := replicas[0]
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "lifecycle")
 	first := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	if first.SpecSchema != 2 || first.StatusSchema != 2 || first.PodUID == "" || first.PVCUID == "" {
-		t.Fatal("schema-v2 exact runtime identities were not persisted")
+	if first.SpecSchema != 3 || first.StatusSchema != 3 || first.PodUID == "" || first.PVCUID == "" {
+		t.Fatal("schema-v3 exact runtime identities were not persisted")
 	}
-	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":2}}`)
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":3}}`)
 	for _, tc := range []struct {
 		name, patch, want string
 	}{
-		{"old", `{"spec":{"schemaVersion":1}}`, "Unsupported value"},
+		{"old", `{"spec":{"schemaVersion":2}}`, "Unsupported value"},
 		{"omitted", `{"spec":{"schemaVersion":null}}`, "Required value"},
 	} {
 		t.Run("schema-version-"+tc.name, func(t *testing.T) {
