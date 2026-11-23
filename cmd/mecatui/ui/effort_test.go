@@ -680,3 +680,39 @@ func TestEffortPickerRelistsUnknownLevels(t *testing.T) {
 		t.Error("known levels fired another listing")
 	}
 }
+
+// TestEffortRelistDuringForkCreatesNoSession: a listing the picker started can
+// land while the effort fork is connecting. It refreshes the inventory but must
+// not create a session: only the startup listing does.
+func TestEffortRelistDuringForkCreatesNoSession(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	lister := &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true}}}
+	m := newModelsModel(t, lister, &fakeStore{}, caps, client.ModelSelection{})
+	m.modelCatalog.models = lister.models
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	conv := m.deps.Session.(*fakeConv)
+	creates := conv.createCount
+
+	mm, listCmd := m.runEffort()
+	m = mm.(Model)
+	if listCmd == nil {
+		t.Fatal("opening the picker on unknown levels fired no listing")
+	}
+	listing := runCmd(listCmd)
+	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	mm, forkCmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseConnecting {
+		t.Fatalf("phase = %v after picking a level, want connecting", m.phase)
+	}
+	mm, next := m.Update(listing)
+	m = feedCmd(t, mm.(Model), next)
+	m = feedCmd(t, m, forkCmd)
+	if conv.createCount != creates {
+		t.Fatalf("CreateSession calls = %d, want %d: the listing created a session during the fork", conv.createCount, creates)
+	}
+	if conv.forkCount != 1 || m.sessionID != "sess-fork-1" || m.phase != phaseIdle {
+		t.Fatalf("forks = %d, session = %q, phase = %v; want one fork adopted as sess-fork-1 and idle", conv.forkCount, m.sessionID, m.phase)
+	}
+}

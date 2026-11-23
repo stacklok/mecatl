@@ -1258,7 +1258,7 @@ func TestConnectCreateRejectedFallsBackToDefault(t *testing.T) {
 		InitialModel:   persisted,
 	})
 
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Models: inventory})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Models: inventory})
 	m = mm.(Model)
 	if !handled || cmd == nil {
 		t.Fatal("connect-time ModelsMsg must be handled and fire CreateSession")
@@ -1322,7 +1322,7 @@ func TestConnectCreateBothFailStaysFatal(t *testing.T) {
 		InitialModel: persisted,
 	})
 
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Models: inventory})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Models: inventory})
 	m = mm.(Model)
 	if !handled || cmd == nil {
 		t.Fatal("connect-time ModelsMsg must be handled and fire CreateSession")
@@ -1389,7 +1389,7 @@ func TestConnectCreateTransientFailureStaysFatal(t *testing.T) {
 		InitialModel: persisted,
 	})
 
-	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{Models: inventory})
+	mm, cmd, handled := m.updateModelsMsg(client.ModelsMsg{RequestToken: m.modelCatalogRequestToken, Models: inventory})
 	m = mm.(Model)
 	if !handled || cmd == nil {
 		t.Fatal("connect-time ModelsMsg must be handled and fire CreateSession")

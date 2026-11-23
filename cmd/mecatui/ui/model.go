@@ -696,8 +696,12 @@ type Model struct {
 	// requests. It never resets when the picker closes, so an older result cannot
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
-	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
-	connectIntent            *ConnectRestartIntent // set only immediately before tea.Quit
+	// startupCatalogToken is the token of the startup catalog request, whose
+	// answer creates the startup session; 0 when Init issues none. A later
+	// listing can land while a fork or switch connects and must not create one.
+	startupCatalogToken uint64
+	modelCatalog        modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
+	connectIntent       *ConnectRestartIntent // set only immediately before tea.Quit
 	// modal is the ONE open modal overlay (nil = none). Stack/tiling/focus-tree
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
@@ -1151,6 +1155,7 @@ func New(deps Deps) Model {
 	// request, so its first picker request starts at 1 instead.
 	if deps.Models != nil && deps.Resume == nil {
 		m.modelCatalogRequestToken = 1
+		m.startupCatalogToken = 1
 	}
 	if deps.BrowseSessions {
 		m.phase = phaseIdle

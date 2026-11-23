@@ -68,7 +68,7 @@ func (m Model) applyModelsCatalog(msg client.ModelsMsg) (tea.Model, tea.Cmd, boo
 			surface.catalog.statuses = nil
 			surface.catalog.configProvenanceProviderIDs = nil
 		}
-		if m.phase == phaseConnecting {
+		if m.connectsOnCatalog(msg) {
 			return m, m.createSessionCmd(), true
 		}
 		return m, nil, true
@@ -87,10 +87,18 @@ func (m Model) applyModelsCatalog(msg client.ModelsMsg) (tea.Model, tea.Cmd, boo
 			m.gatewayNoticeShown = true
 		}
 	}
-	if m.phase == phaseConnecting {
+	if m.connectsOnCatalog(msg) {
 		return m, m.createSessionCmd(), true
 	}
 	return m, nil, true
+}
+
+// connectsOnCatalog reports whether msg is the startup listing the startup connect
+// waits for before it creates its session. Any other listing (the /effort relist,
+// a closed /models picker's late result) can land while a fork or switch is
+// connecting; creating a session then would strand the transcript on an empty one.
+func (m Model) connectsOnCatalog(msg client.ModelsMsg) bool {
+	return m.phase == phaseConnecting && m.startupCatalogToken != 0 && msg.RequestToken == m.startupCatalogToken
 }
 
 // reconcileSelection clears the active selection to the server default when its
