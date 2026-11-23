@@ -404218,6 +404218,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795446282761,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c0f766f77c64925df06c98b3a384b447a3c7beb0",
+          "message": "fix(scheduler): bound the steps a scheduled fire waits on (#2955) (#2958)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T16:57:09+01:00",
+          "tree_id": "6a51611b25edbf0110e5de8de3166a075116b1be",
+          "url": "https://github.com/stacklok/mecatl/commit/c0f766f77c64925df06c98b3a384b447a3c7beb0"
+        },
+        "date": 1795450252668,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -583229,6 +583263,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795450248066,
+  "lastUpdate": 1795450253814,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
