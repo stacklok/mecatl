@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -823,21 +824,25 @@ func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 func TestBuildMCPBrokerRefusesAS2OtherThanTheEntry(t *testing.T) {
 	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), newBrokerClientKey(t))
 	declaration, _ := protectedBrokerAuthorityWithKey(t).Broker()
-	for name, edit := range map[string]func(*identitybroker.GatewayEntry){
-		"another issuer":         func(e *identitybroker.GatewayEntry) { e.AS2Issuer = "https://other.example/v1/mcp/broker" },
-		"another token endpoint": func(e *identitybroker.GatewayEntry) { e.TokenEndpoint = as2TestIssuer + "/token" },
-		"another resource":       func(e *identitybroker.GatewayEntry) { e.Resource = "https://other.example/mcp" },
+	for name, tc := range map[string]struct {
+		edit  func(*identitybroker.GatewayEntry)
+		field string
+	}{
+		"another issuer":         {func(e *identitybroker.GatewayEntry) { e.AS2Issuer = "https://other.example/v1/mcp/broker" }, "its issuer"},
+		"another token endpoint": {func(e *identitybroker.GatewayEntry) { e.TokenEndpoint = as2TestIssuer + "/token" }, "its token endpoint"},
+		"another resource":       {func(e *identitybroker.GatewayEntry) { e.Resource = "https://other.example/mcp" }, "its resource"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			entry := embeddedEntry()[0]
-			edit(&entry)
+			tc.edit(&entry)
 			parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, entry: &entry})
 			if err == nil {
 				parts.close()
 				t.Fatal("buildMCPBroker set up an AS-2 the gateway entry does not name")
 			}
-			if !errors.Is(err, errAS2IsNotTheEntry) {
-				t.Fatalf("buildMCPBroker error = %v, want %v", err, errAS2IsNotTheEntry)
+			// The error names the field that differs, as startup's check does.
+			if !errors.Is(err, errAS2IsNotTheEntry) || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("buildMCPBroker error = %v, want %v naming %q", err, errAS2IsNotTheEntry, tc.field)
 			}
 		})
 	}
@@ -847,6 +852,49 @@ func TestBuildMCPBrokerRefusesAS2OtherThanTheEntry(t *testing.T) {
 		t.Fatalf("buildMCPBroker with the matching entry: %v", err)
 	}
 	parts.close()
+}
+
+// TestBuildMCPBrokerRefusesAS2SigningWithABrokerKey shows the bundled MCP
+// broker refuses to start when AS-2 loaded a signing key that is one of the
+// identity broker's keys, the check after startup's own: startup read the
+// key files once, and AS-2 reads them again, so a file changed in between
+// is caught here.
+func TestBuildMCPBrokerRefusesAS2SigningWithABrokerKey(t *testing.T) {
+	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), newBrokerClientKey(t))
+	declaration, _ := protectedBrokerAuthority().Broker()
+	key := brokerconfigtest.NewKey(t)
+	declaration.SigningKeyFile = writeAS2Key(t, key)
+	entry := embeddedEntry()[0]
+	identity := mcpBrokerIdentity{clientKeySetFile: keySet, entry: &entry, brokerKeys: []crypto.PublicKey{&newBrokerClientKey(t).PublicKey, &key.PublicKey}}
+	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, identity)
+	if err == nil {
+		parts.close()
+		t.Fatal("buildMCPBroker set up an AS-2 signing with an identity broker key")
+	}
+	if !errors.Is(err, errAS2SigningKeyIsABrokerKey) {
+		t.Fatalf("buildMCPBroker error = %v, want %v", err, errAS2SigningKeyIsABrokerKey)
+	}
+	identity.brokerKeys = identity.brokerKeys[:1]
+	parts, err = buildMCPBroker(t.Context(), Config{}, declaration, nil, identity)
+	if err != nil {
+		t.Fatalf("buildMCPBroker with a signing key no broker role holds: %v", err)
+	}
+	parts.close()
+}
+
+// uncomparableKey is a public key type without an Equal method.
+type uncomparableKey struct{}
+
+// TestCheckAS2KeysAreNotBrokerKeysFailsClosed refuses an AS-2 key it cannot
+// compare with the identity broker's keys rather than skipping it.
+func TestCheckAS2KeysAreNotBrokerKeysFailsClosed(t *testing.T) {
+	broker := []crypto.PublicKey{&newBrokerClientKey(t).PublicKey}
+	if err := checkAS2KeysAreNotBrokerKeys([]crypto.PublicKey{uncomparableKey{}}, broker); err == nil {
+		t.Fatal("checkAS2KeysAreNotBrokerKeys accepted a key it cannot compare")
+	}
+	if err := checkAS2KeysAreNotBrokerKeys([]crypto.PublicKey{&newBrokerClientKey(t).PublicKey}, broker); err != nil {
+		t.Fatalf("checkAS2KeysAreNotBrokerKeys with a distinct key = %v", err)
+	}
 }
 
 // resourceGateway is a Gateway with a given endpoint and resource.

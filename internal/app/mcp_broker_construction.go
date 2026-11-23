@@ -84,6 +84,9 @@ type mcpBrokerIdentity struct {
 	// entry is the identity broker's embedded gateway entry, which the AS-2
 	// set up must be; nil sets up no AS-2.
 	entry *identitybroker.GatewayEntry
+	// brokerKeys are the identity broker's public keys, which AS-2 must not
+	// sign with; set with entry.
+	brokerKeys []crypto.PublicKey
 	// gatewayCalls is nil when the identity broker has no gateway path.
 	gatewayCalls *mcpBrokerGatewayCalls
 }
@@ -225,13 +228,15 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	if process.Gateway != nil {
 		gatewayServers = config.GatewayCalls.Servers
 	}
-	// Startup checked the entry against the AS-2 it derived; this checks the
-	// AS-2 the process set up is that one.
-	if entry := identity.entry; entry != nil && (process.AS2 == nil || process.AS2.Issuer != entry.AS2Issuer ||
-		process.AS2.TokenEndpoint != entry.TokenEndpoint || process.AS2.Resource != entry.Resource) {
-		_ = process.Close()
-		authStorageClose()
-		return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", errAS2IsNotTheEntry)
+	// Startup checked the entry and the signing key files against the AS-2
+	// it derived; this checks the AS-2 the process set up, and the keys it
+	// loaded, which a changed file could make differ.
+	if entry := identity.entry; entry != nil {
+		if err := checkBuiltAS2(process.AS2, *entry, identity.brokerKeys); err != nil {
+			_ = process.Close()
+			authStorageClose()
+			return mcpBrokerParts{}, fmt.Errorf("build bundled MCP broker: %w", err)
+		}
 	}
 	var as2 *identityBrokerAS2
 	if process.AS2 != nil {
@@ -368,4 +373,22 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 		Profiles: profiles, CallbackURL: callbackURL, Occupied: append([]string(nil), occupied...),
 		AuthRedisClient: authRedisClient, Diagnostics: diag,
 	}
+}
+
+// checkBuiltAS2 refuses a built AS-2 other than entry's, naming the field
+// that differs, and one that loaded a signing key among brokerKeys.
+func checkBuiltAS2(as2 *mcpbroker.AS2, entry identitybroker.GatewayEntry, brokerKeys []crypto.PublicKey) error {
+	if as2 == nil {
+		return fmt.Errorf("%w: the MCP broker set up no AS-2", errAS2IsNotTheEntry)
+	}
+	for _, f := range []struct{ name, built, entry string }{
+		{"issuer", as2.Issuer, entry.AS2Issuer},
+		{"token endpoint", as2.TokenEndpoint, entry.TokenEndpoint},
+		{"resource", as2.Resource, entry.Resource},
+	} {
+		if f.built != f.entry {
+			return fmt.Errorf("%w: its %s is %q, the entry's is %q", errAS2IsNotTheEntry, f.name, f.built, f.entry)
+		}
+	}
+	return checkAS2KeysAreNotBrokerKeys(as2.SigningPublicKeys(), brokerKeys)
 }

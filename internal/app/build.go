@@ -2372,7 +2372,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// without the identity broker.
 		var identity mcpBrokerIdentity
 		if ib.gatewayEntry != nil {
-			identity = mcpBrokerIdentity{entry: ib.gatewayEntry, clientKeySetFile: ib.clientKeySetFile}
+			identity = mcpBrokerIdentity{entry: ib.gatewayEntry, brokerKeys: ib.brokerPublicKeys, clientKeySetFile: ib.clientKeySetFile}
 		}
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
 			// One list for both sides: the MCP broker sends only these

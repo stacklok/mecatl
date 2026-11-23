@@ -2,11 +2,18 @@ package mcpbroker
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -132,6 +139,74 @@ func TestSigningPublicKeys(t *testing.T) {
 	}
 }
 
+// writePKCS8Key writes key as a PKCS #8 PEM private key and returns its
+// path.
+func writePKCS8Key(t *testing.T, key any) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestSigningPublicKeysRefusesKeysTheVMCPCannotVerify: the vMCP verifies
+// only RSA and ECDSA signatures, and ToolHive signs only on P-256, P-384, or
+// P-521, so an Ed25519 key or another curve is refused before startup goes
+// on, as signing key or fallback; the curves that work are accepted.
+func TestSigningPublicKeysRefusesKeysTheVMCPCannotVerify(t *testing.T) {
+	_, keyFile := writeSigningKey(t)
+	_, edKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, file := range map[string]string{"an Ed25519 key": writePKCS8Key(t, edKey), "a P-224 key": writePKCS8Key(t, p224)} {
+		if _, err := SigningPublicKeys(file, nil); err == nil || !strings.Contains(err.Error(), file) {
+			t.Errorf("SigningPublicKeys with %s = %v, want an error naming the file", name, err)
+		}
+		if _, err := SigningPublicKeys(keyFile, []string{file}); err == nil {
+			t.Errorf("SigningPublicKeys with %s as a fallback = nil, want an error", name)
+		}
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SigningPublicKeys(keyFile, []string{writePKCS8Key(t, rsaKey), writePKCS8Key(t, p384)}); err != nil {
+		t.Fatalf("SigningPublicKeys with RSA and P-384 fallbacks = %v", err)
+	}
+}
+
+// TestSigningPublicKeysRefusesAKeyListedTwice: the signing key repeated as
+// a fallback, the usual slip when promoting a key, or a fallback listed
+// twice, even under another file name, would publish one key ID twice.
+func TestSigningPublicKeysRefusesAKeyListedTwice(t *testing.T) {
+	key, keyFile := writeSigningKey(t)
+	_, oldFile := writeSigningKey(t)
+	copyFile := brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "copy.pem"), key)
+	for name, fallbacks := range map[string][]string{
+		"the signing key as a fallback": {oldFile, keyFile},
+		"a copy of the signing key":     {copyFile},
+		"a fallback twice":              {oldFile, oldFile},
+	} {
+		if _, err := SigningPublicKeys(keyFile, fallbacks); err == nil || !strings.Contains(err.Error(), "same key") {
+			t.Errorf("SigningPublicKeys with %s = %v, want a same-key error", name, err)
+		}
+	}
+}
+
 // TestAS2SigningKeySurvivesARebuild: with an operator key, AS-2 publishes
 // the same key set after a rebuild and the rebuilt vMCP accepts a gateway
 // token signed before it; without one, each build generates its own key.
@@ -165,11 +240,16 @@ func TestAS2SigningKeySurvivesARebuild(t *testing.T) {
 func TestAS2SigningKeyRotation(t *testing.T) {
 	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
-	_, oldFile := writeSigningKey(t)
-	_, newFile := writeSigningKey(t)
+	old, oldFile := writeSigningKey(t)
+	key, newFile := writeSigningKey(t)
 	token := gatewayToken(t, as1, broker, startTrustingAS2With(t, as1, broker.config, withSigningKey(oldFile)))
 
 	during := startTrustingAS2With(t, as1, broker.config, withSigningKey(newFile, oldFile))
+	// AS-2 reports the keys it loaded, which composition checks against the
+	// identity broker's keys after the build.
+	if loaded := during.AS2.SigningPublicKeys(); len(loaded) != 2 || !key.PublicKey.Equal(loaded[0]) || !old.PublicKey.Equal(loaded[1]) {
+		t.Fatalf("AS-2 reports %d loaded signing keys, want the new key then the fallback", len(loaded))
+	}
 	if status := vmcpInitialize(t, during, token); status != http.StatusOK {
 		t.Fatalf("during the rotation, a gateway token signed with the fallback: status %d, want 200", status)
 	}

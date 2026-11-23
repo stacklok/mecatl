@@ -2,6 +2,9 @@ package mcpbroker
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -112,18 +115,50 @@ func (c ToolHiveConfig) signingKeyRunConfig() (*authserver.SigningKeyRunConfig, 
 
 // SigningPublicKeys reads the signing key at keyFile and its fallbacks as
 // the embedded authorization server reads them, and returns their public
-// keys, so composition can refuse a key another role uses. Errors name the
-// file, never key material.
+// keys, so composition can refuse a key another role uses. It refuses a key
+// the vMCP cannot verify tokens from (checkSigningKeyType) and a key listed
+// twice, the active key included, which would publish its key ID twice.
+// Errors name the file, never key material.
 func SigningPublicKeys(keyFile string, fallbacks []string) ([]crypto.PublicKey, error) {
-	keys := make([]crypto.PublicKey, 0, 1+len(fallbacks))
-	for _, path := range append([]string{keyFile}, fallbacks...) {
+	paths := append([]string{keyFile}, fallbacks...)
+	keys := make([]crypto.PublicKey, 0, len(paths))
+	for _, path := range paths {
 		signer, err := servercrypto.LoadSigningKey(path)
 		if err != nil {
 			return nil, fmt.Errorf("signing key %s: %w", path, err)
 		}
-		keys = append(keys, signer.Public())
+		pub := signer.Public()
+		if err := checkSigningKeyType(pub); err != nil {
+			return nil, fmt.Errorf("signing key %s: %w", path, err)
+		}
+		for j, earlier := range keys {
+			if eq, ok := earlier.(interface{ Equal(crypto.PublicKey) bool }); ok && eq.Equal(pub) {
+				return nil, fmt.Errorf("signing key %s is the same key as %s", path, paths[j])
+			}
+		}
+		keys = append(keys, pub)
 	}
 	return keys, nil
+}
+
+// checkSigningKeyType refuses a signing key whose tokens the vMCP cannot
+// verify. ToolHive's embedded authorization server signs with an Ed25519
+// key, as EdDSA, but its token validator accepts only RSA and ECDSA
+// signatures, so every such token would be refused; and it refuses an ECDSA
+// curve other than P-256, P-384, or P-521 only after startup has begun.
+func checkSigningKeyType(pub crypto.PublicKey) error {
+	switch k := pub.(type) {
+	case *rsa.PublicKey:
+		return nil
+	case *ecdsa.PublicKey:
+		switch k.Curve {
+		case elliptic.P256(), elliptic.P384(), elliptic.P521():
+			return nil
+		}
+		return fmt.Errorf("an ECDSA key on %s, but it must be on P-256, P-384, or P-521", k.Curve.Params().Name)
+	default:
+		return fmt.Errorf("a %T key, but it must be an RSA or ECDSA key", pub)
+	}
 }
 
 // AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.
