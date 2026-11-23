@@ -404934,6 +404934,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795456130416,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed39a1b64b49347e0394b8eb5d4ce7db246171fc",
+          "message": "feat(identitybroker): declare gateways and the embedded gateway's signing key (#2946)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub@stacklok.com>",
+          "timestamp": "2026-11-23T20:40:21+01:00",
+          "tree_id": "c676b5d5716a3faa7264bc69196079b84138b04f",
+          "url": "https://github.com/stacklok/mecatl/commit/ed39a1b64b49347e0394b8eb5d4ce7db246171fc"
+        },
+        "date": 1795463511708,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -584251,6 +584285,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795463508078,
+  "lastUpdate": 1795463512994,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
