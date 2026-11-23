@@ -247,8 +247,9 @@ func effortCursorFor(tiers []string, current string) int {
 // per-model levels it offers auto plus the levels the model accepts: a model known
 // to take none offers auto alone and says so, a model whose levels are unknown
 // offers every tier and says the provider may refuse one, and a requested level
-// the model doesn't accept is named. Without the feature, or before the model is
-// in the inventory, it offers every tier without a claim.
+// the model doesn't accept is named with the level sent in its place. Without the
+// feature, or before the model is in the inventory, it offers every tier without
+// a claim.
 func (m Model) effortChoicesFor() effortChoices {
 	if !m.caps.ModelEffortLevels {
 		choices := effortChoices{tiers: effortTiers}
@@ -275,7 +276,13 @@ func (m Model) effortChoicesFor() effortChoices {
 	case len(choices.tiers) == 1:
 		choices.note, choices.warning = effortNoLevels, true
 	case requested != "" && requested != effortAuto && !slices.Contains(choices.tiers, requested):
-		choices.note = "This model doesn't accept " + terminaltext.SanitizeSingleLine(requested) + "; requests use the provider default"
+		// The server sends the highest level the model lists below the request, or
+		// none; the echo says which.
+		sent := "the provider default"
+		if applied := m.resolvedSessionModel.ReasoningEffort; applied != "" && applied != effortAuto {
+			sent = terminaltext.SanitizeSingleLine(applied)
+		}
+		choices.note = "This model doesn't accept " + terminaltext.SanitizeSingleLine(requested) + "; requests use " + sent
 		choices.warning = true
 	}
 	return choices

@@ -621,7 +621,7 @@ func TestEffortPickerOffersModelLevels(t *testing.T) {
 		{name: "no effort levels", feature: true, known: true, in: true, tiers: []string{"auto"}, note: effortNoLevels},
 		{name: "unknown levels", feature: true, in: true, tiers: effortTiers, note: effortUnknownLevels},
 		{name: "model not in inventory", feature: true, tiers: effortTiers},
-		{name: "requested level not accepted", feature: true, known: true, in: true, levels: []string{"low", "high"}, requested: "max", tiers: []string{"auto", "low", "high"}, note: "This model doesn't accept max"},
+		{name: "requested level not accepted", feature: true, known: true, in: true, levels: []string{"low", "high"}, requested: "max", applied: "high", tiers: []string{"auto", "low", "high"}, note: "This model doesn't accept max"},
 		{name: "explicit auto requested", feature: true, known: true, in: true, levels: []string{"low"}, requested: "auto", tiers: []string{"auto", "low"}},
 		{name: "server without the feature", known: true, in: true, levels: []string{"low"}, tiers: effortTiers},
 	} {
@@ -637,6 +637,29 @@ func TestEffortPickerOffersModelLevels(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestEffortNoteNamesTheLevelSent: a requested level the model doesn't list is
+// named with the level the server echoes in its place, or the provider default
+// when the model lists none below it.
+func TestEffortNoteNamesTheLevelSent(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, caps, client.ModelSelection{})
+	for _, tc := range []struct {
+		levels             []string
+		requested, applied string
+		want               string
+	}{
+		{[]string{"low", "high"}, "max", "high", "This model doesn't accept max; requests use high"},
+		{[]string{"medium", "high"}, "low", "", "This model doesn't accept low; requests use the provider default"},
+	} {
+		m.modelCatalog.models = []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", EffortLevels: tc.levels, EffortLevelsKnown: true}}
+		m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: tc.applied, RequestedReasoningEffort: tc.requested}
+		if got := m.effortChoicesFor().note; got != tc.want {
+			t.Errorf("%s on %v: note = %q, want %q", tc.requested, tc.levels, got, tc.want)
+		}
 	}
 }
 
