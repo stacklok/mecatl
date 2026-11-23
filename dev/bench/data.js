@@ -403860,6 +403860,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795443297479,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6e2a0a9f1a557552fbceca91bf73a22bd65020a7",
+          "message": "test(mecatui): pin the scroll-keys label in the connect test model (#2957)",
+          "timestamp": "2026-11-23T15:51:47+01:00",
+          "tree_id": "d8e703f883f60f5ed4d1deae2798e1b77b09be10",
+          "url": "https://github.com/stacklok/mecatl/commit/6e2a0a9f1a557552fbceca91bf73a22bd65020a7"
+        },
+        "date": 1795446282761,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -582718,6 +582752,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795446277991,
+  "lastUpdate": 1795446283835,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
