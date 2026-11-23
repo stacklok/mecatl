@@ -446830,6 +446830,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795436166680,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "560a6ad993d9bd610d13e58722367ff68f6bd42c",
+          "message": "feat(identitybroker): check each call's run, owner, and delegation (#2930)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-23T13:19:40+01:00",
+          "tree_id": "b3c0cceed4974f729579e68b8079ff7d1a9aa1b2",
+          "url": "https://github.com/stacklok/mecatl/commit/560a6ad993d9bd610d13e58722367ff68f6bd42c"
+        },
+        "date": 1795437103141,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13383.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12878,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -581730,6 +581769,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795437099370,
+  "lastUpdate": 1795437103979,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
