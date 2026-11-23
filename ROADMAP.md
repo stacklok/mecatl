@@ -31,8 +31,9 @@ A few terms used below:
   sessions.
 - **Agent host:** the server process that runs the agent loop and talks to the
   model.
-- **Gateway:** the MCP gateway that agents call tools through. It holds users'
-  credentials for outside services, so the agent host never sees them.
+- **Gateway:** the MCP gateway that proxies agents' tool calls to MCP servers.
+  It holds users' credentials for outside services, so the agent host never
+  sees them.
 - **Identity broker:** a separate component from the gateway. It issues and
   checks agent identities, and decides what each agent may call before the
   gateway receives the call.
