@@ -639,3 +639,44 @@ func TestEffortPickerOffersModelLevels(t *testing.T) {
 		})
 	}
 }
+
+// TestEffortPickerRelistsUnknownLevels: when the loaded inventory doesn't know the
+// model's levels, opening the picker lists models again and the rows follow the
+// answer; known levels fire no listing.
+func TestEffortPickerRelistsUnknownLevels(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	lister := &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true}}}
+	m := newModelsModel(t, lister, &fakeStore{}, caps, client.ModelSelection{})
+	m.modelCatalog.models = lister.models
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	calls := lister.calls
+
+	mm, cmd := m.runEffort()
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("opening the picker on unknown levels fired no listing")
+	}
+	lister.models = []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true,
+		EffortLevels: []string{"low", "high"}, EffortLevelsKnown: true}}
+	m = feedCmd(t, m, cmd)
+	if lister.calls != calls+1 {
+		t.Fatalf("listing calls = %d, want %d", lister.calls, calls+1)
+	}
+	state, ok := m.modal.(*effortState)
+	if !ok {
+		t.Fatalf("modal = %T, want the effort picker still open", m.modal)
+	}
+	if want := []string{"auto", "low", "high"}; !reflect.DeepEqual(state.choices.tiers, want) {
+		t.Fatalf("tiers after the listing = %v, want %v", state.choices.tiers, want)
+	}
+	if view := stripANSIstr(m.View().Content); strings.Contains(view, effortUnknownLevels) {
+		t.Errorf("the unknown-levels note survived the listing:\n%s", view)
+	}
+
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if _, cmd = m.runEffort(); cmd != nil {
+		t.Error("known levels fired another listing")
+	}
+}

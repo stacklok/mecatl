@@ -37,11 +37,13 @@ import (
 // When the server reports per-model effort levels (Capabilities.ModelEffortLevels),
 // the picker offers auto plus the levels the session's model accepts, and says
 // why when that is fewer than all five (effortChoicesFor). Without the feature it
-// offers every tier.
+// offers every tier. When the loaded inventory doesn't know the model's levels,
+// opening the picker lists models again (a gateway can list them only on demand),
+// and the rows follow the answer.
 
-// effortAuto is the picker label for the UNSET tier; it maps to the empty string on
-// the wire and in persisted state (see the package header). Named once so the label
-// list, effortValue, and effortLabel share one spelling.
+// effortAuto is the picker label for the provider-default tier. It is sent as the
+// explicit "auto" token, and effortLabel shows an unset effort as auto (see the
+// package header). Named once so the tier list and effortLabel share one spelling.
 const effortAuto = "auto"
 
 const (
@@ -52,15 +54,16 @@ const (
 	effortUnknownLevels  = "This model's effort levels are unknown; the provider may refuse a level"
 )
 
-// effortTiers is the neutral reasoning-effort vocabulary in picker order. "auto" is
-// the unset sentinel (⇒ ""); the rest are the real tiers the server understands.
+// effortTiers is the neutral reasoning-effort vocabulary in picker order. "auto"
+// asks for the provider default; the rest are the real tiers the server understands.
 // FIXED order, locked by a test so the picker layout is stable.
 //
 // AUTHORITY: the canonical neutral vocabulary lives in composition —
 // internal/app/reasoning_effort.go (validReasoningEfforts / NormalizeReasoningEffort).
 // This list is the TUI's display copy (the ui imports no engine/internal package); it
 // must stay in sync with that set. The server normalises/clamps whatever the picker
-// sends, so a drift here degrades gracefully (an unknown token fail-softs to unset),
+// sends, so a drift here degrades gracefully (an unknown token falls back to the
+// operator default),
 // but keep the two aligned.
 var effortTiers = []string{effortAuto, "low", "medium", "high", "xhigh", "max"}
 
@@ -180,13 +183,39 @@ func effortLabel(value string) string {
 // (resolved by the server, m.resolvedSessionModel.ReasoningEffort) so the current tier is
 // pre-selected. Only callable while idle and when model selection is available (the
 // effort is a per-session server setting that only matters with a selectable model);
-// returns the model unchanged otherwise. Unlike /models it fires no RPC (the enum is
-// fixed and client-owned).
+// returns the model unchanged otherwise. Unlike /models it lists models only when
+// the loaded inventory doesn't know the session's model's effort levels.
 func (m Model) openEffort() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || !m.caps.ModelSelection {
 		return m, nil
 	}
-	s := &effortState{deps: (&m).surfaceDeps(), choices: m.effortChoicesFor(), compact: true}
+	s := &effortState{deps: (&m).surfaceDeps(), compact: true}
+	m.fillEffortChoices(s)
+	m.modal = s
+	m.prompt.Blur()
+	if m.caps.ModelEffortLevels && m.deps.Models != nil {
+		if info, found := m.currentModelInfo(); !found || !info.EffortLevelsKnown {
+			m.modelCatalogRequestToken++
+			return m, client.ListModelsCmd(m.deps.Ctx, m.deps.Models, m.modelCatalogRequestToken)
+		}
+	}
+	return m, nil
+}
+
+// refreshOpenEffort refills an open picker's rows after the model inventory
+// changes.
+func (m Model) refreshOpenEffort() {
+	if s, ok := m.modal.(*effortState); ok {
+		m.fillEffortChoices(s)
+	}
+}
+
+// fillEffortChoices sets the picker's rows to what the session's model accepts,
+// keeping the cursor on its tier when that is still offered and otherwise placing
+// it on the current effort.
+func (m Model) fillEffortChoices(s *effortState) {
+	cursor := s.list.CursorID()
+	s.choices = m.effortChoicesFor()
 	items := make([]bounded.ListItem, len(s.choices.tiers))
 	for i, tier := range s.choices.tiers {
 		items[i] = bounded.ListItem{ID: tier, Text: effortRowText(tier)}
@@ -195,10 +224,10 @@ func (m Model) openEffort() (tea.Model, tea.Cmd) {
 		}
 	}
 	s.list.SetItems(items)
+	if cursor != "" && s.list.SelectID(cursor) {
+		return
+	}
 	s.list.SetCursor(effortCursorFor(s.choices.tiers, m.resolvedSessionModel.ReasoningEffort))
-	m.modal = s
-	m.prompt.Blur()
-	return m, nil
 }
 
 // effortCursorFor returns the index of the tier whose label matches the current

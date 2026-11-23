@@ -78,6 +78,7 @@ func (m Model) applyModelsCatalog(msg client.ModelsMsg) (tea.Model, tea.Cmd, boo
 		surface.catalog = m.modelCatalog
 		surface.provenance = m.modelProvenanceLine()
 	}
+	m.refreshOpenEffort()
 	if !m.gatewayNoticeShown && !isToolhiveProviderID(m.resolvedSessionModel.ProviderID) {
 		if row, ok := availableNotDefaultStatus(msg.Statuses); ok {
 			pid := terminaltext.Sanitize(row.ProviderID)
