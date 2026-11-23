@@ -163,7 +163,7 @@ in Slack.
   currently keeps its state in memory and runs on one replica. Its state
   becomes durable, so a restart no longer signs users out, and `mecak8s` runs
   more than one replica with identity turned on.
-- **The identity broker as its own service.** The broker moves out of mecak8s
+- **The identity broker as its own service.** The broker moves out of `mecak8s`
   with its signing keys, refresh tokens and audit records, so a compromised
   agent host can't use them. Records come from the components that make each
   decision, the authorization servers and the gateway, and are cross-checked
