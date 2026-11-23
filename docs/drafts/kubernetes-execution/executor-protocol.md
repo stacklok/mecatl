@@ -66,9 +66,8 @@ service the server did not register fails with the standard gRPC `Unimplemented`
 treats as a misconfigured executor.
 
 Discovery uses the standard gRPC health service: `grpc.health.v1.Health/Check` returns `SERVING` for a registered
-service and `NOT_FOUND` otherwise. The trusted service reports both shared services as `SERVING`, and mecak8s checks
-them at startup, so it refuses to start against a trusted service from an older release. Checking an executor the same
-way at connection time remains possible. Server reflection is for debugging tools and is not used for this.
+service and `NOT_FOUND` otherwise. mecak8s checks the trusted service this way at startup. Server reflection is for
+debugging tools and is not used for this.
 
 ## Commands
 
@@ -92,8 +91,7 @@ start, the command never ran. If it fails after the start but before a result, t
 does not retry the command. A result whose outcome is known replaces Pod exec's `terminal_receipt` as proof that the
 command ended and left no process running.
 
-`StartCommand`, which returned a command's output in one response, is removed. The trusted service relays the command
-stream between mecak8s and the executor, capping the requested timeout at the template's `maxCommandDuration`.
+`StartCommand` is removed; the trusted service relays the command stream between mecak8s and the executor.
 
 ## File content
 
@@ -185,10 +183,7 @@ own framing and handshake are not used.
 The server replaced Pod exec rather than running alongside it: the native Kubernetes execution path is not deployed in
 staging, so there were no users to migrate. The Pod exec transport, the per-operation lease, the one-operation limit,
 and the provider's `pods/exec` permission were removed when mecak8s switched to the shared services, together with
-mutual TLS, so the executor is never reachable without authentication, encryption, and a pinned certificate. Existing
-environments are not migrated: the `ExecutionEnvironment` schema moved to version 3, and an operator retires and
-deletes every environment through the old provider before upgrading. Withdrawal of in-flight calls (#2708) and fencing
-on an unknown command outcome (#2709) are not implemented yet.
+mutual TLS, so the executor is never reachable without authentication, encryption, and a pinned certificate.
 
 ## Local execution
 
@@ -198,11 +193,9 @@ between. The [local execution](local-execution.md) chapter describes it.
 ## Open questions
 
 - **Process separation.** The server and shell programs run in the same container as the same user, so a shell program
-  can read the server's key or replace the server process. The trusted service rereads the Pod after the handshake and
-  requires the pinned UID, no deletion timestamp, and the dialled IP, so a copied key is useful only against the same
-  Pod incarnation. Keeping the key from shell programs remains open: it needs a second container or a uid switch, and
-  switching uid needs `CAP_SETUID` and `CAP_SETGID`, which the restricted Pod Security profile forbids. The
-  [threat model](threat-model.md) chapter tracks whether it is required.
+  can read the server's key or replace the server process. The trusted service rechecks the Pod after the handshake, so
+  a copied key works only against the same Pod. Running the server in a separate container, or as a separate user,
+  would narrow that. The [threat model](threat-model.md) chapter tracks whether it is required.
 - **Binding to the environment.** Whether the executor checks the environment identity and epoch in the request
   context so that the executor can reject calls meant for a previous incarnation, or whether the trusted
   service's own fencing is sufficient.

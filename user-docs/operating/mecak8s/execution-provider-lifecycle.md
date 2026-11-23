@@ -20,11 +20,9 @@ the new generation; a lagging replica fails closed. For provider/client
 certificates, the provider's executor client certificate, and CA bundles, use
 platform PKI and projected Secrets. Stage trust
 overlap, renew identities, and withdraw old trust only after the new chain is
-accepted. Valid TLS renewals need no policy-generation increment. The provider
-checks a client's certificate and policy when each call starts; a call already
-in progress finishes even if that certificate expires or its trust or policy is
-withdrawn. Do not reuse a policy
-generation for different policy bytes or reset the authority ConfigMap to
+accepted. Valid TLS renewals need no policy-generation increment; expiry or
+trust withdrawal refuses new calls, and calls in progress finish. Do not reuse a
+policy generation for different policy bytes or reset the authority ConfigMap to
 bypass a failed check. Verify readiness and a known authorized operation after
 each change without logging private keys or credential values.
 
@@ -43,9 +41,7 @@ Pass both files to every install or upgrade. Keep operator-owned Secrets and
 TLS trust overlap independently; the chart neither owns nor reads Secret contents.
 The provider creates and deletes only its per-executor certificate Secrets.
 
-Upgrade the provider and `mecak8s` together, from the same release. `mecak8s`
-calls the provider's file and command services, and a version mismatch between
-the two is not supported.
+Upgrade the provider and `mecak8s` together, from the same release.
 
 Finish and verify any external authority rotation before starting a chart
 upgrade. Do not rotate the authority ConfigMap while Helm is writing chart
@@ -128,27 +124,20 @@ For a compatible provider upgrade:
 
 :::warning[This upgrade deletes every workspace]
 
-Releases after v0.0.52 store execution environments at schema version 3, and
-an environment from an earlier release can't be carried over. The new provider
-reports it `Ready=False` with reason `IncompatibleSchema`, refuses every file and
-command call on it, and refuses to retire or delete it. Retire and delete every
-environment through the old provider before you upgrade, and copy out any
-workspace data you need first: deleting an environment deletes its PVC.
+Releases after v0.0.52 store execution environments at schema version 3 and
+can't use an earlier environment. Retire and delete every environment through
+the old provider before you upgrade. This deletes their PVCs, so copy out any
+workspace data you need first.
 
 :::
 
-In these releases the provider forwards file and command calls to a server
-running in each executor Pod. The workload image carries the new executor, so
-every template revision changes. `mecak8s` must come from the same release as
-the provider. A newer `mecak8s` refuses to start against an older provider with
-`execution provider does not serve the executor file and command services`, and
-an older `mecak8s` gets `Unimplemented` from a newer provider.
+The new workload image carries a new executor, so every template revision
+changes, and `mecak8s` must come from the same release as the provider.
 
 1. While the old `mecak8s` and provider are still running, delete every session
-   that uses an execution environment, including forks. Deleting a session
-   releases its reference to the environment, and the provider refuses to retire
-   an environment that still has one. Each environment's `spec.bindingID` names
-   the session that created it:
+   that uses an execution environment, including forks. The provider can't retire
+   an environment that a session still references. `spec.bindingID` names each
+   environment's session:
 
    ```sh
    kubectl --namespace <NAMESPACE> get executionenvironments \
@@ -165,9 +154,9 @@ an older `mecak8s` gets `Unimplemented` from a newer provider.
    [capture its identity](#capture-the-exact-environment-identity), then run
    `RetireEnvironment` and `DeleteRetiredEnvironment` against the old provider
    as in [Replace or retire an executor](#replace-or-retire-an-executor), using
-   `contracts/proto` from the old release's tag. A run claim left by the stopped
-   `mecak8s` blocks retirement until it expires; retry the same request with the
-   same operation ID. Continue when the namespace has no
+   `contracts/proto` from the old release's tag. If a run claim left by the
+   stopped `mecak8s` blocks retirement, retry the same request with the same
+   operation ID after it expires. Continue when the namespace has no
    `ExecutionEnvironment` left:
 
    ```sh
@@ -445,9 +434,7 @@ Revoke an environment using its durable `grantGeneration` fence (the wire name),
 not a signed grant. Supply the current generation and a stable operation ID. The
 response returns the new generation; retrying the identical request returns the
 same receipt. After this CAS succeeds, the provider refuses new calls under the
-earlier generation. Calls already in progress, including a running command, are
-not withdrawn and finish under the revoked authority; a command can run until its
-template's `maxCommandDuration`.
+earlier generation; calls already in progress are not stopped.
 
 ```sh
 grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
@@ -460,11 +447,8 @@ Foreground command cancellation is cooperative and bounded. The executor kills
 the command's process group and reports the result. If it cannot confirm that
 every process the command started has ended, the command ends with an unknown
 outcome and the provider does not fence the environment; verify
-termination or fence the environment externally before you continue. The same
-applies when the executor container restarts or the connection to it breaks
-while a command runs: the command ends with an unknown outcome, `mecak8s` does
-not retry it, and the environment stays usable without a fence. There is no
-detached command status or cancellation API for this deployment.
+termination or fence the environment externally before you continue. There is
+no detached command status or cancellation API for this deployment.
 
 ## Recover a fenced environment
 

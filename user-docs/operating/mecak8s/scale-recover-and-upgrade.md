@@ -10,10 +10,6 @@ sidebar_position: 6
 Plan routing and durable storage before adding replicas. Verify recovery with
 your gateway and Redis topology after a deployment change.
 
-With [Kubernetes execution](native-execution.md) enabled, upgrade `mecak8s` and
-the execution provider from the same release, following the
-[provider upgrade procedure](execution-provider-lifecycle.md#upgrade-uninstall-and-reinstall-the-execution-provider).
-
 ## The Helm chart's topology
 
 The chart creates these resources:

@@ -77,9 +77,7 @@ The provider persists an exact environment reference, owner binding, execution
 epoch, run claim, and revocation generation. A resumed session reattaches that
 same reference rather than using the current default. Provider replicas use
 Kubernetes compare-and-swap operations and claims to serialize environment
-lifecycle and run ownership. File and command calls are not serialized: the
-provider authorizes each one from the environment's current status and forwards
-it to the executor Pod's server, writing no Kubernetes state.
+lifecycle and run ownership; file and command calls write no Kubernetes state.
 A lost claim or unprovable executor state fences the environment. Recovery and
 retirement require the administrator to supply the recorded environment, epoch,
 Pod UID, and PVC UID. Workspace PVCs remain retained until the separate delete
@@ -119,8 +117,7 @@ and projects the provider and client certificates and trust bundles, including
 the client certificate the provider presents to executors. Executor server
 certificates are self-signed per Pod by the provider, which holds no signing key
 and dials only the Pod UID and certificate fingerprint pinned in the
-environment's status; after the handshake it rereads the Pod and requires the
-same UID, no deletion timestamp, and the dialled IP. The provider
+environment's status, and rechecks the Pod after the handshake. The provider
 reloads valid projected TLS files independently of the client-policy manifest.
 The manifest generation changes only for authorization policy updates. A valid
 mTLS client still needs the manifest's exact client URI, template scope, owner
