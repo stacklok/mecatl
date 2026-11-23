@@ -158,8 +158,8 @@ const publishingGatewayListing = `{"object":"list","data":[` +
 
 // TestEffortGatewayListingReachesRequest is the #2878 regression: a gateway
 // model whose listing publishes levels receives the requested level on initial
-// create and after effort forks, and a level it doesn't list is dropped, all
-// without a /models visit.
+// create and after effort forks, and a level it doesn't list is lowered to the
+// highest one it lists, all without a /models visit.
 func TestEffortGatewayListingReachesRequest(t *testing.T) {
 	built, upstream := effortGatewayBuild(t, "openai-responses", "gw-reasoner", publishingGatewayListing, nil)
 	ctx := context.Background()
@@ -171,7 +171,7 @@ func TestEffortGatewayListingReachesRequest(t *testing.T) {
 	if echo, sent := effortRun(t, built, upstream, sess.ID); echo != "xhigh" || sent != "xhigh" {
 		t.Fatalf("create: echo=%q sent=%q, want xhigh/xhigh", echo, sent)
 	}
-	for _, tc := range []struct{ fork, want string }{{"low", "low"}, {"max", ""}} {
+	for _, tc := range []struct{ fork, want string }{{"low", "low"}, {"max", "xhigh"}} {
 		forked, err := built.Service.ForkSessionSuccessor(ctx, server.ForkSuccessorRequest{Source: sess.ID, ReasoningEffort: tc.fork})
 		if err != nil {
 			t.Fatalf("fork at %s: %v", tc.fork, err)
@@ -232,9 +232,10 @@ func TestEffortChatCompletionsNeedsConfiguredLevels(t *testing.T) {
 	}
 }
 
-// TestEffortAnthropicListedAndDropped: on the Messages protocol, max reaches a
-// model whose capabilities.effort lists it and is dropped for one that doesn't.
-func TestEffortAnthropicListedAndDropped(t *testing.T) {
+// TestEffortAnthropicListedAndLowered: on the Messages protocol, max reaches a
+// model whose capabilities.effort lists it and is lowered to high for one that
+// lists up to high.
+func TestEffortAnthropicListedAndLowered(t *testing.T) {
 	const listing = `{"data":[` +
 		`{"id":"model-all","type":"model","display_name":"All","created_at":"2026-01-01T00:00:00Z","capabilities":{"effort":{"supported":true,"low":{"supported":true},"medium":{"supported":true},"high":{"supported":true},"xhigh":{"supported":true},"max":{"supported":true}}}},` +
 		`{"id":"model-three","type":"model","display_name":"Three","created_at":"2026-01-01T00:00:00Z","capabilities":{"effort":{"supported":true,"low":{"supported":true},"medium":{"supported":true},"high":{"supported":true},"xhigh":{"supported":false},"max":{"supported":false}}}}` +
@@ -243,8 +244,8 @@ func TestEffortAnthropicListedAndDropped(t *testing.T) {
 	if echo, sent := effortTurn(t, built, upstream, "model-all", "max"); echo != "max" || sent != "max" {
 		t.Fatalf("model-all: echo=%q sent=%q, want max", echo, sent)
 	}
-	if echo, sent := effortTurn(t, built, upstream, "model-three", "max"); echo != "" || sent != "" {
-		t.Fatalf("model-three: echo=%q sent=%q, want none", echo, sent)
+	if echo, sent := effortTurn(t, built, upstream, "model-three", "max"); echo != "high" || sent != "high" {
+		t.Fatalf("model-three: echo=%q sent=%q, want high", echo, sent)
 	}
 }
 

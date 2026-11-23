@@ -237,20 +237,26 @@ An invalid server value is ignored with a warning and becomes unset. An invalid
 per-session value is ignored with a warning and falls back to the server
 default.
 
-Each request carries the effort only when its model accepts that level. Mecatl
-learns a model's effort levels from the first source that knows them: the
+Each request carries the effort level its model accepts. Mecatl learns a
+model's effort levels from the first source that knows them: the
 `models.effort_levels` setting, the provider's live model listing, then the
 models.dev catalog built into Mecatl. A model whose levels include the requested
-one gets it. A model that takes no effort, or whose levels don't include the
-requested one, gets no effort field, and the server logs a warning once per
-session and model. When no source knows the model, Mecatl sends the level and
-the provider can reject it. An OpenRouter reasoning model that lists no levels
-counts as unknown, because OpenRouter converts the level into the model's own
-reasoning control, such as a thinking budget. On Chat Completions providers, a
-model gets an effort only when its levels are known, from `models.effort_levels`
-or from a listing that publishes them. A gateway listing that publishes levels
-for some models declares that the models it lists without levels take no
-effort.
+one gets it. Otherwise the model gets the highest level it lists below the
+requested one: `max` on a model that lists `low`, `medium`, and `high` sends
+`high`. A model that takes no effort, or lists no level below the requested one,
+gets no effort field. The server logs a warning once per session and model when
+a request carries a different level than the session asked for.
+
+When no source knows the model's levels, Mecatl sends the requested level and
+the provider can reject it. On the `openai`, `openai-codex`, `openrouter`, and
+`toolhive` providers, such a model gets at most `high`, because these providers
+serve models that don't accept `xhigh` or `max`. An OpenRouter reasoning model
+that lists no levels counts as unknown, because OpenRouter converts the level
+into the model's own reasoning control, such as a thinking budget. On Chat
+Completions providers, a model gets an effort only when its levels are known,
+from `models.effort_levels` or from a listing that publishes them. A gateway
+listing that publishes levels for some models declares that the models it lists
+without levels take no effort.
 
 The session keeps the level it requested, so a later model that accepts it gets
 it again. `resolved_model.reasoning_effort` reports the level the session's own
@@ -449,11 +455,13 @@ in [Model-call resilience](/features/runtime/observability-and-resilience.md#mod
 
 ### The model didn't receive the requested effort
 
-When `resolved_model.reasoning_effort` is empty for a session that requested a
-level, the session's model doesn't accept that level. The server's warning names
-the model's levels and where they came from: `config`, `live`, or `catalog`. If
-those levels are wrong, set the model's levels in `models.effort_levels`, as
-shown in [Configure reasoning effort](#configure-reasoning-effort). On a Chat
+When `resolved_model.reasoning_effort` is empty or lower than the level a
+session requested, the session's model doesn't accept that level. The server's
+warning names the model's levels and where they came from: `config`, `live`, or
+`catalog`, or `capped` when no source knows them and the provider limits the
+level to `high`. If those levels are wrong, set the model's levels in
+`models.effort_levels`, as shown in
+[Configure reasoning effort](#configure-reasoning-effort). On a Chat
 Completions provider, a warning that names `models.effort_levels` means no source
 knows the model's levels; list them in that setting to send an effort.
 

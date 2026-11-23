@@ -78,7 +78,10 @@ func TestEffortStreamUsesTheAppliedAdapter(t *testing.T) {
 	}
 }
 
-func TestEffortDropWarnsOnce(t *testing.T) {
+// TestEffortChangeWarnsOnce: a level a model doesn't accept is lowered to one it
+// lists, or dropped when it lists none below it, and warned once per session and
+// model.
+func TestEffortChangeWarnsOnce(t *testing.T) {
 	reg, _ := twoProviderEffortRegistry("")
 	diag := &recordingDiag{}
 	reg.diag, sharedEffort(reg, providerAnthropic).diag = diag, diag
@@ -93,11 +96,14 @@ func TestEffortDropWarnsOnce(t *testing.T) {
 			t.Fatalf("applied = %q, want none", got)
 		}
 	}
-	if got := sessionProvider.appliedFor(ctx, "low-only"); got != "" {
-		t.Fatalf("applied = %q, want none", got)
+	if got := sessionProvider.appliedFor(ctx, "low-only"); got != effortLow {
+		t.Fatalf("applied = %q, want low, the highest level it lists below high", got)
 	}
-	if n := countMessages(diag, "doesn't accept the requested level"); n != 2 {
-		t.Fatalf("drop WARNs = %d, want one per model: %v", n, diag.messages())
+	if !diag.has("lists no effort level at or below the requested one") || !diag.has("doesn't accept the requested level") {
+		t.Fatalf("WARNs don't say the level was dropped and lowered: %v", diag.messages())
+	}
+	if n := countMessages(diag, "reasoning-effort: the model"); n != 2 {
+		t.Fatalf("effort WARNs = %d, want one per model: %v", n, diag.messages())
 	}
 	// Children that inherit the session's level share its narration, however many
 	// child engines are built.
@@ -107,13 +113,13 @@ func TestEffortDropWarnsOnce(t *testing.T) {
 			t.Fatalf("child applied = %q, want none", got)
 		}
 	}
-	if n := countMessages(diag, "doesn't accept the requested level"); n != 3 {
-		t.Fatalf("drop WARNs = %d after three inheriting children, want one more", n)
+	if n := countMessages(diag, "reasoning-effort: the model"); n != 3 {
+		t.Fatalf("effort WARNs = %d after three inheriting children, want one more", n)
 	}
 	other := sessionProvider.requesting(effortHigh, &sync.Map{})
 	other.appliedFor(ctx, "no-effort")
-	if n := countMessages(diag, "doesn't accept the requested level"); n != 4 {
-		t.Fatalf("another session's drop was not narrated: %d WARNs", n)
+	if n := countMessages(diag, "reasoning-effort: the model"); n != 4 {
+		t.Fatalf("another session's change was not narrated: %d WARNs", n)
 	}
 }
 
@@ -131,19 +137,20 @@ func TestEffortChatCompletionsDropNamesTheSetting(t *testing.T) {
 	if got := sessionEffortProvider(reg, providerOpenAI, "chat-model", effortHigh).appliedFor(ctx, "chat-model"); got != "" {
 		t.Fatalf("applied = %q, want none", got)
 	}
-	if !diag.has("a Chat Completions model gets effort only when models.effort_levels lists it") {
+	if !diag.has("the model is on Chat Completions and models.effort_levels doesn't list it") {
 		t.Fatalf("drop WARN doesn't name the setting: %v", diag.messages())
 	}
 	reg.defaultID, reg.defaultModel = providerOpenAI, "chat-model"
 	warnOperatorEffortNotAccepted(ctx, reg, effortHigh)
-	if !diag.has("models.effort_levels doesn't list it") {
+	if !diag.has("the default model is on Chat Completions and models.effort_levels doesn't list it") {
 		t.Fatalf("startup WARN doesn't name the setting: %v", diag.messages())
 	}
 }
 
 // TestProviderEffortLevels pins the provider rules every effort decision reads:
-// the mock never sends effort; a Chat Completions model needs known levels;
-// anything else unknown fails open.
+// the mock never sends effort; a Chat Completions model needs known levels; an
+// unknown model on a capped provider gets at most high; anything else unknown
+// fails open.
 func TestProviderEffortLevels(t *testing.T) {
 	remint := func(string, port.ProviderCapabilities) port.LLMProvider { return mockllm.New() }
 	unknown := effortLevelsResolution{source: effortLevelsUnknown}
@@ -158,14 +165,19 @@ func TestProviderEffortLevels(t *testing.T) {
 		source    effortLevelsSource
 		applied   string
 	}{
-		{"unknown fails open", "gateway", responses, true, unknown, effortLevelsUnknown, effortHigh},
-		{"unregistered provider fails open", "gone", providerEntry{}, false, unknown, effortLevelsUnknown, effortHigh},
+		{"unknown fails open", "gateway", responses, true, unknown, effortLevelsUnknown, effortMax},
+		{"unregistered provider fails open", "gone", providerEntry{}, false, unknown, effortLevelsUnknown, effortMax},
 		{"Chat Completions needs known levels", "opencode", chat, true, unknown, effortLevelsNotConfigured, ""},
 		{"Chat Completions listing that publishes levels", "opencode", chat, true, listed, effortLevelsFromLive, effortHigh},
 		{"the mock never sends effort", providerMock, providerEntry{}, true, listed, effortLevelsNotSent, ""},
+		{"unknown on OpenAI is capped at high", providerOpenAI, responses, true, unknown, effortLevelsCapped, effortHigh},
+		{"unknown on the ToolHive gateway is capped at high", providerToolhive, responses, true, unknown, effortLevelsCapped, effortHigh},
+		{"unknown on OpenRouter is capped at high", providerOpenRouter, responses, true, unknown, effortLevelsCapped, effortHigh},
+		{"unknown on Codex is capped at high", providerOpenAICodex, responses, true, unknown, effortLevelsCapped, effortHigh},
+		{"a capped provider's listed levels decide", providerOpenAI, responses, true, effortLevelsResolution{knownEffortLevels([]string{effortMax}), effortLevelsFromLive}, effortLevelsFromLive, effortMax},
 	} {
 		got := providerEffortLevels(tc.pid, tc.entry, tc.found, tc.own)
-		if applied := appliedEffort(effortHigh, got.effortLevels); got.source != tc.source || applied != tc.applied {
+		if applied := appliedEffort(effortMax, got.effortLevels); got.source != tc.source || applied != tc.applied {
 			t.Errorf("%s: source=%q applied=%q, want %q and %q", tc.name, got.source, applied, tc.source, tc.applied)
 		}
 	}
@@ -180,7 +192,9 @@ func TestAppliedEffort(t *testing.T) {
 	}{
 		{"auto sends nothing", "", listed, ""},
 		{"listed level", effortHigh, listed, effortHigh},
-		{"unlisted level", effortMax, listed, ""},
+		{"above every listed level", effortMax, listed, effortHigh},
+		{"between listed levels", effortMedium, listed, effortLow},
+		{"below every listed level", effortLow, knownEffortLevels([]string{effortMedium, effortHigh}), ""},
 		{"known none", effortHigh, knownEffortLevels(nil), ""},
 		{"unknown fails open", effortMax, effortLevels{}, effortMax},
 	} {
@@ -206,8 +220,8 @@ func TestEffortCrossProviderSubagentInherits(t *testing.T) {
 	if got := wrapped.appliedFor(ctx, "claude-opus-4-7"); got != effortMax {
 		t.Errorf("claude-opus-4-7 applied = %q, want max", got)
 	}
-	if got := wrapped.appliedFor(ctx, "claude-opus-4-5"); got != "" {
-		t.Errorf("claude-opus-4-5 applied = %q, want none (lists low, medium, high)", got)
+	if got := wrapped.appliedFor(ctx, "claude-opus-4-5"); got != effortHigh {
+		t.Errorf("claude-opus-4-5 applied = %q, want high (lists low, medium, high)", got)
 	}
 	if got := sharedEffort(reg, providerAnthropic).requested; got != effortHigh {
 		t.Errorf("shared Anthropic entry requests %q, want the operator default high", got)
@@ -282,19 +296,20 @@ func TestEffortHousekeepingAtAuto(t *testing.T) {
 
 func TestEffortStartupWarnsWhenDefaultModelRefusesOperatorDefault(t *testing.T) {
 	for _, tc := range []struct {
-		model string
-		warns bool
+		pid, model string
+		warning    string
 	}{
-		{"claude-opus-4-5", true},  // lists low, medium, high
-		{"claude-opus-4-7", false}, // lists max
-		{"unknown-model", false},   // unknown fails open
+		{providerAnthropic, "claude-opus-4-5", "the default model doesn't accept the requested level"}, // lists low, medium, high
+		{providerAnthropic, "claude-opus-4-7", ""},                                                     // lists max
+		{providerAnthropic, "unknown-model", ""},                                                       // unknown fails open
+		{providerOpenAI, "unknown-model", "the default model's effort levels are unknown"},             // capped at high
 	} {
 		reg, _ := twoProviderEffortRegistry(effortMax)
 		diag := &recordingDiag{}
-		reg.diag, reg.defaultID, reg.defaultModel = diag, providerAnthropic, tc.model
+		reg.diag, reg.defaultID, reg.defaultModel = diag, tc.pid, tc.model
 		warnOperatorEffortNotAccepted(context.Background(), reg, effortMax)
-		if got := diag.has("doesn't accept the operator default"); got != tc.warns {
-			t.Errorf("%s: startup WARN = %v, want %v", tc.model, got, tc.warns)
+		if got := countMessages(diag, "reasoning-effort:"); (tc.warning == "") != (got == 0) || (tc.warning != "" && !diag.has(tc.warning)) {
+			t.Errorf("%s/%s: startup WARNs = %v, want %q", tc.pid, tc.model, diag.messages(), tc.warning)
 		}
 	}
 }

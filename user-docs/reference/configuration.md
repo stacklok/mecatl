@@ -103,7 +103,7 @@ OPERATOR-TIER reasoning-effort scalar: "" / "auto" (unset — the provider defau
 
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |
-| `reasoning-effort` | `string` | `(empty)` | ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max"). Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN (operator-tier only, for consistency — a project cannot raise the model's reasoning spend). Empty = absent (the resolver returns "" and composition uses the provider default). The composition layer sends the level only to models that accept it; permconfig only reads the scalar. |
+| `reasoning-effort` | `string` | `(empty)` | ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max"). Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier file's reasoning-effort: key is IGNORED with a WARN (operator-tier only, for consistency — a project cannot raise the model's reasoning spend). Empty = absent (the resolver returns "" and composition uses the provider default). The composition layer sends each request the level its model accepts: this one, or the highest the model lists below it; permconfig only reads the scalar. |
 
 ## `plan-mode-auto-approve`
 

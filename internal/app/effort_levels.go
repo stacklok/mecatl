@@ -50,6 +50,9 @@ const (
 	// effortLevelsNotConfigured: a Chat Completions model whose levels nothing
 	// knows; models.effort_levels opts it in.
 	effortLevelsNotConfigured effortLevelsSource = "chat-completions"
+	// effortLevelsCapped: a model whose levels nothing knows, on a provider that
+	// can front models without xhigh or max; it is sent at most high.
+	effortLevelsCapped effortLevelsSource = "capped"
 )
 
 type effortLevelsResolution struct {

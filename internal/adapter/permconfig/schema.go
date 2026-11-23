@@ -187,8 +187,9 @@ type Config struct {
 	// project-tier file's reasoning-effort: key is IGNORED with a WARN
 	// (operator-tier only, for consistency — a project cannot raise the model's
 	// reasoning spend). Empty = absent (the resolver returns "" and composition uses
-	// the provider default). The composition layer sends the level only to models
-	// that accept it; permconfig only reads the scalar.
+	// the provider default). The composition layer sends each request the level
+	// its model accepts: this one, or the highest the model lists below it;
+	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
 	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
 	// #206). Like Posture/ReasoningEffort it is honoured ONLY

@@ -210,33 +210,36 @@ func TestFactoryDropsEffortForModelWithoutLevels(t *testing.T) {
 	if len(*reminted) != 0 {
 		t.Errorf("adapters built = %q, want none", *reminted)
 	}
-	if n := countMessages(rec, "doesn't accept the requested level"); n != 1 {
+	if n := countMessages(rec, "lists no effort level at or below the requested one"); n != 1 {
 		t.Errorf("drop WARNs = %d, want exactly 1; got %v", n, rec.messages())
 	}
 }
 
-// TestFactoryFailsOpenOnUnknownModel: no source knows the model's levels, so the
-// requested level is sent and the provider may refuse it.
-func TestFactoryFailsOpenOnUnknownModel(t *testing.T) {
-	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
-	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
-		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "totally-unknown-model", ReasoningEffort: "high"},
-		nil, server.ProfileDefault, "", session.ModeDefault)
-	if err != nil {
-		t.Fatalf("factory: %v", err)
-	}
-	defer func() { _ = res.Close() }()
-	if res.ReasoningEffort != "high" {
-		t.Errorf("echoed ReasoningEffort = %q, want high (fail-open)", res.ReasoningEffort)
-	}
-	if got := runEffortTurn(t, res); got != "REMINTED:high" || !slices.Equal(*reminted, []string{"high"}) {
-		t.Errorf("turn ran on %q with adapters %q, want the high adapter", got, *reminted)
+// TestFactoryCapsUnknownModelAtHigh: no source knows the model's levels, and
+// OpenAI is a capped provider, so a level up to high is sent as is and xhigh or
+// max is sent as high instead of risking a refused request.
+func TestFactoryCapsUnknownModelAtHigh(t *testing.T) {
+	for _, requested := range []string{"high", "max"} {
+		reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
+		res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
+			server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "totally-unknown-model", ReasoningEffort: requested},
+			nil, server.ProfileDefault, "", session.ModeDefault)
+		if err != nil {
+			t.Fatalf("factory: %v", err)
+		}
+		if res.ReasoningEffort != "high" || res.RequestedReasoningEffort != requested {
+			t.Errorf("%s: effort applied=%q requested=%q, want high/%s", requested, res.ReasoningEffort, res.RequestedReasoningEffort, requested)
+		}
+		if got := runEffortTurn(t, res); got != "REMINTED:high" || !slices.Equal(*reminted, []string{"high"}) {
+			t.Errorf("%s: turn ran on %q with adapters %q, want the high adapter", requested, got, *reminted)
+		}
+		_ = res.Close()
 	}
 }
 
-// TestFactoryDropsUnlistedLevel: gpt-5 lists low, medium and high, so max is no
-// longer lowered to high: it is dropped and the request runs at Auto.
-func TestFactoryDropsUnlistedLevel(t *testing.T) {
+// TestFactoryLowersUnlistedLevel: gpt-5 lists low, medium and high, so max is
+// sent as high, the highest level it lists.
+func TestFactoryLowersUnlistedLevel(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
 	res, err := effortFactory(Config{Model: "gpt-5"}, reg)(context.Background(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "max"},
@@ -245,11 +248,11 @@ func TestFactoryDropsUnlistedLevel(t *testing.T) {
 		t.Fatalf("factory: %v", err)
 	}
 	defer func() { _ = res.Close() }()
-	if res.ReasoningEffort != "" || res.RequestedReasoningEffort != "max" {
-		t.Errorf("effort applied=%q requested=%q, want \"\"/max", res.ReasoningEffort, res.RequestedReasoningEffort)
+	if res.ReasoningEffort != "high" || res.RequestedReasoningEffort != "max" {
+		t.Errorf("effort applied=%q requested=%q, want high/max", res.ReasoningEffort, res.RequestedReasoningEffort)
 	}
-	if got := runEffortTurn(t, res); got != "DEFAULT-REPLY" || len(*reminted) != 0 {
-		t.Errorf("turn ran on %q with adapters %q, want Auto and no adapter built", got, *reminted)
+	if got := runEffortTurn(t, res); got != "REMINTED:high" || !slices.Equal(*reminted, []string{"high"}) {
+		t.Errorf("turn ran on %q with adapters %q, want the high adapter", got, *reminted)
 	}
 }
 

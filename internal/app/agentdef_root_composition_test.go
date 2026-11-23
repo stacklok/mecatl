@@ -388,7 +388,7 @@ func TestAgentDefRootEffectiveProviderOptions(t *testing.T) {
 	}{
 		{name: "no effort levels", requested: " MAX ", levels: knownEffortLevels(nil)},
 		{name: "listed", requested: " MAX ", effective: "max", levels: knownEffortLevels([]string{"low", "max"})},
-		{name: "unlisted", requested: " MAX ", levels: knownEffortLevels([]string{"low", "high"})},
+		{name: "unlisted", requested: " MAX ", effective: "high", levels: knownEffortLevels([]string{"low", "high"})},
 		{name: "capabilities only", requested: "low", effective: "low", levels: knownEffortLevels([]string{"low"})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
