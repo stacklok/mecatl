@@ -448815,6 +448815,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795456135493,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed39a1b64b49347e0394b8eb5d4ce7db246171fc",
+          "message": "feat(identitybroker): declare gateways and the embedded gateway's signing key (#2946)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Jakub Hrozek <jakub@stacklok.com>",
+          "timestamp": "2026-11-23T20:40:21+01:00",
+          "tree_id": "c676b5d5716a3faa7264bc69196079b84138b04f",
+          "url": "https://github.com/stacklok/mecatl/commit/ed39a1b64b49347e0394b8eb5d4ce7db246171fc"
+        },
+        "date": 1795463516707,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13400,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -584285,6 +584324,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795463512994,
+  "lastUpdate": 1795463517863,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
