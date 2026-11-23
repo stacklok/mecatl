@@ -377,8 +377,11 @@ func TestEngineDepsReportAppliedEffort(t *testing.T) {
 	if got := deps.AppliedReasoningEffort("claude-opus-4-7"); got != effortMax {
 		t.Errorf("claude-opus-4-7 applied = %q, want max", got)
 	}
-	if got := deps.AppliedReasoningEffort("claude-opus-4-5"); got != "" {
-		t.Errorf("claude-opus-4-5 applied = %q, want none", got)
+	if got := deps.AppliedReasoningEffort("claude-opus-4-5"); got != effortHigh {
+		t.Errorf("claude-opus-4-5 applied = %q, want high, the highest level it lists", got)
+	}
+	if got := deps.AppliedReasoningEffort("claude-haiku-4-5"); got != "" {
+		t.Errorf("claude-haiku-4-5 applied = %q, want none: the catalog lists no effort", got)
 	}
 	for name, provider := range map[string]port.LLMProvider{"housekeeping": atAuto(sessionProvider), "mock": mockllm.New()} {
 		deps := engineDepsForProvider(Config{}, provider, session.ProviderModelID{ProviderID: providerAnthropic, ModelID: "claude-opus-4-7"}, func() int { return 128000 },
