@@ -845,7 +845,7 @@ func newNoFSClassifiedChildCatalog(ctx context.Context, cfg Config, a catalogAss
 // memory tools; the MCP and gateway tools follow def's server references and
 // exclusions. So the definition narrows the member the same way either way.
 // The returned func closes def's inline MCP servers; it may be nil.
-func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAssets, def agents.AgentDef, mainMgr *mcp.Manager) (*classifiedCatalog, func() error) {
+func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAssets, member string, def agents.AgentDef, mainMgr *mcp.Manager) (*classifiedCatalog, func() error) {
 	base, baseAssets := cfg, a
 	base.helperTools, baseAssets.globalMgr = nil, nil
 	generic := newNoFSClassifiedChildCatalog(ctx, base, baseAssets)
@@ -857,9 +857,21 @@ func newNoFSDefinedMemberCatalog(ctx context.Context, cfg Config, a catalogAsset
 	// No filesystem means nothing here mutates a workspace, so the
 	// memory writers stay allowed and there is no shell to withhold.
 	names, diags := scopedToolNamesMode(def, available, true, false, "")
+	// Filesystem tools named in `tools` do not exist without a filesystem; that
+	// is the profile working as designed, not a typo, so it logs at Debug.
+	fsTools := map[string]struct{}{tool.ShellToolName: {}}
+	for _, t := range tools.All() {
+		if _, ok := available[t.Spec().Name]; !ok {
+			fsTools[t.Spec().Name] = struct{}{}
+		}
+	}
 	for _, d := range diags {
-		cfg.diag().Log(ctx, port.LevelWarn, "no-FS team member agent def tool scoping",
-			"agent", def.Name, "tool", d.tool, "reason", d.reason)
+		level := port.LevelWarn
+		if _, fs := fsTools[d.tool]; fs {
+			level = port.LevelDebug
+		}
+		cfg.diag().Log(ctx, level, "no-FS team member agent def tool scoping",
+			"member", member, "agent", def.Name, "tool", d.tool, "reason", d.reason)
 	}
 	for _, name := range names {
 		entry := generic.entries[name]

@@ -8480,7 +8480,8 @@ func modelCfgFor(cfg Config, model string) Config {
 // (memory six + WebFetch + global MCP) + the team coordination tools, with the
 // noFSMemberNote prompt posture and no cwd/shell/git in its <env>. A member
 // that names a def keeps to the def's tool limit (newNoFSDefinedMemberCatalog:
-// its exclusions, its own MCP servers, its servers' gateway tools) and reports
+// its `tools` allowlist, its exclusions, its own MCP servers, its servers'
+// gateway tools) and reports
 // the def, so the identity broker checks the same limit; the rest of the def
 // (prompt, model, hooks) stays file-oriented and is SKIPPED, the same rationale
 // as buildNoFSSubagentTool, and the member resolves its model through the
@@ -8533,15 +8534,15 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 			}
 			// A member that names a definition keeps to its tool limit even
 			// without a filesystem: its catalog follows the definition's
-			// exclusions and MCP servers, and it reports the definition, so the
-			// identity broker checks its calls against the same limit. The rest
-			// of the definition (prompt, model, hooks) stays file-oriented and
-			// is not applied here.
+			// `tools` allowlist, exclusions and MCP servers, and it reports the
+			// definition, so the identity broker checks its calls against the
+			// same limit. The rest of the definition (prompt, model, hooks)
+			// stays file-oriented and is not applied here.
 			var classified *classifiedCatalog
 			var defClose func() error
 			var definitionName string
 			if def, defined := lookupMemberDef(cfg.diag(), reg, spec); defined {
-				classified, defClose = newNoFSDefinedMemberCatalog(context.Background(), cfg, a, def, mainMgr)
+				classified, defClose = newNoFSDefinedMemberCatalog(context.Background(), cfg, a, spec.Name, def, mainMgr)
 				definitionName = def.Name
 			} else {
 				classified = newNoFSClassifiedChildCatalog(context.Background(), cfg, a)

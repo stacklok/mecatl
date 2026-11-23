@@ -252,9 +252,6 @@ func TestNoFSDefinedMemberKeepsToItsToolLimit(t *testing.T) {
 func TestNoFSDefinedMemberCloseWithoutGeneration(t *testing.T) {
 	a := noFSTeamAssets(t)
 	cfg := Config{Model: "mock", Diagnostics: port.NopDiagnostics{}}
-	if _, ok := cfg.harnessInstructions.(generationInstructions); ok {
-		t.Fatal("test needs non-generation harness instructions")
-	}
 	def := agents.AgentDef{
 		Name:        "inline",
 		Description: "a member that opens its own MCP server",
@@ -283,7 +280,7 @@ func TestNoFSDefinedMemberHonoursToolsAllowlist(t *testing.T) {
 	cfg.helperTools = []tool.Tool{countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &calls}}
 	limited := agents.AgentDef{
 		Name:        "limited",
-		Description: "a member limited to one core tool",
+		Description: "a member limited to Remember (Read is not a file-less tool)",
 		Tools:       []string{"Remember", "Read"},
 		MCPServers:  []agents.AgentMCPServer{{Name: "calendar"}},
 	}
