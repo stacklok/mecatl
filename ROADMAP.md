@@ -14,8 +14,8 @@ or useful on its own, though, so the work runs across five themes:
   unrestricted access.
 - **Dependable, long-running work:** make agent work something teams can
   operate, not babysit.
-- **Collaboration where work happens:** make agents useful to teams, not just
-  to one person at a terminal.
+- **Where you work:** bring agents to the tools people already use, from the
+  terminal to team chat.
 - **An open foundation:** make Mecatl easy to build on and integrate with.
 
 The roadmap is grouped as Done, Now, Soon and Later. These describe direction,
@@ -23,6 +23,17 @@ not delivery dates or commitments, and current focus changes as we learn. For
 what Mecatl supports today, see
 [What is a cloud-native harness?](./user-docs/cloud-native-harness.md) and the
 [Mecatl documentation](https://mecatl.dev/docs/).
+
+A few terms used below:
+
+- **`mecak8s`:** the Mecatl server for Kubernetes, which runs many users' agent
+  sessions.
+- **Agent host:** the server process that runs the agent loop and talks to the
+  model.
+- **Gateway:** the MCP gateway that agents call tools through. It holds users'
+  credentials for outside services, so the agent host never sees them.
+- **Identity broker:** the component that issues and checks agent identities,
+  and decides what each agent may call.
 
 ## Done
 
@@ -32,7 +43,7 @@ developers can build on Mecatl.
 
 ### Identity and accountability
 
-- **Every action belongs to a signed-in user.** When the operator connects an
+- **Signed-in users whose work stays theirs.** When the operator connects an
   OIDC identity provider, users sign in through it and the server validates
   their token on every request. Each session, schedule and memory store then
   belongs to the user who created it, and another user's session or schedule
@@ -49,24 +60,25 @@ developers can build on Mecatl.
   strictly paths outside it are gated, from asking for approval to allowing
   reads.
 - **Untrusted text is labeled as data.** Web pages, search results and output
-  from other agents reach the model inside fences that mark them as untrusted
-  data, not instructions.
+  from other agents reach the model wrapped in markers that identify them as
+  untrusted data, not instructions.
 - **Isolation to match the task.** Sessions can run with no file access or
-  shell at all.
+  shell at all, and locally they can run in an opt-in microVM.
 
 ### Dependable, long-running work
 
-- **Run it like any other service.** mecak8s ships as a Helm chart, and each
-  release's image and chart are signed. Operators can turn on metrics and
-  traces for runs, tool calls and token use.
-- **Work survives restarts and crashes.** With the Redis store, sessions live
-  outside the pod, so a restart or pod move keeps their history and pending
-  approvals.
+- **Run it like any other service.** `mecak8s` ships as a Helm chart, and each
+  release's image and chart are signed. It runs across several replicas, and
+  operators can turn on metrics and traces for runs, tool calls and token use.
+- **Sessions survive restarts and crashes.** With the Redis store, sessions
+  live outside the pod, so a restart or pod move keeps their history and
+  pending approvals.
 - **Agents work on a schedule.** Users schedule a prompt to run on a cron
   schedule or once, from chat, the terminal or the API. Schedules survive
-  restarts, and each slot fires at most once however many replicas run.
+  restarts, and each scheduled run fires at most once, however many replicas
+  are running.
 
-### Collaboration where work happens
+### Where you work
 
 - **Agents remember, and learn only with approval.** Each user has a personal
   memory that agents read and add to, and each project workspace has one too.
@@ -89,8 +101,8 @@ developers can build on Mecatl.
 
 ## Now
 
-Agents with their own identities and derived authority, safe execution, and
-sessions that survive restarts.
+Agents with their own identities and derived authority, isolated execution, and
+sessions that resume safely in the middle of an action.
 
 ### Identity and accountability
 
@@ -101,22 +113,22 @@ sessions that survive restarts.
   credentials stay at the gateway and never reach the agent host or the model.
   Closing the session cuts off access.
 - **Every agent gets its own identity.** Mecatl gives each agent its own SPIFFE
-  identity that other systems can verify. The identity broker ties it to the
-  session, the agent that started it, and the user, so every action names the
-  agent that took it. Subagents get their own identities, linked to the agent
-  that started them.
+  identity (an open standard for workload identity) that other systems can
+  verify. The identity broker ties it to the session, the agent that started
+  it, and the user, so every action names the agent that took it. Subagents get
+  their own identities, linked to the agent that started them.
 - **An attributed audit trail.** Every authorization decision and gateway tool
   call is recorded and can be traced to the agent, the agents that started it,
-  the session, and the user, including unattended runs. Outcomes the agent host
-  only reports are marked as reported, and an unknown result is recorded as
-  unknown. Records carry the agent, session and user identifiers, so they can
-  be matched to the session transcript, and go to storage the agent host can't
-  change.
+  the session, and the user, including unattended runs. When a result is known
+  only from the agent host's own report, the record says so, and a result that
+  can't be known is recorded as unknown. Records carry the agent, session and
+  user identifiers, so they can be matched to the session transcript, and go to
+  storage the agent host can't change.
 
 ### Bounded autonomy
 
-- **Isolated execution.** Shell commands and file edits run in a separate
-  executor that holds only the access it's granted, not cluster-wide
+- **Isolated execution on Kubernetes.** Shell commands and file edits run in a
+  separate executor that holds only the access it's granted, not cluster-wide
   privileges.
 - **Per-agent tool limits and call-bound tokens.** Each agent's tool limit
   comes from its definition, narrowed by the agent that started it, and a call
@@ -126,14 +138,15 @@ sessions that survive restarts.
 
 ### Dependable, long-running work
 
-- **Durable sessions.** Sessions survive restarts, pod moves and crashes. When
-  a session resumes, actions that may already have happened, like a command or
-  API call, are handled rather than blindly repeated.
+- **Resuming without repeating work.** Sessions already keep their history
+  across restarts. This work makes it safe to resume in the middle of an
+  action: a command or API call that may already have happened is reconciled
+  rather than blindly run again.
 - **Scheduled agents with their own identity.** A recurring job, such as a
   nightly review, runs unattended on a time-limited grant from the user who
   scheduled it. The user's provider credentials stay at the gateway.
 
-### Collaboration where work happens
+### Where you work
 
 - **A terminal that keeps up with long sessions.** The terminal UI keeps memory
   and CPU flat in long sessions, and large lists such as MCP tools and
@@ -141,13 +154,15 @@ sessions that survive restarts.
 
 ## Soon
 
-Production hardening for identity, stronger isolation, and agents in Slack.
+Production hardening for identity, stronger isolation on Kubernetes, and agents
+in Slack.
 
 ### Identity and accountability
 
-- **Identity that survives restarts and scales out.** Identity state is
-  durable, so a restart no longer signs users out, and mecak8s runs more than
-  one replica with identity on.
+- **Identity that survives restarts and scales out.** The new identity flow
+  currently keeps its state in memory and runs on one replica. Its state
+  becomes durable, so a restart no longer signs users out, and `mecak8s` runs
+  more than one replica with identity turned on.
 - **The identity broker as its own service.** The broker moves out of mecak8s
   with its signing keys, refresh tokens and audit records, so a compromised
   agent host can't use them. Records come from the components that make each
@@ -160,8 +175,9 @@ Production hardening for identity, stronger isolation, and agents in Slack.
 
 ### Bounded autonomy
 
-- **MicroVM isolation for untrusted work.** Sessions can run in lightweight
-  virtual machines with their own kernel when containers aren't enough.
+- **MicroVM isolation on Kubernetes.** Sessions on the shared executor can run
+  in lightweight virtual machines with their own kernel when containers aren't
+  enough, as local sessions already can.
 - **Sign-out and revocation that reach every agent.** Signing out everywhere
   ends the user's sessions and schedule grants, and an account the company
   identity provider disables loses access at the next check.
@@ -169,16 +185,17 @@ Production hardening for identity, stronger isolation, and agents in Slack.
   from sources the operator controls and records where each came from and
   which version was used. A session's definitions can't change once selected,
   and the operator decides which definitions may start a session, which caps
-  what any agent in it can reach. Tool limits become reviewable Cedar policy
-  tied to the exact definition version.
+  what any agent in it can reach. Tool limits become Cedar policy, a readable
+  policy language security teams can review, tied to the exact definition
+  version.
 
 ### Dependable, long-running work
 
-- **Kubernetes-native operations.** Graceful handoff with no user-facing
-  downtime, and well-tested crash recovery that tells users and agents
-  honestly what happened.
+- **Pod replacement without downtime.** Pods can be drained and replaced with
+  no user-facing interruption. After a crash, users and agents are told which
+  work finished, which didn't, and which is unknown.
 
-### Collaboration where work happens
+### Where you work
 
 - **Agents in Slack.** Mention an agent and it works in the thread, within a
   spend budget, and picks up where it left off after restarts.
@@ -186,8 +203,9 @@ Production hardening for identity, stronger isolation, and agents in Slack.
 ### An open foundation
 
 - **SDK testkit.** A fake server lets apps built on the SDK be tested offline.
-- **Kernel architecture.** A minimal core agent loop with well-defined
-  extension points, with many core features refactored as extensions.
+- **A smaller core with more extension points.** A minimal core agent loop with
+  well-defined extension points, so developers can add or replace behavior
+  without forking, and many built-in features become extensions themselves.
 
 ## Later
 
@@ -204,19 +222,16 @@ together.
 
 - **Confidentiality across delegation.** A sensitivity label follows data into
   every delegated agent, and sharing work becomes an explicit act.
+- **Direct tool-to-tool data exchange.** Tools pass data to each other through
+  narrowly scoped grants instead of routing it through the model's context.
+  This saves tokens and limits data exposure.
 
-### Collaboration where work happens
+### Where you work
 
 - **Multiplayer sessions.** Several people work with the same agents in one
   session, with shared controls and a clear record of who asked for what.
 - **Studio web workspace.** A browser workspace for teams, with chat, agent
   mentions and commands, alongside the terminal.
-
-### An open foundation
-
-- **Direct tool-to-tool data exchange.** Tools pass data to each other through
-  narrowly scoped grants instead of routing it through the model's context.
-  This saves tokens and limits data exposure.
 
 ## Being explored
 
@@ -226,4 +241,4 @@ Not scheduled, and may not happen in this form.
   user → agent → helper delegation chain themselves; provenance for agent
   definitions, prompts and skills; extending authorization and audit beyond
   MCP tool calls to file tools, shell and agent spawning.
-- **Collaboration where work happens:** desktop and mobile clients.
+- **Where you work:** desktop and mobile clients.
