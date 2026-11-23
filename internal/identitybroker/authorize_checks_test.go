@@ -82,6 +82,7 @@ func TestNewRefusesAnInvalidGateway(t *testing.T) {
 		"a dotted server":        {Servers: []string{"github", "github.ent"}},
 		"a double underscore":    {Servers: []string{"github__ent"}},
 		"a hyphenated server":    {Servers: []string{"git-hub"}},
+		"a non-ASCII letter":     {Servers: []string{"gíthub"}},
 		"a repeat":               {Servers: []string{"github", "calendar", "github"}},
 		"an AS-2 issuer only":    {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer}},
 		"an AS-2 without a port": {Servers: []string{"github"}, AS2: identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource}},
