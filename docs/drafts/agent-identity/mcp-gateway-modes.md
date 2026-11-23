@@ -71,6 +71,7 @@ In external mode, the gateway administrator configures AS-2 with:
 - the `mecatl` OAuth client, with the broker's public key registered as an inline JWKS for `private_key_jwt`, and registered again when the key rotates;
 - the consent-link flow and its revocation in the gateway UI;
 - permitted actors and allowed vMCP resources;
+- processing of the call entry (`authorization_details`) and the per-call check at the vMCP, which Mecatl's tool calls need before it calls that gateway;
 - ID-JAG lifetime, and single use for AS-1's issuer (recommended; Mecatl never re-submits an ID-JAG).
 
 Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent trust domain and audience, and the allowed AS-2 targets. Embedded mode uses the same roles and checks with local configuration, and AS-2 trusts AS-1 as an ID-JAG issuer, and both sign users in through the same company IdP. Co-location does not create isolation.
@@ -91,14 +92,14 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.4 states, becaus
 
 - **Revocation.** Sign-out and account revocation are covered in [credentials and lifecycle](credentials-and-lifecycle.md#sign-out-and-revocation). Issued ID-JAGs and access tokens are not revoked; they expire.
 - **Structured gateway outcomes.** A missing provider connection ("needs authorization") is reported with MCP URL-mode elicitation by every gateway. How an external gateway's AS-2 reports "consent required" as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
-- **Gateway authorization on `act`**, such as Cedar policies that consider the acting agent. Until the agent ceiling is carried in the ID-JAG and `V` as scope or `authorization_details` (RFC 9396), the broker alone enforces it; the gateway enforces user and connection.
+- **Gateway authorization on `act`**, such as Cedar policies that consider the acting agent. The long-term plan is for AS-1 to write the instance's effective ceiling into the ID-JAG as scope or RFC 9396 `authorization_details`, for AS-2 to carry it into `V`, and for the gateway to enforce it as a second check. The broker enforces the ceiling; the gateway enforces user and connection.
 
 ## Integration requirements and evidence limits
 
 AS-1 must accept `RT-A42` as `subject_token` and the registered agent-instance JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks that the grant is not revoked and has not expired, re-checks the user's upstream refresh token when due, has the broker's actor-token validator check the SVID and that the owner of the instance's session equals the grant's `sub_id`, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque SPIFFE ID, with `act.iss` set to the agent trust domain.
 
-AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, apply the issuer's ID-JAG reuse policy, and resolve the native user: directly in embedded mode, and only for an approved user in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unapproved subjects fail closed.
+AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, apply the issuer's ID-JAG reuse policy, and resolve the native user: directly in embedded mode, and only for an approved user in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. It must process the signed `authorization_details` claim: copy the granted entries into the token, only narrow them, refuse an empty grant or an unknown type, and refuse a redemption that still carries the parameter. Unresolved or unapproved subjects fail closed.
 
-The vMCP must validate `V`, bind its session to `iss`, `sub`, `client_id`, `act.iss`, `act.sub`, and the delegated-access marker, and load provider credentials only for a marked `V`, keyed by (gateway, native user, routed provider). Do not add a callback or response fields that expose AS-2's private native mappings to the broker. The design does not claim a backend-to-SaaS audit trail.
+The vMCP must validate `V`, bind its session to `iss`, `sub`, `client_id`, `act.iss`, `act.sub`, and the delegated-access marker, and load provider credentials only for a marked `V`, keyed by (gateway, native user, routed provider). For tokens from client `mecatl` it must also enforce that a `V` serves only the call its `authorization_details` entry names, and only once. Do not add a callback or response fields that expose AS-2's private native mappings to the broker. The design does not claim a backend-to-SaaS audit trail.
 
 Embedded and external deployments implement the same protocol roles and token formats. Embedded wiring uses local configuration, separate issuer keys and storage namespaces, and implicit consent; external wiring uses gateway-administrator trust and the consent link. Co-location is not isolation.

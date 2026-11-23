@@ -28,7 +28,7 @@ AS-1 and AS-2 must produce the records above, following the [AuditEvent profile]
 
 ## AuditEvent profile
 
-Every component records evidence as a [toolhive-core](https://github.com/stacklok/toolhive-core/tree/main/audit) `audit.AuditEvent`, so that Mecatl and ToolHive records can be joined in one investigation. This profile says what Mecatl puts in each field. Where toolhive-core does not yet define a convention, Mecatl uses namespaced `mecatl.` keys in `Metadata.Extra` until the shared conventions in toolhive-core [#341](https://github.com/stacklok/toolhive-core/issues/341) and [#342](https://github.com/stacklok/toolhive-core/issues/342) land.
+Every component records evidence as a [toolhive-core](https://github.com/stacklok/toolhive-core/tree/main/audit) `audit.AuditEvent`, so that Mecatl and ToolHive records can be joined in one investigation. This profile says what Mecatl puts in each field. Where toolhive-core does not yet define a convention, Mecatl uses namespaced `mecatl.` keys in `Metadata.Extra`; the shared conventions in toolhive-core are tracked in [#341](https://github.com/stacklok/toolhive-core/issues/341) and [#342](https://github.com/stacklok/toolhive-core/issues/342).
 
 | Question | Field | Content |
 | --- | --- | --- |
