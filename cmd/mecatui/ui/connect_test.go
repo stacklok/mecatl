@@ -22,7 +22,12 @@ func (f fakeConnect) ListConnectTargets(context.Context) ([]ConnectTarget, error
 }
 
 func newConnectModel(targets []ConnectTarget) Model {
-	m := New(Deps{Connect: fakeConnect{targets: targets}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
+	m := newTestModelFromDeps(Deps{
+		Connect:     fakeConnect{targets: targets},
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
 	m.phase = phaseIdle
 	return applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 40})
 }
@@ -119,7 +124,15 @@ func TestConnectListFailureIsSanitized(t *testing.T) {
 }
 
 func TestReauthenticateIntentCarriesNoBrowserState(t *testing.T) {
-	m := New(Deps{Connect: fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}}, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true, ConnectOpen: true, ConnectReason: client.AuthSessionExpired, ConnectTarget: "remote.example:443"})
+	m := newTestModelFromDeps(Deps{
+		Connect:       fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
+		Theme:         theme.New("aztec", theme.AztecPalette()),
+		Ctx:           context.Background(),
+		NoAltScreen:   true,
+		ConnectOpen:   true,
+		ConnectReason: client.AuthSessionExpired,
+		ConnectTarget: "remote.example:443",
+	})
 	m = applyAll(m, m.Init()(), tea.WindowSizeMsg{Width: 120, Height: 40}, tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEnter})
 	intent, ok := m.ConnectRestartIntent()
 	if !ok || intent.Action != Reauthenticate {
