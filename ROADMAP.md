@@ -18,8 +18,9 @@ or useful on its own, though, so the work runs across five themes:
   terminal to team chat.
 - **An open foundation:** make Mecatl easy to build on and integrate with.
 
-The roadmap is grouped as Done, Now, Soon and Later. These describe direction,
-not delivery dates or commitments, and current focus changes as we learn. For
+The roadmap is grouped as Done (shipped), Now (in progress), Soon (next) and
+Later (further out). These describe direction, not delivery dates or
+commitments, and current focus changes as we learn. For
 what Mecatl supports today, see
 [What is a cloud-native harness?](./user-docs/cloud-native-harness.md) and the
 [Mecatl documentation](https://mecatl.dev/docs/).
@@ -98,14 +99,16 @@ developers can build on Mecatl.
 
 - **Build apps on Mecatl.** A TypeScript SDK on npm lets apps start sessions,
   stream runs and answer approvals. Clients check what a server supports before
-  they use a feature, and errors carry stable codes.
+  they use a feature, and errors carry stable codes. See the
+  [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/).
 - **Embed the engine in Go.** The engine, each model provider, and the session
   storage adapters are separate Go modules, so a Go application can use the
-  same parts Mecatl does.
+  same parts Mecatl does. See the
+  [embedding guide](https://mecatl.dev/docs/building/embed-engine).
 
 ## Now
 
-Agents with their own identities and derived authority, isolated execution, and
+In progress: agents with their own identities and derived authority, isolated execution, and
 session history that supports inspection and safe recovery.
 
 ### Identity and accountability
@@ -147,10 +150,11 @@ session history that supports inspection and safe recovery.
   session state after an interruption and distinguish known outcomes from
   actions whose effects are uncertain. A command or API call that may already
   have happened isn't automatically run again.
-- **History that explains the work.** Retain the instructions, context, tool
-  definitions, and model interactions behind an action, even after
-  configuration changes. Reducing the model's working context doesn't erase
-  the retained conversation and activity.
+- **History that explains the work.** Mecatl keeps the instructions, context,
+  tool definitions and model calls behind each action, so you can later see
+  why an agent did what it did, even after its configuration has changed. When
+  older turns are summarized to fit the model's context window, the full
+  conversation and tool activity are still kept.
 - **Scheduled agents with their own identity.** A recurring job, such as a
   nightly review, runs unattended on a time-limited grant from the user who
   scheduled it. The user's provider credentials stay at the gateway.
