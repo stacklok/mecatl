@@ -115,8 +115,8 @@ func TestResolvedModelRequestedEffort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if rm := resp.GetSession().GetResolvedModel(); rm.GetReasoningEffort() != "" || rm.GetRequestedReasoningEffort() != "max" {
-		t.Fatalf("gRPC resolved_model applied=%q requested=%q, want none/max", rm.GetReasoningEffort(), rm.GetRequestedReasoningEffort())
+	if rm := resp.GetSession().GetResolvedModel(); rm.GetReasoningEffort() != "xhigh" || rm.GetRequestedReasoningEffort() != "max" {
+		t.Fatalf("gRPC resolved_model applied=%q requested=%q, want xhigh/max", rm.GetReasoningEffort(), rm.GetRequestedReasoningEffort())
 	}
 
 	srv := httptest.NewServer(server.NewHTTPHandler(built.Service))
@@ -135,8 +135,8 @@ func TestResolvedModelRequestedEffort(t *testing.T) {
 	if err := json.NewDecoder(httpResp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode session: %v", err)
 	}
-	if body.ResolvedModel.ReasoningEffort != "" || body.ResolvedModel.RequestedReasoningEffort != "max" {
-		t.Fatalf("HTTP resolved_model = %+v, want none/max", body.ResolvedModel)
+	if body.ResolvedModel.ReasoningEffort != "xhigh" || body.ResolvedModel.RequestedReasoningEffort != "max" {
+		t.Fatalf("HTTP resolved_model = %+v, want xhigh/max", body.ResolvedModel)
 	}
 }
 
@@ -168,6 +168,7 @@ func TestPublishedEffortLevelsMatchTheRequestPath(t *testing.T) {
 		{"chat", "chat-model", true, nil},
 		{providerOpenAI, "gpt-5", true, []string{effortLow, effortMedium, effortHigh}},
 		{providerAnthropic, "unknown-model", false, nil},
+		{providerOpenAI, "unknown-model", true, []string{effortLow, effortMedium, effortHigh}}, // capped
 	} {
 		published := publishedEffortLevels(reg, Config{}, reg.meta.current(), tc.pid, tc.model)
 		if published.known != tc.known || !slices.Equal(published.levels, tc.levels) {

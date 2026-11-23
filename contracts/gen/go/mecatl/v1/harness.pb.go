@@ -1048,9 +1048,10 @@ type CreateSessionRequest struct {
 	//     operator default (and ultimately the provider default) applies.
 	//   - "low" / "medium" / "high" / "xhigh" / "max": the neutral effort tiers.
 	//
-	// The server NORMALISES and per-provider CLAMPS the value (OpenAI supports
-	// low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all
-	// five) and CAPABILITY-GATES it (a model with no reasoning support drops it).
+	// The server NORMALISES the value and sends each request the level its model
+	// accepts: the requested level when the model lists it or its levels are
+	// unknown, otherwise the highest level the model lists below it, or none (see
+	// ModelInfo.effort_levels).
 	// An unknown value falls back to the operator default with a WARN (it never
 	// 400s the request). It OUT-RANKS the operator default and is meaningful WITHOUT
 	// a provider_id (it rides the resolved provider). The
@@ -2632,9 +2633,10 @@ type ResolvedModel struct {
 	// reasoning_effort is the EFFECTIVE reasoning-effort tier requests for this
 	// session's model carry, enum-as-string (the same neutral vocabulary as
 	// CreateSessionRequest.reasoning_effort, NO proto enum): "" when none is sent
-	// (Auto, or the model doesn't accept the requested level, so the provider
-	// default applies), else that level. The client renders it (e.g. in the model
-	// footer) and never recomputes it.
+	// (Auto, or the model lists no level at or below the requested one, so the
+	// provider default applies), else that level, which is lower than the
+	// requested one when the model doesn't list it. The client renders it (e.g.
+	// in the model footer) and never recomputes it.
 	ReasoningEffort string `protobuf:"bytes,4,opt,name=reasoning_effort,json=reasoningEffort,proto3" json:"reasoning_effort,omitempty"`
 	// requested_reasoning_effort is the level the session asks for, normalised: ""
 	// for Auto, else a level, with the server default applied when the session
@@ -14372,16 +14374,19 @@ type ModelInfo struct {
 	// implicit cacher may cache regardless. Additive: an older client reads false.
 	PromptCached bool `protobuf:"varint,7,opt,name=prompt_cached,json=promptCached,proto3" json:"prompt_cached,omitempty"`
 	// effort_levels are the reasoning-effort levels a session on this model sends,
-	// from low, medium, high, xhigh and max, in that order. Meaningful only when
-	// effort_levels_known is true; then an empty list means the model gets no
-	// effort. Additive (feature model_effort_levels): a server without the feature
+	// from low, medium, high, xhigh and max, in that order. A requested level the
+	// list lacks is sent as the highest listed level below it, or not at all.
+	// Meaningful only when effort_levels_known is true; then an empty list means
+	// the model gets no effort. Additive (feature model_effort_levels): a server without the feature
 	// leaves both fields unset, so a client must check the feature before reading
 	// an empty list as "no effort".
 	EffortLevels []string `protobuf:"bytes,8,rep,name=effort_levels,json=effortLevels,proto3" json:"effort_levels,omitempty"`
-	// effort_levels_known is true when the server knows which levels the model
-	// accepts (from the operator's models.effort_levels, the live listing, or the
-	// catalog). False means unknown: a requested level is sent and the provider
-	// may refuse it.
+	// effort_levels_known is true when requests for the model are decided against
+	// effort_levels: the levels the operator's models.effort_levels, the live
+	// listing, or the catalog give, or a provider rule (no effort for an
+	// unconfigured Chat Completions model; low, medium and high for an unknown
+	// model on openai, openai-codex, openrouter and toolhive). False means
+	// unknown: a requested level is sent and the provider may refuse it.
 	EffortLevelsKnown bool `protobuf:"varint,9,opt,name=effort_levels_known,json=effortLevelsKnown,proto3" json:"effort_levels_known,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
