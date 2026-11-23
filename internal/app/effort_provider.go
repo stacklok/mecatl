@@ -127,12 +127,13 @@ func effortChangeMessage(subject, applied string, source effortLevelsSource) str
 }
 
 // appliedEffortReporter returns the engine's AppliedReasoningEffort for a
-// provider: what an effort-wrapped provider sends each model, or nil for a
-// provider that doesn't decide effort per request.
+// provider: what an effort-wrapped provider sends each model. Composition wraps
+// every provider that can send effort, so any other provider it hands an engine
+// (the Auto adapter housekeeping runs on, the mock) sends none.
 func appliedEffortReporter(provider port.LLMProvider) func(model string) string {
 	wrapped, ok := provider.(*effortProvider)
 	if !ok {
-		return nil
+		return func(string) string { return "" }
 	}
 	return func(model string) string {
 		applied, _, _ := wrapped.resolve(model)

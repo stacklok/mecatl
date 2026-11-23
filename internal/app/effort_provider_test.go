@@ -364,8 +364,8 @@ func TestAwaitRunEffortLevelsOnlyForAnOperatorDefault(t *testing.T) {
 }
 
 // TestEngineDepsReportAppliedEffort: an engine over an effort-wrapped provider
-// reports what each model is sent, for its request manifests; any other provider
-// reports nothing.
+// reports what each model is sent, for its request manifests; an engine on the
+// Auto adapter (housekeeping) or the mock reports none.
 func TestEngineDepsReportAppliedEffort(t *testing.T) {
 	reg, _ := twoProviderEffortRegistry("")
 	sessionProvider := sessionEffortProvider(reg, providerAnthropic, "claude-opus-4-7", effortMax)
@@ -380,9 +380,14 @@ func TestEngineDepsReportAppliedEffort(t *testing.T) {
 	if got := deps.AppliedReasoningEffort("claude-opus-4-5"); got != "" {
 		t.Errorf("claude-opus-4-5 applied = %q, want none", got)
 	}
-	plain := engineDepsForProvider(Config{}, mockllm.New(), session.ProviderModelID{ProviderID: providerMock, ModelID: "m"}, func() int { return 128000 },
-		memstore.New(), permpolicy.NewPolicy(nil, nil), hookexec.New(nil), nil, prompt.NewMultiAssembler())
-	if plain.AppliedReasoningEffort != nil {
-		t.Error("a provider that doesn't decide effort reports one")
+	for name, provider := range map[string]port.LLMProvider{"housekeeping": atAuto(sessionProvider), "mock": mockllm.New()} {
+		deps := engineDepsForProvider(Config{}, provider, session.ProviderModelID{ProviderID: providerAnthropic, ModelID: "claude-opus-4-7"}, func() int { return 128000 },
+			memstore.New(), permpolicy.NewPolicy(nil, nil), hookexec.New(nil), nil, prompt.NewMultiAssembler())
+		if deps.AppliedReasoningEffort == nil {
+			t.Fatalf("%s: the engine reports no applied effort, so its manifests omit it", name)
+		}
+		if got := deps.AppliedReasoningEffort("claude-opus-4-7"); got != "" {
+			t.Errorf("%s: applied = %q, want none", name, got)
+		}
 	}
 }
