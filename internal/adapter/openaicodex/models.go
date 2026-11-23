@@ -135,10 +135,6 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 	return models, nil
 }
 
-// validModelID treats the entitlement slug as an opaque identifier. A valid
-// slug is returned byte-for-byte; a slug that would require trimming,
-// sanitization, or truncation is rejected instead of silently becoming a
-// different model id.
 // reasoningEfforts reads the effort token from each supported_reasoning_levels
 // entry, skipping entries without one.
 func reasoningEfforts(levels *[]json.RawMessage) []string {
@@ -157,6 +153,10 @@ func reasoningEfforts(levels *[]json.RawMessage) []string {
 	return out
 }
 
+// validModelID treats the entitlement slug as an opaque identifier. A valid
+// slug is returned byte-for-byte; a slug that would require trimming,
+// sanitization, or truncation is rejected instead of silently becoming a
+// different model id.
 func validModelID(value string) bool {
 	return value != "" &&
 		utf8.RuneCountInString(value) <= maxModelIDRunes &&

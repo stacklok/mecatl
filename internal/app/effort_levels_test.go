@@ -55,7 +55,8 @@ func TestModelEffortLevelsPrecedence(t *testing.T) {
 			{ID: "claude-opus-4-7", Effort: knownEffortLevels(nil)},
 			{ID: "claude-haiku-4-5"},
 		}},
-		providerToolhive: {observations: []modelEntry{{ID: "gateway-only"}}},
+		providerToolhive:   {observations: []modelEntry{{ID: "gateway-only"}}},
+		providerOpenRouter: {observations: []modelEntry{{ID: "anthropic/claude-sonnet-4.5", Reasoning: true}}},
 	}}
 	cfg := Config{effortLevels: map[string]map[string][]string{
 		providerAnthropic: {"claude-opus-4-5": {"max", "high"}, "claude-sonnet-4-5": {}},
@@ -74,6 +75,13 @@ func TestModelEffortLevelsPrecedence(t *testing.T) {
 		{"gateway Anthropic route reads the Anthropic catalog", providerToolhiveAnthropic, "claude-opus-4-5", effortLevelsFromCatalog, true, []string{"low", "medium", "high"}},
 		{"gateway OpenAI route has no catalog", providerToolhive, "gateway-only", effortLevelsUnknown, false, nil},
 		{"unlisted model on an unknown provider", "custom", "anything", effortLevelsUnknown, false, nil},
+		// OpenRouter turns an effort level into a thinking budget for a reasoning
+		// model without effort levels, so the catalog's missing option says nothing.
+		{"OpenRouter live reasoning model without levels skips the catalog", providerOpenRouter, "anthropic/claude-sonnet-4.5", effortLevelsUnknown, false, nil},
+		{"OpenRouter catalogued reasoning model without an effort option", providerOpenRouter, "anthropic/claude-opus-4.5", effortLevelsUnknown, false, nil},
+		{"OpenRouter Anthropic route reads the same rule", providerOpenRouterAnthropic, "anthropic/claude-opus-4.5", effortLevelsUnknown, false, nil},
+		{"OpenRouter catalogued effort option", providerOpenRouter, "openai/gpt-5", effortLevelsFromCatalog, true, []string{"low", "medium", "high"}},
+		{"OpenRouter catalogued model that doesn't reason", providerOpenRouter, "amazon/nova-lite-v1", effortLevelsFromCatalog, true, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := resolveModelEffortLevels(cfg, view, tc.pid, tc.model)

@@ -70,7 +70,10 @@ func resolveModelEffortLevels(cfg Config, view *discoverySnapshot, pid, model st
 }
 
 // catalogEffortLevels reads a catalogued model's levels. A catalogued model is
-// always known: no effort option means it takes no effort.
+// known: no effort option means it takes no effort. OpenRouter is the
+// exception: it translates an effort level into the control a reasoning model
+// does take (a thinking budget, an on/off switch), so a reasoning model it
+// catalogues without an effort option hasn't said which levels it takes.
 func catalogEffortLevels(catalogPID, model string) (effortLevels, bool) {
 	p, ok := providercatalog.Default().Provider(catalogPID)
 	if !ok {
@@ -80,5 +83,9 @@ func catalogEffortLevels(catalogPID, model string) (effortLevels, bool) {
 	if !ok {
 		return effortLevels{}, false
 	}
-	return knownEffortLevels(m.EffortLevels()), true
+	levels := m.EffortLevels()
+	if catalogPID == providerOpenRouter && m.SupportsReasoning() && len(levels) == 0 {
+		return effortLevels{}, false
+	}
+	return knownEffortLevels(levels), true
 }
