@@ -32,8 +32,9 @@ A few terms used below:
   model.
 - **Gateway:** the MCP gateway that agents call tools through. It holds users'
   credentials for outside services, so the agent host never sees them.
-- **Identity broker:** the component that issues and checks agent identities,
-  and decides what each agent may call.
+- **Identity broker:** a separate component from the gateway. It issues and
+  checks agent identities, and decides what each agent may call before the
+  gateway receives the call.
 
 ## Done
 
@@ -87,8 +88,11 @@ developers can build on Mecatl.
   also let agents propose new skills and facts from finished work.
 - **Tools connect with each user's own accounts.** Operators list MCP servers
   once for the deployment. A user connects their accounts for a session in one
-  browser trip, and a credential broker keeps the tokens away from the agent
-  and the model.
+  browser trip, and the gateway keeps the tokens away from the agent and the
+  model.
+- **Studio, in early access.** A browser client for any Mecatl deployment,
+  with OIDC sign-in and a signed image. It never receives a provider API key.
+  Its interface and endpoints can still change between releases.
 
 ### An open foundation
 
@@ -134,7 +138,8 @@ sessions that resume safely in the middle of an action.
   comes from its definition, narrowed by the agent that started it, and a call
   outside that limit is refused before any token is issued. Each gateway token
   is approved for one call (this tool, with these arguments) and expires within
-  seconds, so a token taken from the agent host is no good for anything else.
+  seconds, so a token taken from the agent host can't be used for any other
+  call.
 
 ### Dependable, long-running work
 
@@ -230,8 +235,9 @@ together.
 
 - **Multiplayer sessions.** Several people work with the same agents in one
   session, with shared controls and a clear record of who asked for what.
-- **Studio web workspace.** A browser workspace for teams, with chat, agent
-  mentions and commands, alongside the terminal.
+- **Studio as a team workspace.** Studio grows from an early-access client
+  into a stable browser workspace for teams, with agent mentions, commands and
+  shared sessions alongside the terminal.
 
 ## Being explored
 
