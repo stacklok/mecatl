@@ -44,20 +44,22 @@ func (a *effortAdapters) at(level string) port.LLMProvider {
 
 // effortProvider sends each request at the effort its own model accepts: the
 // requested level when the model lists it or its levels are unknown, otherwise
-// Auto. On Chat Completions an unknown model gets Auto too (failOpen is false),
-// so only models.effort_levels opts a model in there.
+// Auto. The levels come with the provider's rules applied (effortLevelsFor), so
+// on Chat Completions an unknown model gets Auto too.
 type effortProvider struct {
 	adapters   *effortAdapters
 	requested  string // a level from effortVocabulary, or "" for Auto
 	providerID string
 	model      string // the model the provider was resolved for; used when a request names none
 	levels     func(model string) effortLevelsResolution
-	failOpen   bool
 	diag       port.Diagnostics
-	warned     sync.Map // dropKey → struct{}: each drop is narrated once per wrapper
+	// warned holds the drops already narrated (dropKey → struct{}). A session's
+	// wrapper and the children that inherit its level share one set, so a drop is
+	// narrated once per session and model, whichever engine sends the request.
+	warned *sync.Map
 }
 
-type dropKey struct{ model, level string }
+type dropKey struct{ providerID, model, level string }
 
 var _ port.LLMProvider = (*effortProvider)(nil)
 
@@ -79,41 +81,45 @@ func (p *effortProvider) appliedFor(ctx context.Context, model string) string {
 		model = p.model
 	}
 	resolution := p.levels(model)
-	applied := appliedEffort(p.requested, resolution.effortLevels, p.failOpen)
+	applied := appliedEffort(p.requested, resolution.effortLevels)
 	if applied == "" {
-		if _, seen := p.warned.LoadOrStore(dropKey{model, p.requested}, struct{}{}); !seen && p.diag != nil {
-			p.diag.Log(ctx, port.LevelWarn,
-				"reasoning-effort: the model doesn't accept the requested level; sending no effort",
-				"provider", p.providerID, "model", model, "requested", p.requested,
-				"levels", strings.Join(resolution.levels, ","), "levels_known", resolution.known, "source", string(resolution.source))
-		}
+		p.narrateDrop(ctx, model, resolution)
 	}
 	return applied
 }
 
-// withRequested returns a wrapper over the same adapters that requests another
-// level, with its own drop narration.
-func (p *effortProvider) withRequested(requested string) *effortProvider {
-	return &effortProvider{adapters: p.adapters, requested: requested, providerID: p.providerID, model: p.model,
-		levels: p.levels, failOpen: p.failOpen, diag: p.diag}
+// narrateDrop warns, once per session and model, that the requested level isn't
+// sent. A provider that never sends effort (the mock) is not narrated.
+func (p *effortProvider) narrateDrop(ctx context.Context, model string, resolution effortLevelsResolution) {
+	if p.diag == nil || resolution.source == effortLevelsNotSent {
+		return
+	}
+	if _, seen := p.warned.LoadOrStore(dropKey{p.providerID, model, p.requested}, struct{}{}); seen {
+		return
+	}
+	msg := "reasoning-effort: the model doesn't accept the requested level; sending no effort"
+	if resolution.source == effortLevelsNotConfigured {
+		msg = "reasoning-effort: a Chat Completions model gets effort only when models.effort_levels lists it; sending no effort"
+	}
+	p.diag.Log(ctx, port.LevelWarn, msg,
+		"provider", p.providerID, "model", model, "requested", p.requested,
+		"levels", strings.Join(resolution.levels, ","), "source", string(resolution.source))
 }
 
-// appliedEffort decides the effort a request carries. A known list sends the
-// requested level only when it includes it; unknown levels send it when the
-// protocol fails open.
-func appliedEffort(requested string, levels effortLevels, failOpen bool) string {
-	switch {
-	case requested == "":
+// requesting returns a wrapper over the same adapters that requests level and
+// narrates its drops into warned.
+func (p *effortProvider) requesting(level string, warned *sync.Map) *effortProvider {
+	return &effortProvider{adapters: p.adapters, requested: level, providerID: p.providerID, model: p.model,
+		levels: p.levels, diag: p.diag, warned: warned}
+}
+
+// appliedEffort decides the effort a request carries: the requested level when
+// the model lists it or its levels are unknown, otherwise none.
+func appliedEffort(requested string, levels effortLevels) string {
+	if requested == "" || (levels.known && !slices.Contains(levels.levels, requested)) {
 		return ""
-	case levels.known:
-		if slices.Contains(levels.levels, requested) {
-			return requested
-		}
-		return ""
-	case failOpen:
-		return requested
 	}
-	return ""
+	return requested
 }
 
 // atAuto returns the adapter of an effort-wrapped provider that sends no effort.
@@ -129,32 +135,51 @@ func atAuto(provider port.LLMProvider) port.LLMProvider {
 
 // inheritEffort returns child requesting the level parent requests, so a
 // subagent, team member or routed child on another provider's adapter keeps the
-// session's effort. Each request is still checked against its own model. A
-// child or parent that isn't effort-wrapped is returned unchanged.
+// session's effort. Each request is still checked against its own model, and its
+// drops are narrated with the session's. A child or parent that isn't
+// effort-wrapped is returned unchanged.
 func inheritEffort(parent, child port.LLMProvider) port.LLMProvider {
 	from, ok := parent.(*effortProvider)
 	to, wraps := child.(*effortProvider)
-	if !ok || !wraps || from.requested == to.requested {
+	if !ok || !wraps {
 		return child
 	}
-	return to.withRequested(from.requested)
+	return to.requesting(from.requested, from.warned)
 }
 
-// effortLevelsFor resolves a provider's model's effort levels against the
+// modelEffortLevels resolves a provider's model's own effort levels against the
 // operator setting, the current live snapshot and the catalog.
-func (r *providerRegistry) effortLevelsFor(pid, model string) effortLevelsResolution {
+func (r *providerRegistry) modelEffortLevels(pid, model string) effortLevelsResolution {
 	return resolveModelEffortLevels(Config{effortLevels: r.effortLevels}, r.meta.current(), pid, model)
 }
 
-// appliedEffortFor returns the effort a request for pid's model is sent at when
-// requested is asked for. The mock ignores effort, so offline runs never get one.
-func (r *providerRegistry) appliedEffortFor(pid, model, requested string) string {
-	if pid == providerMock {
-		return ""
-	}
+// effortLevelsFor returns the levels a request for pid's model is decided
+// against: the model's own levels under the provider's rules. The request path,
+// the session echo and the startup warning all read it, so they agree.
+func (r *providerRegistry) effortLevelsFor(pid, model string) effortLevelsResolution {
 	entry, ok := r.Lookup(pid)
-	failOpen := !ok || entry.protocol != protocolOpenAIChatCompletions
-	return appliedEffort(requested, r.effortLevelsFor(pid, model).effortLevels, failOpen)
+	return providerEffortLevels(pid, entry, ok, r.modelEffortLevels(pid, model))
+}
+
+// providerEffortLevels applies a provider's rules to a model's own levels. The
+// mock never sends effort. On Chat Completions, where many models reject the
+// parameter, a model whose levels nothing knows takes none until
+// models.effort_levels lists it. Any other unknown model fails open: it is sent
+// the requested level.
+func providerEffortLevels(pid string, entry providerEntry, found bool, own effortLevelsResolution) effortLevelsResolution {
+	switch {
+	case pid == providerMock:
+		return effortLevelsResolution{knownEffortLevels(nil), effortLevelsNotSent}
+	case !own.known && found && entry.protocol == protocolOpenAIChatCompletions:
+		return effortLevelsResolution{knownEffortLevels(nil), effortLevelsNotConfigured}
+	}
+	return own
+}
+
+// appliedEffortFor returns the effort a request for pid's model is sent at when
+// requested is asked for.
+func (r *providerRegistry) appliedEffortFor(pid, model, requested string) string {
+	return appliedEffort(requested, r.effortLevelsFor(pid, model).effortLevels)
 }
 
 // newEffortProvider wraps adapters for pid so each request sends requested only
@@ -167,8 +192,8 @@ func (r *providerRegistry) newEffortProvider(entry providerEntry, model, request
 		providerID: pid,
 		model:      model,
 		levels:     func(model string) effortLevelsResolution { return r.effortLevelsFor(pid, model) },
-		failOpen:   entry.protocol != protocolOpenAIChatCompletions,
 		diag:       r.diag,
+		warned:     &sync.Map{},
 	}
 }
 
@@ -180,12 +205,16 @@ func warnOperatorEffortNotAccepted(ctx context.Context, reg *providerRegistry, r
 		return
 	}
 	resolution := reg.effortLevelsFor(reg.defaultID, reg.defaultModel)
-	if resolution.known && !slices.Contains(resolution.levels, requested) {
-		reg.diag.Log(ctx, port.LevelWarn,
-			"reasoning-effort: the default model doesn't accept the operator default; its requests carry no effort",
-			"provider", reg.defaultID, "model", reg.defaultModel, "requested", requested,
-			"levels", strings.Join(resolution.levels, ","), "source", string(resolution.source))
+	if resolution.source == effortLevelsNotSent || appliedEffort(requested, resolution.effortLevels) != "" {
+		return
 	}
+	msg := "reasoning-effort: the default model doesn't accept the operator default; its requests carry no effort"
+	if resolution.source == effortLevelsNotConfigured {
+		msg = "reasoning-effort: the default model is on Chat Completions and models.effort_levels doesn't list it; its requests carry no effort"
+	}
+	reg.diag.Log(ctx, port.LevelWarn, msg,
+		"provider", reg.defaultID, "model", reg.defaultModel, "requested", requested,
+		"levels", strings.Join(resolution.levels, ","), "source", string(resolution.source))
 }
 
 // capsAdapters returns adapters for entry built with caps. When the entry's

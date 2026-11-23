@@ -169,6 +169,7 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 				t.Fatal("persisted agent identity was re-resolved")
 				return ResolvedModel{}
 			}
+			retry.cfg.AppliedReasoningEffort = func(_, _, requested string) string { return requested }
 			again, err := retry.CreateSessionWithProfile(ctx, tc.mode, tc.limits, tc.selector, ProfileDefault, WithSessionID(id), WithAgentDefinitionName(tc.binding))
 			if !tc.ok {
 				if !errors.Is(err, ErrInvalidArgument) {
@@ -221,5 +222,28 @@ func TestAgentSessionPersistsRequestedEffort(t *testing.T) {
 	}
 	if got := svc.ResolvedModel(sess.ID).ReasoningEffort; got != "" {
 		t.Fatalf("echoed effort = %q, want the applied none", got)
+	}
+
+	// Before its engine is built again, the echo is decided against the model,
+	// not read back from the persisted request.
+	svc.DropSessionEngineForTest(sess.ID)
+	for _, tc := range []struct {
+		name    string
+		applied func(providerID, modelID, requested string) string
+		want    string
+	}{
+		{"model refuses the level", func(_, model, requested string) string {
+			if model == "model-without-max" {
+				return ""
+			}
+			return requested
+		}, ""},
+		{"model accepts the level", func(_, _, requested string) string { return requested }, "max"},
+		{"no composition hook", nil, ""},
+	} {
+		svc.cfg.AppliedReasoningEffort = tc.applied
+		if got := svc.resolvedModelFor(sess).ReasoningEffort; got != tc.want {
+			t.Errorf("%s: unloaded echo = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

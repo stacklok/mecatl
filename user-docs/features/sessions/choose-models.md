@@ -244,9 +244,12 @@ models.dev catalog built into Mecatl. A model whose levels include the requested
 one gets it. A model that takes no effort, or whose levels don't include the
 requested one, gets no effort field, and the server logs a warning once per
 session and model. When no source knows the model, Mecatl sends the level and
-the provider can reject it. On Chat Completions providers, a model gets an effort
-only when `models.effort_levels` lists it. A gateway listing that publishes
-levels for some models declares that the models it lists without levels take no
+the provider can reject it. An OpenRouter reasoning model that lists no levels
+counts as unknown, because OpenRouter converts the level into the model's own
+reasoning control, such as a thinking budget. On Chat Completions providers, a
+model gets an effort only when its levels are known, from `models.effort_levels`
+or from a listing that publishes them. A gateway listing that publishes levels
+for some models declares that the models it lists without levels take no
 effort.
 
 The session keeps the level it requested, so a later model that accepts it gets
@@ -450,7 +453,9 @@ When `resolved_model.reasoning_effort` is empty for a session that requested a
 level, the session's model doesn't accept that level. The server's warning names
 the model's levels and where they came from: `config`, `live`, or `catalog`. If
 those levels are wrong, set the model's levels in `models.effort_levels`, as
-shown in [Configure reasoning effort](#configure-reasoning-effort).
+shown in [Configure reasoning effort](#configure-reasoning-effort). On a Chat
+Completions provider, a warning that names `models.effort_levels` means no source
+knows the model's levels; list them in that setting to send an effort.
 
 ### A provider request failed
 

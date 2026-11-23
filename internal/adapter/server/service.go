@@ -661,6 +661,12 @@ type Config struct {
 	// per-session engine. It must be side-effect free; nil preserves the default-only
 	// behavior for lightweight consumers and tests.
 	ResolveSessionModel func(ProviderSelector, session.PermissionMode) ResolvedModel
+	// AppliedReasoningEffort returns the effort requests for a provider's model
+	// carry when requested ("" for Auto) is asked for: "" when the model doesn't
+	// accept it. An agent-bound session persists its requested level, so GetSession
+	// uses it to echo what that session's model gets before its engine is rebuilt.
+	// It must be side-effect free; nil echoes no effort.
+	AppliedReasoningEffort func(providerID, modelID, requested string) string
 
 	// Posture is the SERVER-WIDE operator posture-ladder tier as a string
 	// ("strict"/"trusted"/"auto"/"yolo"), projected into the ServerCapabilities echo.
@@ -7538,7 +7544,8 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort})
 	}
 	if sess.AgentDefinitionName != "" {
-		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort})
+		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID,
+			ReasoningEffort: s.appliedReasoningEffort(sess.ProviderID, sess.ModelID, sess.ReasoningEffort)})
 	}
 	if s.cfg.ResolveSessionModel != nil {
 		rm := s.cfg.ResolveSessionModel(ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}, sess.Mode)
@@ -7548,6 +7555,15 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort})
 	}
 	return s.resolveModelWindow(s.cfg.DefaultResolvedModel)
+}
+
+// appliedReasoningEffort is the effort a session that requests requested sends
+// its model; see Config.AppliedReasoningEffort.
+func (s *Service) appliedReasoningEffort(providerID, modelID, requested string) string {
+	if requested == "" || s.cfg.AppliedReasoningEffort == nil {
+		return ""
+	}
+	return s.cfg.AppliedReasoningEffort(providerID, modelID, requested)
 }
 
 func (s *Service) resolveModelWindow(rm ResolvedModel) ResolvedModel {

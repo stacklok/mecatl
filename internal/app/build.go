@@ -2665,6 +2665,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		ResolveSessionModel: func(sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
 			return resolvedSessionProjection(cfg, reg, sel, mode)
 		},
+		AppliedReasoningEffort: reg.appliedEffortFor,
 		// Posture: the resolved server-wide tier as a string, projected into the
 		// ServerCapabilities echo. It tracks the server ceiling (strict/trusted =
 		// accept-edits, auto, yolo), which bounds the modes a client may cycle to.
@@ -3028,7 +3029,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if err := awaitContextWindow(awaitCtx, reg, p, m); err != nil {
 				return err
 			}
-			awaitEffortLevels(awaitCtx, reg, p, m)
+			awaitRunEffortLevels(awaitCtx, reg, p, m)
 			return nil
 		},
 		// Session lease: nil unless a backend was selected;

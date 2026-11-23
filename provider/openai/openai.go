@@ -45,8 +45,8 @@ type Provider struct {
 	// effort is the reasoning-effort token stamped on every request's
 	// reasoning.effort field. Empty (and "auto") means OMIT the field
 	// entirely — the provider's own default applies, so a non-reasoning endpoint is
-	// never sent an effort it would reject. Composition supplies an ALREADY-CLAMPED
-	// neutral token (the openai xhigh/max→high clamp + its diagnostic live in
+	// never sent an effort it would reject. Composition supplies a neutral token
+	// the request's model accepts (the per-model check and its diagnostic live in
 	// composition, which has port.Diagnostics — this adapter does not); the adapter
 	// maps a recognised value verbatim and OMITS on anything else (fail-soft).
 	effort string

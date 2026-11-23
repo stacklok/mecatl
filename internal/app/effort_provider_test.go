@@ -81,7 +81,7 @@ func TestEffortStreamUsesTheAppliedAdapter(t *testing.T) {
 func TestEffortDropWarnsOnce(t *testing.T) {
 	reg, _ := twoProviderEffortRegistry("")
 	diag := &recordingDiag{}
-	reg.diag = diag
+	reg.diag, sharedEffort(reg, providerAnthropic).diag = diag, diag
 	reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {
 		{ID: "no-effort", Effort: knownEffortLevels(nil)},
 		{ID: "low-only", Effort: knownEffortLevels([]string{effortLow})},
@@ -99,10 +99,75 @@ func TestEffortDropWarnsOnce(t *testing.T) {
 	if n := countMessages(diag, "doesn't accept the requested level"); n != 2 {
 		t.Fatalf("drop WARNs = %d, want one per model: %v", n, diag.messages())
 	}
-	other := sessionProvider.withRequested(effortHigh)
-	other.appliedFor(ctx, "no-effort")
+	// Children that inherit the session's level share its narration, however many
+	// child engines are built.
+	for range 3 {
+		child := inheritEffort(sessionProvider, sharedEffort(reg, providerAnthropic)).(*effortProvider)
+		if got := child.appliedFor(ctx, "claude-haiku-4-5"); got != "" { // the catalog lists no effort
+			t.Fatalf("child applied = %q, want none", got)
+		}
+	}
 	if n := countMessages(diag, "doesn't accept the requested level"); n != 3 {
+		t.Fatalf("drop WARNs = %d after three inheriting children, want one more", n)
+	}
+	other := sessionProvider.requesting(effortHigh, &sync.Map{})
+	other.appliedFor(ctx, "no-effort")
+	if n := countMessages(diag, "doesn't accept the requested level"); n != 4 {
 		t.Fatalf("another session's drop was not narrated: %d WARNs", n)
+	}
+}
+
+// TestEffortChatCompletionsDropNamesTheSetting: a Chat Completions model nothing
+// knows the levels of gets no effort, and both the per-request and the startup
+// warning name models.effort_levels.
+func TestEffortChatCompletionsDropNamesTheSetting(t *testing.T) {
+	ctx := context.Background()
+	reg, _ := twoProviderEffortRegistry("")
+	entry := reg.entries[providerOpenAI]
+	entry.protocol = protocolOpenAIChatCompletions
+	reg.entries[providerOpenAI] = entry
+	diag := &recordingDiag{}
+	reg.diag = diag
+	if got := sessionEffortProvider(reg, providerOpenAI, "chat-model", effortHigh).appliedFor(ctx, "chat-model"); got != "" {
+		t.Fatalf("applied = %q, want none", got)
+	}
+	if !diag.has("a Chat Completions model gets effort only when models.effort_levels lists it") {
+		t.Fatalf("drop WARN doesn't name the setting: %v", diag.messages())
+	}
+	reg.defaultID, reg.defaultModel = providerOpenAI, "chat-model"
+	warnOperatorEffortNotAccepted(ctx, reg, effortHigh)
+	if !diag.has("models.effort_levels doesn't list it") {
+		t.Fatalf("startup WARN doesn't name the setting: %v", diag.messages())
+	}
+}
+
+// TestProviderEffortLevels pins the provider rules every effort decision reads:
+// the mock never sends effort; a Chat Completions model needs known levels;
+// anything else unknown fails open.
+func TestProviderEffortLevels(t *testing.T) {
+	remint := func(string, port.ProviderCapabilities) port.LLMProvider { return mockllm.New() }
+	unknown := effortLevelsResolution{source: effortLevelsUnknown}
+	listed := effortLevelsResolution{knownEffortLevels([]string{effortHigh}), effortLevelsFromLive}
+	responses := providerEntry{remint: remint, protocol: protocolOpenAIResponses}
+	chat := providerEntry{remint: remint, protocol: protocolOpenAIChatCompletions}
+	for _, tc := range []struct {
+		name, pid string
+		entry     providerEntry
+		found     bool
+		own       effortLevelsResolution
+		source    effortLevelsSource
+		applied   string
+	}{
+		{"unknown fails open", "gateway", responses, true, unknown, effortLevelsUnknown, effortHigh},
+		{"unregistered provider fails open", "gone", providerEntry{}, false, unknown, effortLevelsUnknown, effortHigh},
+		{"Chat Completions needs known levels", "opencode", chat, true, unknown, effortLevelsNotConfigured, ""},
+		{"Chat Completions listing that publishes levels", "opencode", chat, true, listed, effortLevelsFromLive, effortHigh},
+		{"the mock never sends effort", providerMock, providerEntry{}, true, listed, effortLevelsNotSent, ""},
+	} {
+		got := providerEffortLevels(tc.pid, tc.entry, tc.found, tc.own)
+		if applied := appliedEffort(effortHigh, got.effortLevels); got.source != tc.source || applied != tc.applied {
+			t.Errorf("%s: source=%q applied=%q, want %q and %q", tc.name, got.source, applied, tc.source, tc.applied)
+		}
 	}
 }
 
@@ -111,18 +176,15 @@ func TestAppliedEffort(t *testing.T) {
 	for _, tc := range []struct {
 		name, requested string
 		levels          effortLevels
-		failOpen        bool
 		want            string
 	}{
-		{"auto sends nothing", "", listed, true, ""},
-		{"listed level", effortHigh, listed, true, effortHigh},
-		{"unlisted level", effortMax, listed, true, ""},
-		{"known none", effortHigh, knownEffortLevels(nil), true, ""},
-		{"unknown fails open", effortMax, effortLevels{}, true, effortMax},
-		{"unknown on Chat Completions", effortMax, effortLevels{}, false, ""},
-		{"listed on Chat Completions", effortHigh, listed, false, effortHigh},
+		{"auto sends nothing", "", listed, ""},
+		{"listed level", effortHigh, listed, effortHigh},
+		{"unlisted level", effortMax, listed, ""},
+		{"known none", effortHigh, knownEffortLevels(nil), ""},
+		{"unknown fails open", effortMax, effortLevels{}, effortMax},
 	} {
-		if got := appliedEffort(tc.requested, tc.levels, tc.failOpen); got != tc.want {
+		if got := appliedEffort(tc.requested, tc.levels); got != tc.want {
 			t.Errorf("%s: appliedEffort = %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -237,9 +299,10 @@ func TestEffortStartupWarnsWhenDefaultModelRefusesOperatorDefault(t *testing.T) 
 	}
 }
 
-// TestAwaitEffortLevelsAsksAnUnansweredListerOnce: unknown levels on a provider
-// whose listing hasn't answered trigger one bounded listing; known levels or an
-// answered provider don't.
+// TestAwaitEffortLevelsAsksAnUnansweredListerOnce: levels neither the setting
+// nor a listing knows, on a provider whose listing hasn't answered, trigger one
+// bounded listing, even when the catalog knows the model; an answered provider
+// doesn't.
 func TestAwaitEffortLevelsAsksAnUnansweredListerOnce(t *testing.T) {
 	lister := &fakeLister{models: []modelEntry{{ID: "listed", Effort: knownEffortLevels([]string{effortLow})}}}
 	d := discoveryFixture(t, map[string]providerEntry{"custom": {lister: lister}})
@@ -248,11 +311,39 @@ func TestAwaitEffortLevelsAsksAnUnansweredListerOnce(t *testing.T) {
 	if got := lister.calls.Load(); got != 1 {
 		t.Fatalf("listing calls = %d, want 1", got)
 	}
-	if got := d.reg.effortLevelsFor("custom", "listed"); !got.known || got.source != effortLevelsFromLive {
+	if got := d.reg.modelEffortLevels("custom", "listed"); !got.known || got.source != effortLevelsFromLive {
 		t.Fatalf("levels after the wait = %+v, want live", got)
 	}
 	awaitEffortLevels(ctx, d.reg, "custom", "still-unknown")
 	if got := lister.calls.Load(); got != 1 {
 		t.Fatalf("listing calls = %d after the provider answered, want 1", got)
+	}
+
+	// The Anthropic catalog knows claude-opus-4-5 (low, medium, high); a gateway
+	// route's listing still decides.
+	route := &fakeLister{models: []modelEntry{{ID: "claude-opus-4-5", Effort: knownEffortLevels([]string{effortMax})}}}
+	gw := discoveryFixture(t, map[string]providerEntry{providerToolhiveAnthropic: {lister: route}})
+	awaitEffortLevels(ctx, gw.reg, providerToolhiveAnthropic, "claude-opus-4-5")
+	if got := route.calls.Load(); got != 1 {
+		t.Fatalf("listing calls = %d for a catalogued model, want 1", got)
+	}
+	if got := gw.reg.modelEffortLevels(providerToolhiveAnthropic, "claude-opus-4-5"); got.source != effortLevelsFromLive || !slices.Equal(got.levels, []string{effortMax}) {
+		t.Fatalf("levels after the wait = %+v, want the listing's max", got)
+	}
+}
+
+// TestAwaitRunEffortLevelsOnlyForAnOperatorDefault: before a run on the shared
+// engine, the listing is waited for only when the operator default is a level.
+func TestAwaitRunEffortLevelsOnlyForAnOperatorDefault(t *testing.T) {
+	for _, tc := range []struct {
+		operatorEffort string
+		want           int32
+	}{{"", 0}, {effortHigh, 1}} {
+		lister := &fakeLister{models: []modelEntry{{ID: "listed"}}}
+		d := discoveryFixture(t, map[string]providerEntry{"custom": {lister: lister, defaultEffort: tc.operatorEffort}})
+		awaitRunEffortLevels(context.Background(), d.reg, "custom", "listed")
+		if got := lister.calls.Load(); got != tc.want {
+			t.Fatalf("operator default %q: listing calls = %d, want %d", tc.operatorEffort, got, tc.want)
+		}
 	}
 }

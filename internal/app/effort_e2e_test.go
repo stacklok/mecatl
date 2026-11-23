@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -253,6 +254,25 @@ func TestEffortAnthropicListedAndDropped(t *testing.T) {
 // session's model, so neither the echo nor the request carries effort. The
 // context window is pinned, so only the effort-level wait asks for the listing.
 func TestEffortNativeGatewayWithoutModelsVisit(t *testing.T) {
+	built, upstream := effortNativeBuild(t, "")
+	sess, err := built.Service.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{},
+		server.ProviderSelector{ProviderID: "native", ModelID: "native-model", ReasoningEffort: "high"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithProvider: %v", err)
+	}
+	echo, sent := effortRun(t, built, upstream, sess.ID)
+	if echo != "" || sent != "" {
+		t.Fatalf("echo=%q sent=%q, want none: the listing omits the model", echo, sent)
+	}
+	if got := upstream.arrivals(); len(got) != 2 || got[0] != "list" || got[1] != "generate:native-model" {
+		t.Fatalf("gateway requests = %v, want the listing before the first request", got)
+	}
+}
+
+// effortNativeBuild builds a native OIDC gateway, which lists its models only
+// on demand, at the operator default effort, and checks Build didn't list them.
+func effortNativeBuild(t *testing.T, operatorEffort string) (*Built, *effortUpstream) {
+	t.Helper()
 	upstream := &effortUpstream{listing: `{"object":"list","data":[` +
 		`{"id":"other-model","reasoning":{"supported_efforts":["low","high"]}},{"id":"native-model"}]}`}
 	transport := nativeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -267,25 +287,42 @@ func TestEffortNativeGatewayWithoutModelsVisit(t *testing.T) {
 	cfg.Workspace, cfg.StoreDir, cfg.MemoryDir, cfg.UserModelDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	cfg.NoSoul, cfg.DefaultProvider, cfg.LLMMaxAttempts = true, "native", 1
 	cfg.ContextWindowOverride = 128000
+	cfg.ReasoningEffort = operatorEffort
 	cfg.envDetector = fakeEnv(nil)
 	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer built.Close()
+	t.Cleanup(built.Close)
 	if got := upstream.arrivals(); len(got) != 0 {
 		t.Fatalf("Build contacted the native gateway: %v", got)
 	}
-	sess, err := built.Service.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{},
-		server.ProviderSelector{ProviderID: "native", ModelID: "native-model", ReasoningEffort: "high"})
-	if err != nil {
-		t.Fatalf("CreateSessionWithProvider: %v", err)
-	}
-	echo, sent := effortRun(t, built, upstream, sess.ID)
-	if echo != "" || sent != "" {
-		t.Fatalf("echo=%q sent=%q, want none: the listing omits the model", echo, sent)
-	}
-	if got := upstream.arrivals(); len(got) != 2 || got[0] != "list" || got[1] != "generate:native-model" {
-		t.Fatalf("gateway requests = %v, want the listing before the first request", got)
+	return built, upstream
+}
+
+// TestEffortAutoSessionDoesNotWaitForTheListing: a session that asks for the
+// operator default waits for an unanswered listing before its first request
+// only when that default is a level. At Auto no request carries effort.
+func TestEffortAutoSessionDoesNotWaitForTheListing(t *testing.T) {
+	for _, tc := range []struct {
+		operatorEffort string
+		want           []string
+	}{
+		{"", []string{"generate:native-model"}},
+		{"high", []string{"list", "generate:native-model"}},
+	} {
+		t.Run("default="+tc.operatorEffort, func(t *testing.T) {
+			built, upstream := effortNativeBuild(t, tc.operatorEffort)
+			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if _, sent := effortRun(t, built, upstream, sess.ID); sent != "" {
+				t.Fatalf("sent=%q, want none: the listing omits the model", sent)
+			}
+			if got := upstream.arrivals(); !slices.Equal(got, tc.want) {
+				t.Fatalf("gateway requests = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
