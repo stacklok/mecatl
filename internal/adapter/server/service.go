@@ -7555,7 +7555,8 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 	}
 	if sess.AgentDefinitionName != "" {
 		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID,
-			ReasoningEffort: s.appliedReasoningEffort(sess.ProviderID, sess.ModelID, sess.ReasoningEffort)})
+			ReasoningEffort:          s.appliedReasoningEffort(sess.ProviderID, sess.ModelID, sess.ReasoningEffort),
+			RequestedReasoningEffort: sess.ReasoningEffort})
 	}
 	if s.cfg.ResolveSessionModel != nil {
 		rm := s.cfg.ResolveSessionModel(ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}, sess.Mode)

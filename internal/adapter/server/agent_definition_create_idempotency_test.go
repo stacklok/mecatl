@@ -242,8 +242,8 @@ func TestAgentSessionPersistsRequestedEffort(t *testing.T) {
 		{"no composition hook", nil, ""},
 	} {
 		svc.cfg.AppliedReasoningEffort = tc.applied
-		if got := svc.resolvedModelFor(sess).ReasoningEffort; got != tc.want {
-			t.Errorf("%s: unloaded echo = %q, want %q", tc.name, got, tc.want)
+		if got := svc.resolvedModelFor(sess); got.ReasoningEffort != tc.want || got.RequestedReasoningEffort != "max" {
+			t.Errorf("%s: unloaded echo applied=%q requested=%q, want %q and max", tc.name, got.ReasoningEffort, got.RequestedReasoningEffort, tc.want)
 		}
 	}
 }

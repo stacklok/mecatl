@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -146,5 +148,35 @@ func TestCompatibilityAdvertisesModelEffortLevels(t *testing.T) {
 	}
 	if !slices.Contains(resp.GetFeatures(), server.FeatureModelEffortLevels) {
 		t.Fatalf("features = %v, want %s", resp.GetFeatures(), server.FeatureModelEffortLevels)
+	}
+}
+
+// TestPublishedEffortLevelsMatchTheRequestPath: ListModels reports the levels
+// requests are decided against, so what a client offers and what the server
+// sends agree, the mock and an unconfigured Chat Completions model included.
+func TestPublishedEffortLevelsMatchTheRequestPath(t *testing.T) {
+	reg, _ := twoProviderEffortRegistry("")
+	reg.entries[providerMock] = providerEntry{id: providerMock, available: true, provider: mockllm.New()}
+	reg.entries["chat"] = providerEntry{id: "chat", available: true, protocol: protocolOpenAIChatCompletions,
+		remint: func(string, port.ProviderCapabilities) port.LLMProvider { return mockllm.New() }}
+	for _, tc := range []struct {
+		pid, model string
+		known      bool
+		levels     []string
+	}{
+		{providerMock, "mock-model", true, nil},
+		{"chat", "chat-model", true, nil},
+		{providerOpenAI, "gpt-5", true, []string{effortLow, effortMedium, effortHigh}},
+		{providerAnthropic, "unknown-model", false, nil},
+	} {
+		published := publishedEffortLevels(reg, Config{}, reg.meta.current(), tc.pid, tc.model)
+		if published.known != tc.known || !slices.Equal(published.levels, tc.levels) {
+			t.Errorf("%s/%s: published %v known=%v, want %v known=%v", tc.pid, tc.model, published.levels, published.known, tc.levels, tc.known)
+		}
+		for _, level := range effortVocabulary {
+			if got, want := reg.appliedEffortFor(tc.pid, tc.model, level), appliedEffort(level, published); got != want {
+				t.Errorf("%s/%s at %s: the request path sends %q, the listing implies %q", tc.pid, tc.model, level, got, want)
+			}
+		}
 	}
 }

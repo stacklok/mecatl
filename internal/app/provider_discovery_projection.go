@@ -23,17 +23,12 @@ func projectModelEntry(reg *providerRegistry, cfg Config, view *discoverySnapsho
 }
 
 // publishedEffortLevels is what ListModels reports for a model: the levels a
-// session on it sends. Chat Completions sends effort only for models the
-// operator configured, so there a model of unknown levels is reported as taking
-// none.
+// session on it is sent against, under the same provider rules as the request
+// path (providerEffortLevels). The mock, and a Chat Completions model of
+// unknown levels, are reported as taking none.
 func publishedEffortLevels(reg *providerRegistry, cfg Config, view *discoverySnapshot, pid, model string) effortLevels {
-	resolution := resolveModelEffortLevels(cfg, view, pid, model)
-	if !resolution.known {
-		if entry, ok := reg.Lookup(pid); ok && entry.protocol == protocolOpenAIChatCompletions {
-			return knownEffortLevels(nil)
-		}
-	}
-	return resolution.effortLevels
+	entry, ok := reg.Lookup(pid)
+	return providerEffortLevels(pid, entry, ok, resolveModelEffortLevels(cfg, view, pid, model)).effortLevels
 }
 
 func modelCapabilityCandidate(reg *providerRegistry, view *discoverySnapshot, pid, model string) port.ProviderCapabilities {
