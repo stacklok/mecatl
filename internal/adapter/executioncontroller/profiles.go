@@ -13,6 +13,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 const maxTolerationSeconds int64 = 86400
@@ -58,6 +60,7 @@ type Profiles struct {
 	catalog                map[string]map[string]TemplateDisplay
 	executorServiceAccount string
 	executorTrust          ExecutorTrust
+	executorKeepalive      executionenv.ExecutorKeepalive
 }
 
 // WithExecutorServiceAccount sets the chart-owned identity for Pod construction and validation.
@@ -69,6 +72,12 @@ func (p *Profiles) WithExecutorServiceAccount(name string) *Profiles {
 // WithExecutorTrust sets the provider trust sources mounted into executor Pods.
 func (p *Profiles) WithExecutorTrust(trust ExecutorTrust) *Profiles {
 	p.executorTrust = trust
+	return p
+}
+
+// WithExecutorKeepalive sets the keepalive passed to new executor Pods.
+func (p *Profiles) WithExecutorKeepalive(keepalive executionenv.ExecutorKeepalive) *Profiles {
+	p.executorKeepalive = keepalive
 	return p
 }
 

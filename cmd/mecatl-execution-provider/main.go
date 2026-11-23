@@ -40,6 +40,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	var executorClientDirectory, executorClientURI string
 	var executorCASecret, executorCAKey, executorTrustConfigMap string
 	var reloadInterval, recheckInterval time.Duration
+	executorKeepalive := executionenv.DefaultExecutorKeepalive()
 	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
@@ -67,7 +68,27 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		"key of the executor CA bundle in --executor-ca-secret")
 	flag.StringVar(&executorTrustConfigMap, "executor-trust-configmap", "",
 		"chart-owned ConfigMap holding the provider URI executors accept")
+	flag.DurationVar(
+		&executorKeepalive.Interval,
+		executorKeepaliveIntervalFlag,
+		executorKeepalive.Interval,
+		"idle time before the provider and an executor ping each other",
+	)
+	flag.DurationVar(
+		&executorKeepalive.Timeout,
+		executorKeepaliveTimeoutFlag,
+		executorKeepalive.Timeout,
+		"wait for a ping reply before an executor connection is closed and its calls cancelled",
+	)
 	flag.Parse()
+	if err := executorKeepalive.Validate(); err != nil {
+		return fmt.Errorf(
+			"--%s, --%s: %w",
+			executorKeepaliveIntervalFlag,
+			executorKeepaliveTimeoutFlag,
+			err,
+		)
+	}
 	if len(validation.IsDNS1123Label(executorServiceAccount)) != 0 || executorServiceAccount == "default" {
 		return errors.New("--executor-service-account must name the chart-created dedicated executor ServiceAccount, not default")
 	}
@@ -90,7 +111,8 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 			CASecret:        executorCASecret,
 			CAKey:           executorCAKey,
 			ClientConfigMap: executorTrustConfigMap,
-		})
+		}).
+		WithExecutorKeepalive(executorKeepalive)
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("build in-cluster Kubernetes config: %w", err)
@@ -110,7 +132,11 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		return fmt.Errorf("load security material: %w", err)
 	}
 	dialer := executioncontroller.NewExecutorDialer(
-		kube, namespace, executorClientDirectory, executorClientURI)
+		kube,
+		namespace,
+		executorClientDirectory,
+		executorClientURI,
+	).WithKeepalive(executorKeepalive)
 	if err := dialer.CheckClientCertificate(); err != nil {
 		return fmt.Errorf("load executor client certificate: %w", err)
 	}
@@ -212,6 +238,11 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		return nil
 	}
 }
+
+const (
+	executorKeepaliveIntervalFlag = "executor-" + executionenv.KeepaliveIntervalFlag
+	executorKeepaliveTimeoutFlag  = "executor-" + executionenv.KeepaliveTimeoutFlag
+)
 
 func serverKeepalive() keepalive.ServerParameters {
 	return keepalive.ServerParameters{

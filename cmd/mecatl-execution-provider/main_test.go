@@ -93,3 +93,18 @@ func TestProviderPolicyRecheckInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderStartupRejectsInvalidExecutorKeepalive(t *testing.T) {
+	oldFlags, oldArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = oldFlags, oldArgs })
+	for _, arg := range []string{
+		"--executor-keepalive-interval=500ms",
+		"--executor-keepalive-timeout=11m",
+	} {
+		flag.CommandLine = flag.NewFlagSet("execution-provider-test", flag.ContinueOnError)
+		os.Args = []string{"execution-provider", arg}
+		if err := run(); err == nil || !strings.Contains(err.Error(), "keepalive") {
+			t.Fatalf("%s: err = %v", arg, err)
+		}
+	}
+}

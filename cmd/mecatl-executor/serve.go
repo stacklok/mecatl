@@ -26,46 +26,25 @@ type serveConfig struct {
 	files        bool
 	commands     bool
 	maxFileBytes int
+	keepalive    executionenv.ExecutorKeepalive
+}
+
+type serveFlags struct {
+	listen   string
+	tlsDir   string
+	trustDir string
+	cfg      serveConfig
 }
 
 func runServeMode(ctx context.Context, args []string) error {
 	if args[0] != serveMode {
 		return errors.New("unknown mode " + args[0])
 	}
-	flags := flag.NewFlagSet(serveMode, flag.ContinueOnError)
-	listen := flags.String("listen", "", "TCP address to serve the executor gRPC services on")
-	var cfg serveConfig
-	flags.BoolVar(&cfg.files, "files", false, "serve the Files service")
-	flags.BoolVar(&cfg.commands, "commands", false, "serve the Commands service")
-	flags.IntVar(
-		&cfg.maxFileBytes,
-		"max-file-bytes",
-		executionenv.MaxFileBytes,
-		"largest file the Files service reads or writes, from the template",
-	)
-	tlsDir := flags.String(
-		"tls-dir",
-		executionenv.ExecutorServerTLSDir,
-		"directory holding the server tls.crt and tls.key",
-	)
-	trustDir := flags.String(
-		"provider-trust-dir",
-		executionenv.ExecutorProviderTrustDir,
-		"directory holding the provider's ca.crt and client-uri",
-	)
-	if err := flags.Parse(args[1:]); err != nil {
+	sf, err := parseServeFlags(args[1:])
+	if err != nil {
 		return err
 	}
-	if *listen == "" {
-		return errors.New("serve: -listen is required")
-	}
-	if !cfg.files && !cfg.commands {
-		return errors.New("serve: enable at least one of -files and -commands")
-	}
-	if cfg.maxFileBytes <= 0 || cfg.maxFileBytes > executionenv.MaxFileBytes {
-		return fmt.Errorf("serve: -max-file-bytes must be in 1..%d", executionenv.MaxFileBytes)
-	}
-	tlsConfig, err := executionexecutor.ServerTLSConfig(*tlsDir, *trustDir)
+	tlsConfig, err := executionexecutor.ServerTLSConfig(sf.tlsDir, sf.trustDir)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
@@ -73,11 +52,11 @@ func runServeMode(ctx context.Context, args []string) error {
 		return errors.New("serve requires Linux")
 	}
 
-	srv, err := newExecutorServer(ctx, workspaceRoot, cfg, credentials.NewTLS(tlsConfig))
+	srv, err := newExecutorServer(ctx, workspaceRoot, sf.cfg, credentials.NewTLS(tlsConfig))
 	if err != nil {
 		return err
 	}
-	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", *listen)
+	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", sf.listen)
 	if err != nil {
 		return err
 	}
@@ -88,6 +67,69 @@ func runServeMode(ctx context.Context, args []string) error {
 	return srv.Serve(lis)
 }
 
+func parseServeFlags(args []string) (serveFlags, error) {
+	flags := flag.NewFlagSet(serveMode, flag.ContinueOnError)
+	sf := serveFlags{cfg: serveConfig{keepalive: executionenv.DefaultExecutorKeepalive()}}
+	cfg := &sf.cfg
+	flags.StringVar(&sf.listen, "listen", "", "TCP address to serve the executor gRPC services on")
+	flags.BoolVar(&cfg.files, "files", false, "serve the Files service")
+	flags.BoolVar(&cfg.commands, "commands", false, "serve the Commands service")
+	flags.IntVar(
+		&cfg.maxFileBytes,
+		"max-file-bytes",
+		executionenv.MaxFileBytes,
+		"largest file the Files service reads or writes, from the template",
+	)
+	flags.DurationVar(
+		&cfg.keepalive.Interval,
+		executionenv.KeepaliveIntervalFlag,
+		cfg.keepalive.Interval,
+		"idle time before pinging the provider",
+	)
+	flags.DurationVar(
+		&cfg.keepalive.Timeout,
+		executionenv.KeepaliveTimeoutFlag,
+		cfg.keepalive.Timeout,
+		"wait for a ping reply before closing the connection and cancelling its calls",
+	)
+	flags.StringVar(
+		&sf.tlsDir,
+		"tls-dir",
+		executionenv.ExecutorServerTLSDir,
+		"directory holding the server tls.crt and tls.key",
+	)
+	flags.StringVar(
+		&sf.trustDir,
+		"provider-trust-dir",
+		executionenv.ExecutorProviderTrustDir,
+		"directory holding the provider's ca.crt and client-uri",
+	)
+	if err := flags.Parse(args); err != nil {
+		return serveFlags{}, err
+	}
+	if sf.listen == "" {
+		return serveFlags{}, errors.New("serve: -listen is required")
+	}
+	if !cfg.files && !cfg.commands {
+		return serveFlags{}, errors.New("serve: enable at least one of -files and -commands")
+	}
+	if cfg.maxFileBytes <= 0 || cfg.maxFileBytes > executionenv.MaxFileBytes {
+		return serveFlags{}, fmt.Errorf(
+			"serve: -max-file-bytes must be in 1..%d",
+			executionenv.MaxFileBytes,
+		)
+	}
+	if err := cfg.keepalive.Validate(); err != nil {
+		return serveFlags{}, fmt.Errorf(
+			"serve: -%s, -%s: %w",
+			executionenv.KeepaliveIntervalFlag,
+			executionenv.KeepaliveTimeoutFlag,
+			err,
+		)
+	}
+	return sf, nil
+}
+
 // newExecutorServer registers only the enabled services; with Commands
 // disabled nothing starts a process.
 func newExecutorServer(
@@ -96,7 +138,11 @@ func newExecutorServer(
 	cfg serveConfig,
 	creds credentials.TransportCredentials,
 ) (*grpc.Server, error) {
-	srv := grpc.NewServer(grpc.Creds(creds), grpc.WaitForHandlers(true))
+	opts := append(
+		[]grpc.ServerOption{grpc.Creds(creds), grpc.WaitForHandlers(true)},
+		executionexecutor.ServerKeepalive(cfg.keepalive)...,
+	)
+	srv := grpc.NewServer(opts...)
 	if cfg.files {
 		files, err := newFileServer(root, cfg.maxFileBytes)
 		if err != nil {
