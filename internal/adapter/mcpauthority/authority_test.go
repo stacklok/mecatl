@@ -94,3 +94,17 @@ func TestResultOwnsImmutableCopies(t *testing.T) {
 		t.Fatalf("broker aliases accessor result: %#v", again)
 	}
 }
+
+func TestBrokerCarriesTheSigningKeyPaths(t *testing.T) {
+	fallbacks := []string{"/keys/as2-old/key.pem"}
+	broker := NewBroker(BrokerConfig{SigningKeyFile: "/keys/as2/key.pem", FallbackKeyFiles: fallbacks})
+	fallbacks[0] = "/mutated.pem"
+	got, ok := broker.Broker()
+	if !ok || got.SigningKeyFile != "/keys/as2/key.pem" || len(got.FallbackKeyFiles) != 1 || got.FallbackKeyFiles[0] != "/keys/as2-old/key.pem" {
+		t.Fatalf("broker signing key = %q %v, want the declared paths", got.SigningKeyFile, got.FallbackKeyFiles)
+	}
+	got.FallbackKeyFiles[0] = "/returned-mutation.pem"
+	if again, _ := broker.Broker(); again.FallbackKeyFiles[0] != "/keys/as2-old/key.pem" {
+		t.Fatal("a returned fallback list aliases the result")
+	}
+}

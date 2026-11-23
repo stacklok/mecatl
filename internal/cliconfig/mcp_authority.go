@@ -52,6 +52,9 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 	if opts.Operator != nil && opts.Operator.Broker.CallbackURL != "" {
 		return nil, fmt.Errorf("%w: mcp.broker.callback_url is inert in global mode", ErrMCPProfileInvalid)
 	}
+	if opts.Operator != nil && opts.Operator.Broker.SigningKeyFile != "" {
+		return nil, fmt.Errorf("%w: mcp.broker.signing_key_file is inert in global mode", ErrMCPProfileInvalid)
+	}
 	if opts.Operator != nil {
 		for _, route := range opts.Operator.Servers {
 			if route.Auth.OAuth == nil {
@@ -149,8 +152,13 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 		}
 	} else if callback != "" {
 		return nil, fmt.Errorf("%w: mcp.broker.callback_url requires a broker OAuth server", ErrMCPProfileInvalid)
+	} else if section.Broker.SigningKeyFile != "" {
+		return nil, fmt.Errorf("%w: mcp.broker.signing_key_file requires a broker OAuth server, whose embedded authorization server signs with it", ErrMCPProfileInvalid)
 	}
-	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{Routes: section.Servers, CallbackURL: callback}), nil
+	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{
+		Routes: section.Servers, CallbackURL: callback,
+		SigningKeyFile: section.Broker.SigningKeyFile, FallbackKeyFiles: section.Broker.FallbackKeyFiles,
+	}), nil
 }
 
 func validateBrokerOAuth(route permconfig.MCPServerProfile) error {

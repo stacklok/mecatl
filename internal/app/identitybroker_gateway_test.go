@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
@@ -57,10 +60,11 @@ func wantAct(agentID string) map[string]any {
 }
 
 // buildWithRealAS1 builds with the real AS-1, issuing ID-JAGs for AS-2 and
-// checking actor tokens with the built broker's verifier, and a protected
-// calendar route, after edit changes the configuration. trustAS1 makes AS-2
-// trust AS-1 for Alice.
-func buildWithRealAS1(t *testing.T, trustAS1 bool, edit func(*Config)) *gatewayBuild {
+// checking actor tokens with the built broker's verifier, a protected
+// calendar route with the embedded gateway's signing key, and gateways, the
+// broker's gateway entries, after edit changes the configuration. trustAS1
+// makes AS-2 trust AS-1 for Alice.
+func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.GatewayEntry, edit func(*Config)) *gatewayBuild {
 	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(brokerconfigtest.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
@@ -74,10 +78,13 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, edit func(*Config)) *gatewayB
 		UseMock: true, NoSoul: true, NoShell: true,
 		IdentityBroker: true, MCPAuthority: protectedBrokerAuthority(),
 		// The file's broker client key is the one AS-1 registered.
-		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: a.Key}).Path,
+		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: a.Key, Gateways: gateways}).Path,
 		IdentityBrokerAS1: &IdentityBrokerAS1{
 			Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: as1HTTP, ActorTokens: a.Server,
 		},
+	}
+	if len(gateways) != 0 {
+		cfg.MCPAuthority = protectedBrokerAuthorityWithKey(t)
 	}
 	if trustAS1 {
 		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
@@ -175,7 +182,10 @@ func jwtClaims(t *testing.T, token string) map[string]any {
 // AS-1 and a gateway token at the real AS-2 naming the agent as the actor and
 // the broker as the client.
 func TestBuildBindsAS2ToTheIdentityBrokerGateway(t *testing.T) {
-	g := buildWithRealAS1(t, true, func(cfg *Config) { cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer} })
+	g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), nil)
+	if got := g.built.identityBrokerAS2; got == nil || got.Issuer != as2TestIssuer || got.TokenEndpoint != as2TestIssuer+"/oauth/token" || got.Resource != as2TestIssuer+"/mcp" {
+		t.Fatalf("AS-2 = %+v, want the entry's", got)
+	}
 	s, cred, _ := g.open(t)
 	auth, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
 	if err != nil {
@@ -197,26 +207,12 @@ func TestBuildBindsAS2ToTheIdentityBrokerGateway(t *testing.T) {
 }
 
 // TestBuildIdentityBrokerUnboundGatewayIsUnavailable shows a gateway whose
-// AS-2 is not bound, because startup set up no AS-2 or shutdown unbound it,
-// refuses calls as unavailable before asking AS-1 for an ID-JAG.
+// AS-2 shutdown unbound refuses calls as unavailable before asking AS-1 for
+// an ID-JAG. Startup never leaves a gateway unbound: it refuses an entry
+// without the embedded gateway (TestBuildRefusesADisagreeingGatewayEntry).
 func TestBuildIdentityBrokerUnboundGatewayIsUnavailable(t *testing.T) {
-	t.Run("no AS-2", func(t *testing.T) {
-		g := buildWithRealAS1(t, false, func(cfg *Config) {
-			cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer}
-			cfg.MCPAuthority = nil
-		})
-		if g.built.identityBrokerAS2 != nil {
-			t.Fatal("startup set up AS-2 without a protected route")
-		}
-		s, cred, _ := g.open(t)
-		_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-		wantBrokerError(t, err, identitybroker.CodeUnavailable, "")
-		if n := g.as1.Count(identityharness.KindIDJAG); n != 0 {
-			t.Fatalf("sent %d ID-JAG exchanges, want none", n)
-		}
-	})
 	t.Run("unbound at shutdown", func(t *testing.T) {
-		g := buildWithRealAS1(t, true, func(cfg *Config) { cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer} })
+		g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), nil)
 		s, cred, _ := g.open(t)
 		if _, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred)); err != nil {
 			t.Fatalf("AuthorizeCall before shutdown: %v", err)
@@ -237,7 +233,7 @@ func TestBuildIdentityBrokerUnboundGatewayIsUnavailable(t *testing.T) {
 // that serves AS-2: the call held at its ID-JAG exchange while Close runs
 // still gets its gateway token.
 func TestBuildCloseFinishesACallInFlightBeforeTheMCPBroker(t *testing.T) {
-	g := buildWithRealAS1(t, true, func(cfg *Config) { cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer} })
+	g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), nil)
 	s, cred, _ := g.open(t)
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	// A failed assertion still lets the call in flight finish.
@@ -310,20 +306,35 @@ func TestBuildCloseFinishesACallInFlightBeforeTheMCPBroker(t *testing.T) {
 	}
 }
 
-// TestBuildConfiguresNoGatewayInProduction shows that without the test-only
-// gateway servers, which production never sets, the identity broker has no
-// gateway even with AS-2 set up: a session holding a grant is denied without
-// an ID-JAG request.
+// TestBuildConfiguresNoGatewayInProduction shows the configurations
+// production can start with, an embedded gateway entry routing no servers or
+// no entry, give the identity broker no gateway: a session holding a grant is
+// denied without an ID-JAG request. The entry still sets AS-2 up, with the
+// operator's signing key; without one there is no AS-2, as with the identity
+// broker off.
 func TestBuildConfiguresNoGatewayInProduction(t *testing.T) {
-	g := buildWithRealAS1(t, false, nil)
-	if g.built.identityBrokerAS2 == nil {
-		t.Fatal("startup set up no AS-2")
-	}
-	s, cred, _ := g.open(t)
-	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-	wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
-	if n := g.as1.Count(identityharness.KindIDJAG); n != 0 {
-		t.Fatalf("sent %d ID-JAG exchanges, want none", n)
+	for name, tc := range map[string]struct {
+		gateways []identitybroker.GatewayEntry
+		as2      bool
+	}{
+		"an entry routing no servers": {embeddedEntry(), true},
+		"no entry":                    {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := buildWithRealAS1(t, false, tc.gateways, nil)
+			if got := g.built.identityBrokerAS2 != nil; got != tc.as2 {
+				t.Fatalf("startup set up AS-2: %v, want %v", got, tc.as2)
+			}
+			if g.built.mcpBrokerGatewayServers != nil {
+				t.Fatalf("gateway servers = %v, want none", g.built.mcpBrokerGatewayServers)
+			}
+			s, cred, _ := g.open(t)
+			_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
+			wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+			if n := g.as1.Count(identityharness.KindIDJAG); n != 0 {
+				t.Fatalf("sent %d ID-JAG exchanges, want none", n)
+			}
+		})
 	}
 }
 
@@ -337,8 +348,7 @@ func TestBuildConfiguresNoGatewayInProduction(t *testing.T) {
 // TestIdentityBrokerSessionToolCallThroughGateway.
 func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 	diag := &recordingDiag{}
-	g := buildWithRealAS1(t, true, func(cfg *Config) {
-		cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer}
+	g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), func(cfg *Config) {
 		cfg.Diagnostics = diag
 		cfg.UseMock, cfg.MockProvider = false, mockllm.New(mockllm.TextTurn("done"))
 	})
@@ -468,13 +478,13 @@ func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 // gateway entry routes, and only with the identity broker on.
 func TestBuildInstallsGatewayCallsOnlyWithGatewayServers(t *testing.T) {
 	t.Run("with gateway servers", func(t *testing.T) {
-		g := buildWithRealAS1(t, true, func(cfg *Config) { cfg.IdentityBrokerGatewayServers = []string{gatewayTestServer} })
+		g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), nil)
 		if got := g.built.mcpBrokerGatewayServers; !slices.Equal(got, []string{gatewayTestServer}) {
 			t.Fatalf("gateway servers = %v, want [%s]", got, gatewayTestServer)
 		}
 	})
 	t.Run("without gateway servers", func(t *testing.T) {
-		g := buildWithRealAS1(t, true, nil)
+		g := buildWithRealAS1(t, true, embeddedEntry(), nil)
 		if g.built.identityBrokerAS2 == nil {
 			t.Fatal("startup set up no AS-2")
 		}
@@ -485,7 +495,7 @@ func TestBuildInstallsGatewayCallsOnlyWithGatewayServers(t *testing.T) {
 	t.Run("without the identity broker", func(t *testing.T) {
 		built, err := buildIsolated(t, t.Context(), Config{
 			Workspace: t.TempDir(), UseMock: true, NoSoul: true, NoShell: true,
-			MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: []string{gatewayTestServer},
+			MCPAuthority: protectedBrokerAuthority(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -529,33 +539,34 @@ func TestGatewayInProcessClientRefusesOtherURLs(t *testing.T) {
 }
 
 // TestHostedAS1IssuesTheGatewaysIDJAGs builds the production path, the
-// identity broker beside a hosted AS-1, with the test-only gateway servers
-// and a protected route: the hosted AS-1 issues a call's ID-JAG for the AS-2
-// the MCP broker set up, naming the agent in act with the broker's trust
-// domain, and checks the agent's credential with the broker's verifier, which
-// startup bound. AS-2 then refuses the ID-JAG: its test trust would have to
-// list Alice's AS-1 subject, which the hosted AS-1 assigns only at a sign-in
-// after the build, so it trusts no issuer, and the test reads the ID-JAG from
-// the redemption.
+// identity broker beside a hosted AS-1, with a gateway entry routing a
+// protected route: the hosted AS-1 issues a call's ID-JAG for the entry's
+// AS-2, naming the agent in act with the broker's trust domain, and checks
+// the agent's credential with the broker's verifier, which startup bound.
+// AS-2 then refuses the ID-JAG: its test trust would have to list Alice's
+// AS-1 subject, which the hosted AS-1 assigns only at a sign-in after the
+// build, so it trusts another issuer, and the test reads the ID-JAG from the
+// redemption.
 func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
-	hb := buildWithHostedAS1(t, []string{gatewayTestServer})
+	hb := buildWithHostedAS1(t, embeddedEntry(gatewayTestServer))
 	// The hosted AS-1 issues ID-JAGs, and startup bound its actor-token check.
 	wantBindRefused(t, hb.built, "already bound")
 	g := hb.signIn(t)
 	s, cred, _ := g.open(t)
 	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-	// An AS-2 trusting no issuer answers invalid_request, which the broker
-	// reports as a fault without a retry.
+	// An AS-2 trusting another issuer answers invalid_grant without a reason
+	// (the #2533 shortcut on Config.IdentityBrokerAS2Trust), which the broker
+	// retries once with a new ID-JAG before failing the call.
 	wantBrokerError(t, err, identitybroker.CodeInternal, "")
 	jags := g.built.identityBrokerRecorder.IDJAGs()
 	redeemed := hb.as2.Requests()
-	if len(jags) != 1 || len(redeemed) != 1 {
-		t.Fatalf("%d ID-JAG records and %d redemptions, want 1 of each", len(jags), len(redeemed))
+	if len(jags) != 2 || len(redeemed) != 2 {
+		t.Fatalf("%d ID-JAG records and %d redemptions, want two of each: the call and its one retry", len(jags), len(redeemed))
 	}
 	issuer := hb.issuer
 	for i, r := range redeemed {
-		if r.Kind != identityharness.KindRedemption || r.Code != "invalid_request" || r.IssuedToken != "" {
-			t.Fatalf("redemption %d = %s answered %q, want an invalid_request refusal", i, r.Kind, r.Code)
+		if r.Kind != identityharness.KindRedemption || r.Code != "invalid_grant" || r.IssuedToken != "" {
+			t.Fatalf("redemption %d = %s answered %q, want an invalid_grant refusal", i, r.Kind, r.Code)
 		}
 		var header struct{ Typ string }
 		if err := json.Unmarshal([]byte(jwtSegmentText(t, r.Assertion, 0)), &header); err != nil || header.Typ != "oauth-id-jag+jwt" {
@@ -587,8 +598,11 @@ type hostedBuild struct {
 }
 
 // buildWithHostedAS1 builds the production path, the identity broker beside
-// a hosted AS-1, with a protected calendar route and gatewayServers.
-func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
+// a hosted AS-1, with a protected calendar route and gateways, the broker's
+// gateway entries. With an entry, the embedded gateway has a signing key;
+// with one routing servers, AS-2 trusts an issuer other than AS-1, which an
+// entry routing servers requires and which refuses AS-1's ID-JAGs.
+func buildWithHostedAS1(t *testing.T, gateways []identitybroker.GatewayEntry) *hostedBuild {
 	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	// The issuer names the listener the hosted AS-1 is served on once built.
@@ -600,20 +614,31 @@ func buildWithHostedAS1(t *testing.T, gatewayServers []string) *hostedBuild {
 	hb := &hostedBuild{h: h, issuer: "https://" + ln.Addr().String() + "/as1"}
 	hb.cfg = Config{
 		UseMock: true, NoSoul: true, NoShell: true,
-		IdentityBroker: true, IdentityBrokerConfigFile: testHostedAS1BrokerConfigFile(t), IdentityBrokerHostedAS1: hostedAS1Config(t, h, hb.issuer),
-		MCPAuthority: protectedBrokerAuthority(), IdentityBrokerGatewayServers: gatewayServers,
+		IdentityBroker:           true,
+		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Gateways: gateways}).Path,
+		IdentityBrokerHostedAS1:  hostedAS1Config(t, h, hb.issuer),
+		MCPAuthority:             protectedBrokerAuthority(),
 		identityBrokerAS2Transport: func(next http.RoundTripper) http.RoundTripper {
 			hb.as2 = identityharness.NewFaultTransport(next, as2TestIssuer+"/oauth/token")
 			return hb.as2
 		},
+	}
+	if len(gateways) != 0 {
+		hb.cfg.MCPAuthority = protectedBrokerAuthorityWithKey(t)
+		if len(gateways[0].Servers) != 0 {
+			hb.cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
+				Issuer: "https://untrusted-as1.mecatl.test", JWKSURL: "https://untrusted-as1.mecatl.test/jwks",
+				CAFile: h.WriteCACert(t, t.TempDir()), Subjects: []string{"nobody"},
+			})
+		}
 	}
 	hb.built, err = buildIsolated(t, t.Context(), hb.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(hb.built.Close)
-	if hb.as2 == nil {
-		t.Fatal("startup set up no AS-2")
+	if (hb.as2 != nil) != (len(gateways) != 0) {
+		t.Fatalf("startup set up AS-2: %v, want it exactly with a gateway entry", hb.as2 != nil)
 	}
 	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: hb.built.IdentityBrokerHostedAS1.Handler, ReadHeaderTimeout: 10 * time.Second}}
 	ts.StartTLS()
@@ -632,55 +657,102 @@ func (hb *hostedBuild) signIn(t *testing.T) *gatewayBuild {
 	return &gatewayBuild{h: hb.h, built: hb.built, access: access}
 }
 
-// TestHostedAS1IssuesNoIDJAGsInProduction builds the hosted AS-1 path
-// without the test-only gateway servers, as production does: startup derives
-// no ID-JAG target, the hosted AS-1 has no ID-JAG issuance (it refuses a
-// verifier because no delegate client issues ID-JAGs, where one with issuance
-// refuses only a second bind), and a call in a session holding a grant is
-// denied without an ID-JAG or a redemption.
+// TestHostedAS1IssuesNoIDJAGsInProduction builds the hosted AS-1 path as
+// production can, with an embedded gateway entry routing no servers or with
+// no entry: the hosted AS-1 has no ID-JAG issuance (it refuses a verifier
+// because no delegate client issues ID-JAGs, where one with issuance refuses
+// only a second bind), and a call in a session holding a grant is denied
+// without an ID-JAG or a redemption.
 func TestHostedAS1IssuesNoIDJAGsInProduction(t *testing.T) {
-	hb := buildWithHostedAS1(t, nil)
-	declaration, selected := hb.cfg.MCPAuthority.Broker()
-	if target := deriveGatewayIDJAGTarget(hb.cfg, declaration, selected); target != nil {
-		t.Fatalf("production derives ID-JAG target %+v, want none", target)
-	}
-	wantBindRefused(t, hb.built, "no delegate client issues ID-JAGs")
-	g := hb.signIn(t)
-	s, cred, _ := g.open(t)
-	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-	wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
-	if jags := g.built.identityBrokerRecorder.IDJAGs(); len(jags) != 0 {
-		t.Fatalf("ID-JAG records = %+v, want none", jags)
+	for name, gateways := range map[string][]identitybroker.GatewayEntry{
+		"an entry routing no servers": embeddedEntry(),
+		"no entry":                    nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			hb := buildWithHostedAS1(t, gateways)
+			wantBindRefused(t, hb.built, "no delegate client issues ID-JAGs")
+			g := hb.signIn(t)
+			s, cred, _ := g.open(t)
+			_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
+			wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+			if jags := g.built.identityBrokerRecorder.IDJAGs(); len(jags) != 0 {
+				t.Fatalf("ID-JAG records = %+v, want none", jags)
+			}
+		})
 	}
 }
 
-// TestDeriveGatewayIDJAGTarget derives the AS-2 a hosted AS-1 issues the
-// gateway's ID-JAGs for only with the test-only gateway servers and a bundled
-// broker whose callback URL AS-2 can be set up for.
-func TestDeriveGatewayIDJAGTarget(t *testing.T) {
+// TestHostedAS1IssuesIDJAGsOnlyForTheGatewayEntry asks the hosted AS-1, as
+// the broker client, for ID-JAGs for an audience or resource the gateway
+// entry does not name: AS-1 refuses each with invalid_target, and issues one
+// for the entry's.
+func TestHostedAS1IssuesIDJAGsOnlyForTheGatewayEntry(t *testing.T) {
+	hb := buildWithHostedAS1(t, embeddedEntry(gatewayTestServer))
+	_, cred, _ := hb.signIn(t).open(t)
+	// A grant of Alice's own, from another sign-in, for the same agent.
+	access := hb.signIn(t).access
+	client, err := authserverclient.New(authserverclient.Config{
+		Issuer: hb.issuer, TokenEndpoint: hb.built.identityBrokerHostedAS1Server.TokenEndpoint(),
+		Assertions: hb.built.identityBrokerClient, HTTPClient: hb.built.IdentityBrokerHostedAS1.HTTPClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := client.Exchange(t.Context(), identitybroker.TokenExchange{SubjectToken: access, Grant: identitybroker.ExchangeGrant{
+		Type: identitybroker.ExchangeGrantType, IssuableTokenTypes: []string{identitybroker.TokenTypeIDJAG},
+	}})
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	issue := func(audience, resource string) error {
+		_, err := client.IssueIDJAG(t.Context(), identitybroker.IDJAGRequest{
+			SubjectToken: grant.RefreshToken, ActorToken: cred, Audience: audience, Resource: resource, OperationID: "op-target",
+		})
+		return err
+	}
+	for name, target := range map[string][2]string{
+		"another audience": {"https://other.example/v1/mcp/broker", as2TestIssuer + "/mcp"},
+		"another resource": {as2TestIssuer, as2TestIssuer + "/other-mcp"},
+	} {
+		var refusal *identitybroker.ServerRefusal
+		if err := issue(target[0], target[1]); !errors.As(err, &refusal) || refusal.Code != "invalid_target" {
+			t.Errorf("%s: IssueIDJAG = %v, want invalid_target", name, err)
+		}
+	}
+	if err := issue(as2TestIssuer, as2TestIssuer+"/mcp"); err != nil {
+		t.Fatalf("IssueIDJAG for the entry's AS-2 and resource: %v", err)
+	}
+}
+
+// TestDeriveEmbeddedGateway derives the embedded gateway an embedded gateway
+// entry must describe only for a bundled broker with an OAuth route and a
+// callback URL AS-2 can be set up for.
+func TestDeriveEmbeddedGateway(t *testing.T) {
 	protected, _ := protectedBrokerAuthority().Broker()
-	gateway := []string{gatewayTestServer}
-	want := &gatewayIDJAGTarget{Issuer: as2TestIssuer, Resource: as2TestIssuer + "/mcp"}
-	if got := deriveGatewayIDJAGTarget(Config{IdentityBrokerGatewayServers: gateway}, protected, true); !reflect.DeepEqual(got, want) {
-		t.Fatalf("target = %+v, want %+v", got, want)
+	protected.Routes = append(protected.Routes, permconfig.MCPServerProfile{Name: "docs", URL: "https://docs.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}})
+	want := &embeddedGateway{Issuer: as2TestIssuer, TokenEndpoint: as2TestIssuer + "/oauth/token", Resource: as2TestIssuer + "/mcp", Routes: []string{"calendar"}}
+	if got := deriveEmbeddedGateway(Config{}, protected, true); !reflect.DeepEqual(got, want) {
+		t.Fatalf("embedded gateway = %+v, want %+v", got, want)
 	}
 	httpCallback := protected
 	httpCallback.CallbackURL = "http://broker.example/oauth/callback"
-	configured := Config{IdentityBrokerGatewayServers: gateway}
+	anonymousOnly := protected
+	anonymousOnly.Routes = protected.Routes[1:]
+	configured := Config{}
 	configured.MCPBrokerCaller = unusedBrokerCaller
 	for name, tc := range map[string]struct {
 		cfg         Config
 		declaration mcpauthority.BrokerConfig
 		selected    bool
 	}{
-		"no gateway servers": {Config{}, protected, true},
-		"no broker":          {Config{IdentityBrokerGatewayServers: gateway}, protected, false},
-		"no routes":          {Config{IdentityBrokerGatewayServers: gateway}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}, true},
+		"global authority":   {Config{}, protected, false},
+		"no routes":          {Config{}, mcpauthority.BrokerConfig{CallbackURL: brokerTestCallbackURL}, true},
+		"no OAuth route":     {Config{}, anonymousOnly, true},
 		"configured broker":  {configured, protected, true},
-		"non-HTTPS callback": {Config{IdentityBrokerGatewayServers: gateway}, httpCallback, true},
+		"non-HTTPS callback": {Config{}, httpCallback, true},
 	} {
-		if got := deriveGatewayIDJAGTarget(tc.cfg, tc.declaration, tc.selected); got != nil {
-			t.Errorf("%s: target = %+v, want none", name, got)
+		if got := deriveEmbeddedGateway(tc.cfg, tc.declaration, tc.selected); got != nil {
+			t.Errorf("%s: embedded gateway = %+v, want none", name, got)
 		}
 	}
 }
@@ -744,33 +816,83 @@ func TestBuildFailsWhenAS1sActorTokenCheckCannotBind(t *testing.T) {
 	})
 }
 
-// TestBuildMCPBrokerRefusesAS2OtherThanTheIDJAGTarget shows the bundled MCP
-// broker refuses to start when the AS-2 it set up is not the one AS-1 issues
-// the gateway's ID-JAGs for.
-func TestBuildMCPBrokerRefusesAS2OtherThanTheIDJAGTarget(t *testing.T) {
+// TestBuildMCPBrokerRefusesAS2OtherThanTheEntry shows the bundled MCP broker
+// refuses to start when the AS-2 it set up is not the one the identity
+// broker's gateway entry names, the check after startup's own.
+func TestBuildMCPBrokerRefusesAS2OtherThanTheEntry(t *testing.T) {
 	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), newBrokerClientKey(t))
-	declaration, _ := protectedBrokerAuthority().Broker()
-	for name, target := range map[string]gatewayIDJAGTarget{
-		"another issuer":   {Issuer: "https://other.example/v1/mcp/broker", Resource: as2TestIssuer + "/mcp"},
-		"another resource": {Issuer: as2TestIssuer, Resource: "https://other.example/mcp"},
+	declaration, _ := protectedBrokerAuthorityWithKey(t).Broker()
+	for name, tc := range map[string]struct {
+		edit  func(*identitybroker.GatewayEntry)
+		field string
+	}{
+		"another issuer":         {func(e *identitybroker.GatewayEntry) { e.AS2Issuer = "https://other.example/v1/mcp/broker" }, "its issuer"},
+		"another token endpoint": {func(e *identitybroker.GatewayEntry) { e.TokenEndpoint = as2TestIssuer + "/token" }, "its token endpoint"},
+		"another resource":       {func(e *identitybroker.GatewayEntry) { e.Resource = "https://other.example/mcp" }, "its resource"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, idjagTarget: &target})
+			entry := embeddedEntry()[0]
+			tc.edit(&entry)
+			parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, entry: &entry})
 			if err == nil {
 				parts.close()
-				t.Fatal("buildMCPBroker set up an AS-2 AS-1 issues no ID-JAGs for")
+				t.Fatal("buildMCPBroker set up an AS-2 the gateway entry does not name")
 			}
-			if !errors.Is(err, errAS2IsNotIDJAGTarget) {
-				t.Fatalf("buildMCPBroker error = %v, want %v", err, errAS2IsNotIDJAGTarget)
+			// The error names the field that differs, as startup's check does.
+			if !errors.Is(err, errAS2IsNotTheEntry) || !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("buildMCPBroker error = %v, want %v naming %q", err, errAS2IsNotTheEntry, tc.field)
 			}
 		})
 	}
-	want := gatewayIDJAGTarget{Issuer: as2TestIssuer, Resource: as2TestIssuer + "/mcp"}
-	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, idjagTarget: &want})
+	entry := embeddedEntry()[0]
+	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, mcpBrokerIdentity{clientKeySetFile: keySet, entry: &entry})
 	if err != nil {
-		t.Fatalf("buildMCPBroker with the matching target: %v", err)
+		t.Fatalf("buildMCPBroker with the matching entry: %v", err)
 	}
 	parts.close()
+}
+
+// TestBuildMCPBrokerRefusesAS2SigningWithABrokerKey shows the bundled MCP
+// broker refuses to start when AS-2 loaded a signing key that is one of the
+// identity broker's keys, the check after startup's own: startup read the
+// key files once, and AS-2 reads them again, so a file changed in between
+// is caught here.
+func TestBuildMCPBrokerRefusesAS2SigningWithABrokerKey(t *testing.T) {
+	keySet := brokerconfigtest.WriteKeySet(t, filepath.Join(t.TempDir(), "jwks.json"), newBrokerClientKey(t))
+	declaration, _ := protectedBrokerAuthority().Broker()
+	key := brokerconfigtest.NewKey(t)
+	declaration.SigningKeyFile = writeAS2Key(t, key)
+	entry := embeddedEntry()[0]
+	identity := mcpBrokerIdentity{clientKeySetFile: keySet, entry: &entry, brokerKeys: []crypto.PublicKey{&newBrokerClientKey(t).PublicKey, &key.PublicKey}}
+	parts, err := buildMCPBroker(t.Context(), Config{}, declaration, nil, identity)
+	if err == nil {
+		parts.close()
+		t.Fatal("buildMCPBroker set up an AS-2 signing with an identity broker key")
+	}
+	if !errors.Is(err, errAS2SigningKeyIsABrokerKey) {
+		t.Fatalf("buildMCPBroker error = %v, want %v", err, errAS2SigningKeyIsABrokerKey)
+	}
+	identity.brokerKeys = identity.brokerKeys[:1]
+	parts, err = buildMCPBroker(t.Context(), Config{}, declaration, nil, identity)
+	if err != nil {
+		t.Fatalf("buildMCPBroker with a signing key no broker role holds: %v", err)
+	}
+	parts.close()
+}
+
+// uncomparableKey is a public key type without an Equal method.
+type uncomparableKey struct{}
+
+// TestCheckAS2KeysAreNotBrokerKeysFailsClosed refuses an AS-2 key it cannot
+// compare with the identity broker's keys rather than skipping it.
+func TestCheckAS2KeysAreNotBrokerKeysFailsClosed(t *testing.T) {
+	broker := []crypto.PublicKey{&newBrokerClientKey(t).PublicKey}
+	if err := checkAS2KeysAreNotBrokerKeys([]crypto.PublicKey{uncomparableKey{}}, broker); err == nil {
+		t.Fatal("checkAS2KeysAreNotBrokerKeys accepted a key it cannot compare")
+	}
+	if err := checkAS2KeysAreNotBrokerKeys([]crypto.PublicKey{&newBrokerClientKey(t).PublicKey}, broker); err != nil {
+		t.Fatalf("checkAS2KeysAreNotBrokerKeys with a distinct key = %v", err)
+	}
 }
 
 // resourceGateway is a Gateway with a given endpoint and resource.
@@ -820,9 +942,14 @@ func TestGatewayCallsFollowALoadedDefinitionsCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers := []string{gatewayTestServer, github}
-	g := buildWithRealAS1(t, true, func(cfg *Config) {
+	g := buildWithRealAS1(t, true, embeddedEntry(servers...), func(cfg *Config) {
 		cfg.AgentsDirs = []string{dir}
-		cfg.IdentityBrokerGatewayServers = servers
+		// The entry's servers must be OAuth routes of the MCP broker.
+		cfg.MCPAuthority = mcpauthority.NewBroker(mcpauthority.BrokerConfig{
+			CallbackURL:    brokerTestCallbackURL,
+			Routes:         []permconfig.MCPServerProfile{protectedToolHiveRoute(gatewayTestServer), protectedToolHiveRoute(github)},
+			SigningKeyFile: writeAS2Key(t, brokerconfigtest.NewKey(t)),
+		})
 	})
 
 	// The reference the broker holds for the definition, through the loader

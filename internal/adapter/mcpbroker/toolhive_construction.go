@@ -1,13 +1,19 @@
 package mcpbroker
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
+	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
 	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
@@ -79,6 +85,80 @@ type ToolHiveConfig struct {
 	// EmbeddedGatewayClient builds the embedded gateway's HTTP client over
 	// the vMCP handler for endpoint.
 	EmbeddedGatewayClient func(vmcp http.Handler, endpoint string) (*http.Client, error)
+	// SigningKeyFile is the absolute path of the PEM private key the embedded
+	// authorization server signs its tokens with; empty generates a key at
+	// each start. FallbackKeyFiles are absolute paths of earlier keys, PEM
+	// private keys too, whose tokens still verify; they require
+	// SigningKeyFile.
+	SigningKeyFile   string
+	FallbackKeyFiles []string
+}
+
+// signingKeyRunConfig is ToolHive's configuration of the embedded
+// authorization server's signing keys, nil without a key file. ToolHive
+// joins each file name to an empty KeyDir, so the absolute paths stay as
+// they are.
+func (c ToolHiveConfig) signingKeyRunConfig() (*authserver.SigningKeyRunConfig, error) {
+	if c.SigningKeyFile == "" {
+		if len(c.FallbackKeyFiles) != 0 {
+			return nil, fmt.Errorf("%w: signing fallback keys need a signing key file", ErrInvalidCatalogue)
+		}
+		return nil, nil
+	}
+	for _, path := range append([]string{c.SigningKeyFile}, c.FallbackKeyFiles...) {
+		if !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("%w: signing key file %q is not an absolute path", ErrInvalidCatalogue, path)
+		}
+	}
+	return &authserver.SigningKeyRunConfig{SigningKeyFile: c.SigningKeyFile, FallbackKeyFiles: append([]string(nil), c.FallbackKeyFiles...)}, nil
+}
+
+// SigningPublicKeys reads the signing key at keyFile and its fallbacks as
+// the embedded authorization server reads them, and returns their public
+// keys, so composition can refuse a key another role uses. It refuses a key
+// the vMCP cannot verify tokens from (checkSigningKeyType) and a key listed
+// twice, the active key included, which would publish its key ID twice.
+// Errors name the file, never key material.
+func SigningPublicKeys(keyFile string, fallbacks []string) ([]crypto.PublicKey, error) {
+	paths := append([]string{keyFile}, fallbacks...)
+	keys := make([]crypto.PublicKey, 0, len(paths))
+	for _, path := range paths {
+		signer, err := servercrypto.LoadSigningKey(path)
+		if err != nil {
+			return nil, fmt.Errorf("signing key %s: %w", path, err)
+		}
+		pub := signer.Public()
+		if err := checkSigningKeyType(pub); err != nil {
+			return nil, fmt.Errorf("signing key %s: %w", path, err)
+		}
+		for j, earlier := range keys {
+			if eq, ok := earlier.(interface{ Equal(crypto.PublicKey) bool }); ok && eq.Equal(pub) {
+				return nil, fmt.Errorf("signing key %s is the same key as %s", path, paths[j])
+			}
+		}
+		keys = append(keys, pub)
+	}
+	return keys, nil
+}
+
+// checkSigningKeyType refuses a signing key whose tokens the vMCP cannot
+// verify. ToolHive's embedded authorization server signs with an Ed25519
+// key, as EdDSA, but its token validator accepts only RSA and ECDSA
+// signatures, so every such token would be refused; and it refuses an ECDSA
+// curve other than P-256, P-384, or P-521 only after startup has begun.
+func checkSigningKeyType(pub crypto.PublicKey) error {
+	switch k := pub.(type) {
+	case *rsa.PublicKey:
+		return nil
+	case *ecdsa.PublicKey:
+		switch k.Curve {
+		case elliptic.P256(), elliptic.P384(), elliptic.P521():
+			return nil
+		}
+		return fmt.Errorf("an ECDSA key on %s, but it must be on P-256, P-384, or P-521", k.Curve.Params().Name)
+	default:
+		return fmt.Errorf("a %T key, but it must be an RSA or ECDSA key", pub)
+	}
 }
 
 // AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.
@@ -91,6 +171,10 @@ type AS2Trust struct{ t *as2trust.Trust }
 
 // NewAS2Trust returns an AS2Trust trusting t.
 func NewAS2Trust(t as2trust.Trust) AS2Trust { return AS2Trust{t: &t} }
+
+// TrustsAnIssuer reports whether t trusts an ID-JAG issuer; the zero value,
+// production's, trusts none.
+func (t AS2Trust) TrustsAnIssuer() bool { return t.t != nil }
 
 // ToolHiveBrokerClient is the identity broker's client at AS-2.
 type ToolHiveBrokerClient struct {
@@ -125,16 +209,21 @@ func as2Resource(issuer string) string {
 	return issuer + "/mcp"
 }
 
-// AS2Endpoints returns the issuer and vMCP resource NewToolHiveProcess gives
-// AS-2 when it sets AS-2 up for callbackURL, which it does only with a
-// protected profile and a broker client. It fails when callbackURL is not the
-// canonical HTTPS URL protected profiles require.
-func AS2Endpoints(callbackURL string) (issuer, resource string, err error) {
+// as2TokenEndpoint is the token endpoint of AS-2 at issuer.
+func as2TokenEndpoint(issuer string) string {
+	return issuer + "/oauth/token"
+}
+
+// AS2Endpoints returns the issuer, token endpoint, and vMCP resource
+// NewToolHiveProcess gives AS-2 when it sets AS-2 up for callbackURL, which
+// it does only with a protected profile and a broker client. It fails when
+// callbackURL is not the canonical HTTPS URL protected profiles require.
+func AS2Endpoints(callbackURL string) (issuer, tokenEndpoint, resource string, err error) {
 	issuer, err = toolHiveIssuer(callbackURL, true)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return issuer, as2Resource(issuer), nil
+	return issuer, as2TokenEndpoint(issuer), as2Resource(issuer), nil
 }
 
 // as2RunConfig returns AS-2's additions to the embedded authorization

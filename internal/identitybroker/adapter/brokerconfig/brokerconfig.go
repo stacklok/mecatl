@@ -16,7 +16,14 @@
 //	    "agent_issuer": {"key_file": "/keys/agent-issuer/key.pem", "fallback_key_files": ["/keys/agent-issuer-old/public.pem"]},
 //	    "broker_client": {"key_file": "/keys/broker-client/key.pem", "key_set_file": "/keys/broker-client-jwks/jwks.json"},
 //	    "as1_signing": {"key_file": "/keys/as1/key.pem", "fallback_key_files": ["/keys/as1-old/key.pem"]}
-//	  }
+//	  },
+//	  "gateways": [{
+//	    "kind": "embedded",
+//	    "as2_issuer": "https://mecatl.example.com/v1/mcp/broker",
+//	    "token_endpoint": "https://mecatl.example.com/v1/mcp/broker/oauth/token",
+//	    "resource": "https://mecatl.example.com/v1/mcp/broker/mcp",
+//	    "servers": ["calendar"]
+//	  }]
 //	}
 //
 // Every path is absolute. Key files are PEM private keys: PKCS #1, SEC 1, or
@@ -29,6 +36,15 @@
 // broker client rotates through its key set file instead, which holds the old
 // and new public keys. AS-1's signing key is configured only with a hosted
 // AS-1.
+//
+// Gateways are optional. Each entry names its gateway's kind, its
+// authorization server's (AS-2's) issuer and advertised token endpoint, each
+// an absolute https URL, the vMCP resource, and the servers it routes. The
+// broker validates the entries (identitybroker.ValidateGatewayEntries) and
+// refuses one whose AS-2 issuer names AS-1's issuer: the broker client
+// authenticates to both with one key. An entry requires the broker client
+// key. The process that runs the gateway checks that it agrees with the
+// entry.
 package brokerconfig
 
 import (
@@ -40,8 +56,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
@@ -70,6 +88,9 @@ type File struct {
 	// signing key.
 	AS1SigningKeyFile   string
 	AS1FallbackKeyFiles []string
+	// Gateways are the file's gateway entries, validated with
+	// identitybroker.ValidateGatewayEntries: none, or one embedded entry.
+	Gateways []identitybroker.GatewayEntry
 }
 
 // document is the file's JSON form.
@@ -84,6 +105,16 @@ type document struct {
 		} `json:"broker_client"`
 		AS1Signing signingKey `json:"as1_signing"`
 	} `json:"keys"`
+	Gateways []gatewayEntry `json:"gateways"`
+}
+
+// gatewayEntry is a gateway entry's JSON form.
+type gatewayEntry struct {
+	Kind          string   `json:"kind"`
+	AS2Issuer     string   `json:"as2_issuer"`
+	TokenEndpoint string   `json:"token_endpoint"`
+	Resource      string   `json:"resource"`
+	Servers       []string `json:"servers"`
 }
 
 // signingKey names a signing key and its fallbacks.
@@ -131,6 +162,8 @@ func load(raw []byte, host Host) (File, error) {
 	case !host.AS1 && doc.Keys.AS1Signing.KeyFile != "":
 		// Refused before the unused private key is read.
 		return File{}, errors.New("keys.as1_signing requires a hosted AS-1, which this process does not run")
+	case len(doc.Gateways) != 0 && doc.Keys.BrokerClient.KeyFile == "":
+		return File{}, errors.New("gateways requires keys.broker_client, which the broker authenticates to each gateway's AS-2 with")
 	}
 	if err := identitybroker.ValidateTrustDomain(doc.TrustDomain); err != nil {
 		return File{}, fmt.Errorf("trust_domain: %w", err)
@@ -145,6 +178,9 @@ func load(raw []byte, host Host) (File, error) {
 	if err := file.Config.Validate(); err != nil {
 		return File{}, err
 	}
+	if file.Gateways, err = gateways(doc.Gateways, host); err != nil {
+		return File{}, err
+	}
 	if file.Keys, err = readKeys(doc); err != nil {
 		return File{}, err
 	}
@@ -152,6 +188,76 @@ func load(raw []byte, host Host) (File, error) {
 		return File{}, err
 	}
 	return file, nil
+}
+
+// gateways converts and validates the file's gateway entries for a broker
+// beside host: the broker's rules, each URL an absolute https URL, and no
+// AS-2 issuer naming AS-1's.
+func gateways(raw []gatewayEntry, host Host) ([]identitybroker.GatewayEntry, error) {
+	entries := make([]identitybroker.GatewayEntry, len(raw))
+	for i, e := range raw {
+		entries[i] = identitybroker.GatewayEntry{
+			Kind: identitybroker.GatewayKind(e.Kind), AS2Issuer: e.AS2Issuer, TokenEndpoint: e.TokenEndpoint,
+			Resource: e.Resource, Servers: append([]string(nil), e.Servers...),
+		}
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	if err := identitybroker.ValidateGatewayEntries(entries); err != nil {
+		return nil, fmt.Errorf("gateways: %w", err)
+	}
+	for i, e := range raw {
+		for _, f := range []struct{ name, value string }{{"as2_issuer", e.AS2Issuer}, {"token_endpoint", e.TokenEndpoint}, {"resource", e.Resource}} {
+			if !httpsURL(f.value) {
+				return nil, fmt.Errorf("gateways[%d].%s: %q must be an absolute https URL with a host and no credentials, query, or fragment", i, f.name, f.value)
+			}
+		}
+		if host.AS1Issuer != "" && sameIssuer(e.AS2Issuer, host.AS1Issuer) {
+			return nil, fmt.Errorf("gateways[%d].as2_issuer: %q names AS-1's issuer %q; the broker client authenticates to both with one key, so a client assertion or ID-JAG meant for one would be accepted by the other", i, e.AS2Issuer, host.AS1Issuer)
+		}
+	}
+	return entries, nil
+}
+
+// httpsURL reports whether raw is an absolute https URL with a host and no
+// credentials, query, or fragment.
+func httpsURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.Contains(raw, "#")
+}
+
+// sameIssuer reports whether two issuer URLs name the same issuer: scheme
+// and host compare case-insensitively, a default port equals none, and the
+// paths compare equal ignoring a trailing slash. The same host under another
+// path is another issuer. Unparseable URLs compare byte for byte.
+func sameIssuer(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		effectivePort(ua) == effectivePort(ub) &&
+		strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/")
+}
+
+// effectivePort is u's port, or its scheme's default when it names none.
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
 }
 
 // readKeys reads the keys doc names, which load has checked are named

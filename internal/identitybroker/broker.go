@@ -67,7 +67,7 @@ type Broker struct {
 	as1 AuthServer
 	// gateway is the gateway calls are authorized through; nil when none is
 	// configured, and every call is denied at the server check. There is at
-	// most one until #2538 (see WithGateway).
+	// most one until #2812 (see WithGateway).
 	gateway *Gateway
 	// gateways counts WithGateway options, so New refuses a second.
 	gateways int

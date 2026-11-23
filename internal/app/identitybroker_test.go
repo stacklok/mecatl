@@ -60,7 +60,7 @@ func (c *closableCore) FindSession(ctx context.Context, workload identitybroker.
 
 func newClosableCore(t *testing.T) *closableCore {
 	t.Helper()
-	broker, err := newIdentityBroker(t.Context(), Config{}, testBrokerFile(t, brokerconfigtest.Options{}))
+	broker, err := newIdentityBroker(t.Context(), Config{}, testBrokerFile(t, brokerconfigtest.Options{}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestIdentityBrokerUsesTheOperatorKeysPerRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker, err := newIdentityBroker(t.Context(), Config{}, file)
+	broker, err := newIdentityBroker(t.Context(), Config{}, file, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestIdentityBrokerUsesTheOperatorKeysPerRole(t *testing.T) {
 	if want := kidOf(t, files.BrokerClientKey); len(keys) != 1 || keys[0].KeyID != want {
 		t.Fatalf("broker client JWKS %+v; want the file's broker client key %q", keys, want)
 	}
-	restarted, err := newIdentityBroker(t.Context(), Config{}, file)
+	restarted, err := newIdentityBroker(t.Context(), Config{}, file, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestIdentityBrokerRefusesAnAS1WithoutTheBrokerClientKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newIdentityBroker(t.Context(), Config{IdentityBrokerAS1: unusedAS1("https://as1.example")}, file); !errors.Is(err, errNoBrokerClientKey) {
+	if _, err := newIdentityBroker(t.Context(), Config{IdentityBrokerAS1: unusedAS1("https://as1.example")}, file, nil); !errors.Is(err, errNoBrokerClientKey) {
 		t.Fatalf("newIdentityBroker = %v, want %v", err, errNoBrokerClientKey)
 	}
 }
@@ -581,7 +581,7 @@ func TestIdentityBrokerWiringConvertsAtAS1(t *testing.T) {
 	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), nil)
 	broker, err := newIdentityBroker(t.Context(), Config{IdentityBrokerAS1: &IdentityBrokerAS1{
 		Issuer: a.Issuer(), TokenEndpoint: a.Server.TokenEndpoint(), HTTPClient: a.HTTPClient(),
-	}}, testBrokerFile(t, brokerconfigtest.Options{BrokerClientKey: a.Key}))
+	}}, testBrokerFile(t, brokerconfigtest.Options{BrokerClientKey: a.Key}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,28 +740,6 @@ func TestIdentityBrokerHostsAS1(t *testing.T) {
 	}
 }
 
-func TestSameIssuer(t *testing.T) {
-	const issuer = "https://broker.example/v1/mcp/broker"
-	for other, want := range map[string]bool{
-		issuer:                                 true,
-		"HTTPS://Broker.Example/v1/mcp/broker": true,
-		"https://broker.example:443/v1/mcp/broker":  true,
-		"https://broker.example/v1/mcp/broker/":     true,
-		"http://broker.example/v1/mcp/broker":       false,
-		"https://broker.example:8443/v1/mcp/broker": false,
-		"https://other.example/v1/mcp/broker":       false,
-		"https://broker.example/v1/mcp/BROKER":      false,
-		"https://broker.example/as1":                false,
-	} {
-		if got := sameIssuer(issuer, other); got != want {
-			t.Errorf("sameIssuer(%q, %q) = %v, want %v", issuer, other, got, want)
-		}
-		if got := sameIssuer(other, issuer); got != want {
-			t.Errorf("sameIssuer(%q, %q) = %v, want %v", other, issuer, got, want)
-		}
-	}
-}
-
 func TestIdentityBrokerAS1RequiresTheBroker(t *testing.T) {
 	built, err := buildIsolated(t, t.Context(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, IdentityBrokerHostedAS1: &IdentityBrokerAS1Config{Issuer: "https://mecatl.test/as1"}})
 	if err == nil {
@@ -851,7 +829,7 @@ func TestScheduledFireClosesItsBrokerSessionWhenTheRunEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ib, err := newIdentityBroker(t.Context(), Config{}, testBrokerFile(t, brokerconfigtest.Options{}))
+	ib, err := newIdentityBroker(t.Context(), Config{}, testBrokerFile(t, brokerconfigtest.Options{}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -912,7 +890,7 @@ func TestIdentityBrokerLoadsTheOperatorsDefinitions(t *testing.T) {
 	const secret = "sk-test-do-not-log"
 	bad := write("broken.md", "---\nname: broken\n---\n"+secret+"\n") // no description
 	diag := &captureDiag{}
-	ib, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{dir}, Diagnostics: diag}, testBrokerFile(t, brokerconfigtest.Options{}))
+	ib, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{dir}, Diagnostics: diag}, testBrokerFile(t, brokerconfigtest.Options{}), nil)
 	if err != nil {
 		t.Fatalf("newIdentityBroker: %v", err)
 	}
@@ -950,7 +928,7 @@ func TestIdentityBrokerLoadsTheOperatorsDefinitions(t *testing.T) {
 
 func TestIdentityBrokerMissingAgentsDirFailsStartup(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{missing}}, testBrokerFile(t, brokerconfigtest.Options{})); err == nil || !strings.Contains(err.Error(), "load identity broker definitions") {
+	if _, err := newIdentityBroker(t.Context(), Config{AgentsDirs: []string{missing}}, testBrokerFile(t, brokerconfigtest.Options{}), nil); err == nil || !strings.Contains(err.Error(), "load identity broker definitions") {
 		t.Fatalf("newIdentityBroker with a missing agents directory = %v, want a load failure", err)
 	}
 	llm := mockllm.New(mockllm.TextTurn("done"))
@@ -990,7 +968,7 @@ func TestIdentityDefinitionRefsUnderAHarnessPolicy(t *testing.T) {
 // even when a test injects the broker core, so it never starts without them
 // (the server refuses an identity broker with none).
 func TestIdentityBrokerWithAnInjectedCoreSendsTheConfiguredDefinitions(t *testing.T) {
-	parts, err := buildIdentityBroker(t.Context(), Config{IdentityBroker: true, NoShell: true, identityBrokerCore: newClosableCore(t)}, nil)
+	parts, err := buildIdentityBroker(t.Context(), Config{IdentityBroker: true, NoShell: true, identityBrokerCore: newClosableCore(t)}, nil, as2SigningKey{})
 	if err != nil {
 		t.Fatalf("buildIdentityBroker: %v", err)
 	}

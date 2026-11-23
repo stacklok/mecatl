@@ -21,6 +21,18 @@ const (
 type BrokerConfig struct {
 	Routes      []permconfig.MCPServerProfile
 	CallbackURL string
+	// SigningKeyFile and FallbackKeyFiles are the absolute paths of the
+	// embedded authorization server's signing key and its fallbacks; empty
+	// lets it generate its key at each start.
+	SigningKeyFile   string
+	FallbackKeyFiles []string
+}
+
+func (c *BrokerConfig) clone() *BrokerConfig {
+	return &BrokerConfig{
+		Routes: cloneRoutes(c.Routes), CallbackURL: c.CallbackURL,
+		SigningKeyFile: c.SigningKeyFile, FallbackKeyFiles: append([]string(nil), c.FallbackKeyFiles...),
+	}
 }
 
 // Result is the canonical authority tagged union. Unexported payloads prevent a
@@ -43,7 +55,7 @@ func NewGlobal(servers []mcp.ServerConfig, lifecycle interface{ Close() error })
 
 // NewBroker takes one deep defensive copy and creates a broker-only result.
 func NewBroker(config BrokerConfig) *Result {
-	return &Result{mode: Broker, broker: &BrokerConfig{Routes: cloneRoutes(config.Routes), CallbackURL: config.CallbackURL}}
+	return &Result{mode: Broker, broker: config.clone()}
 }
 
 // Mode returns the selected authority tag. Nil, zero, and malformed results fail
@@ -80,7 +92,7 @@ func (r *Result) Broker() (BrokerConfig, bool) {
 	if r.Mode() != Broker {
 		return BrokerConfig{}, false
 	}
-	return BrokerConfig{Routes: cloneRoutes(r.broker.Routes), CallbackURL: r.broker.CallbackURL}, true
+	return *r.broker.clone(), true
 }
 
 func cloneServers(in []mcp.ServerConfig) []mcp.ServerConfig {

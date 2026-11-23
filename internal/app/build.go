@@ -999,17 +999,11 @@ type Config struct {
 	// test-only and no production path sets it: it sees every ID-JAG
 	// redeemed.
 	identityBrokerAS2Transport func(http.RoundTripper) http.RoundTripper
-	// IdentityBrokerGatewayServers gives the real identity broker a gateway
-	// routing these servers, whose AS-2 Build binds once the MCP broker has
-	// started. It is test-only: production leaves it nil, which configures no
-	// gateway, so gateway calls are refused as not configured (#2533).
-	// Without IdentityBrokerAS2Trust, AS-2 refuses the gateway's ID-JAGs
-	// anyway.
-	IdentityBrokerGatewayServers []string
 	// IdentityBrokerAS2Trust makes the bundled MCP broker's AS-2 trust an
 	// ID-JAG issuer, such as a test's AS-1 from mcpbrokertest.TrustAS1. It is
 	// test-only: production leaves it zero, and cannot build another, so
-	// AS-2 trusts no issuer.
+	// AS-2 trusts no issuer and Build refuses a gateway entry that routes
+	// servers.
 	// Shortcut: AS-2 trusts AS-1 only in tests, and sends no reason codes until stacklok/toolhive#7030, so every invalid_grant at AS-2 takes the reasonless retry; removed by #2533 (AS-2 trusts AS-1 in production, with reason codes).
 	IdentityBrokerAS2Trust as2Trust
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
@@ -2341,10 +2335,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
 
 	// The identity broker is released after the MCP broker, on startup failure
-	// and on shutdown. A hosted AS-1 issues the gateway's ID-JAGs for the AS-2
-	// the MCP broker will set up.
-	idjagTarget := deriveGatewayIDJAGTarget(cfg, brokerDeclaration, brokerSelected)
-	ib, err := buildIdentityBroker(ctx, cfg, idjagTarget)
+	// and on shutdown. Its embedded gateway entry must describe the embedded
+	// gateway the MCP broker will run.
+	ib, err := buildIdentityBroker(ctx, cfg, deriveEmbeddedGateway(cfg, brokerDeclaration, brokerSelected),
+		as2SigningKey{file: brokerDeclaration.SigningKeyFile, fallbacks: brokerDeclaration.FallbackKeyFiles})
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()
@@ -2374,12 +2368,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		identity := mcpBrokerIdentity{idjagTarget: idjagTarget, clientKeySetFile: ib.clientKeySetFile}
-		switch {
-		case ib.hosted != nil:
-			identity.as1Issuer = ib.hosted.Issuer
-		case cfg.IdentityBrokerAS1 != nil:
-			identity.as1Issuer = cfg.IdentityBrokerAS1.Issuer
+		// Without an embedded gateway entry the MCP broker is built as it is
+		// without the identity broker.
+		var identity mcpBrokerIdentity
+		if ib.gatewayEntry != nil {
+			identity = mcpBrokerIdentity{entry: ib.gatewayEntry, brokerKeys: ib.brokerPublicKeys, clientKeySetFile: ib.clientKeySetFile}
 		}
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
 			// One list for both sides: the MCP broker sends only these
@@ -2398,7 +2391,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, err
 		}
 	}
-	// AS-2 is bound in process after the MCP broker starts (the #2560
+	// AS-2 is bound in process after the MCP broker starts (the #2559
 	// shortcut on identitybroker.Broker.BindGatewayAS2).
 	unbindAS2, err := ib.bindAS2(broker.as2)
 	if err != nil {

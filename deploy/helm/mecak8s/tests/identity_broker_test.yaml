@@ -130,6 +130,30 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --identity-broker-as1-upstream-ca-file=/var/run/secrets/as1-upstream-ca/ca.crt
 
+  - it: refuses a gateway entry without the embedded gateway
+    set:
+      identityBroker.gateways:
+        - kind: embedded
+          as2Issuer: https://mecatl.example.com/v1/mcp/broker
+          tokenEndpoint: https://mecatl.example.com/v1/mcp/broker/oauth/token
+          resource: https://mecatl.example.com/v1/mcp/broker/mcp
+      mcp.broker.signingKey.secretName: mcp-gateway-signing
+      mcp.broker.signingKey.key: key.pem
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.gateways declares an embedded gateway, which needs mcp.broker.callbackURL and an mcp.servers entry with auth.mode oauth
+
+  - it: refuses an external gateway entry
+    set:
+      identityBroker.gateways:
+        - kind: external
+          as2Issuer: https://gateway.example.com
+          tokenEndpoint: https://gateway.example.com/oauth/token
+          resource: https://gateway.example.com/mcp
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.gateways[0].kind external: external gateways are not supported yet (#2812)"
+
   - it: rejects private upstream addresses without the upstream CA
     set:
       identityBroker.as1.upstream.allowPrivateAddresses: true

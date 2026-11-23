@@ -582,6 +582,20 @@
 #     # be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or
 #     # / is normalized to /.
 #     callback_url: ""
+#     # SigningKeyFile is the absolute path of the PEM private key (RSA, or ECDSA on
+#     # P-256, P-384, or P-521; PKCS #1, SEC 1, or PKCS #8) the embedded MCP gateway's
+#     # authorization server signs its tokens with, so they survive a restart. mecak8s
+#     # requires it with the identity broker on and an embedded gateway entry in the
+#     # identity broker's configuration file, and refuses it otherwise; it must differ
+#     # from every identity broker key. An Ed25519 key is refused: the gateway cannot
+#     # verify the tokens it signs. It is read at startup, so a new key takes effect on
+#     # restart.
+#     signing_key_file: ""
+#     # FallbackKeyFiles are absolute paths of earlier signing keys, PEM private keys of
+#     # the same types as SigningKeyFile: tokens they signed still verify while they are
+#     # listed, so the key can rotate. They require SigningKeyFile, and no key may be
+#     # listed twice, SigningKeyFile included.
+#     fallback_key_files: []
 #   # Servers is the ordered list of neutral Streamable HTTP route declarations.
 #   servers: []
 #|

@@ -86,7 +86,7 @@ type harnessOptions struct {
 func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 	t.Helper()
 	// AS-1 is configured with the AS-2 StartAS2 sets up, before either runs.
-	as2Issuer, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
+	as2Issuer, _, as2Resource, err := mcpbroker.AS2Endpoints(mcpbrokertest.CallbackURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +149,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		identitybroker.WithIDJAGIssuer(as1),
 		identitybroker.WithRecorder(rec),
 		identitybroker.WithGateway(identitybroker.Gateway{
+			Issuer: as2.Issuer, Resource: as2.Resource,
 			Servers: []string{"github"},
 			AS2:     identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource, AuthServer: as2Client},
 		}))

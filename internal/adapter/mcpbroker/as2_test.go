@@ -277,10 +277,10 @@ func TestAS2RegistersTheBrokerClientWithTheVMCPResource(t *testing.T) {
 		t.Fatalf("AS-2 = %+v", as2)
 	}
 	// AS2Endpoints names the same AS-2 before construction.
-	if issuer, resource, err := AS2Endpoints(as2TestCallbackURL); err != nil || issuer != as2.Issuer || resource != as2.Resource {
-		t.Fatalf("AS2Endpoints = %q, %q, %v; want AS-2's %q and %q", issuer, resource, err, as2.Issuer, as2.Resource)
+	if issuer, token, resource, err := AS2Endpoints(as2TestCallbackURL); err != nil || issuer != as2.Issuer || token != as2.TokenEndpoint || resource != as2.Resource {
+		t.Fatalf("AS2Endpoints = %q, %q, %q, %v; want AS-2's %q, %q, and %q", issuer, token, resource, err, as2.Issuer, as2.TokenEndpoint, as2.Resource)
 	}
-	if _, _, err := AS2Endpoints("http://broker.example/callback"); !errors.Is(err, ErrInvalidCatalogue) {
+	if _, _, _, err := AS2Endpoints("http://broker.example/callback"); !errors.Is(err, ErrInvalidCatalogue) {
 		t.Fatalf("AS2Endpoints for an http callback = %v, want ErrInvalidCatalogue", err)
 	}
 	if got := []string(spy.client.GetAudience()); !reflect.DeepEqual(got, []string{as2TestResource}) {
@@ -706,14 +706,25 @@ func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 // client.
 func startTrustingAS2(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient) *Process {
 	t.Helper()
+	return startTrustingAS2With(t, as1, client, nil)
+}
+
+// startTrustingAS2With is startTrustingAS2 with edit, when set, changing the
+// configuration first.
+func startTrustingAS2With(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient, edit func(*ToolHiveConfig)) *Process {
+	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
-	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+	config := ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: client,
 		AS2Trust: NewAS2Trust(as2trust.Trust{
 			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: as1.a.Harness.WriteCACert(t, t.TempDir()),
 			Subjects: []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
 		}.WithDefaults()),
-	})
+	}
+	if edit != nil {
+		edit(&config)
+	}
+	process, err := NewToolHiveProcess(t.Context(), config)
 	if err != nil {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}

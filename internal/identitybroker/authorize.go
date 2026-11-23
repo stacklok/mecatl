@@ -54,8 +54,7 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 		return Authorization{}, b.refuse(ctx, rec, err)
 	}
 
-	// Check 6: the gateway routes the server.
-	// Shortcut: check 6 matches the call's server, not the tool's route; removed by #2538 (gateway entries carry their routed tools, or the design moves the tool check to the vMCP).
+	// Check 6: a configured gateway routes the server.
 	if !b.gateway.routes(req.Server) {
 		return Authorization{}, b.refuse(ctx, rec, ReasonError(ReasonDenied, "no gateway routes the server"))
 	}
@@ -72,7 +71,7 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 		return Authorization{}, b.refuse(ctx, rec, err)
 	}
 
-	// AS-2 may not be bound yet (the #2560 shortcut on BindGatewayAS2).
+	// AS-2 may not be bound yet (the #2559 shortcut on BindGatewayAS2).
 	as2, release, ok := b.acquireAS2()
 	if !ok {
 		return Authorization{}, b.refuse(ctx, rec, NewError(CodeUnavailable, "", "the gateway's authorization server is not bound yet"))

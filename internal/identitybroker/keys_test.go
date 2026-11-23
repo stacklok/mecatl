@@ -22,6 +22,17 @@ func keySetOf(t *testing.T, jwks ...JWK) []byte {
 	return raw
 }
 
+// keySetWithRaw is the JSON JWK Set of jwk followed by raw, a JWK that the
+// JWK type cannot represent, such as an RSA or OKP key.
+func keySetWithRaw(t *testing.T, jwk JWK, raw string) []byte {
+	t.Helper()
+	first, err := json.Marshal(jwk)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	return []byte(`{"keys":[` + string(first) + `,` + raw + `]}`)
+}
+
 func jwkOf(t *testing.T, label string) JWK {
 	t.Helper()
 	jwk, err := publicJWK(&testKey(t, label).PublicKey)
@@ -125,6 +136,24 @@ func TestKeysValidateRefuses(t *testing.T) {
 		"a key set without the broker client's public key": {
 			edit: func(k *Keys) { k.BrokerClientKeySet = keySetOf(t, jwkOf(t, "someone else")) }, want: "does not hold the broker client key's public key",
 		},
+		"a key set with an RSA key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"RSA","kid":"rsa","n":"AQAB","e":"AQAB"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "rsa")`,
+		},
+		"a key set with an Ed25519 key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"OKP","crv":"Ed25519","kid":"okp","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "okp")`,
+		},
+		"a key set with a P-384 key": {
+			edit: func(k *Keys) {
+				k.BrokerClientKeySet = keySetWithRaw(t, jwkOf(t, "broker client"), `{"kty":"EC","crv":"P-384","kid":"p384","x":"AA","y":"AA"}`)
+			},
+			want: `not an ECDSA P-256 key (kid "p384")`,
+		},
 		"a key set with another key under the broker client's kid": {
 			edit: func(k *Keys) {
 				other := jwkOf(t, "someone else")
@@ -219,6 +248,21 @@ func TestWithAgentIssuerFallbacksRefusesANonP256Key(t *testing.T) {
 	for name, key := range map[string]crypto.PublicKey{"RSA": rsaKey.Public(), "P-384": p384Key(t).Public(), "nil": nil} {
 		if _, err := New(testConfig(), nil, testKey(t, "agent issuer"), WithAgentIssuerFallbacks(key)); !errors.Is(err, ErrInvalidSigner) {
 			t.Errorf("%s fallback: New = %v, want ErrInvalidSigner", name, err)
+		}
+	}
+}
+
+func TestKeysPublicKeysListsEveryRole(t *testing.T) {
+	t.Parallel()
+	k := validKeys(t)
+	got := k.PublicKeys()
+	want := []string{"agent issuer", "old agent issuer", "next broker client", "broker client", "AS-1", "old AS-1"}
+	if len(got) != len(want) {
+		t.Fatalf("PublicKeys = %d keys, want %d", len(got), len(want))
+	}
+	for i, label := range want {
+		if !testKey(t, label).PublicKey.Equal(got[i]) {
+			t.Errorf("PublicKeys[%d] is not the %s key", i, label)
 		}
 	}
 }

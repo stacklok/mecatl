@@ -147,9 +147,11 @@ func (f *fakeAS2) tokens() []identitybroker.Token {
 	return append([]identitybroker.Token(nil), f.issued...)
 }
 
-// withGateway configures g with a recorder and an ID-JAG issuer, which a
-// gateway requires; later options may replace them.
+// withGateway configures g, as the entry of the test AS-2, with a recorder
+// and an ID-JAG issuer, which a gateway requires; later options may replace
+// them.
 func withGateway(g identitybroker.Gateway) identitybroker.Option {
+	g.Issuer, g.Resource = as2Issuer, as2Resource
 	opts := []identitybroker.Option{
 		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()),
 		identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
@@ -178,7 +180,7 @@ func newPerCall(t *testing.T, opts ...identitybroker.Option) perCallFixture {
 	opts = append([]identitybroker.Option{
 		identitybroker.WithRecorder(rec),
 		identitybroker.WithIDJAGIssuer(issuer),
-		identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"github", "calendar"}}),
+		identitybroker.WithGateway(identitybroker.Gateway{Issuer: as2Issuer, Resource: as2Resource, Servers: []string{"github", "calendar"}}),
 	}, opts...)
 	f := openGranted(t, opts...)
 	unbind, err := f.b.BindGatewayAS2(boundAS2(as2))
@@ -211,7 +213,7 @@ func TestBindGatewayAS2(t *testing.T) {
 	f := openGranted(t,
 		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()),
 		identitybroker.WithIDJAGIssuer(issuer),
-		identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"github"}}))
+		identitybroker.WithGateway(identitybroker.Gateway{Issuer: as2Issuer, Resource: as2Resource, Servers: []string{"github"}}))
 
 	_, err := f.authorize(callRequest(f.s.ID, f.cred))
 	wantError(t, err, identitybroker.CodeUnavailable, "", f.cred)
@@ -225,6 +227,9 @@ func TestBindGatewayAS2(t *testing.T) {
 		"no resource":   {Issuer: as2Issuer, AuthServer: as2},
 		"no port":       {Issuer: as2Issuer, Resource: as2Resource},
 		"spaced issuer": {Issuer: "as 2", Resource: as2Resource, AuthServer: as2},
+		// The gateway's entry names AS-2's issuer and resource.
+		"another issuer":   {Issuer: "https://other.example.com", Resource: as2Resource, AuthServer: as2},
+		"another resource": {Issuer: as2Issuer, Resource: "https://other.example.com/mcp", AuthServer: as2},
 	} {
 		if _, err := f.b.BindGatewayAS2(bad); !errors.Is(err, identitybroker.ErrInvalidConfig) {
 			t.Errorf("BindGatewayAS2 with %s = %v, want ErrInvalidConfig", name, err)
@@ -268,7 +273,7 @@ func TestBindGatewayAS2(t *testing.T) {
 	g := openGranted(t,
 		identitybroker.WithRecorder(identitybroker.NewMemoryRecorder()),
 		identitybroker.WithIDJAGIssuer(&fakeIssuer{}),
-		identitybroker.WithGateway(identitybroker.Gateway{Servers: []string{"github"}, AS2: boundAS2(&fakeAS2{})}))
+		identitybroker.WithGateway(identitybroker.Gateway{Issuer: as2Issuer, Resource: as2Resource, Servers: []string{"github"}, AS2: boundAS2(&fakeAS2{})}))
 	if _, err := g.authorize(callRequest(g.s.ID, g.cred)); err != nil {
 		t.Fatalf("AuthorizeCall with AS-2 configured at New: %v", err)
 	}

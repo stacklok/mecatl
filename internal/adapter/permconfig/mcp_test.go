@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml/parser"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/port"
@@ -510,5 +513,59 @@ func TestProjectMCPIgnoredWithValueFreeWarning(t *testing.T) {
 		if strings.Contains(got, secret) {
 			t.Errorf("warning leaked project MCP value %q: %s", secret, got)
 		}
+	}
+}
+
+func TestMCPBrokerSigningKeySettings(t *testing.T) {
+	cfg, err := parseYAML([]byte(`mcp:
+  mode: broker
+  broker:
+    signing_key_file: /keys/as2/key.pem
+    fallback_key_files: [/keys/as2-old/key.pem, /keys/as2-older/key.pem]
+`))
+	if err != nil {
+		t.Fatalf("parse signing key settings: %v", err)
+	}
+	if got := cfg.MCP.Broker; got.SigningKeyFile != "/keys/as2/key.pem" || !slices.Equal(got.FallbackKeyFiles, []string{"/keys/as2-old/key.pem", "/keys/as2-older/key.pem"}) {
+		t.Fatalf("broker signing key settings = %#v", got)
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"a relative key":               {`signing_key_file: key.pem`, "mcp.broker.signing_key_file must be absolute"},
+		"a blank key":                  {`signing_key_file: " "`, "mcp.broker.signing_key_file is required"},
+		"fallbacks with an empty key":  {"signing_key_file: \"\"\nfallback_key_files: [/keys/old.pem]", "requires mcp.broker.signing_key_file"},
+		"a control character":          {`signing_key_file: "/keys/a\tb.pem"`, "control characters"},
+		"fallbacks without a key":      {`fallback_key_files: [/keys/old.pem]`, "mcp.broker.fallback_key_files requires mcp.broker.signing_key_file"},
+		"a relative fallback":          {"signing_key_file: /keys/key.pem\nfallback_key_files: [old.pem]", "mcp.broker.fallback_key_files[0] must be absolute"},
+		"an unknown signing key field": {`signing_key: /keys/key.pem`, "signing_key"},
+	} {
+		// The settings parser reports a value-free schema error, so decode the
+		// section itself to see which rule refused it.
+		if _, err := parseYAML([]byte("mcp:\n  mode: broker\n  broker:\n    " + strings.ReplaceAll(tc.body, "\n", "\n    ") + "\n")); err == nil {
+			t.Errorf("%s: the settings parsed", name)
+		}
+		file, err := parser.ParseBytes([]byte(tc.body+"\n"), 0)
+		if err != nil {
+			t.Fatalf("%s: parse YAML: %v", name, err)
+		}
+		var profile MCPBrokerProfile
+		if err := profile.UnmarshalYAML(file.Docs[0].Body); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: decode = %v, want an error containing %q", name, err, tc.want)
+		}
+	}
+}
+
+// TestProjectMCPBrokerSigningKeyIsIgnored: the embedded gateway's signing
+// key is operator configuration; a project file cannot set it.
+func TestProjectMCPBrokerSigningKeyIsIgnored(t *testing.T) {
+	var log bytes.Buffer
+	ws := &countingWS{Workspace: memfs.NewWorkspace("/repo")}
+	ws.seed(t, projectFileMecatl, "mcp:\n  mode: broker\n  broker:\n    signing_key_file: /repo/key-canary.pem\n")
+	r := newWithEnv(Options{Conventional: true, TrustProject: true, Diagnostics: slogdiag.New(&log, false, port.LevelDebug)}, fakeEnv())
+	_ = r.Resolve(context.Background(), ws)
+	if r.OperatorMCP() != nil {
+		t.Fatal("a project signing key became operator configuration")
+	}
+	if got := log.String(); !strings.Contains(got, "IGNORING a project-tier mcp") || strings.Contains(got, "key-canary") {
+		t.Fatalf("want a value-free warning, got: %s", got)
 	}
 }

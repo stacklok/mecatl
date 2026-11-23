@@ -60,6 +60,19 @@ mcp:
     # Public HTTPS URL where the browser returns after OAuth. This exact URL
     # must route to this service's HTTP listener through your ingress/gateway.
     callbackURL: ""
+    # The embedded MCP gateway's signing key (its authorization server, AS-2):
+    # an existing Secret key holding a PEM private key, projected read-only
+    # and rendered as mcp.broker.signing_key_file. Required with
+    # identityBroker.enabled and an identityBroker.gateways entry, and allowed
+    # only then; without it the embedded gateway generates its key at each
+    # start. It must differ from every identity broker key. fallbacks are
+    # earlier keys, also PEM private keys, whose tokens still verify during a
+    # rotation. mecak8s reads them at startup: after changing a Secret, run
+    # `kubectl rollout restart deployment/<release>-mecak8s`.
+    signingKey:
+      secretName: ""
+      key: ""
+      fallbacks: []
   servers: []
 
 # Optional remote learning driver. A bearer token is optional; when both tokenSecret
@@ -308,7 +321,8 @@ identityBroker:
   # its own keys at startup, so they stay the same across a restart and the
   # access tokens AS-1 issued before it keep verifying until they expire. The MCP
   # gateway's embedded authorization server generates its signing key at each
-  # start, so the tokens it issued stop verifying. Broker sessions, agent
+  # start, so the tokens it issued stop verifying, unless a gateway entry and
+  # mcp.broker.signingKey supply its key. Broker sessions, agent
   # registrations, and AS-1's refresh tokens are in memory and lost. The
   # broker reads its keys only at startup: a configuration change rolls the
   # pod, but after changing a key in a Secret, run
@@ -326,10 +340,12 @@ identityBroker:
     agentIssuer:
       secretName: ""
       key: ""
-    # PEM EC P-256 private key the broker authenticates with at AS-1 and the
-    # MCP gateway, and keySet, its public JWK Set (RFC 7517), which must hold
-    # this key's public key under its RFC 7638 thumbprint kid. Required with
-    # as1.issuer. The key set may also hold the next key during a rotation.
+    # PEM EC P-256 private key the broker authenticates with at AS-1, and at
+    # the MCP gateway when gateways has an entry, and keySet, its public JWK
+    # Set (RFC 7517), which must hold this key's public key under its RFC 7638
+    # thumbprint kid. Every key in the set must be EC P-256. Required with
+    # as1.issuer or a gateways entry. The key set may also hold the next key
+    # during a rotation.
     brokerClient:
       secretName: ""
       key: ""
@@ -348,6 +364,22 @@ identityBroker:
   # whose sub differs per application; sub for an IdP whose sub is the same
   # across applications.
   subjectClaim: ""
+  # Optional gateway entries, rendered into the identity broker's configuration
+  # file: at most one, of kind embedded, describing the embedded MCP gateway
+  # mecak8s runs for mcp.servers with auth.mode oauth. Its as2Issuer,
+  # tokenEndpoint, and resource must equal what the gateway derives from
+  # mcp.broker.callbackURL: <scheme://host>/v1/mcp/broker, that plus
+  # /oauth/token, and that plus /mcp. as2Issuer must differ from as1.issuer.
+  # An entry requires keys.brokerClient and mcp.broker.signingKey. servers
+  # must stay empty until the embedded gateway trusts AS-1 (#2533); an entry
+  # without servers sets the gateway's authorization server up for the broker
+  # and routes no calls through it.
+  gateways: []
+  # - kind: embedded
+  #   as2Issuer: https://mecatl.example.com/v1/mcp/broker
+  #   tokenEndpoint: https://mecatl.example.com/v1/mcp/broker/oauth/token
+  #   resource: https://mecatl.example.com/v1/mcp/broker/mcp
+  #   servers: []
   # as1 hosts AS-1, Mecatl's sign-in authorization server in front of the company
   # identity provider, on mecak8s's HTTP listener under the issuer URL's path. A
   # non-empty issuer turns it on and requires oidc.enabled, oidc.audience, and

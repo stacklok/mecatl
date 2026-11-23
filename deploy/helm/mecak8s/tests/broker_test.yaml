@@ -43,6 +43,19 @@ tests:
       - failedTemplate:
           errorPattern: mcp.broker.callbackURL is required
 
+  - it: refuses the embedded gateway's signing key without the identity broker
+    set:
+      mcp.broker.signingKey.secretName: mcp-gateway-signing
+      mcp.broker.signingKey.key: key.pem
+    asserts:
+      - failedTemplate:
+          errorMessage: mcp.broker.signingKey requires identityBroker.enabled with an identityBroker.gateways entry
+
+  - it: renders no signing key without one
+    asserts:
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "mcp-broker-signing-key")]
+
   - it: requires OIDC caller identity
     set:
       mockProvider: true

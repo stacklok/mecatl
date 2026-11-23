@@ -43,6 +43,9 @@ type Host struct {
 	// client key and AS-1's signing key; only a hosted AS-1 takes AS-1's
 	// signing key.
 	AS1 bool
+	// AS1Issuer is the issuer of the AS-1 the broker uses, hosted or not;
+	// empty without one. No gateway entry's AS-2 issuer may name it.
+	AS1Issuer string
 }
 
 // Validate checks k for a broker beside host. It refuses a missing required
@@ -57,8 +60,7 @@ func (k Keys) Validate(host Host) error {
 	if k.AgentIssuer == nil {
 		return fmt.Errorf("%w: the agent issuer key is required", ErrInvalidConfig)
 	}
-	_, issuerPub, err := checkSigner(k.AgentIssuer)
-	if err != nil {
+	if _, _, err := checkSigner(k.AgentIssuer); err != nil {
 		return fmt.Errorf("%w: the agent issuer key: %v", ErrInvalidSigner, err)
 	}
 	switch {
@@ -71,17 +73,11 @@ func (k Keys) Validate(host Host) error {
 	case (k.BrokerClient == nil) != (len(k.BrokerClientKeySet) == 0):
 		return fmt.Errorf("%w: the broker client key and the broker client's key set are required together", ErrInvalidConfig)
 	}
-	type roleKey struct {
-		role string
-		pub  crypto.PublicKey
-	}
-	keys := []roleKey{{"agent issuer", issuerPub}}
 	for i, pub := range k.AgentIssuerFallbacks {
 		// New refuses the same keys; checking here refuses them at load.
 		if _, err := copyP256Public(pub); err != nil {
 			return fmt.Errorf("%w: agent issuer fallback key %d: %v", ErrInvalidSigner, i, err)
 		}
-		keys = append(keys, roleKey{"agent issuer", pub})
 	}
 	if k.BrokerClient != nil {
 		_, clientPub, err := checkSigner(k.BrokerClient)
@@ -92,19 +88,11 @@ func (k Keys) Validate(host Host) error {
 		if err != nil {
 			return fmt.Errorf("%w: the broker client key: %v", ErrInvalidSigner, err)
 		}
-		// AS-1 and AS-2 accept assertions signed by any key in the set, so
-		// each is a broker client key; the set holds clientPub.
-		set, err := checkClientKeySet(k.BrokerClientKeySet, jwk)
-		if err != nil {
+		if err := checkClientKeySet(k.BrokerClientKeySet, jwk); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 		}
-		for _, pub := range set {
-			keys = append(keys, roleKey{"broker client", pub})
-		}
 	}
-	for _, pub := range k.AS1Signing {
-		keys = append(keys, roleKey{"AS-1 signing", pub})
-	}
+	keys := k.roleKeys()
 	for i, a := range keys {
 		eq, ok := a.pub.(interface{ Equal(crypto.PublicKey) bool })
 		if !ok {
@@ -117,34 +105,79 @@ func (k Keys) Validate(host Host) error {
 	return nil
 }
 
+// PublicKeys returns the public keys of every role in k: the agent issuer
+// key and its fallbacks, the broker client's key set's ECDSA P-256 keys,
+// which include the broker client key's, and AS-1's signing keys. A process
+// holding a key for another role, such as the embedded gateway's signing key,
+// refuses one of these.
+func (k Keys) PublicKeys() []crypto.PublicKey {
+	keys := k.roleKeys()
+	pubs := make([]crypto.PublicKey, len(keys))
+	for i, key := range keys {
+		pubs[i] = key.pub
+	}
+	return pubs
+}
+
+// roleKey is a public key and the role it serves.
+type roleKey struct {
+	role string
+	pub  crypto.PublicKey
+}
+
+// roleKeys returns k's public keys by role, as PublicKeys describes them.
+// AS-1 and AS-2 accept assertions signed by any key in the broker client's
+// key set, so each is a broker client key.
+func (k Keys) roleKeys() []roleKey {
+	var keys []roleKey
+	if k.AgentIssuer != nil {
+		keys = append(keys, roleKey{"agent issuer", k.AgentIssuer.Public()})
+	}
+	for _, pub := range k.AgentIssuerFallbacks {
+		keys = append(keys, roleKey{"agent issuer", pub})
+	}
+	var set JWKSet
+	if json.Unmarshal(k.BrokerClientKeySet, &set) == nil {
+		for _, key := range set.Keys {
+			if pub, ok := p256JWKKey(key); ok {
+				keys = append(keys, roleKey{"broker client", pub})
+			}
+		}
+	}
+	for _, pub := range k.AS1Signing {
+		keys = append(keys, roleKey{"AS-1 signing", pub})
+	}
+	return keys
+}
+
 // checkClientKeySet checks that raw, the broker client's JWK Set, holds at
-// least one key and client under client's kid, and returns the set's ECDSA
-// P-256 keys.
-func checkClientKeySet(raw []byte, client JWK) ([]crypto.PublicKey, error) {
+// least one key and client under client's kid.
+func checkClientKeySet(raw []byte, client JWK) error {
 	var set JWKSet
 	if err := json.Unmarshal(raw, &set); err != nil {
-		return nil, errors.New("the broker client's key set is not a JSON JWK Set")
+		return errors.New("the broker client's key set is not a JSON JWK Set")
 	}
 	if len(set.Keys) == 0 {
-		return nil, errors.New("the broker client's key set holds no key")
+		return errors.New("the broker client's key set holds no key")
 	}
 	found := false
-	var keys []crypto.PublicKey
 	for _, key := range set.Keys {
+		// The broker client signs only with P-256, so any other key in the
+		// set could only let a server accept another role's key as mecatl's.
+		if _, ok := p256JWKKey(key); !ok {
+			return fmt.Errorf("the broker client's key set holds a key that is not an ECDSA P-256 key (kid %q); the broker client signs only with P-256", key.KeyID)
+		}
 		if key.KeyID == client.KeyID {
 			if key.KeyType != client.KeyType || key.Curve != client.Curve || key.X != client.X || key.Y != client.Y {
-				return nil, fmt.Errorf("the broker client's key set holds another key under the broker client key's kid %q", client.KeyID)
+				return fmt.Errorf("the broker client's key set holds another key under the broker client key's kid %q", client.KeyID)
 			}
 			found = true
 		}
-		if pub, ok := p256JWKKey(key); ok {
-			keys = append(keys, pub)
-		}
 	}
 	if !found {
-		return nil, fmt.Errorf("the broker client's key set does not hold the broker client key's public key under its kid %q (its RFC 7638 thumbprint)", client.KeyID)
+		return fmt.Errorf("the broker client's key set does not hold the broker client key's public key under its kid %q (its RFC 7638 thumbprint)", client.KeyID)
 	}
-	return keys, nil
+	return nil
 }
 
 // p256JWKKey is jwk's public key when jwk is a valid ECDSA P-256 key.

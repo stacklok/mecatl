@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -439,6 +440,125 @@ func TestLoadedBrokerClientKeyMatchesItsKeySet(t *testing.T) {
 	var set identitybroker.JWKSet
 	if err := json.Unmarshal(got.Keys.BrokerClientKeySet, &set); err != nil || len(set.Keys) != 1 || set.Keys[0] != signer.JWKS().Keys[0] {
 		t.Errorf("key set = %+v, want the signer's key %+v", set, signer.JWKS())
+	}
+}
+
+// testAS2Issuer is the gateway entries' AS-2 issuer; testAS1Issuer is AS-1's
+// on the same host under another path.
+const (
+	testAS2Issuer = "https://mecatl.example.com/v1/mcp/broker"
+	testAS1Issuer = "https://mecatl.example.com/as1"
+)
+
+func TestLoadReadsAGatewayEntry(t *testing.T) {
+	t.Parallel()
+	for name, entry := range map[string]identitybroker.GatewayEntry{
+		"routing servers": brokerconfigtest.EmbeddedGateway(testAS2Issuer, "calendar", "github"),
+		"routing none":    brokerconfigtest.EmbeddedGateway(testAS2Issuer),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Gateways: []identitybroker.GatewayEntry{entry}})
+			got, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: true, AS1Issuer: testAS1Issuer})
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if len(got.Gateways) != 1 {
+				t.Fatalf("Gateways = %+v, want the entry", got.Gateways)
+			}
+			g := got.Gateways[0]
+			if g.Kind != entry.Kind || g.AS2Issuer != entry.AS2Issuer || g.TokenEndpoint != entry.TokenEndpoint || g.Resource != entry.Resource || !slices.Equal(g.Servers, entry.Servers) {
+				t.Errorf("Gateways[0] = %+v, want %+v", g, entry)
+			}
+		})
+	}
+	files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true})
+	got, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: true, AS1Issuer: testAS1Issuer})
+	if err != nil || got.Gateways != nil {
+		t.Fatalf("Load without gateways = %+v, %v; want no entries", got.Gateways, err)
+	}
+}
+
+func TestLoadRefusesAGatewayEntry(t *testing.T) {
+	t.Parallel()
+	entry := func(edit func(map[string]any)) []map[string]any {
+		e := map[string]any{
+			"kind": "embedded", "as2_issuer": testAS2Issuer, "token_endpoint": testAS2Issuer + "/oauth/token",
+			"resource": testAS2Issuer + "/mcp", "servers": []string{"calendar"},
+		}
+		if edit != nil {
+			edit(e)
+		}
+		return []map[string]any{e}
+	}
+	set := func(field string, value any) []map[string]any {
+		return entry(func(e map[string]any) { e[field] = value })
+	}
+	tests := map[string]struct {
+		gateways  any
+		as1Issuer string
+		want      string
+	}{
+		"two entries":          {gateways: append(entry(nil), entry(nil)...), want: "only one gateway entry"},
+		"an external entry":    {gateways: set("kind", "external"), want: "external gateways are not supported yet (#2812)"},
+		"an unknown kind":      {gateways: set("kind", "remote"), want: `kind "remote"`},
+		"no kind":              {gateways: entry(func(e map[string]any) { delete(e, "kind") }), want: `kind ""`},
+		"no AS-2 issuer":       {gateways: entry(func(e map[string]any) { delete(e, "as2_issuer") }), want: "AS-2 issuer"},
+		"a blank resource":     {gateways: set("resource", " "), want: "resource"},
+		"no token endpoint":    {gateways: entry(func(e map[string]any) { delete(e, "token_endpoint") }), want: "token endpoint"},
+		"a repeated server":    {gateways: set("servers", []string{"calendar", "calendar"}), want: "listed twice"},
+		"an empty server":      {gateways: set("servers", []string{""}), want: "gateway server"},
+		"a dotted server":      {gateways: set("servers", []string{"github.ent"}), want: "single underscores"},
+		"a double underscore":  {gateways: set("servers", []string{"github__ent"}), want: "single underscores"},
+		"an unknown field":     {gateways: set("dial_address", "https://10.0.0.1"), want: `unknown field "dial_address"`},
+		"a relative issuer":    {gateways: set("as2_issuer", "/v1/mcp/broker"), want: "gateways[0].as2_issuer"},
+		"an http issuer":       {gateways: set("as2_issuer", "http://mecatl.example.com/v1/mcp/broker"), want: "gateways[0].as2_issuer"},
+		"an http endpoint":     {gateways: set("token_endpoint", "http://mecatl.example.com/v1/mcp/broker/oauth/token"), want: "gateways[0].token_endpoint"},
+		"a hostless resource":  {gateways: set("resource", "https:///mcp"), want: "gateways[0].resource"},
+		"a query":              {gateways: set("resource", testAS2Issuer+"/mcp?x=1"), want: "gateways[0].resource"},
+		"a fragment":           {gateways: set("as2_issuer", testAS2Issuer+"#x"), want: "gateways[0].as2_issuer"},
+		"credentials":          {gateways: set("token_endpoint", "https://u:p@mecatl.example.com/oauth/token"), want: "gateways[0].token_endpoint"},
+		"AS-1's issuer":        {gateways: entry(nil), as1Issuer: testAS2Issuer, want: "names AS-1's issuer"},
+		"AS-1's issuer, slash": {gateways: entry(nil), as1Issuer: testAS2Issuer + "/", want: "names AS-1's issuer"},
+		"AS-1's issuer, case":  {gateways: entry(nil), as1Issuer: "HTTPS://MECATL.example.com/v1/mcp/broker", want: "names AS-1's issuer"},
+		"AS-1's issuer, port":  {gateways: entry(nil), as1Issuer: "https://mecatl.example.com:443/v1/mcp/broker", want: "names AS-1's issuer"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true})
+			doc := readDoc(t, files.Path)
+			doc["gateways"] = tc.gateways
+			writeJSON(t, files.Path, doc)
+			as1 := tc.as1Issuer
+			if as1 == "" {
+				as1 = testAS1Issuer
+			}
+			_, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: true, AS1Issuer: as1})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), files.Path) {
+				t.Fatalf("Load = %v, want an error naming the file and containing %q", err, tc.want)
+			}
+		})
+	}
+	// The same host under another path, or another port, is another issuer.
+	for _, as1 := range []string{testAS1Issuer, "https://mecatl.example.com", "https://mecatl.example.com:8443/v1/mcp/broker"} {
+		files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Gateways: []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(testAS2Issuer, "calendar")}})
+		if _, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: true, AS1Issuer: as1}); err != nil {
+			t.Errorf("Load beside AS-1 at %s = %v, want the entry accepted", as1, err)
+		}
+	}
+}
+
+// TestLoadRefusesAGatewayEntryWithoutTheBrokerClientKey: the broker
+// authenticates to AS-2 with the broker client key.
+func TestLoadRefusesAGatewayEntryWithoutTheBrokerClientKey(t *testing.T) {
+	t.Parallel()
+	files := brokerconfigtest.Write(t, brokerconfigtest.Options{Gateways: []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(testAS2Issuer)}})
+	doc := readDoc(t, files.Path)
+	delete(keys(doc), "broker_client")
+	writeJSON(t, files.Path, doc)
+	if _, err := brokerconfig.Load(files.Path, brokerconfig.Host{}); err == nil || !strings.Contains(err.Error(), "gateways requires keys.broker_client") {
+		t.Fatalf("Load = %v, want the entry refused without the broker client key", err)
 	}
 }
 

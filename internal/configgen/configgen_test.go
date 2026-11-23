@@ -246,6 +246,8 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 	for _, want := range []string{
 		"`mcp.mode`",
 		"`mcp.broker.callback_url`",
+		"`mcp.broker.signing_key_file`",
+		"`mcp.broker.fallback_key_files`",
 		"`mcp.servers[].auth.mode`",
 		"`mcp.servers[].auth.oauth.upstream.mode`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint`",

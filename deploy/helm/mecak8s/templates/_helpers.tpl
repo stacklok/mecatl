@@ -87,7 +87,71 @@ client IDs from it; the chart renders the same derived values.
 {{- with $broker.keys.as1Signing -}}{{- if .secretName -}}
 {{- $_ := set $keys "as1_signing" (dict "key_file" (printf "%s/as1-signing/%s" $dir .key)) -}}
 {{- end -}}{{- end -}}
-{{- dict "trust_domain" $broker.trustDomain "audience" $broker.audience "keys" $keys | toPrettyJson -}}
+{{- $doc := dict "trust_domain" $broker.trustDomain "audience" $broker.audience "keys" $keys -}}
+{{- with $broker.gateways -}}
+{{- $entries := list -}}
+{{- range . -}}
+{{- $entries = append $entries (dict "kind" .kind "as2_issuer" .as2Issuer "token_endpoint" .tokenEndpoint "resource" .resource "servers" (.servers | default list)) -}}
+{{- end -}}
+{{- $_ := set $doc "gateways" $entries -}}
+{{- end -}}
+{{- $doc | toPrettyJson -}}
+{{- end -}}
+{{- /* mcpSigningKeyDir is where the embedded MCP gateway's signing key and its fallbacks are projected. */ -}}
+{{- define "mecak8s.mcpSigningKeyDir" -}}/var/run/secrets/mcp-broker-signing-key{{- end -}}
+{{- /* issuerKey normalizes an issuer URL as mecak8s compares issuers: scheme and host lowercased, a default port dropped, the path compared as written without a trailing slash. mecak8s's startup check is authoritative; this only avoids rendering a release that crash-loops. */ -}}
+{{- define "mecak8s.issuerKey" -}}
+{{- $u := urlParse . -}}
+{{- $scheme := lower $u.scheme -}}
+{{- $host := lower $u.host -}}
+{{- if or (and (eq $scheme "https") (hasSuffix ":443" $host)) (and (eq $scheme "http") (hasSuffix ":80" $host)) -}}{{- $host = regexReplaceAll ":[0-9]+$" $host "" -}}{{- end -}}
+{{- printf "%s://%s%s" $scheme $host (trimSuffix "/" $u.path) -}}
+{{- end -}}
+{{- define "mecak8s.validateGatewayEntries" -}}
+{{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
+{{- $broker := .Values.identityBroker -}}
+{{- $gateways := $broker.gateways | default list -}}
+{{- $signingKey := .Values.mcp.broker.signingKey | default dict -}}
+{{- $fallbacks := $signingKey.fallbacks | default list -}}
+{{- if or $signingKey.secretName $signingKey.key -}}
+{{- $_ := required "mcp.broker.signingKey.secretName is required when mcp.broker.signingKey.key is set" $signingKey.secretName -}}
+{{- $_ := required "mcp.broker.signingKey.key is required when mcp.broker.signingKey.secretName is set" $signingKey.key -}}
+{{- end -}}
+{{- if and $fallbacks (not $signingKey.secretName) -}}{{ fail "mcp.broker.signingKey.fallbacks requires mcp.broker.signingKey" }}{{- end -}}
+{{- /* Shortcut: the embedded gateway's signing key is allowed only with the identity broker on; removed by #2869. */ -}}
+{{- if and $signingKey.secretName (not (and $broker.enabled $gateways)) -}}{{ fail "mcp.broker.signingKey requires identityBroker.enabled with an identityBroker.gateways entry" }}{{- end -}}
+{{- if $gateways -}}
+{{- if not $broker.enabled -}}{{ fail "identityBroker.gateways requires identityBroker.enabled=true" }}{{- end -}}
+{{- /* Shortcut: one gateway entry, of kind embedded; removed by #2812. */ -}}
+{{- if gt (len $gateways) 1 -}}{{ fail "identityBroker.gateways takes at most one entry" }}{{- end -}}
+{{- $entry := first $gateways -}}
+{{- if eq $entry.kind "external" -}}{{ fail "identityBroker.gateways[0].kind external: external gateways are not supported yet (#2812)" }}{{- end -}}
+{{- $brokerClient := ($broker.keys | default dict).brokerClient | default dict -}}
+{{- $_ := required "identityBroker.gateways requires identityBroker.keys.brokerClient, which the broker authenticates to the gateway's authorization server with" $brokerClient.secretName -}}
+{{- $_ := required "identityBroker.gateways requires mcp.broker.signingKey: the embedded gateway's signing key" $signingKey.secretName -}}
+{{- $oauth := list -}}
+{{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = append $oauth .name -}}{{- end -}}{{- end -}}
+{{- if not (and $oauth .Values.mcp.broker.callbackURL) -}}{{ fail "identityBroker.gateways declares an embedded gateway, which needs mcp.broker.callbackURL and an mcp.servers entry with auth.mode oauth" }}{{- end -}}
+{{- $issuer := printf "%s/v1/mcp/broker" (regexFind "^https://[^/?#]+" .Values.mcp.broker.callbackURL) -}}
+{{- range $field, $want := dict "as2Issuer" $issuer "tokenEndpoint" (printf "%s/oauth/token" $issuer) "resource" (printf "%s/mcp" $issuer) -}}
+{{- if ne (get $entry $field) $want -}}{{ fail (printf "identityBroker.gateways[0].%s must be %s, which the embedded gateway derives from mcp.broker.callbackURL" $field $want) }}{{- end -}}
+{{- end -}}
+{{- if and $broker.as1.issuer (eq (include "mecak8s.issuerKey" $broker.as1.issuer) (include "mecak8s.issuerKey" $issuer)) -}}{{ fail "identityBroker.gateways[0].as2Issuer must differ from identityBroker.as1.issuer: the broker client authenticates to both with one key" }}{{- end -}}
+{{- range $entry.servers -}}
+{{- if not (has . $oauth) -}}{{ fail (printf "identityBroker.gateways[0].servers entry %q is not an mcp.servers name with auth.mode oauth" .) }}{{- end -}}
+{{- end -}}
+{{- /* Shortcut: production's gateway entry routes no servers; removed by #2533 (AS-2 trusts AS-1). */ -}}
+{{- if $entry.servers -}}{{ fail "identityBroker.gateways[0].servers must stay empty until the embedded gateway trusts AS-1's ID-JAGs (#2533)" }}{{- end -}}
+{{- end -}}
+{{- /* The same Secret key is the same key; mecak8s also compares the keys themselves. */ -}}
+{{- if $signingKey.secretName -}}
+{{- $keys := $broker.keys | default dict -}}
+{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" ($keys.agentIssuer | default dict) "identityBroker.keys.brokerClient" ($keys.brokerClient | default dict) "identityBroker.keys.as1Signing" ($keys.as1Signing | default dict) -}}
+{{- range $own := prepend $fallbacks $signingKey -}}
+{{- if and $ref.secretName (eq $ref.secretName $own.secretName) (eq $ref.key $own.key) -}}{{ fail (printf "mcp.broker.signingKey and %s name the same Secret key %s/%s; each role needs its own key" $name $ref.secretName $ref.key) }}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateIdentityBroker" -}}
 {{- /* mecak8s refuses these combinations at startup; fail at render time instead of crash-looping. */ -}}
@@ -383,6 +447,16 @@ mcp:
   mode: broker
   broker:
     callback_url: {{ .Values.mcp.broker.callbackURL | quote }}
+{{- with .Values.mcp.broker.signingKey }}{{- if .secretName }}
+{{- $dir := include "mecak8s.mcpSigningKeyDir" $ }}
+    signing_key_file: {{ printf "%s/signing-key/%s" $dir .key | quote }}
+{{- with .fallbacks }}
+    fallback_key_files:
+{{- range $i, $ref := . }}
+      - {{ printf "%s/fallback-%d/%s" $dir $i $ref.key | quote }}
+{{- end }}
+{{- end }}
+{{- end }}{{- end }}
 {{- end }}
   servers:
 {{- range $server := .Values.mcp.servers }}

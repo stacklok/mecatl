@@ -659,6 +659,10 @@ type MCPSection struct {
 type MCPBrokerProfile struct {
 	// CallbackURL is required exactly when broker mode contains an OAuth route. It must be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or / is normalized to /.
 	CallbackURL string `yaml:"callback_url"`
+	// SigningKeyFile is the absolute path of the PEM private key (RSA, or ECDSA on P-256, P-384, or P-521; PKCS #1, SEC 1, or PKCS #8) the embedded MCP gateway's authorization server signs its tokens with, so they survive a restart. mecak8s requires it with the identity broker on and an embedded gateway entry in the identity broker's configuration file, and refuses it otherwise; it must differ from every identity broker key. An Ed25519 key is refused: the gateway cannot verify the tokens it signs. It is read at startup, so a new key takes effect on restart.
+	SigningKeyFile string `yaml:"signing_key_file"`
+	// FallbackKeyFiles are absolute paths of earlier signing keys, PEM private keys of the same types as SigningKeyFile: tokens they signed still verify while they are listed, so the key can rotate. They require SigningKeyFile, and no key may be listed twice, SigningKeyFile included.
+	FallbackKeyFiles []string `yaml:"fallback_key_files"`
 }
 
 // MCPServerProfile is one named Streamable HTTP endpoint and its explicit auth mode.
@@ -883,13 +887,43 @@ func (s *MCPSection) strictFields() map[string]any {
 }
 
 func (b *MCPBrokerProfile) strictFields() map[string]any {
-	return map[string]any{"callback_url": &b.CallbackURL}
+	return map[string]any{"callback_url": &b.CallbackURL, "signing_key_file": &b.SigningKeyFile, "fallback_key_files": &b.FallbackKeyFiles}
 }
 
-// UnmarshalYAML strictly decodes broker-only metadata. Selection-specific
-// validation belongs to the canonical authority resolver.
+// UnmarshalYAML strictly decodes broker-only metadata and checks the signing
+// key paths. Selection-specific validation belongs to the canonical authority
+// resolver.
 func (b *MCPBrokerProfile) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "mcp.broker", b.strictFields())
+	if err := decodeStrictMapping(node, "mcp.broker", b.strictFields()); err != nil {
+		return err
+	}
+	// An empty value is unset, as in the generated skeleton.
+	if b.SigningKeyFile != "" {
+		if err := validateMCPAbsolutePath("mcp.broker.signing_key_file", b.SigningKeyFile); err != nil {
+			return err
+		}
+	}
+	if len(b.FallbackKeyFiles) != 0 && b.SigningKeyFile == "" {
+		return errors.New("mcp.broker.fallback_key_files requires mcp.broker.signing_key_file")
+	}
+	for i, path := range b.FallbackKeyFiles {
+		if err := validateMCPAbsolutePath(fmt.Sprintf("mcp.broker.fallback_key_files[%d]", i), path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateMCPAbsolutePath refuses an empty, relative, or control-character
+// path.
+func validateMCPAbsolutePath(field, path string) error {
+	if err := validateMCPSafeValue(field, path); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s must be absolute", field)
+	}
+	return nil
 }
 
 // UnmarshalYAML strictly decodes and validates an MCP operator section.

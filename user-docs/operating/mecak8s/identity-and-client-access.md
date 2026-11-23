@@ -249,11 +249,11 @@ identityBroker:
 
 |Value|Flag|Meaning|
 |-|-|-|
-|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `trustDomain`, `audience`, and `keys.agentIssuer` below. Also requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, an empty `workspace` (see [Keep the broker's keys out of sessions](#keep-the-brokers-keys-out-of-sessions)), and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`. With protected MCP servers configured, turning it on or off changes the audience of the MCP gateway's tokens, so those servers must be [enrolled](/features/security-and-execution/mcp-oauth-and-credentials.md) again. Each session's main agent gets its own agent identity, and so does each [subagent and team member](/features/agent-behavior/subagents-and-teams.md) it starts. Helpers call the MCP gateway's tools under their own identity. A helper that runs no named agent gets all of them. One running a named agent gets the tools of each server its `mcpServers` names by reference, minus each tool its `disallowedTools` names as `mcp__<server>__<tool>`; an inline server entry and the `tools` list add no gateway tools. A helper never gets another MCP broker tool. The broker refuses a gateway call outside an agent's limit: the tools its agent allows, as above, narrowed by the limit of the agent that started it. These gateway calls need a gateway the broker routes, which the chart doesn't configure yet, so for now helpers get no gateway tools. The broker accepts only built-in agents or a [named agent](/features/agent-behavior/named-agents.md#choose-where-definitions-are-discovered) from a directory passed with `--agents-dir` in `extraArgs` and mounted with `extraVolumes` and `extraVolumeMounts`. A session that uses a named agent from any other location cannot run, a subagent or team member that names one cannot start, and a `--agents-dir` directory that does not exist stops startup. With an operator [`harness_context`](/operating/settings.md#select-harness-context-sources) policy, which can let another source win an agent name, only built-in agents can run.|
+|`identityBroker.enabled`|`--enable-identity-broker`|Starts the identity broker. Requires `trustDomain`, `audience`, and `keys.agentIssuer` below. Also requires `replicaCount: 1`, `oidc.ownerIdentity: sub_id` when OIDC is enabled, an empty `workspace` (see [Keep the broker's keys out of sessions](#keep-the-brokers-keys-out-of-sessions)), and no shell in the process: `--no-shell` in `extraArgs`, or `--shell=` with `execution.enabled` to keep the remote Shell. The chart refuses to render without one. The Deployment rolls out with `Recreate`. This value is the only way to start the broker: the chart refuses `--enable-identity-broker` in `extraArgs`. With protected MCP servers configured, adding or removing a [gateway entry](#declare-the-embedded-gateway) changes the audience of the MCP gateway's tokens, so those servers must be [enrolled](/features/security-and-execution/mcp-oauth-and-credentials.md) again. Each session's main agent gets its own agent identity, and so does each [subagent and team member](/features/agent-behavior/subagents-and-teams.md) it starts. Helpers call the MCP gateway's tools under their own identity. A helper that runs no named agent gets all of them. One running a named agent gets the tools of each server its `mcpServers` names by reference, minus each tool its `disallowedTools` names as `mcp__<server>__<tool>`; an inline server entry and the `tools` list add no gateway tools. A helper never gets another MCP broker tool. The broker refuses a gateway call outside an agent's limit: the tools its agent allows, as above, narrowed by the limit of the agent that started it. These gateway calls need a gateway the broker routes, which the chart doesn't configure yet, so for now helpers get no gateway tools. The broker accepts only built-in agents or a [named agent](/features/agent-behavior/named-agents.md#choose-where-definitions-are-discovered) from a directory passed with `--agents-dir` in `extraArgs` and mounted with `extraVolumes` and `extraVolumeMounts`. A session that uses a named agent from any other location cannot run, a subagent or team member that names one cannot start, and a `--agents-dir` directory that does not exist stops startup. With an operator [`harness_context`](/operating/settings.md#select-harness-context-sources) policy, which can let another source win an agent name, only built-in agents can run.|
 |`identityBroker.trustDomain`|`--identity-broker-config`|The agent trust domain, such as `agents.example.com`. It names every agent the broker vouches for, so keep it once agents act.|
 |`identityBroker.audience`|`--identity-broker-config`|The broker audience every agent credential names.|
 |`identityBroker.keys.agentIssuer`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key that signs agent credentials.|
-|`identityBroker.keys.brokerClient`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key the broker authenticates with at AS-1. Its `keySet` names the Secret key holding the matching public JWK Set, whose `kid` is the key's RFC 7638 thumbprint. Required with `identityBroker.as1.issuer`.|
+|`identityBroker.keys.brokerClient`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key the broker authenticates with at AS-1. Its `keySet` names the Secret key holding the matching public JWK Set, whose `kid` is the key's RFC 7638 thumbprint. Every key in the set must be EC P-256. Required with `identityBroker.as1.issuer` or an `identityBroker.gateways` entry, which also registers the key at the MCP gateway.|
 |`identityBroker.keys.as1Signing`|`--identity-broker-config`|Secret key holding AS-1's PEM signing key (EC P-256 or RSA). Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`. AS-1 accepts only an absolute `http` or `https` URL with a host and no fragment as the audience, such as `https://mecatl.example.com/api`.|
@@ -340,7 +340,7 @@ from the JSON file `--identity-broker-config` names, which
 |`audience`|The broker audience every agent credential names. Required.|
 |`keys.agent_issuer.key_file`|EC P-256 private key that signs agent credentials. Required.|
 |`keys.agent_issuer.fallback_key_files`|_Optional._ Earlier agent issuer keys. Credentials they signed keep verifying while they are listed.|
-|`keys.broker_client.key_file`, `key_set_file`|EC P-256 private key the broker authenticates with at AS-1 and the MCP gateway, and the public JWK Set those servers register for it. Required together, and required with `--identity-broker-as1-issuer`.|
+|`keys.broker_client.key_file`, `key_set_file`|EC P-256 private key the broker authenticates with at AS-1, and at the MCP gateway's authorization server when the file declares a gateway, and the public JWK Set those servers register for it. Every key in the set must be EC P-256. Required together, required with `--identity-broker-as1-issuer`, and required with a gateway entry.|
 |`keys.as1_signing.key_file`|AS-1's EC P-256 or RSA private key, which signs access tokens. Required with `--identity-broker-as1-issuer`, and refused without it.|
 |`keys.as1_signing.fallback_key_files`|_Optional._ Earlier AS-1 signing keys. AS-1 publishes them in its key set, so tokens they signed keep verifying, and never signs with them. Requires `key_file`.|
 
@@ -380,6 +380,79 @@ kubectl rollout restart deployment/mecak8s-mecak8s --namespace mecatl
 AS-1's signing key is part of this file: `mecak8s` refuses to start with the
 removed `--identity-broker-as1-signing-key-file` flag, so set
 `keys.as1_signing.key_file` instead.
+
+### Declare the embedded gateway
+
+The configuration file can list the MCP gateway the broker authorizes agent
+calls through. The list is optional and takes at most one entry, which
+describes the embedded gateway `mecak8s` runs for MCP servers with
+`auth.mode: oauth`. With the chart, set `identityBroker.gateways`:
+
+```yaml
+identityBroker:
+  gateways:
+    - kind: embedded
+      as2Issuer: https://mecatl.example.com/v1/mcp/broker
+      tokenEndpoint: https://mecatl.example.com/v1/mcp/broker/oauth/token
+      resource: https://mecatl.example.com/v1/mcp/broker/mcp
+      servers: []
+```
+
+Without the chart, add `gateways` to the file. The fields below use the
+file's names; the chart names `as2_issuer` and `token_endpoint` as
+`as2Issuer` and `tokenEndpoint`.
+
+```json
+"gateways": [{
+  "kind": "embedded",
+  "as2_issuer": "https://mecatl.example.com/v1/mcp/broker",
+  "token_endpoint": "https://mecatl.example.com/v1/mcp/broker/oauth/token",
+  "resource": "https://mecatl.example.com/v1/mcp/broker/mcp",
+  "servers": []
+}]
+```
+
+|Field|Meaning|
+|-|-|
+|`kind`|`embedded`. `mecak8s` refuses `external`: external gateways are not supported yet.|
+|`as2_issuer`|The issuer of the gateway's authorization server: the scheme and host of `mcp.broker.callback_url` followed by `/v1/mcp/broker`. It must differ from AS-1's issuer, comparing the path too, because the broker authenticates to both with the same key.|
+|`token_endpoint`|That issuer followed by `/oauth/token`, as the authorization server advertises it.|
+|`resource`|That issuer followed by `/mcp`.|
+|`servers`|MCP server names, matched exactly, each with `auth.mode: oauth`. Leave it empty for now.|
+
+`mecak8s` derives the embedded gateway's issuer, token endpoint, and resource
+from `mcp.broker.callback_url` and refuses to start when the entry names
+others, when it runs no embedded gateway, or when the file names no broker
+client key. An entry also requires the gateway's own signing key, below.
+Without an entry, the MCP broker runs as it does with the identity broker off.
+
+The entry also decides the audience of the tokens the MCP gateway issues:
+without an entry it is the gateway's issuer, and with one it is the entry's
+`resource`. Adding or removing the entry therefore changes the audience, and
+users must [enroll](/features/security-and-execution/mcp-oauth-and-credentials.md)
+their protected MCP servers again.
+
+An entry that lists servers is refused until the gateway's authorization
+server accepts AS-1's tokens, which is not available yet. An entry with no
+servers routes no calls through the gateway: it registers the broker as a
+client of the gateway's authorization server and keeps that server's signing
+key across restarts.
+
+#### Set the gateway's signing key
+
+The embedded gateway's authorization server signs its tokens with the key in
+the `mcp.broker.signing_key_file` setting. Earlier keys listed in
+`mcp.broker.fallback_key_files` keep verifying the tokens they signed, so the
+key can rotate the same way as the broker's keys. Both take absolute paths to
+PEM private keys. `mecak8s` requires the key with the identity broker on and a
+gateway entry, refuses it otherwise, and refuses a key, or a fallback, that is
+also one of the broker's keys. With the chart, name an existing Secret key in
+`mcp.broker.signingKey` and its fallbacks in `mcp.broker.signingKey.fallbacks`;
+the chart projects them read-only and renders the setting. See the
+[configuration reference](/reference/configuration.md) for the setting.
+
+`mecak8s` reads the key at startup, so restart the Deployment after changing it
+in a Secret.
 
 ### Keep the broker's keys out of sessions
 
@@ -438,9 +511,10 @@ comes from a Secret, so the access tokens AS-1 issued before a restart keep
 verifying until they expire. AS-1 accepts each access token for one session
 open, but it forgets which tokens it has accepted when the pod restarts. A token
 used before a restart can open one more session after it, until the token
-expires. The MCP gateway's embedded authorization server generates its own
-signing key at each start, so the tokens it issued stop verifying after a
-restart.
+expires. Without a gateway entry, the MCP gateway's embedded authorization
+server generates its own signing key at each start, so the tokens it issued
+stop verifying after a restart; with one, it signs with
+[the key you supply](#set-the-gateways-signing-key).
 
 Turning on `oidc.ownerIdentity: sub_id` for a deployment with existing sessions leaves
 those sessions with their previous owners; see

@@ -42,6 +42,18 @@ type Options struct {
 	// AS1Fallbacks generates that many AS-1 fallback keys; it requires
 	// HostedAS1.
 	AS1Fallbacks int
+	// Gateways are the gateway entries to write, such as EmbeddedGateway's.
+	Gateways []identitybroker.GatewayEntry
+}
+
+// EmbeddedGateway is the embedded gateway entry for AS-2 at as2Issuer,
+// with the token endpoint and vMCP resource mecak8s's embedded gateway
+// derives from it, routing servers.
+func EmbeddedGateway(as2Issuer string, servers ...string) identitybroker.GatewayEntry {
+	return identitybroker.GatewayEntry{
+		Kind: identitybroker.GatewayEmbedded, AS2Issuer: as2Issuer, TokenEndpoint: as2Issuer + "/oauth/token",
+		Resource: as2Issuer + "/mcp", Servers: servers,
+	}
 }
 
 // Files are a written configuration file and its keys.
@@ -101,6 +113,16 @@ func Write(t testing.TB, opts Options) Files {
 		keys["as1_signing"] = signingKey{KeyFile: files.AS1SigningKeyFile, FallbackKeyFiles: files.AS1FallbackKeyFiles}
 	}
 	doc := map[string]any{"trust_domain": trustDomain, "audience": Audience, "keys": keys}
+	if opts.Gateways != nil {
+		entries := make([]map[string]any, len(opts.Gateways))
+		for i, e := range opts.Gateways {
+			entries[i] = map[string]any{
+				"kind": e.Kind, "as2_issuer": e.AS2Issuer, "token_endpoint": e.TokenEndpoint,
+				"resource": e.Resource, "servers": e.Servers,
+			}
+		}
+		doc["gateways"] = entries
+	}
 	writeJSON(t, files.Path, doc)
 	return files
 }
