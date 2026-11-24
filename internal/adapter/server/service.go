@@ -6114,9 +6114,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	// which is what lets a cross-process resume continue THE SAME run rather than
 	// mint a second one. Every prompt-entry path funnels through here
 	// (StartRun, RetryFailedRun, scheduler fires, steer promotion), so this is the
-	// one mint site for a new run.
+	// one mint site for a new run. The run's owner is recorded with it.
 	runID := newRunID()
-	sess.BeginRun(runID)
+	sess.BeginRunFor(runID, newRunOwner(ctx, sess, purpose))
 	env, err = s.acquireExecution(ctx, st, sess, runID, env)
 	if err != nil {
 		return nil, err
@@ -10106,17 +10106,34 @@ func randomID() session.SessionID {
 	return session.SessionID(hex.EncodeToString(b[:]))
 }
 
+// newRunOwner returns the owner startRunContentLocked records for a run it
+// mints: the person who started it, the verified caller on the request that
+// starts it (its company identity, as the ownership edge maps it). The owner
+// is recorded with the run, so a resume, a later request, continues the run
+// under the owner it started with rather than its own caller
+// (docs/drafts/agent-identity/run-owner.md: one initiator per run). A request
+// with no verified caller records no owner, so the run's gateway calls fail
+// closed.
+//
+// Shortcut: a scheduled run's owner is its session's owner, the schedule's
+// captured owner, rather than one taken from its schedule grant; removed by
+// #2569.
+func newRunOwner(ctx context.Context, sess *session.Session, purpose runPurpose) *session.Principal {
+	if purpose == runPurposeScheduler {
+		return sess.Owner
+	}
+	return session.PrincipalFromContext(ctx)
+}
+
 // rootedRunContext is the context every server run entry hands to the engine: the
 // authoritative session becomes the causal root (overwriting anything the caller's
 // ctx carried), memory writes bind to the session's governance root, and the
-// session's run and owner become the main agent's run, which gateway calls and
-// helper delegations name. A session with no run ID or no owner carries no run,
-// so its gateway calls fail closed.
-//
-// Shortcut: the run owner is the session's owner, read at each run entry, not recorded from the request that started the run, and a scheduled run takes it from its session rather than its schedule grant; removed by #2947 (interactive runs) and #2569 (scheduled runs).
+// session's current run, its ID and the owner recorded with it, becomes the main
+// agent's run, which gateway calls and helper delegations name. A session with no
+// run ID or no recorded run owner carries no run, so its gateway calls fail closed.
 func rootedRunContext(ctx context.Context, sess *session.Session, governanceRoot string) context.Context {
 	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
-	if owner, ok := identityBrokerOwner(sess.Owner); ok && sess.RunID() != "" {
+	if owner, ok := identityBrokerOwner(sess.RunOwner()); ok && sess.RunID() != "" {
 		return agentcredential.WithRun(ctx, agentcredential.Run{ID: sess.RunID(), Owner: owner})
 	}
 	return agentcredential.WithRun(ctx, agentcredential.Run{})

@@ -528,6 +528,11 @@ type Session struct {
 	// ended stays readable until the next run replaces it, which is what lets a
 	// terminal-state session still answer "which run was that?".
 	runID string
+	// runOwner is the person who started the run runID names, as the host
+	// recorded it when it minted the run. It is persisted with runID, so a
+	// resume continues the run under the owner it started with. Like runID it
+	// is an inert stored label the aggregate never interprets.
+	runOwner *Principal
 }
 
 // maxSnapshotErrorRunes caps how many runes of a StateFailed session's terminal
@@ -970,8 +975,18 @@ func (s *Session) LastError() string {
 //
 // An EMPTY id is accepted and clears the stamp: a host that mints no run id (an
 // in-memory embedder, a test) is byte-identical to the behaviour before run ids existed.
+//
+// BeginRun records no run owner; BeginRunFor records one.
 func (s *Session) BeginRun(runID string) {
+	s.BeginRunFor(runID, nil)
+}
+
+// BeginRunFor is BeginRun that also records owner as the run's owner, the
+// person who started it. It replaces any earlier run's owner, and a nil owner
+// records none. owner is copied, so the caller cannot change it later.
+func (s *Session) BeginRunFor(runID string, owner *Principal) {
 	s.runID = runID
+	s.runOwner = owner.Clone()
 }
 
 // RunID reports the run identity stamped by BeginRun, or "" if none was.
@@ -980,6 +995,13 @@ func (s *Session) BeginRun(runID string) {
 // one; that reuse is the whole reason the value is persisted.
 func (s *Session) RunID() string {
 	return s.runID
+}
+
+// RunOwner reports a copy of the owner BeginRunFor recorded for the run RunID
+// names, or nil if none was. It is independent of Owner: a run keeps the
+// owner it started with whatever the session's owner is later.
+func (s *Session) RunOwner() *Principal {
+	return s.runOwner.Clone()
 }
 
 // Fail transitions the session to StateFailed with StopError. It is legal from

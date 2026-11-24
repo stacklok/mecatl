@@ -144,6 +144,11 @@ type Snapshot struct {
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
 	RunID string `json:"run_id,omitempty"`
+	// RunOwner is the person who started the run RunID names, recorded with
+	// it so a resume after a restart keeps the run's owner. A POINTER for true
+	// omitempty, like Owner: a snapshot with no "run_owner" key restores a run
+	// with no recorded owner. Purely additive, no format-tag bump.
+	RunOwner *session.Principal `json:"run_owner,omitempty"`
 	// Owner is the verified caller the session is attributed to. A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
@@ -376,6 +381,7 @@ func Of(s *session.Session) (Snapshot, error) {
 	snap.RetryPendingDisposition, snap.RetryPendingProgress, snap.RetryPending = pendingRetry.Disposition, pendingRetry.Progress, pending
 	snap.LastError = s.LastError()
 	snap.RunID = s.RunID()
+	snap.RunOwner = s.RunOwner()
 	return snap, nil
 }
 
@@ -429,8 +435,12 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	restored.ExternalBinding = s.ExternalBinding
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
-	// RestoreState's state-machine parameter list.
-	restored.BeginRun(s.RunID)
+	// RestoreState's state-machine parameter list. The run's owner is checked
+	// as the session owner is.
+	if s.RunOwner != nil && !s.RunOwner.IdentityWellFramed() {
+		return nil, errors.New("sessnap: invalid run_owner identity")
+	}
+	restored.BeginRunFor(s.RunID, s.RunOwner)
 	restored.RestoreTitleMetadata(s.Title, s.TitleProvenance, s.TitleRevision, s.TitleGeneration, s.TitleSourcePrompts, s.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState

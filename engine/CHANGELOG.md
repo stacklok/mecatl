@@ -12,6 +12,14 @@ API snapshots live in [`engine/api/`](./api/).
 
 ### Added
 
+- **Run owner**: adds `session.Session.BeginRunFor`, which stamps a run's ID
+  together with its owner, the person who started it, and
+  `session.Session.RunOwner`, which reports it. The owner is independent of
+  the session's `Owner`, so a run keeps the owner it started with.
+  `BeginRun` now records no owner. `sessnap.Snapshot.RunOwner` persists it
+  beside `RunID` under the optional `"run_owner"` key; an older snapshot
+  restores a run with no recorded owner. Added (minor).
+
 - **Child session admission** — adds `port.ChildSessionCreator`, an optional
   `SessionStore` capability, and `port.ChildSessionInfo`. When a child store
   implements it, the engine calls `CreateChild` instead of `Create` to first
