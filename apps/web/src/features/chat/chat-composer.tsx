@@ -35,6 +35,12 @@ import { readDraft, writeDraft } from "../../lib/draft-store";
 import { fileKindMeta } from "../../lib/file-meta";
 import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
 import type { EnterSendBehavior } from "../../lib/profile-preferences";
+import {
+  type EffortModelInfo,
+  effortChoicesFor,
+  findModel,
+  type ReasoningEffort,
+} from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import { ClearDraftButton } from "./clear-draft-button";
 import { composerFrameClass } from "./composer-frame";
@@ -65,12 +71,14 @@ export interface ComposerModelOption {
   providerLabel: string;
   /** The inventory's `reasoning` flag: whether the model reports a reasoning-effort tier. */
   reasoning?: boolean;
+  /** The inventory's `effortLevels`; absent on a server without per-model effort levels. */
+  effortLevels?: EffortModelInfo["effortLevels"];
 }
 
 export interface DraftChatConfiguration {
   mode: SessionPermissionMode;
   model?: { id: string; providerId: string };
-  reasoningEffort: "default" | "high" | "low" | "max" | "medium" | "xhigh";
+  reasoningEffort: ReasoningEffort;
   execution?: { none: Record<string, never> } | { template: { id: string; revision: string } };
 }
 
@@ -117,8 +125,23 @@ interface ChatComposerProps {
   liveControlsDisabled?: boolean;
   /** A live chat's mode, once its detail has loaded. */
   liveMode?: SessionPermissionMode;
-  /** A live chat's model and effort, once its detail has loaded. */
-  liveModel?: { id: string; providerId: string; reasoningEffort: string };
+  /**
+   * A live chat's model and effort, once its detail has loaded:
+   * `reasoningEffort` is the level the session asks for, and
+   * `appliedReasoningEffort` the level its requests carry.
+   */
+  liveModel?: {
+    appliedReasoningEffort?: ReasoningEffort;
+    id: string;
+    providerId: string;
+    reasoningEffort: ReasoningEffort;
+  };
+  /**
+   * Every model in the inventory, including those hidden from the pickers, to
+   * look up the chosen model's effort levels. Defaults to `models`.
+   */
+  modelInventory?: ComposerModelOption[];
+  /** The models the pickers offer. */
   models?: ComposerModelOption[];
   onConfigurationChange?: (configuration: DraftChatConfiguration) => void;
   onDraftChange?: (present: boolean) => void;
@@ -127,6 +150,8 @@ interface ChatComposerProps {
     model: { id: string; providerId: string },
     reasoningEffort: DraftChatConfiguration["reasoningEffort"],
   ) => void;
+  /** The Effort choices opened on a model whose levels are unknown: list models again. */
+  onRefreshModels?: () => void;
   /** A Mode pick on a live chat, which changes it in place. */
   onLiveModeChange?: (mode: SessionPermissionMode) => void;
   onPreviewFile?: (file: LocalFilePreview) => void;
@@ -201,6 +226,7 @@ export function ChatComposer({
   liveControlsDisabled = false,
   liveMode,
   liveModel,
+  modelInventory,
   models = [],
   onConfigurationChange,
   onDraftChange,
@@ -209,6 +235,7 @@ export function ChatComposer({
   onPreviewFile,
   onPreviewImage,
   onRefreshExecution,
+  onRefreshModels,
   onSeedConsumed,
   onSend,
   pillRowDetail,
@@ -585,8 +612,16 @@ export function ChatComposer({
     : liveMode && onLiveModeChange
       ? { disabled: liveControlsDisabled, onChange: onLiveModeChange, value: liveMode }
       : undefined;
-  const liveEffort = (liveModel?.reasoningEffort ??
-    "default") as DraftChatConfiguration["reasoningEffort"];
+  const liveEffort = liveModel?.reasoningEffort ?? "default";
+  const inventory = modelInventory ?? models;
+  const effortChoices = configuration
+    ? effortChoicesFor(findModel(inventory, configuration.model), configuration.reasoningEffort)
+    : effortChoicesFor(
+        findModel(inventory, liveModel),
+        liveEffort,
+        liveModel?.appliedReasoningEffort,
+      );
+  const onEffortOpen = effortChoices.levelsUnknown ? onRefreshModels : undefined;
   // No inventory means no choice to offer: render nothing rather than a
   // permanently dead control.
   const model: ComposerModelControl | undefined =
@@ -596,10 +631,11 @@ export function ChatComposer({
         ? {
             disabled: draftControlsDisabled,
             effort: configuration.reasoningEffort,
+            effortChoices,
             groupedModels,
             model: configuration.model,
-            onEffortChange: (effort) =>
-              update({ reasoningEffort: effort as DraftChatConfiguration["reasoningEffort"] }),
+            onEffortChange: (effort) => update({ reasoningEffort: effort as ReasoningEffort }),
+            onEffortOpen,
             onModelChange: (next) => update({ model: next }),
             onReset: () => update({ model: undefined, reasoningEffort: "default" }),
           }
@@ -607,10 +643,15 @@ export function ChatComposer({
           ? {
               disabled: liveControlsDisabled || !canForkModel,
               effort: liveEffort,
+              effortChoices,
               groupedModels,
               model: liveModel,
               onEffortChange: (effort) =>
-                onForkModel(liveModel, effort as DraftChatConfiguration["reasoningEffort"]),
+                onForkModel(
+                  { id: liveModel.id, providerId: liveModel.providerId },
+                  effort as ReasoningEffort,
+                ),
+              onEffortOpen,
               onModelChange: (next) => next && onForkModel(next, liveEffort),
             }
           : undefined;
@@ -858,9 +899,11 @@ export function ChatComposer({
                 <ModelEffortMenu
                   disabled={model.disabled}
                   effort={model.effort}
+                  effortChoices={model.effortChoices}
                   groupedModels={model.groupedModels}
                   model={model.model}
                   onEffortChange={model.onEffortChange}
+                  onEffortOpen={model.onEffortOpen}
                   onModelChange={model.onModelChange}
                   onReset={model.onReset}
                 />

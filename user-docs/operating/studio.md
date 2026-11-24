@@ -207,8 +207,21 @@ and its reasoning effort), and, before a chat starts, **Execution** (see
 [Choose execution for a new chat](#choose-execution-for-a-new-chat)). On a phone,
 the same settings are under **Composer options**, the sliders button.
 In an existing chat, changing the mode applies in place; choosing another model
-or effort creates a fork of that chat. The row also shows how much of the
-model's context the chat uses, with **Compact** when the deployment allows it.
+or effort creates a fork of that chat.
+
+**Effort** offers **Auto** and the levels the chosen model accepts. Auto in a new
+chat uses the deployment's default effort; choosing Auto in an existing chat
+forks it at the provider's default. A model known to take no effort offers only
+Auto. When the deployment doesn't know a model's levels, Studio lists every
+level and notes that the provider can refuse one. If a chat asks for a level its
+model doesn't accept, the menu names the level its requests use instead, and
+**Inspect session** shows both. On a deployment that doesn't report per-model
+levels, **Effort** lists every level. See
+[Configure reasoning effort](/features/sessions/choose-models.md#configure-reasoning-effort)
+for how Mecatl chooses the level it sends.
+
+The row also shows how much of the model's context the chat uses, with
+**Compact** when the deployment allows it.
 The chat header shows the mode when it is **Accept edits** or **Plan**. Press
 Enter to send or Shift+Enter for a new line. Enter used to confirm an input
 method candidate leaves the message in the composer.

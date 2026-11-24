@@ -53,6 +53,12 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import {
+  effortChoicesFor,
+  findModel,
+  type ReasoningEffort,
+  requestedEffort,
+} from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
@@ -129,6 +135,13 @@ export function SideThreadPanel({
   const textarea = useRef<HTMLTextAreaElement>(null);
 
   const model = sessionDetail.data?.model;
+  const effort = requestedEffort(model);
+  // Looked up in the whole inventory: a model hidden from the pickers still has levels.
+  const effortChoices = effortChoicesFor(
+    findModel(runtimeSettings.data?.models, model),
+    effort,
+    model?.reasoningEffort,
+  );
   const models: ComposerModelOption[] =
     runtimeSettings.data?.models
       .filter((candidate) => !disabledModels.has(modelPreferenceId(candidate)))
@@ -177,11 +190,11 @@ export function SideThreadPanel({
 
   async function forkToModel(
     nextModel: { id: string; providerId: string },
-    reasoningEffort: string,
+    reasoningEffort: ReasoningEffort,
   ) {
     try {
       const successor = await forkSession.mutateAsync({
-        body: { model: nextModel, reasoningEffort: reasoningEffort as never },
+        body: { model: nextModel, reasoningEffort },
         path: { sessionId: activeSessionId },
       });
       registerThreadSession(parentSessionId, messageKey, successor.id);
@@ -409,13 +422,21 @@ export function SideThreadPanel({
                 <ModelEffortMenu
                   className="min-w-0 shrink"
                   disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
-                  effort={model?.reasoningEffort ?? "default"}
+                  effort={effort}
+                  effortChoices={effortChoices}
                   groupedModels={groupModels(models)}
                   model={model}
-                  onEffortChange={(effort) => model && void forkToModel(model, effort)}
-                  onModelChange={(nextModel) =>
-                    nextModel && void forkToModel(nextModel, model?.reasoningEffort ?? "default")
+                  onEffortChange={(next) =>
+                    model &&
+                    void forkToModel(
+                      { id: model.id, providerId: model.providerId },
+                      next as ReasoningEffort,
+                    )
                   }
+                  onEffortOpen={
+                    effortChoices.levelsUnknown ? () => void runtimeSettings.refetch() : undefined
+                  }
+                  onModelChange={(nextModel) => nextModel && void forkToModel(nextModel, effort)}
                 />
               </div>
             ) : null}
