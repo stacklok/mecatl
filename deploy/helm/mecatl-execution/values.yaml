@@ -28,6 +28,19 @@ provider:
     caSecretName: ""
     caKey: ca.crt
   securityReloadInterval: 2s
+  # How often the provider reauthorizes each forwarded file or command call,
+  # closing it once revocation, a lapsed run claim, a revoked template, or a
+  # client policy change would refuse it. Allowed range: 1s to 1m.
+  policyRecheckInterval: 10s
+  # Keepalive between the provider and executor Pods, each 1s to 600s or 1m to
+  # 10m, in whole seconds or minutes. An executor pings after `interval` without
+  # traffic and, when no reply arrives within `timeout`, closes the connection
+  # and stops every command it carried. The provider pings with the same
+  # settings, at most every 10s. Changes apply to executor Pods created
+  # afterwards.
+  executorKeepalive:
+    interval: 10s
+    timeout: 10s
   maxConcurrentStreams: 64
   maxConcurrentRPCs: 128
   maxConcurrentRPCsPerClient: 32

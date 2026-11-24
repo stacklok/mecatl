@@ -121,7 +121,9 @@ environment's status, and rechecks the Pod after the handshake. The provider
 reloads valid projected TLS files independently of the client-policy manifest.
 The manifest generation changes only for authorization policy updates. A valid
 mTLS client still needs the manifest's exact client URI, template scope, owner
-binding, run epoch, claim, and revocation checks for each operation. Run acquire,
+binding, run epoch, claim, and revocation checks for each operation. A forwarded
+file or command call repeats them at the policy recheck interval and closes when
+they fail; a revocation closes the serving replica's calls at once. Run acquire,
 renew, and replay recheck template revocation and current client policy;
 reference release and authorized lifecycle cleanup remain possible. The helper
 has no service credentials or Kubernetes API token. mTLS authenticates services;

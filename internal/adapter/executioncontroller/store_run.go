@@ -3,11 +3,13 @@ package executioncontroller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -25,8 +27,61 @@ func generationMatches(o *unstructured.Unstructured, generation uint64) bool {
 	return generation > 0 && generation <= math.MaxInt64 && intNested(o.Object, "status", "grantGeneration") == int64(generation)
 }
 
-//nolint:gocyclo // Every durable claim, reference, and policy precondition is checked.
 func (s *Store) validateRunClaim(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+) (*unstructured.Unstructured, error) {
+	o, err := s.currentRunClaim(ctx, client, owner, rc)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := referenceRecords(o)
+	if err != nil {
+		return nil, err
+	}
+	if !publishedReference(refs, rc.BindingID) ||
+		textNested(o.Object, "spec", "desired") != activeDesired ||
+		!conditionTrue(o, "Ready") ||
+		textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: "run binding is not ready",
+		}
+	}
+	if err := s.clientPolicyRefusal(ctx, client, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// RecheckAuthority reports whether a forwarded call's authority ended: the
+// environment, its template, the run claim, or the client's policy. Unlike
+// ExecutorRoute it ignores whether a new call could be routed, so reference
+// release, readiness, fencing, and lifecycle work leave the call running.
+func (s *Store) RecheckAuthority(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+) error {
+	o, err := s.currentRunClaim(ctx, client, owner, rc)
+	if err != nil {
+		return err
+	}
+	// Replicas started with the revised template file report revocation here.
+	if conditionFalseFor(o, "Ready", "InvalidTemplate") {
+		return &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: templateRevokedMessage,
+		}
+	}
+	return s.clientPolicyRefusal(ctx, client, o)
+}
+
+//nolint:gocyclo // Every durable claim precondition is checked.
+func (s *Store) currentRunClaim(
 	ctx context.Context,
 	client string,
 	owner string,
@@ -38,12 +93,22 @@ func (s *Store) validateRunClaim(
 			Message: "run claim identity is invalid",
 		}
 	}
-	o, err := s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
+	o, err := recheckRead(
+		ctx,
+		environmentRead(rc.Environment.ID),
+		func() (*unstructured.Unstructured, error) {
+			return s.resources.Get(ctx, rc.Environment.ID, metav1.GetOptions{})
+		},
+	)
 	if err != nil {
-		return nil, &executionenv.Error{
+		refusal := &executionenv.Error{
 			Code:    executionenv.CodeNotFound,
 			Message: environmentNotFoundMessage,
 		}
+		if !apierrors.IsNotFound(err) {
+			return nil, &unconfirmedRefusal{refusal}
+		}
+		return nil, refusal
 	}
 	if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
 		return nil, &executionenv.Error{
@@ -64,23 +129,31 @@ func (s *Store) validateRunClaim(
 	if !ok || !s.now().Before(expiry) || claim.Environment != rc.Environment || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
 		return nil, errRunClaimNotCurrent
 	}
-	refs, err := referenceRecords(o)
-	if err != nil {
-		return nil, err
-	}
-	if !publishedReference(refs, rc.BindingID) || textNested(o.Object, "spec", "desired") != activeDesired || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
-		return nil, &executionenv.Error{
-			Code:    executionenv.CodeNotReady,
-			Message: "run binding is not ready",
-		}
-	}
-	if !s.clientPolicyCurrent(ctx, client, o) {
-		return nil, &executionenv.Error{
-			Code:    executionenv.CodeNotReady,
-			Message: "client policy is unavailable or revoked",
-		}
-	}
 	return o, nil
+}
+
+type environmentRead string
+
+func conditionFalseFor(o *unstructured.Unstructured, name, reason string) bool {
+	conds, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
+	for _, raw := range conds {
+		m, ok := raw.(map[string]any)
+		if ok && text(m, "type") == name {
+			return text(m, "status") == "False" && text(m, "reason") == reason
+		}
+	}
+	return false
+}
+
+// unconfirmedRefusal is a refusal because authorization state could not be read.
+type unconfirmedRefusal struct{ refusal *executionenv.Error }
+
+func (e *unconfirmedRefusal) Error() string { return e.refusal.Error() }
+func (e *unconfirmedRefusal) Unwrap() error { return e.refusal }
+
+func unconfirmed(err error) bool {
+	var u *unconfirmedRefusal
+	return errors.As(err, &u)
 }
 
 func (s *Store) clientPolicyCurrent(
@@ -88,18 +161,36 @@ func (s *Store) clientPolicyCurrent(
 	client string,
 	o *unstructured.Unstructured,
 ) bool {
+	return s.clientPolicyRefusal(ctx, client, o) == nil
+}
+
+func (s *Store) clientPolicyRefusal(
+	ctx context.Context,
+	client string,
+	o *unstructured.Unstructured,
+) error {
 	if s.security == nil {
-		return true
+		return nil
+	}
+	refusal := &executionenv.Error{
+		Code:    executionenv.CodeNotReady,
+		Message: "client policy is unavailable or revoked",
 	}
 	chain, _, err := clientCertificates(ctx)
 	if err != nil {
-		return false
+		return refusal
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	id, policy, err := s.security.authorize(checkCtx, chain)
-	return err == nil && id == client && policy.MayAttestOwner &&
-		slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID"))
+	if errors.Is(err, errAuthorityUnavailable) {
+		return &unconfirmedRefusal{refusal}
+	}
+	if err != nil || id != client || !policy.MayAttestOwner ||
+		!slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID")) {
+		return refusal
+	}
+	return nil
 }
 
 func activeRunFrom(o *unstructured.Unstructured) (executionenv.RunClaim, string, time.Time, bool) {

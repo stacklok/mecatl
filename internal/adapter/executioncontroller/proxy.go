@@ -63,6 +63,15 @@ type ExecutorConnectFunc func(
 	pin ExecutorPin,
 ) (conn grpc.ClientConnInterface, release func(), err error)
 
+type authorityRechecker interface {
+	RecheckAuthority(
+		ctx context.Context,
+		client string,
+		owner string,
+		rc executionenv.RequestContext,
+	) error
+}
+
 type executorRouter interface {
 	ExecutorRoute(
 		ctx context.Context,
@@ -148,13 +157,15 @@ type authorizedCall struct {
 func (p *executorProxy) open(
 	ctx context.Context,
 	rc *executorv1.RequestContext,
-) (authorizedCall, error) {
+) (context.Context, authorizedCall, error) {
+	ctx, f := p.track(ctx, rc)
 	route, err := p.authorize(ctx, rc)
 	if err != nil {
-		return authorizedCall{}, notForwarded(err)
+		f.release()
+		return ctx, authorizedCall{}, notForwarded(withdrawnOr(ctx, err))
 	}
-	a, err := p.connect(route)
-	return a, notForwarded(err)
+	a, err := p.connect(ctx, route, f)
+	return ctx, a, notForwarded(err)
 }
 
 func (p *executorProxy) authorize(
@@ -180,12 +191,53 @@ func (p *executorProxy) authorize(
 	return route, nil
 }
 
-func (p *executorProxy) connect(route ExecutorRoute) (authorizedCall, error) {
+// recheck reports whether a forwarded call's authority ended, and whether a
+// refusal is unconfirmed because authorization state could not be read.
+func (p *executorProxy) recheck(ctx context.Context, rc *executorv1.RequestContext) (bool, error) {
+	c, err := p.handler.client(ctx)
+	if err != nil {
+		// The client check refuses as Unavailable only while not ready.
+		return status.Code(err) == codes.Unavailable, err
+	}
+	erc, ok := requestContextFromProto(executionContext(rc))
+	if !ok || !c.policy.MayAttestOwner {
+		return false, wireError(executionenv.CodePermissionDenied, false)
+	}
+	owner := ownerHash(erc.Owner)
+	if rechecker, ok := p.handler.backend.(authorityRechecker); ok {
+		err = rechecker.RecheckAuthority(ctx, c.id, owner, erc)
+	} else if router, ok := p.handler.backend.(executorRouter); ok {
+		_, err = router.ExecutorRoute(ctx, c.id, owner, erc, p.capability)
+	} else {
+		return false, wireError(executionenv.CodeNotReady, false)
+	}
+	if err != nil {
+		return unconfirmed(err), backendError(err)
+	}
+	return false, nil
+}
+
+// connect dials route's executor for a call tracked since before admission,
+// refusing it if it was withdrawn meanwhile; release ends the tracking.
+func (p *executorProxy) connect(
+	ctx context.Context,
+	route ExecutorRoute,
+	f *flight,
+) (authorizedCall, error) {
 	conn, release, err := p.connector(route.Pin)
 	if err != nil {
-		return authorizedCall{}, wireError(executionenv.CodeNotReady, true)
+		f.release()
+		return authorizedCall{}, withdrawnOr(ctx, wireError(executionenv.CodeNotReady, true))
 	}
-	return authorizedCall{route: route, conn: conn, release: release}, nil
+	if !p.handler.flights.admit(f) {
+		release()
+		f.release()
+		return authorizedCall{}, withdrawnOr(ctx, status.FromContextError(ctx.Err()).Err())
+	}
+	return authorizedCall{route: route, conn: conn, release: func() {
+		f.release()
+		release()
+	}}, nil
 }
 
 func executionContext(p *executorv1.RequestContext) *executionv1.RequestContext {

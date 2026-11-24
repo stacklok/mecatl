@@ -198,6 +198,8 @@ func (m *SecurityManager) authoritative(ctx context.Context) (*securitySnapshot,
 
 var errAuthorityUnavailable = errors.New("security authority is unavailable")
 
+type authorityRead struct{ snapshot *securitySnapshot }
+
 func authorityUnavailable(err error) error {
 	if err == nil {
 		return errAuthorityUnavailable
@@ -210,7 +212,10 @@ func (m *SecurityManager) authoritativeAt(ctx context.Context, now time.Time) (*
 	if state == nil || !snapshotValidAt(state.snapshot, now) || m.kube == nil {
 		return nil, authorityUnavailable(nil)
 	}
-	if err := m.verifyAuthority(ctx, state.snapshot); err != nil {
+	_, err := recheckRead(ctx, authorityRead{state.snapshot}, func() (struct{}, error) {
+		return struct{}{}, m.verifyAuthority(ctx, state.snapshot)
+	})
+	if err != nil {
 		m.state.CompareAndSwap(state, nil)
 		return nil, authorityUnavailable(err)
 	}

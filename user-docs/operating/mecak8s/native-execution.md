@@ -312,6 +312,19 @@ throughput guarantee. A large declared quota cannot override either byte limit.
 Retain each ID's reservation ledger; missing or inconsistent capacity authority
 requires trusted-state recovery, never a reset or copied reservations.
 
+When the connection between the provider and an executor Pod breaks, the
+executor stops every command that connection carried. To detect a connection
+that stays open but stops responding, the executor pings the provider after
+`provider.executorKeepalive.interval` without traffic and closes the connection
+when no reply arrives within `provider.executorKeepalive.timeout`. Both default
+to `10s`, so an unresponsive provider is detected in about 20 seconds; each
+accepts whole seconds from `1s` to `600s` or whole minutes from `1m` to `10m`.
+The provider pings executors with the same settings, but no more often than
+every 10 seconds, to fail calls to an unresponsive executor. Shorter values stop
+orphaned commands sooner at the cost of more ping traffic. A change applies to
+executor Pods created afterwards; existing Pods keep the timing they started
+with.
+
 ## Prepare platform-managed TLS and client policy
 
 The provider's TLS certificate, private key, and client CA bundle come from your
@@ -680,8 +693,8 @@ written.
 Run claims renew before expiry while the exact peer identity and current
 client policy remain valid. Exact retained retries preserve the claim and
 original expiry. Conflicting or expired replay cannot extend or resurrect the
-claim. Withdrawn trust or an expired certificate refuses new calls; calls already
-in progress finish.
+claim. Withdrawn trust or an expired certificate refuses new calls and closes
+calls in progress within `provider.policyRecheckInterval`.
 
 ## Next steps
 

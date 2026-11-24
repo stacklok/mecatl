@@ -27,6 +27,7 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/stacklok/mecatl/internal/executionenv"
 	"github.com/stacklok/mecatl/internal/executionexecutor"
 )
 
@@ -329,5 +330,14 @@ func TestExecutorDialConfirmsThePodAfterTheHandshake(t *testing.T) {
 	dialer := NewExecutorDialer(kube, "ns", pki.clientDir, testProviderClientURI)
 	if err := dialAndRead(t, dialer, pin, server.port); err != nil {
 		t.Fatalf("unchanged Pod refused: %v", err)
+	}
+}
+
+// gRPC raises any client ping interval below 10s to 10s.
+func TestExecutorDialerPingsWithinTheExecutorPolicy(t *testing.T) {
+	const grpcClientPingFloor = 10 * time.Second
+	if executionenv.ExecutorMinClientPing >= grpcClientPingFloor {
+		t.Fatalf("executors refuse pings under %s; gRPC clients may ping every %s",
+			executionenv.ExecutorMinClientPing, grpcClientPingFloor)
 	}
 }

@@ -391,7 +391,11 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 		pvc:            pvc,
 		serviceAccount: r.profiles.executorServiceAccount,
 		trust:          r.profiles.executorTrust,
-		serverArgs:     executorServerArgs(admitted, p.Spec.MaxFileBytes),
+		serverArgs: executorServerArgs(
+			admitted,
+			p.Spec.MaxFileBytes,
+			r.profiles.executorKeepalive.OrDefault(),
+		),
 	}
 	pods := r.kube.CoreV1().Pods(r.namespace)
 	cur, err := pods.Get(ctx, name, metav1.GetOptions{})
