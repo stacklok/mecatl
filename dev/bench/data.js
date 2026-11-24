@@ -407440,6 +407440,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795524245179,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50079c0b0be2074e05592eb537e996c6475efbf",
+          "message": "feat(identity): give named-definition sessions their servers' gateway tools (#2965)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T15:04:34+02:00",
+          "tree_id": "b82c7b0ad3738aaf896231d7cd00244daee4601c",
+          "url": "https://github.com/stacklok/mecatl/commit/f50079c0b0be2074e05592eb537e996c6475efbf"
+        },
+        "date": 1795526237463,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -587828,6 +587862,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795526233277,
+  "lastUpdate": 1795526238648,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
