@@ -451197,6 +451197,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795514727936,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e41144fca56a89da371814e2daa9d897ed120418",
+          "message": "feat(server): record an interactive run's owner from the request that starts it (#2968)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T14:30:43+02:00",
+          "tree_id": "76f3bc94445ab909bbf4da738891de0d1996b72f",
+          "url": "https://github.com/stacklok/mecatl/commit/e41144fca56a89da371814e2daa9d897ed120418"
+        },
+        "date": 1795524249807,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13410.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12905,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -587351,6 +587390,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795524246066,
+  "lastUpdate": 1795524250913,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
