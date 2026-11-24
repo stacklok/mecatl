@@ -337,10 +337,10 @@ type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, p
 // (ADR 0291) despite the factory gaining no dedicated parameter for it — the
 // caller attaches it to ctx via ContextWithAgentDefSessionRoot before invoking
 // the factory; AgentDefSessionRootFromContext reads it back inside the
-// factory's own composition-layer closure. This keeps the factory's shape
-// exactly as originally frozen (no per-feature parameter growth) while still
-// letting two agent-bound sessions on the SAME def but DIFFERENT placements
-// resolve distinct project-memory files instead of leaking one into the other.
+// factory's own composition-layer closure. The root is a placement detail of
+// one extension, not a catalog input, and it still lets two agent-bound
+// sessions on the SAME def but DIFFERENT placements resolve distinct
+// project-memory files instead of leaking one into the other.
 //
 // gatewayTools are the session's tools whose calls take the identity broker's
 // gateway (HelperGatewayTools of its MCP broker attachment), nil when it has

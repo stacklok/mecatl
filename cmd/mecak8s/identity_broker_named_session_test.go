@@ -17,7 +17,9 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/definitionloader"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
@@ -141,11 +143,43 @@ func TestIdentityBrokerNamedSessionGetsItsDefinitionsGatewayTools(t *testing.T) 
 	if got := diag.call(ops[0]); got["code"] != "completed" || got["outcome"] != "completed" {
 		t.Fatalf("calendar-reader's gateway call = %v, want completed at the vMCP", got)
 	}
-	// idjags fails unless each ID-JAG names an agent as its actor; the
+	// The one ID-JAG names as its actor the agent registered as the
+	// session's main agent, running calendar-reader: registering that
+	// instance again under its definition returns the same agent. The
 	// broker's check of a named root against its own definition's limit is
 	// pinned by TestAuthorizeCallChecksANamedRootsOwnCeiling.
-	if issued := gw.idjags(t); len(issued) != 1 {
+	issued := gw.idjags(t)
+	if len(issued) != 1 {
 		t.Fatalf("AS-1 issued %d ID-JAGs, want one for the session's main agent", len(issued))
+	}
+	opened, ok, err := gw.built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: reader})
+	if err != nil || !ok {
+		t.Fatalf("FindSession = %v, %v; want calendar-reader's broker session", ok, err)
+	}
+	// The broker refuses an instance registering again under another
+	// definition, so only the definition it registered with returns it.
+	records, _, err := definitionloader.Load(t.Context(), definitionloader.Config{Dirs: []string{agents}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := map[string]identitybroker.DefinitionRef{}
+	for _, r := range records {
+		refs[r.Ref.Source+"/"+r.Ref.Name] = r.Ref
+	}
+	again := func(def identitybroker.DefinitionRef) (identitybroker.Registration, error) {
+		return gw.built.IdentityBroker.RegisterAgent(t.Context(), identitybroker.RegisterAgentRequest{
+			SessionID: opened.ID, HostSessionID: reader, Owner: opened.Owner, Incarnation: opened.Incarnation, Definition: def,
+		})
+	}
+	if _, err := again(refs[identitybroker.SourceSystem+"/"+identitybroker.BuiltinMain]); err == nil {
+		t.Fatal("calendar-reader's main agent registered again as system/main; want it held to the definition it registered with")
+	}
+	registered, err := again(refs[identitybroker.SourceGlobal+"/calendar-reader"])
+	if err != nil {
+		t.Fatalf("register calendar-reader's main agent again under its definition: %v", err)
+	}
+	if actor := issued[0]["act"].(map[string]any)["sub"]; actor != registered.Agent.Subject {
+		t.Fatalf("the ID-JAG's actor is %v, want calendar-reader's main agent %s", actor, registered.Agent.Subject)
 	}
 	// The vMCP holds no calendar credential offline, so the backend's own
 	// answer is an error; the call reaching it is what counts.

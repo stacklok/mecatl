@@ -190,14 +190,19 @@ consecutive-failure limit keep the inherited value. `execution.none` further
 removes filesystem and shell access; project memory is unavailable without a
 filesystem.
 
-With the identity broker on, the bound root also gets the MCP gateway tools of
-each server its definition's `mcpServers` names by reference, minus each tool
-its `disallowedTools` names, and no other MCP broker tool. The broker registers
-the root under its definition and refuses a gateway call outside that
-definition's limit. It gets only the tools a server declares statically in
-`auth.oauth.tools`: a bound session cannot use workspace enrollment, which
-discovers the tools of a server that declares none. Without the identity
-broker, the bound root gets no MCP broker tools.
+A bound root gets no MCP broker tools until `mecak8s` routes servers through
+the identity broker's gateway, which it refuses until the gateway's
+authorization server accepts AS-1's tokens; see
+[Declare the embedded gateway](/operating/mecak8s/identity-and-client-access.md#declare-the-embedded-gateway).
+Once it does, with the identity broker and the MCP broker on, the bound root
+gets the gateway tools of each server its definition's `mcpServers` names by
+reference, minus each tool its `disallowedTools` names, and no other MCP broker
+tool. An inline server entry and the definition's `tools` list add no gateway
+tools. It gets only the tools a server declares in
+`mcp.servers[].auth.oauth.tools`, because a bound session cannot use workspace
+enrollment, which discovers the tools of a server that declares none. The
+broker registers the root under its definition and refuses a gateway call
+outside that definition's limit.
 
 Provider/model selection for a bound root follows these five cases:
 

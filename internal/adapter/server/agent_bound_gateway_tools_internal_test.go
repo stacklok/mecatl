@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -218,6 +220,9 @@ func TestAgentBoundSessionListsNoBrokerConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
+	if created.ExternalBinding == "" {
+		t.Fatal("the agent-bound session has no broker binding; the refusal under test would not be reached")
+	}
 	if _, err := svc.ListSessionMcpConnectors(ctx, created.ID); err != errConnectorUnavailable || spy.calls != 0 {
 		t.Fatalf("ListSessionMcpConnectors = %v after %d inspection(s), want connector inspection unavailable", err, spy.calls)
 	}
@@ -225,7 +230,7 @@ func TestAgentBoundSessionListsNoBrokerConnectors(t *testing.T) {
 
 // TestAgentBoundSessionAbortsItsAttachmentWhenTheBuildFails pins the
 // attachment's rollback: when the engine build of an agent-bound session
-// fails, its broker attachment is aborted, never committed or persisted.
+// fails, its broker attachment is aborted and never committed.
 func TestAgentBoundSessionAbortsItsAttachmentWhenTheBuildFails(t *testing.T) {
 	svc, broker, seen := newAgentBoundGatewayService(t, true)
 	seen.fail = true
@@ -236,5 +241,31 @@ func TestAgentBoundSessionAbortsItsAttachmentWhenTheBuildFails(t *testing.T) {
 	}
 	if broker.attached.Load() != 1 || broker.aborted.Load() != 1 || broker.committed.Load() != 0 {
 		t.Fatalf("attached %d, aborted %d, committed %d; want one aborted attachment", broker.attached.Load(), broker.aborted.Load(), broker.committed.Load())
+	}
+}
+
+// TestAgentBoundSessionRefusesMCPRefresh pins that refreshing direct MCP
+// sources on an agent-bound session with a broker binding is refused with a
+// reason that fits it, without reconciling anything: its MCP tools come from
+// its definition, and it cannot enroll either.
+func TestAgentBoundSessionRefusesMCPRefresh(t *testing.T) {
+	svc, _, _ := newAgentBoundGatewayService(t, true)
+	reconciled := 0
+	svc.cfg.MCPRefresh = func(context.Context) (MCPRefreshSnapshot, error) {
+		reconciled++
+		return MCPRefreshSnapshot{}, nil
+	}
+	ctx := session.WithPrincipal(t.Context(), mcpAuthorizationOwner)
+	created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
+		ProviderSelector{}, ProfileDefault, WithAgentDefinitionName("release-reviewer"))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if created.ExternalBinding == "" {
+		t.Fatal("the agent-bound session has no broker binding; the refusal under test would not be reached")
+	}
+	_, err = svc.RefreshMcpSources(ctx, created.ID)
+	if !errors.Is(err, ErrFailedPrecondition) || !strings.Contains(err.Error(), "agent definition") || reconciled != 0 {
+		t.Fatalf("RefreshMcpSources = %v after %d reconcile(s), want a refusal naming the agent definition", err, reconciled)
 	}
 }

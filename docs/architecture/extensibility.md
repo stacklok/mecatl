@@ -62,7 +62,7 @@ mount the broker's fixed HTTP surface (the contract's `HTTPHandlers`) and an
 operator-configured callback on their primary HTTP mux; see
 [deployment and hardening](deployment-and-hardening.md).
 
-A session gets its catalogue one of two ways:
+A session gets its catalogue one of three ways:
 
 - **Lazy authorization.** Trusted static `tools:` declarations appear at once as
   placeholders. The first call parks while the user authorizes the whole bundle,
@@ -71,6 +71,10 @@ A session gets its catalogue one of two ways:
   privately. Each definition must pass `validateAuthenticatedRoute` (the same
   naming rules plus size and collision checks). One frozen catalogue then
   replaces the placeholders atomically, and any failure admits nothing.
+- **Named agent definition.** A session bound to one attaches only with the
+  identity broker on and gets only the identity broker's gateway routes of the
+  servers its definition references, from their static declarations. Gateway
+  calls never park, and the session cannot enroll.
 
 The catalogue stays frozen until the owner explicitly refreshes. Broker state is
 process-local: a persisted binding is never treated as live after a restart, so

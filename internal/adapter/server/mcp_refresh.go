@@ -178,6 +178,11 @@ func (s *Service) mcpRefreshTarget(ctx context.Context, id session.SessionID) (*
 	if s.IsLive(id) {
 		return nil, fmt.Errorf("%w: session has a local active run", ErrFailedPrecondition)
 	}
+	if sess.ExternalBinding != "" && sess.AgentDefinitionName != "" {
+		// An agent-bound session's broker binding carries only its
+		// definition's gateway tools (#2938), and it cannot enroll.
+		return nil, fmt.Errorf("%w: an agent-bound session gets its MCP tools from its agent definition", ErrFailedPrecondition)
+	}
 	if sess.ExternalBinding != "" {
 		return nil, fmt.Errorf("%w: broker-bound sessions use workspace enrollment", ErrFailedPrecondition)
 	}
