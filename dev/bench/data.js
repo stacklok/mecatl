@@ -453182,6 +453182,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795539397630,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11005e22a4ab857dec5ceeba567428e564601a26",
+          "message": "feat(mecak8s): deliver the identity broker's settings and key fallbacks through Helm (#2977)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-24T17:04:04Z",
+          "tree_id": "2643d8781afa28dd9915841688d48814e3f2565d",
+          "url": "https://github.com/stacklok/mecatl/commit/11005e22a4ab857dec5ceeba567428e564601a26"
+        },
+        "date": 1795540602064,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13421,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12915,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -589906,6 +589945,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795540598258,
+  "lastUpdate": 1795540603077,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
