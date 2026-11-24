@@ -595,11 +595,12 @@ type gatewayServerTool interface {
 }
 
 // defGatewayTools returns the gateway tools in helperTools, a session's, that
-// a helper running def gets (#2842): those of each server def's mcpServers
-// names by reference, minus each tool its disallowedTools names. The identity
-// broker resolves def's ceiling to the same servers and tools
+// an agent running def gets, whether a helper (#2842) or the main agent of a
+// session bound to def (#2938): those of each server def's mcpServers names by
+// reference, minus each tool its disallowedTools names. The identity broker
+// resolves def's ceiling to the same servers and tools
 // (definitionloader.resolveCeiling) and refuses any other call, so this keeps
-// the helper's catalog to what it may call.
+// the agent's catalog to what it may call.
 //
 // Shortcut: the harness resolves the definition's gateway tools again rather than reading the ceiling the broker recorded; removed by #2548 (the harness builds agents from the broker's records).
 func defGatewayTools(def agents.AgentDef, helperTools []tool.Tool) []tool.Tool {
@@ -1160,9 +1161,8 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 // docs): a Subagent-delegate caller passes cfg.Workspace, a session-root
 // caller passes THIS session's own bound placement root.
 //
-// gatewayTools are the identity broker gateway tools a helper running def
-// gets (defGatewayTools); a session root passes none, since a session bound
-// to a named agent definition does not attach to the MCP broker.
+// gatewayTools are the identity broker gateway tools the agent running def
+// gets (defGatewayTools), whether a helper or a session root bound to def.
 func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager, sessionRoot string, gatewayTools []tool.Tool) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
 	var diags []scopeDiag
 	names, diags = scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))

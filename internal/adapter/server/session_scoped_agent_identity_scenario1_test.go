@@ -27,7 +27,9 @@ func (c countingBrokerService) DeleteSession(ctx context.Context, id session.Ses
 	return c.inner.DeleteSession(ctx, id)
 }
 
-// newAgentDefBrokerService exercises agent-bound entrypoints with a live broker.
+// newAgentDefBrokerService exercises agent-bound entrypoints with a live MCP
+// broker and no identity broker, so the broker has no gateway routes and an
+// agent-bound session attaches to nothing (#2938).
 func newAgentDefBrokerService(t *testing.T) (*Service, *int32) {
 	t.Helper()
 	runtime := testBrokerRuntime(t)
@@ -64,6 +66,6 @@ func TestSessionScopedAgentIdentity_Scenario1_MCPBrokerAttachmentSkipped(t *test
 		t.Fatalf("CreateSession: %v", err)
 	}
 	if got := atomic.LoadInt32(attachCalled); got != 0 {
-		t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound session — it must be skipped entirely (AC1.10)", got)
+		t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound session without the identity broker — it must be skipped entirely (AC1.10)", got)
 	}
 }

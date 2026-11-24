@@ -153,7 +153,7 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearSkipMCPBrokerAttachment(t
 			}
 
 			if got := atomic.LoadInt32(attachCalled); got != 0 {
-				t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound fork/clear successor — it must be skipped entirely (AC2.4)", got)
+				t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound fork/clear successor without the identity broker — it must be skipped entirely (AC2.4)", got)
 			}
 		})
 	}

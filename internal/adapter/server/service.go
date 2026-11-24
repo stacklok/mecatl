@@ -341,6 +341,8 @@ type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, p
 // exactly as originally frozen (no per-feature parameter growth) while still
 // letting two agent-bound sessions on the SAME def but DIFFERENT placements
 // resolve distinct project-memory files instead of leaking one into the other.
+// The session's gateway tools reach the factory the same way
+// (ContextWithAgentDefGatewayTools).
 type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (SessionEngineResult, error)
 
 // agentDefSessionRootContextKey is the unexported context key backing
@@ -363,6 +365,27 @@ func AgentDefSessionRootFromContext(ctx context.Context) string {
 	return root
 }
 
+// agentDefGatewayToolsContextKey is the unexported context key backing
+// ContextWithAgentDefGatewayTools/AgentDefGatewayToolsFromContext.
+type agentDefGatewayToolsContextKey struct{}
+
+// ContextWithAgentDefGatewayTools attaches an agent-bound session's gateway
+// tools to ctx before invoking AgentDefSessionEngineFactory: the tools of its
+// MCP broker attachment whose calls take the identity broker's gateway
+// (HelperGatewayTools), and no other broker route, since those act as the
+// session with its shared grant. The factory keeps those of the servers the
+// definition references, minus the tools it excludes (#2938).
+func ContextWithAgentDefGatewayTools(ctx context.Context, tools []tool.Tool) context.Context {
+	return context.WithValue(ctx, agentDefGatewayToolsContextKey{}, slices.Clone(tools))
+}
+
+// AgentDefGatewayToolsFromContext returns the tools attached by
+// ContextWithAgentDefGatewayTools, or nil if none were.
+func AgentDefGatewayToolsFromContext(ctx context.Context) []tool.Tool {
+	tools, _ := ctx.Value(agentDefGatewayToolsContextKey{}).([]tool.Tool)
+	return slices.Clone(tools)
+}
+
 // AgentDefSessionSelection identifies a bounded root build through the ordinary
 // owner/execution-scoped SessionContextEngine binding lifecycle.
 type AgentDefSessionSelection struct {
@@ -380,8 +403,21 @@ func AgentDefSessionSelectionFromContext(ctx context.Context) (AgentDefSessionSe
 	return selection, ok
 }
 
-func (s *Service) callAgentDefSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionWorkspaceAcquirer, sel ProviderSelector, profile SessionProfile, workspace string, mode session.PermissionMode, limits session.Limits, name string, forkSource ...session.SessionID) (SessionEngineResult, error) {
+// agentBoundBrokerAttachment reports whether an agent-bound session attaches
+// to the MCP broker, which it does only for its gateway tools (#2938). Only
+// the identity broker installs gateway routes, and it checks each call against
+// the definition's ceiling; without it, an agent-bound session attaches to
+// nothing.
+func (s *Service) agentBoundBrokerAttachment() bool {
+	return s.cfg.MCPBroker != nil && s.cfg.IdentityBroker != nil
+}
+
+// callAgentDefSessionEngine builds an agent-bound session's engine. brokerTools
+// are its MCP broker attachment's tools, nil when it has none; only their
+// gateway routes reach the factory.
+func (s *Service) callAgentDefSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionWorkspaceAcquirer, sel ProviderSelector, profile SessionProfile, workspace string, mode session.PermissionMode, limits session.Limits, name string, brokerTools []tool.Tool, forkSource ...session.SessionID) (SessionEngineResult, error) {
 	ctx = ContextWithAgentDefSessionRoot(ctx, workspace)
+	ctx = ContextWithAgentDefGatewayTools(ctx, HelperGatewayTools(brokerTools))
 	var res SessionEngineResult
 	var err error
 	if s.cfg.SessionContextEngine != nil {
@@ -2438,10 +2474,12 @@ func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelecto
 		// own resolved catalog + resource-capability list by
 		// AgentDefSessionEngine (ADR 0353, AC1.9) — never
 		// Config.RootAuthority's deployment-default closure, and never widened
-		// by broker/client-MCP tools: neither channel reaches an agent-bound
-		// session's create path (AC1.10). It mounts no broker bundle, so a fresh
-		// session records empty (present) enrollment provenance like any root
-		// without one.
+		// afterwards: client MCP never reaches an agent-bound session's create
+		// path (AC1.10), and the only broker tools it gets are the gateway tools
+		// of the servers its definition references, already in that catalog
+		// when the authority is minted (#2938). It mounts no broker bundle, so a
+		// fresh session records empty (present) enrollment provenance like any
+		// root without one.
 		brokerKeys, brokerKeysPresent := carried.brokerKeys, carried.brokerKeysPresent
 		if !carried.bound {
 			brokerKeys, brokerKeysPresent = res.BrokerRegistrationKeys, true
@@ -3158,11 +3196,33 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			s.cfg.Commands.Retire(id)
 		}
 	}()
+	// The session's MCP broker attachment, committed only once the session is
+	// published below. A debug session never attaches, and an agent-bound one
+	// only for its gateway tools.
+	attachBroker := s.cfg.MCPBroker != nil
 	switch {
 	case opts.agentDefinitionName != "":
-		// Agent-bound sessions (ADR 0353) never reach the MCPBroker attach
-		// branch below — AC1.10. Owner/execution-scoped source binding is shared
-		// with ordinary sessions, but no broker tools enter the bounded catalog.
+		attachBroker = s.agentBoundBrokerAttachment()
+	case opts.debugTargetID != "":
+		attachBroker = false
+	}
+	if attachBroker {
+		if id == "" {
+			id = mintID()
+		}
+		unlockBroker := s.brokerMu.lock(id)
+		defer unlockBroker()
+		broker, err = s.openBrokerAttachment(ctx, id, "", false)
+		if err != nil {
+			return nil, err
+		}
+		defer s.finalizeBrokerAttachment(broker, &committed)
+	}
+	switch {
+	case opts.agentDefinitionName != "":
+		// Agent-bound sessions (ADR 0353) attach to the MCP broker only for
+		// the gateway tools of the servers their definition references (#2938);
+		// callAgentDefSessionEngine passes the factory no other broker route.
 		// workspace (this createPerSessionEngine call's own param, resolved by
 		// createSession via PlacementGovernanceRoot) is THIS session's own bound
 		// governance root — attached to ctx so a placement-aware extension
@@ -3170,7 +3230,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// deployment-wide cfg.Workspace. "" for profile: "no-fs" (AC2.6).
 		factoryDone := creatediag.Begin(ctx, "engine_factory")
 		acquire := s.executionWorkspaceAcquirer(owner, placement.Ref)
-		res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName)
+		res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName, brokerTools(broker))
 		// Like ordinary creates, only this reserved unpublished attempt may reactivate.
 		if errors.Is(err, ErrCommandBindingRetired) && s.cfg.SessionContextEngine != nil {
 			if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
@@ -3179,7 +3239,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 				err = s.cfg.Commands.Activate(ctx, id, owner.Clone(), string(profile))
 			}
 			if err == nil {
-				res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName)
+				res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName, brokerTools(broker))
 			}
 		}
 		factoryDone(err)
@@ -3205,18 +3265,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
 	default:
-		if s.cfg.MCPBroker != nil {
-			if id == "" {
-				id = mintID()
-			}
-			unlockBroker := s.brokerMu.lock(id)
-			defer unlockBroker()
-			broker, err = s.openBrokerAttachment(ctx, id, "", false)
-			if err != nil {
-				return nil, err
-			}
-			defer s.finalizeBrokerAttachment(broker, &committed)
-		}
 		factoryDone := creatediag.Begin(ctx, "engine_factory")
 		acquire := s.executionWorkspaceAcquirer(owner, placement.Ref)
 		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker), nil)
@@ -7307,12 +7355,15 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 	if sess.AgentDefinitionName != "" {
 		// ADR 0353: an agent-bound session's engine is built EXCLUSIVELY from its
 		// own bound def's resolved catalog via AgentDefSessionEngine — never the
-		// debug/exact-tools/broker machinery below. rehydrateSession refuses an
+		// debug/exact-tools/broker machinery below. Its broker attachment
+		// contributes only the gateway tools of the servers the definition
+		// references (#2938): Fork/Clear pass a fresh successor's attachment
+		// tools as exactTools, and a rebuild of a live registration reopens the
+		// session's own committed attachment. rehydrateSession refuses an
 		// agent-bound session outright (AC3.4), and rebuildGrantedAuthorizationEngine/
 		// connectWorkspaceServicesLocked both reject one before reaching this
-		// function (AC3.6). Fork/Clear reach it with a fresh successor; runtime
-		// publication may also rebuild a live registration, whose fixed
-		// configuration must be validated rather than silently changed.
+		// function (AC3.6). Runtime publication may rebuild a live registration,
+		// whose fixed configuration must be validated rather than silently changed.
 		// sess.Limits carries the session's own already-persisted (already
 		// tighten-only clamped) value, mirroring how createPerSessionEngine
 		// threads the request's raw Limits at create time — the factory does not
@@ -7324,11 +7375,27 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if s.cfg.AgentDefSessionEngine == nil {
 			return nil, fmt.Errorf("%w: agent-bound session %q cannot be rebuilt (no agent-def session-engine factory configured)", ErrInvalidArgument, sess.ID)
 		}
+		gatewaySource := exactTools
+		if !useExactTools && sess.ExternalBinding != "" && s.agentBoundBrokerAttachment() {
+			broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
+			if err != nil {
+				return nil, err
+			}
+			defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
+			gatewaySource = brokerTools(broker)
+		}
+		// The session keeps its authority across a rebuild, so offer only the
+		// gateway tools it allows, not ones published since it was minted.
+		if authority, bound := sess.BoundAuthority(); bound {
+			gatewaySource = slices.DeleteFunc(slices.Clone(gatewaySource), func(t tool.Tool) bool {
+				return !authority.CapabilitySet.AllowsTool(t.Spec().Name)
+			})
+		}
 		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callAgentDefSessionEngine(ctx, sess.ID, sess.Owner, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, profile, workspace, mode, sess.Limits, sess.AgentDefinitionName, forkSource...)
+		res, err = s.callAgentDefSessionEngine(ctx, sess.ID, sess.Owner, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, profile, workspace, mode, sess.Limits, sess.AgentDefinitionName, gatewaySource, forkSource...)
 	} else if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||

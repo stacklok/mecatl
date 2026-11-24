@@ -42,11 +42,15 @@ func (f fakeGatewayTool) GatewayServer() string { return f.server }
 // tools the harness gives are exactly the tools the broker allows, so a
 // change to either rule that the other does not follow fails here.
 //
+// The same rule gives the main agent of a session bound to a named
+// definition its gateway tools (#2938), and the broker checks that root's
+// calls against its definition's ceiling, so the first comparison covers it.
+//
 // It also covers the parent: a helper's gateway tools come from its root's,
 // which today is always the built-in main agent (named helpers start no
-// helpers, and named roots get no gateway tools, #2938), so its effective
-// ceiling is its definition's intersected with system/main's. And it covers
-// the built-in helpers, whose catalogs hold every gateway tool.
+// helpers, and a session bound to a named definition starts none either), so
+// its effective ceiling is its definition's intersected with system/main's.
+// And it covers the built-in helpers, whose catalogs hold every gateway tool.
 func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 	definitions := map[string]string{
 		"one-server":     "mcpServers: [calendar]\n",
