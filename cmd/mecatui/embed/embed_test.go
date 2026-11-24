@@ -108,7 +108,7 @@ func TestStartServesOverSocket(t *testing.T) {
 
 	// Readiness IS a real client dial + session create over the socket (the one
 	// assertion — no separate health probe): a served socket answers CreateSession.
-	cl, err := client.Dial(client.DialConfig{Server: target})
+	cl, err := client.NewClient(client.DialConfig{Server: target})
 	if err != nil {
 		t.Fatalf("dial embedded server: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestStartWithMemoryDirServes(t *testing.T) {
 	}
 	defer func() { _ = srv.Close() }()
 
-	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 	if err != nil {
 		t.Fatalf("dial embedded server: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestStartListAgentsOverSocket(t *testing.T) {
 	}
 	defer func() { _ = srv.Close() }()
 
-	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 	if err != nil {
 		t.Fatalf("dial embedded server: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestStartPerfServesAdminSurface(t *testing.T) {
 	}
 	// The gRPC socket must still serve alongside the admin surface: a real client
 	// dial + session create proves readiness (no separate health probe).
-	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 	if err != nil {
 		t.Fatalf("dial embedded gRPC server with perf enabled: %v", err)
 	}

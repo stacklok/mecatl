@@ -48,7 +48,7 @@ type DialConfig struct {
 	IdentityBrokerSignIn bool
 }
 
-// TokenSource supplies a current bearer token for an RPC. Dial must not invoke it.
+// TokenSource supplies a current bearer token for an RPC. NewClient must not invoke it.
 type TokenSource interface {
 	Token(context.Context) (string, error)
 }
@@ -62,7 +62,7 @@ type TokenRefresher interface {
 	Refresh(context.Context) (string, error)
 }
 
-// Client is a connected mecated gRPC client: the dialled conn plus the generated
+// Client is a mecated gRPC client: the lazy conn plus the generated
 // service stub. Close it on shutdown.
 type Client struct {
 	conn         *grpc.ClientConn
@@ -102,12 +102,12 @@ func withSessionAffinity(ctx context.Context, id string) context.Context {
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
-// Dial connects to mecated per cfg. It uses grpc.NewClient (not the deprecated
-// grpc.Dial), attaches a per-RPC bearer credential when a token is set, and
-// configures transport credentials (plaintext for loopback by default, TLS/mTLS
-// when requested). The connection is lazy; the first RPC (CreateSession)
+// NewClient creates a mecated client per cfg. It uses grpc.NewClient (not the
+// deprecated grpc.Dial), attaches a per-RPC bearer credential when a token is
+// set, and configures transport credentials (plaintext for loopback by default,
+// TLS/mTLS when requested). The connection is lazy; the first RPC (CreateSession)
 // surfaces a connect error.
-func Dial(cfg DialConfig) (*Client, error) {
+func NewClient(cfg DialConfig) (*Client, error) {
 	var opts []grpc.DialOption
 
 	// A UNIX socket is as local as loopback and carries the same single-user
@@ -164,7 +164,7 @@ func Dial(cfg DialConfig) (*Client, error) {
 
 	conn, err := grpc.NewClient(cfg.Server, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("dial %q: %w", cfg.Server, err)
+		return nil, fmt.Errorf("new client for %q: %w", cfg.Server, err)
 	}
 	refreshes := cfg.AuthToken == "" && isRefresher(cfg.TokenSource)
 	return &Client{
@@ -939,10 +939,10 @@ func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }
 //   - unverified TLS: encrypted but UNAUTHENTICATED, so an MITM presenting any
 //     certificate terminates the session and reads the token just the same.
 //     Note this arm is reachable precisely because Insecure turns UseTLS on,
-//     which satisfies every other plaintext guard in Dial.
+//     which satisfies every other plaintext guard in NewClient.
 //
-// It lives in Dial rather than in a caller's transport policy so EVERY caller of
-// this package inherits it.
+// It lives in NewClient rather than in a caller's transport policy so EVERY
+// caller of this package inherits it.
 func bearerTransportRefusal(cfg DialConfig, local bool) error {
 	if local || (cfg.AuthToken == "" && cfg.TokenSource == nil) {
 		return nil

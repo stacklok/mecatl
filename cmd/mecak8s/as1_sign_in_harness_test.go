@@ -421,9 +421,15 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	}
 	defer func() { _ = source.Close() }()
 	recorder := &refreshRecorder{source: source}
-	tui, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: cfg.grpcAddr, UseTLS: true, TLSCAFile: caFile, TokenSource: recorder, IdentityBrokerSignIn: profile.IdentityBrokerSignIn})
+	tui, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+		Server:               cfg.grpcAddr,
+		UseTLS:               true,
+		TLSCAFile:            caFile,
+		TokenSource:          recorder,
+		IdentityBrokerSignIn: profile.IdentityBrokerSignIn,
+	})
 	if err != nil {
-		t.Fatalf("Dial: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = tui.Close() }()
 
@@ -480,9 +486,14 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	stopped = true
 	broker, stop = start()
 	stopped = false
-	restarted, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: cfg.grpcAddr, UseTLS: true, TLSCAFile: caFile, AuthToken: beforeRestart})
+	restarted, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+		Server:    cfg.grpcAddr,
+		UseTLS:    true,
+		TLSCAFile: caFile,
+		AuthToken: beforeRestart,
+	})
 	if err != nil {
-		t.Fatalf("Dial after restart: %v", err)
+		t.Fatalf("NewClient after restart: %v", err)
 	}
 	defer func() { _ = restarted.Close() }()
 	id, _, _, err := restarted.CreateSession(t.Context(), mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED, mecatuiclient.ModelSelection{})

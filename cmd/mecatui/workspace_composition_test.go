@@ -159,7 +159,7 @@ func TestWorkspaceProductionComposition(t *testing.T) {
 				if err != nil || len(sockets) != 1 {
 					t.Fatalf("embedded socket: %v %v", sockets, err)
 				}
-				cl, err := client.Dial(client.DialConfig{Server: "unix://" + sockets[0]})
+				cl, err := client.NewClient(client.DialConfig{Server: "unix://" + sockets[0]})
 				if err != nil {
 					t.Fatal(err)
 				}

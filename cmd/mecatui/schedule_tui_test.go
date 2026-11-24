@@ -88,7 +88,7 @@ func TestScheduleTool_TuiEmbeddedSchedulerOn(t *testing.T) {
 
 	// The capability half: the embedded server advertises `Scheduling` on the
 	// default per-workspace store, so the /schedule overlay appears.
-	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 	if err != nil {
 		t.Fatalf("dial embedded server: %v", err)
 	}

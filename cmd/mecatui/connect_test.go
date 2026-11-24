@@ -260,7 +260,7 @@ func TestUnenrolledLocalTargetConnectsAnonymouslyWithoutCreatingAuthState(t *tes
 		t.Fatalf("auth registry root was touched or created: %v", statErr)
 	}
 
-	cl, err := client.Dial(dial)
+	cl, err := client.NewClient(dial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestUnenrolledRemoteTargetReachesCredentialFreeServer(t *testing.T) {
 	if err != nil || target != listener.Addr().String() || !dial.RemotePlaintextAllowed || dial.AuthToken != "" || dial.TokenSource != nil {
 		t.Fatalf("resolve = target %q dial %#v err %v, want credential-free remote dial", target, dial, err)
 	}
-	cl, err := client.Dial(dial)
+	cl, err := client.NewClient(dial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestUnenrolledRemoteUnauthenticatedOffersServerAuthoritativeRecovery(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	cl, err := client.Dial(dial)
+	cl, err := client.NewClient(dial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -809,7 +809,7 @@ func TestConnectUsesSavedServerCAForLazyTLSRPC(t *testing.T) {
 			if err != nil || !dial.UseTLS || (dial.TokenSource != nil) != tc.managed {
 				t.Fatalf("resolve dial=%#v err=%v, want parsed TLS dial managed=%v", dial, err, tc.managed)
 			}
-			cl, err := client.Dial(dial)
+			cl, err := client.NewClient(dial)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1108,7 +1108,7 @@ func TestConnectRestartCancellationDoesNotReopenRecovery(t *testing.T) {
 func startupCompatibilityCheck(t *testing.T, major int32) error {
 	t.Helper()
 	target := startStartupCompatibilityServer(t, &startupCompatibilityServer{major: major})
-	cl, err := client.Dial(client.DialConfig{Server: target})
+	cl, err := client.NewClient(client.DialConfig{Server: target})
 	if err != nil {
 		t.Fatal(err)
 	}

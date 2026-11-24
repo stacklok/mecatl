@@ -40,7 +40,7 @@ type SoulSource struct {
 // compile-time assertion that SoulSource satisfies the prompt port.
 var _ prompt.SoulSource = (*SoulSource)(nil)
 
-// NewSoulSource wraps an established driver connection (see Dial) as a
+// NewSoulSource wraps an established driver connection (see NewClient) as a
 // prompt.SoulSource.
 func NewSoulSource(conn grpc.ClientConnInterface, opts SoulOptions) *SoulSource {
 	maxBytes := opts.MaxBytes

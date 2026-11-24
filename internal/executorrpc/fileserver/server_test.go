@@ -58,7 +58,7 @@ func dialConn(
 ) (*executorclient.Workspace, *grpc.ClientConn, *memfs.FileSystem) {
 	t.Helper()
 	backend := memfs.NewFileSystem(root)
-	conn := fileconformance.Dial(
+	conn := fileconformance.NewClient(
 		t,
 		newServer(t, memfs.NewWorkspaceOverFileSystem(backend), opts...),
 	)
@@ -303,7 +303,7 @@ func (r *racyWorkspace) write(
 func TestConcurrentWritesSerializePerPath(t *testing.T) {
 	ctx := context.Background()
 	racy := newRacy()
-	ws := fileconformance.NewWorkspace(fileconformance.Dial(t, newServer(t, racy)), root)
+	ws := fileconformance.NewWorkspace(fileconformance.NewClient(t, newServer(t, racy)), root)
 	const writers = 16
 	spellings := [2]string{"shared.txt", "./shared.txt"}
 
@@ -357,7 +357,7 @@ func TestWritesToDifferentPathsDoNotSerialize(t *testing.T) {
 	ctx := context.Background()
 	racy := newRacy()
 	racy.hold, racy.entered = make(chan struct{}), make(chan struct{})
-	ws := fileconformance.NewWorkspace(fileconformance.Dial(t, newServer(t, racy)), root)
+	ws := fileconformance.NewWorkspace(fileconformance.NewClient(t, newServer(t, racy)), root)
 
 	held := make(chan error, 1)
 	go func() {

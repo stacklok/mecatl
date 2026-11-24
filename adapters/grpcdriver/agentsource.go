@@ -62,7 +62,7 @@ type AgentSource struct {
 // compile-time assertion that AgentSource satisfies the port.
 var _ tool.AgentDefSource = (*AgentSource)(nil)
 
-// NewAgentSource wraps an established driver connection (see Dial) as a
+// NewAgentSource wraps an established driver connection (see NewClient) as a
 // tool.AgentDefSource.
 func NewAgentSource(conn grpc.ClientConnInterface, opts AgentOptions) *AgentSource {
 	diag := opts.Diagnostics

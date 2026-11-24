@@ -6,6 +6,9 @@ Changes to the public adapter API follow [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ### Added
 
+- `grpcdriver.NewClient` creates a lazy driver connection, replacing `Dial`.
+  Its creation errors begin `grpcdriver: new client` instead of
+  `grpcdriver: dial`.
 - `history/sqlite.Backend`, `New`, and `Close` provide a local SQLite-backed
   implementation of kernel history storage.
 - `jsonlstore.OpenReader` and `Reader` provide explicitly read-only access to
@@ -23,3 +26,8 @@ Changes to the public adapter API follow [COMPATIBILITY.md](COMPATIBILITY.md).
 This is an extraction without runtime, storage-format, or wire-behavior changes.
 The initial `v0.1.0` tags are pending human release; support and driver must be
 published before adapters. Engine source and dependency graph are unchanged.
+
+### Deprecated
+
+- `grpcdriver.Dial`: use `grpcdriver.NewClient`. `Dial` remains as an alias for
+  at least one release.

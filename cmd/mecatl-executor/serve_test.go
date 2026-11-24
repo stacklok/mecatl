@@ -39,7 +39,7 @@ func TestFileServiceOverOSFSConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		return fileconformance.Target{
-			Conn: fileconformance.Dial(t, srv),
+			Conn: fileconformance.NewClient(t, srv),
 			Root: root,
 			External: fsconformance.ExternalAccess{
 				Read: func(p string) ([]byte, error) {
@@ -59,7 +59,7 @@ func TestFileServiceOverOSFSBoundsFileSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := fileconformance.NewWorkspace(fileconformance.Dial(t, srv), root)
+	ws := fileconformance.NewWorkspace(fileconformance.NewClient(t, srv), root)
 	oversized := bytes.Repeat([]byte("x"), 5)
 	if err := os.WriteFile(filepath.Join(root, "big"), oversized, 0o600); err != nil {
 		t.Fatal(err)

@@ -50,7 +50,7 @@ type CommandSource struct {
 // compile-time assertion that CommandSource satisfies the prompt port.
 var _ prompt.CommandSource = (*CommandSource)(nil)
 
-// NewCommandSource wraps an established driver connection (see Dial) as a
+// NewCommandSource wraps an established driver connection (see NewClient) as a
 // prompt.CommandSource.
 func NewCommandSource(conn grpc.ClientConnInterface, opts CommandOptions) *CommandSource {
 	diag := opts.Diagnostics

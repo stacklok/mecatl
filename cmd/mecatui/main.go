@@ -320,7 +320,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: --insecure skips TLS certificate verification (testing only)")
 	}
 
-	cl, err = client.Dial(dial)
+	cl, err = client.NewClient(dial)
 	if err != nil {
 		if runCleanup(forceExit, cleanup) {
 			return context.Canceled

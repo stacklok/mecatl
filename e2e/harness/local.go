@@ -314,7 +314,7 @@ func (l *Local) start() error {
 		close(l.exited)
 	}()
 
-	cli, err := client.Dial(client.DialConfig{Server: l.grpcAddr})
+	cli, err := client.NewClient(client.DialConfig{Server: l.grpcAddr})
 	if err != nil {
 		return err
 	}

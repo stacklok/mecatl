@@ -59,7 +59,7 @@ func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 
 			target, stop := tc.start(t, cfg)
 			id := seedStartupResumeSession(ctx, t, target, workspace)
-			seedClient, err := client.Dial(client.DialConfig{Server: target})
+			seedClient, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial seeded server: %v", err)
 			}
@@ -72,7 +72,7 @@ func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 
 			target, stop = tc.start(t, cfg)
 			defer stop()
-			cl, err := client.Dial(client.DialConfig{Server: target})
+			cl, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial restarted server: %v", err)
 			}
@@ -142,7 +142,7 @@ func TestStartupResumeHidesPersistedHarnessControlNotesE2E(t *testing.T) {
 			stop()
 			target, stop := tc.start(t, cfg)
 			defer stop()
-			cl, err := client.Dial(client.DialConfig{Server: target})
+			cl, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial restarted server: %v", err)
 			}
@@ -193,7 +193,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 			cfg := app.Config{Workspace: workspace, StoreDir: storeDir, Model: "mock-model", UseMock: true, Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic", SchedulerEnabled: true}
 			target, stop := tc.start(t, cfg)
 			defer stop()
-			cl, err := client.Dial(client.DialConfig{Server: target})
+			cl, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}
@@ -608,7 +608,7 @@ func TestPendingApprovalStartupRecovery(t *testing.T) {
 					originalRun, originalAsk = event.GetRunId(), event.GetAsk().GetAskId()
 				}
 			}
-			probe, err := client.Dial(client.DialConfig{Server: target})
+			probe, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial persistence probe: %v", err)
 			}
@@ -633,7 +633,7 @@ func TestPendingApprovalStartupRecovery(t *testing.T) {
 
 			target, _, cleanupSecond := startPendingRecoveryServer(t, cfg)
 			defer cleanupSecond()
-			cl, err := client.Dial(client.DialConfig{Server: target})
+			cl, err := client.NewClient(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial restarted server: %v", err)
 			}

@@ -234,9 +234,13 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	}
 	defer func() { _ = source.Close() }()
 	recorder := &refreshRecorder{source: source}
-	tui, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: cfg.grpcAddr, TokenSource: recorder, IdentityBrokerSignIn: profile.IdentityBrokerSignIn})
+	tui, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+		Server:               cfg.grpcAddr,
+		TokenSource:          recorder,
+		IdentityBrokerSignIn: profile.IdentityBrokerSignIn,
+	})
 	if err != nil {
-		t.Fatalf("Dial: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = tui.Close() }()
 

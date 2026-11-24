@@ -198,7 +198,7 @@ func (s *bearerServer) receivedPrompts() []string {
 	return append([]string(nil), s.prompts...)
 }
 
-// dialBearerServer serves fake over loopback and dials it through Dial, so
+// dialBearerServer serves fake over loopback and dials it through NewClient, so
 // the production interceptors and per-RPC credentials carry the bearer.
 func dialBearerServer(t *testing.T, fake *bearerServer, source TokenSource) *Client {
 	t.Helper()
@@ -223,7 +223,11 @@ func dialBearerServer(t *testing.T, fake *bearerServer, source TokenSource) *Cli
 	mecatlv1.RegisterHarnessServiceServer(srv, fake)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
-	c, err := Dial(DialConfig{Server: lis.Addr().String(), TokenSource: source, IdentityBrokerSignIn: !fake.noBrokerSignIn})
+	c, err := NewClient(DialConfig{
+		Server:               lis.Addr().String(),
+		TokenSource:          source,
+		IdentityBrokerSignIn: !fake.noBrokerSignIn,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

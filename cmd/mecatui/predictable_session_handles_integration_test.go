@@ -73,7 +73,7 @@ func TestPredictableSessionHandles_Scenario2_RenderedHeaderCreatesBoundDebugger(
 		_ = listener.Close()
 	})
 
-	cl, err := client.Dial(client.DialConfig{Server: listener.Addr().String()})
+	cl, err := client.NewClient(client.DialConfig{Server: listener.Addr().String()})
 	if err != nil {
 		t.Fatal(err)
 	}

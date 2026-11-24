@@ -14,10 +14,10 @@ type tokenSourceFunc func(context.Context) (string, error)
 
 func (f tokenSourceFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
 
-// TestDialBearerCleartextGuard covers the security contract: a bearer token may
+// TestNewClientBearerCleartextGuard covers the security contract: a bearer token may
 // ride plaintext only to a loopback target; any non-loopback plaintext target is
 // hard-refused, and TLS targets always succeed.
-func TestDialBearerCleartextGuard(t *testing.T) {
+func TestNewClientBearerCleartextGuard(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     DialConfig
@@ -73,15 +73,15 @@ func TestDialBearerCleartextGuard(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cl, err := Dial(tc.cfg)
+			cl, err := NewClient(tc.cfg)
 			if cl != nil {
 				_ = cl.Close()
 			}
 			if tc.wantErr && err == nil {
-				t.Fatalf("Dial(%+v) = nil error, want error", tc.cfg)
+				t.Fatalf("NewClient(%+v) = nil error, want error", tc.cfg)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("Dial(%+v) = %v, want nil error", tc.cfg, err)
+				t.Fatalf("NewClient(%+v) = %v, want nil error", tc.cfg, err)
 			}
 		})
 	}
@@ -108,11 +108,14 @@ func TestDynamicBearerCredentials(t *testing.T) {
 	}
 }
 
-func TestDialDynamicBearerCleartextGuard(t *testing.T) {
-	cl, err := Dial(DialConfig{Server: "example.com:443", TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
-		t.Fatal("Dial must not call token source")
-		return "", nil
-	})})
+func TestNewClientDynamicBearerCleartextGuard(t *testing.T) {
+	cl, err := NewClient(DialConfig{
+		Server: "example.com:443",
+		TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
+			t.Fatal("NewClient must not call token source")
+			return "", nil
+		}),
+	})
 	if cl != nil {
 		_ = cl.Close()
 	}
@@ -122,9 +125,9 @@ func TestDialDynamicBearerCleartextGuard(t *testing.T) {
 
 	// A dynamic bearer leaks to an MITM over unverified TLS exactly as a static
 	// one does, so both guards must read the TokenSource arm too.
-	cl, err = Dial(DialConfig{Server: "example.com:443", UseTLS: true, Insecure: true,
+	cl, err = NewClient(DialConfig{Server: "example.com:443", UseTLS: true, Insecure: true,
 		TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
-			t.Fatal("Dial must not call token source")
+			t.Fatal("NewClient must not call token source")
 			return "", nil
 		})})
 	if cl != nil {
@@ -249,19 +252,19 @@ func TestIsLocalTarget(t *testing.T) {
 	}
 }
 
-// TestDialUnixSocketWithBearer pins the guard/credential agreement: a unix://
+// TestNewClientUnixSocketWithBearer pins the guard/credential agreement: a unix://
 // target accepted by the pre-dial guards must ALSO be accepted by the per-RPC
 // credential. When allowInsecure tracked only loopback, this dial failed with
 // gRPC's opaque "credentials require transport level security" -- exactly the
 // error the pre-dial guard exists to replace.
-func TestDialUnixSocketWithBearer(t *testing.T) {
+func TestNewClientUnixSocketWithBearer(t *testing.T) {
 	for _, cfg := range []DialConfig{
 		{Server: "unix:///tmp/mecatl-test.sock", AuthToken: "tok"},
 		{Server: "unix:///tmp/mecatl-test.sock", TokenSource: tokenSourceFunc(func(context.Context) (string, error) { return "tok", nil })},
 	} {
-		cl, err := Dial(cfg)
+		cl, err := NewClient(cfg)
 		if err != nil {
-			t.Fatalf("Dial(%+v) = %v, want a plaintext unix dial to succeed", cfg.Server, err)
+			t.Fatalf("NewClient(%+v) = %v, want a plaintext unix dial to succeed", cfg.Server, err)
 		}
 		_ = cl.Close()
 	}

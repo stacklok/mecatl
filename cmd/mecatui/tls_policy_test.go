@@ -22,7 +22,7 @@ func TestResolveRemoteTLSPolicy(t *testing.T) {
 		{name: "remote defaults verified TLS", address: "mecated.example:443", wantTLS: true},
 		// A unix:// socket is local but is NOT a loopback host:port. Defaulting it
 		// to TLS would attempt a handshake against a plaintext socket that
-		// client.Dial is happy to dial in the clear -- the policy layer and the
+		// client.NewClient is happy to dial in the clear -- the policy layer and the
 		// transport layer must classify a target the same way.
 		{name: "unix socket defaults plaintext", address: "unix:///run/user/1000/mecated.sock"},
 		{name: "unix socket static bearer is allowed", address: "unix:///run/mecated.sock", cfg: config{tlsExplicit: true, authToken: "token"}},

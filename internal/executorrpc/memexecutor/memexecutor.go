@@ -16,7 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/executorrpc/fileserver"
 )
 
-// Executor configures Dial; a nil service stays unregistered.
+// Executor configures NewClient; a nil service stays unregistered.
 type Executor struct {
 	Files          *memfs.Workspace
 	FileOptions    []fileserver.Option
@@ -24,8 +24,8 @@ type Executor struct {
 	CommandOptions []commandserver.Option
 }
 
-// Dial serves e in process for the test's lifetime.
-func Dial(t testing.TB, e Executor) *grpc.ClientConn {
+// NewClient serves e in process for the test's lifetime.
+func NewClient(t testing.TB, e Executor) *grpc.ClientConn {
 	t.Helper()
 	gs := grpc.NewServer()
 	if e.Files != nil {

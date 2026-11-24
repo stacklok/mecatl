@@ -33,10 +33,10 @@ func NewRemote(addr string) (*Remote, error) {
 	// RemotePlaintextAllowed is THE controlled, unauthenticated testing-caller
 	// carve-out: an operator who exports MECATL_E2E_TARGET has already
 	// chosen the transport for their own qualification server. Without it a
-	// non-loopback target is refused at Dial. The bearer guard is NOT waived by
+	// non-loopback target is refused at NewClient. The bearer guard is NOT waived by
 	// this flag, so MECATL_E2E_AUTH_TOKEN against a plaintext non-loopback target
 	// still fails closed and needs a TLS-terminating endpoint.
-	cli, err := client.Dial(client.DialConfig{
+	cli, err := client.NewClient(client.DialConfig{
 		Server:                 addr,
 		AuthToken:              os.Getenv("MECATL_E2E_AUTH_TOKEN"),
 		RemotePlaintextAllowed: true,

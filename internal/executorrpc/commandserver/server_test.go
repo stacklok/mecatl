@@ -97,7 +97,7 @@ func TestNonPositiveLimitsAreRejected(t *testing.T) {
 
 func TestConformanceWithScriptedRunner(t *testing.T) {
 	runner := &fakeRunner{}
-	client := commandconformance.Dial(t, newServer(t, runner))
+	client := commandconformance.NewClient(t, newServer(t, runner))
 	commandconformance.Run(t, commandconformance.Harness{
 		Client:         func(*testing.T) executorv1.CommandServiceClient { return client },
 		Succeed:        "succeed",
@@ -146,7 +146,7 @@ func run(t *testing.T, client executorv1.CommandServiceClient, command string) (
 
 func TestOutputIsBoundedAndFlagged(t *testing.T) {
 	srv := newServer(t, &fakeRunner{}, commandserver.WithMaxOutputBytes(8))
-	client := commandconformance.Dial(t, srv)
+	client := commandconformance.NewClient(t, srv)
 	out, res, err := run(t, client, "big")
 	if err != nil || out != "ooooooee" || !res.GetOutputTruncated() {
 		t.Fatalf("out %q result %v err %v", out, res, err)
@@ -155,7 +155,7 @@ func TestOutputIsBoundedAndFlagged(t *testing.T) {
 
 func TestStartFailures(t *testing.T) {
 	srv := newServer(t, &fakeRunner{}, commandserver.WithMaxCommandBytes(8))
-	client := commandconformance.Dial(t, srv)
+	client := commandconformance.NewClient(t, srv)
 	for command, want := range map[string]struct {
 		code   codes.Code
 		reason executorv1.ErrorReason
@@ -180,7 +180,7 @@ func TestStartFailures(t *testing.T) {
 }
 
 func TestSecondStartIsRejected(t *testing.T) {
-	client := commandconformance.Dial(t, newServer(t, &fakeRunner{}))
+	client := commandconformance.NewClient(t, newServer(t, &fakeRunner{}))
 	stream, err := client.RunCommand(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,8 @@ func TestSecondStartIsRejected(t *testing.T) {
 }
 
 func TestOutputBeforeStartedIsHeld(t *testing.T) {
-	stream, err := commandconformance.Dial(t, newServer(t, &fakeRunner{})).RunCommand(t.Context())
+	client := commandconformance.NewClient(t, newServer(t, &fakeRunner{}))
+	stream, err := client.RunCommand(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -252,7 +252,7 @@ func dial(endpoint string, cfg *tls.Config) (*grpc.ClientConn, error) {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(executionenv.MaxMessageBytes), grpc.MaxCallSendMsgSize(executionenv.MaxMessageBytes)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("execution client: connect: %w", err)
+		return nil, fmt.Errorf("execution client: new client: %w", err)
 	}
 	return conn, nil
 }

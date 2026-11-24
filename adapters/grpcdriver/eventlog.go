@@ -46,7 +46,7 @@ type EventLog struct {
 // compile-time assertion that EventLog satisfies the port.
 var _ port.EventLog = (*EventLog)(nil)
 
-// NewEventLog wraps an established driver connection (see Dial) as a
+// NewEventLog wraps an established driver connection (see NewClient) as a
 // port.EventLog.
 func NewEventLog(conn grpc.ClientConnInterface) *EventLog {
 	return &EventLog{client: driverv1.NewEventLogServiceClient(conn)}

@@ -162,7 +162,7 @@ func (d *ExecutorDialer) Dial(ctx context.Context, pin ExecutorPin, port int) (*
 // Connect is an ExecutorConnectFunc for the executor server port. Every dial
 // resolves the pinned Pod before the handshake and confirms it after.
 func (d *ExecutorDialer) Connect(pin ExecutorPin) (grpc.ClientConnInterface, func(), error) {
-	conn, err := executorclient.Dial(
+	conn, err := executorclient.NewClient(
 		"passthrough:///"+pin.PodName,
 		confirmedCredentials{
 			TransportCredentials: credentials.NewTLS(d.TLSConfig(pin)),

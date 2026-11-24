@@ -300,7 +300,10 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				firstServer.Stop()
 				_ = firstListener.Close()
 			}()
-			firstClient, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: firstListener.Addr().String(), AuthToken: nativeBridgeOwnerToken})
+			firstClient, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+				Server:    firstListener.Addr().String(),
+				AuthToken: nativeBridgeOwnerToken,
+			})
 			if err != nil {
 				firstServer.Stop()
 				_ = firstListener.Close()
@@ -390,12 +393,18 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				_ = listener.Close()
 			}()
 
-			ownerClient, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: listener.Addr().String(), AuthToken: nativeBridgeOwnerToken})
+			ownerClient, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+				Server:    listener.Addr().String(),
+				AuthToken: nativeBridgeOwnerToken,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = ownerClient.Close() }()
-			foreignClient, err := mecatuiclient.Dial(mecatuiclient.DialConfig{Server: listener.Addr().String(), AuthToken: nativeBridgeForeignToken})
+			foreignClient, err := mecatuiclient.NewClient(mecatuiclient.DialConfig{
+				Server:    listener.Addr().String(),
+				AuthToken: nativeBridgeForeignToken,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

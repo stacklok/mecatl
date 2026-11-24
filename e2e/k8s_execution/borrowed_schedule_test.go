@@ -185,7 +185,7 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	defer func() { agent.stop() }()
 	grpc := portForward(t, ctx, kubeconfig, "service/mecak8s", 8080)
 	defer func() { grpc.stop() }()
-	wire, err := tuiClient.Dial(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
+	wire, err := tuiClient.NewClient(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	if err := wire.Close(); err != nil {
 		t.Fatal(err)
 	}
-	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
+	wire, err = tuiClient.NewClient(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	if err := wire.Close(); err != nil {
 		t.Fatal(err)
 	}
-	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
+	wire, err = tuiClient.NewClient(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	if err := wire.Close(); err != nil {
 		t.Fatal(err)
 	}
-	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
+	wire, err = tuiClient.NewClient(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
 	if err != nil {
 		t.Fatal(err)
 	}
