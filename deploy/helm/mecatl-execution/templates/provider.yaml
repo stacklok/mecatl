@@ -118,6 +118,7 @@ spec:
         - --tls-directory=/etc/mecatl-execution/security
         - --security-authority-configmap={{ include "mecatl-execution.fullname" . }}-security-authority
         - --security-reload-interval={{ .Values.provider.securityReloadInterval }}
+        - --policy-recheck-interval={{ .Values.provider.policyRecheckInterval }}
         - --max-concurrent-streams={{ .Values.provider.maxConcurrentStreams }}
         - --max-concurrent-rpcs={{ .Values.provider.maxConcurrentRPCs }}
         - --max-concurrent-rpcs-per-client={{ .Values.provider.maxConcurrentRPCsPerClient }}

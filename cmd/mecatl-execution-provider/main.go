@@ -39,7 +39,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	var addr, healthAddr, namespace, templatesPath, manifestPath, keyDirectory, authorityConfigMap, executorServiceAccount string
 	var executorClientDirectory, executorClientURI string
 	var executorCASecret, executorCAKey, executorTrustConfigMap string
-	var reloadInterval time.Duration
+	var reloadInterval, recheckInterval time.Duration
 	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
@@ -50,6 +50,9 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	flag.StringVar(&keyDirectory, "tls-directory", "/etc/mecatl-execution/security", "projected server TLS and client CA directory")
 	flag.StringVar(&authorityConfigMap, "security-authority-configmap", "", "provider-owned security generation high-water ConfigMap")
 	flag.DurationVar(&reloadInterval, "security-reload-interval", 2*time.Second, "security material reload interval")
+	flag.DurationVar(&recheckInterval, "policy-recheck-interval",
+		executioncontroller.DefaultPolicyRecheckInterval,
+		"how often each forwarded executor call is reauthorized, from 1s to 1m")
 	flag.IntVar(&maxConcurrentStreams, "max-concurrent-streams", 64, "maximum concurrent HTTP/2 streams per connection")
 	flag.IntVar(&maxConcurrentRPCs, "max-concurrent-rpcs", 128, "maximum active provider RPCs")
 	flag.IntVar(&maxConcurrentRPCsPerClient, "max-concurrent-rpcs-per-client", 32, "maximum active provider RPCs per authorized client")
@@ -75,6 +78,9 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if namespace == "" || authorityConfigMap == "" || reloadInterval <= 0 || reloadInterval > time.Minute || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
 		return errors.New("required identity, security reload interval, or RPC concurrency bounds are invalid")
 	}
+	if recheckInterval < time.Second || recheckInterval > time.Minute {
+		return errors.New("--policy-recheck-interval must be between 1s and 1m")
+	}
 	templates, err := executioncontroller.LoadTemplates(templatesPath)
 	if err != nil {
 		return err
@@ -89,6 +95,8 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err != nil {
 		return fmt.Errorf("build in-cluster Kubernetes config: %w", err)
 	}
+	// client-go's default of 5 QPS would throttle admission and policy rechecks.
+	cfg.QPS, cfg.Burst = 50, 100
 	kube, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return err
@@ -113,9 +121,10 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates).
 		WithDiagnostics(diagnostics)
 	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{
-		Security:    security,
-		Ready:       func() bool { return reconciler.Ready() && security.Ready() },
-		Diagnostics: diagnostics,
+		Security:              security,
+		Ready:                 func() bool { return reconciler.Ready() && security.Ready() },
+		Diagnostics:           diagnostics,
+		PolicyRecheckInterval: recheckInterval,
 	}, store)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

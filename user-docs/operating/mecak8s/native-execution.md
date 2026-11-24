@@ -680,8 +680,8 @@ written.
 Run claims renew before expiry while the exact peer identity and current
 client policy remain valid. Exact retained retries preserve the claim and
 original expiry. Conflicting or expired replay cannot extend or resurrect the
-claim. Withdrawn trust or an expired certificate refuses new calls; calls already
-in progress finish.
+claim. Withdrawn trust or an expired certificate refuses new calls and closes
+calls in progress within `provider.policyRecheckInterval`.
 
 ## Next steps
 

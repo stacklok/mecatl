@@ -21,7 +21,11 @@ certificates, the provider's executor client certificate, and CA bundles, use
 platform PKI and projected Secrets. Stage trust
 overlap, renew identities, and withdraw old trust only after the new chain is
 accepted. Valid TLS renewals need no policy-generation increment; expiry or
-trust withdrawal refuses new calls, and calls in progress finish. Do not reuse a
+trust withdrawal refuses new calls and closes file and command calls in
+progress within `provider.policyRecheckInterval` (default `10s`, from `1s` to
+`1m`). A shorter interval withdraws access sooner at the cost of more
+Kubernetes API reads: each recheck reads every environment with calls in
+progress and the security authority once. Do not reuse a
 policy generation for different policy bytes or reset the authority ConfigMap to
 bypass a failed check. Verify readiness and a known authorized operation after
 each change without logging private keys or credential values.
@@ -528,7 +532,9 @@ Revoke an environment using its durable `grantGeneration` fence (the wire name),
 not a signed grant. Supply the current generation and a stable operation ID. The
 response returns the new generation; retrying the identical request returns the
 same receipt. After this CAS succeeds, the provider refuses new calls under the
-earlier generation; calls already in progress are not stopped.
+earlier generation and closes the environment's file and command calls in
+progress: at once on the replica that served the request, and within
+`provider.policyRecheckInterval` on the others.
 
 ```sh
 grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
