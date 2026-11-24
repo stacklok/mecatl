@@ -190,6 +190,20 @@ consecutive-failure limit keep the inherited value. `execution.none` further
 removes filesystem and shell access; project memory is unavailable without a
 filesystem.
 
+A bound root gets no MCP broker tools until `mecak8s` routes servers through
+the identity broker's gateway, which it refuses until the gateway's
+authorization server accepts AS-1's tokens; see
+[Declare the embedded gateway](/operating/mecak8s/identity-and-client-access.md#declare-the-embedded-gateway).
+Once it does, with the identity broker and the MCP broker on, the bound root
+gets the gateway tools of each server its definition's `mcpServers` names by
+reference, minus each tool its `disallowedTools` names, and no other MCP broker
+tool. An inline server entry and the definition's `tools` list add no gateway
+tools. It gets only the tools a server declares in
+`mcp.servers[].auth.oauth.tools`, because a bound session cannot use workspace
+enrollment, which discovers the tools of a server that declares none. The
+broker registers the root under its definition and refuses a gateway call
+outside that definition's limit.
+
 Provider/model selection for a bound root follows these five cases:
 
 |Request selector|Result|
@@ -228,8 +242,9 @@ identity, and it does not record the definition's source or revision. Fork and
 clear create new sessions, and an existing bound session is never silently
 rebuilt from a different definition after restart. The authority ceiling bounds
 what a session can be granted; it is not an access-control or revocation
-mechanism. This feature adds no definition-specific access controls, no
-credentialed agent-instance registration, and no broker-side enforcement.
+mechanism. This feature adds no definition-specific access controls. Only the
+identity broker, when it is on, checks the bound root's gateway calls against
+its definition, as above.
 
 ### Dedicated debugger creation
 

@@ -64,6 +64,7 @@ func buildAgentDefRootEngine(
 	sessionRoot string,
 	profile server.SessionProfile,
 	mode session.PermissionMode,
+	gatewayTools []tool.Tool,
 ) (*agent.Engine, func() error, session.Authority) {
 	// sessionRoot is THIS session's own bound placement root (ADR 0291), never
 	// cfg.Workspace unconditionally — cfg is a single deployment-wide value
@@ -71,9 +72,14 @@ func buildAgentDefRootEngine(
 	// scope "memory: project" to two sessions on the same def bound to
 	// different placements (ADR 0353 Scenario 2, AC2.5). See
 	// resolveAgentMemoryHead's docs.
+	//
+	// gatewayTools are the session's gateway tools (#2938); the catalog keeps
+	// those of the servers def references, minus the tools it excludes, as a
+	// named helper's does (defGatewayTools). They are in the catalog before the
+	// authority below is minted from it, so the authority stays within def.
 	model := providerModel.ModelID
 	cat, pc, hooks, mcpClose, _, resources, _ := resolvedAgentDefCatalog(
-		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr, sessionRoot, nil)
+		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr, sessionRoot, defGatewayTools(def, gatewayTools))
 
 	deps := engineDepsForProvider(cfg, provider, providerModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 	deps.Catalog = cat
@@ -183,7 +189,7 @@ func agentDefSessionEngineFactory(
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.AgentDefSessionEngineFactory {
 	mainRunner := buildCommandRunner(cfg)
-	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (server.SessionEngineResult, error) {
+	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, defName string, gatewayTools []tool.Tool) (server.SessionEngineResult, error) {
 		ctx, assets, revision, release, err := pinCatalogAssets(ctx, assets)
 		if err != nil {
 			return server.SessionEngineResult{}, err
@@ -243,7 +249,7 @@ func agentDefSessionEngineFactory(
 		// resolveAgentMemoryHead's "project" tier a no-op, never an error (AC2.6).
 		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, assets.agentReg.Detail(def.Name),
 			childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn, base, allowShell, assets.skillIndex, hooks, runner, assets.globalMgr,
-			store, policy, mcpProvider, instructions, provReg, pid, guardrailWaiver, sessionRoot, profile, clampedMode)
+			store, policy, mcpProvider, instructions, provReg, pid, guardrailWaiver, sessionRoot, profile, clampedMode, gatewayTools)
 
 		closeFn := func() error {
 			if mcpClose != nil {

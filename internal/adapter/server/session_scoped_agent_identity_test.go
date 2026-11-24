@@ -39,7 +39,7 @@ func TestSessionScopedAgentIdentity_Scenario2_ResponseEchoesBoundName(t *testing
 		// engine" factory so THIS plumbing-only echo test (AC2.2, Scenario 2)
 		// keeps exercising only the label/echo path; the real catalog-scoping
 		// behaviour is pinned by the Scenario 1 tests instead.
-		AgentDefSessionEngine: func(context.Context, server.ProviderSelector, server.SessionProfile, session.PermissionMode, session.Limits, string) (server.SessionEngineResult, error) {
+		AgentDefSessionEngine: func(context.Context, server.ProviderSelector, server.SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (server.SessionEngineResult, error) {
 			return server.SessionEngineResult{AgentDefinitionName: "release-reviewer", Engine: shared, BuiltForMode: session.ModeDefault, Authority: session.Authority{
 				Provenance: "agent-def:test", CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
 				Ceiling: &governance.CapabilitySet{Tools: []string{"Read"}},

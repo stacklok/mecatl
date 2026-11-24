@@ -376,10 +376,10 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	profile := profileForSession(created)
-	// An agent-bound successor (ADR 0353) never gets an MCPBroker incarnation —
-	// AC2.4, mirroring AC1.10's create-time skip: the def's own resolved
+	// An agent-bound successor (ADR 0353) gets an MCPBroker incarnation only
+	// for its gateway tools, as at create (#2938): the def's own resolved
 	// mcpServers: is the exclusive MCP scope, never widened by the deployment's
-	// broker-granted tools.
+	// other broker-granted tools (AC2.4).
 	agentBound := created.AgentDefinitionName != ""
 	var (
 		builtEngine     *sessionEngine
@@ -391,7 +391,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// id are the ones the factory receives. The binding is stamped on the
 	// successor before its first durable publication; broker commit happens only
 	// after that publication succeeds.
-	if s.cfg.MCPBroker != nil && !agentBound {
+	if s.attachesBroker(agentBound) {
 		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
 		if err != nil {
 			return "", saved, err

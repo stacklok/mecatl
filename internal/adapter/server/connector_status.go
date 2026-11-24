@@ -39,7 +39,10 @@ func (s *Service) ListSessionMcpConnectors(ctx context.Context, id session.Sessi
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return brokercontract.ConnectorInventory{}, ErrNotFound
 	}
-	if s.cfg.MCPConnectorInspector == nil || sess.ExternalBinding == "" {
+	// An agent-bound session attaches to the broker only for its definition's
+	// gateway tools (#2938) and never enrolls, so the broker's connector
+	// inventory does not describe its tools.
+	if s.cfg.MCPConnectorInspector == nil || sess.ExternalBinding == "" || sess.AgentDefinitionName != "" {
 		return brokercontract.ConnectorInventory{}, errConnectorUnavailable
 	}
 	unlockBroker := s.brokerMu.lock(id)

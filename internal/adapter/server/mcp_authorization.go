@@ -435,12 +435,14 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 // authenticated snapshot and compensates a failed handoff by restoring its claim.
 func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization, exactTools []tool.Tool) error {
 	if sess.AgentDefinitionName != "" {
-		// ADR 0353 (AC3.6): an agent-bound session never attaches to
-		// Config.MCPBroker at all (AC1.10), so it should never legitimately reach
-		// a lazy broker-OAuth grant continuation in the first place — this is
-		// defense-in-depth against exactly that regression, failing closed rather
-		// than widening the session's catalog with a freshly authenticated broker
-		// tool the def's own Ceiling may not include.
+		// ADR 0353 (AC3.6): an agent-bound session gets only its definition's
+		// gateway tools from Config.MCPBroker (#2938), and a gateway call never
+		// parks for the broker's OAuth (the identity broker authorizes it when
+		// it runs), so only a non-gateway route reaches a lazy broker-OAuth
+		// grant continuation. That is never legitimate for this session — this
+		// is defense-in-depth against exactly that regression, failing closed
+		// rather than widening the session's catalog with a freshly
+		// authenticated broker tool the def's own Ceiling may not include.
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, restoreErr)
 		}

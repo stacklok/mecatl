@@ -108,6 +108,23 @@ func TestTeamHelperToolsAreTheRootsAllowedGatewayTools(t *testing.T) {
 	if tools, names, err := svc.teamHelperTools(t.Context(), unbound.ID); err != nil || tools != nil || names != nil {
 		t.Fatalf("a root with no bound authority gave %v, %v; want none", tools, names)
 	}
+	// A root bound to a named definition gives members nothing, even with a
+	// resident attachment and an authority allowing the tool (#2938).
+	named := session.New("named-root", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	named.AgentDefinitionName = "calendar-reader"
+	namedTools := governance.CapabilitySet{Tools: []string{"Read", "mcp__calendar__echo"}}
+	if err := named.BindAuthority(session.Authority{Provenance: "test-root", CapabilitySet: namedTools, Ceiling: &namedTools}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(t.Context(), named); err != nil {
+		t.Fatal(err)
+	}
+	svc.mu.Lock()
+	svc.brokerAttachments[named.ID] = svc.brokerAttachments[root.ID]
+	svc.mu.Unlock()
+	if tools, names, err := svc.teamHelperTools(t.Context(), named.ID); err != nil || tools != nil || names != nil {
+		t.Fatalf("a root bound to a named definition gave %v, %v; want none", tools, names)
+	}
 
 	// A member's authority gains the names, once each and sorted.
 	got := withHelperToolNames(session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read", "mcp__calendar__echo"}}}, []string{"mcp__calendar__echo", "Bash"})

@@ -251,6 +251,7 @@ func ceilingAgent(eng *agent.Engine) server.AgentDefSessionEngineFactory {
 		mode session.PermissionMode,
 		_ session.Limits,
 		name string,
+		_ []tool.Tool,
 	) (server.SessionEngineResult, error) {
 		read := governance.CapabilitySet{FileSystem: true, Tools: []string{"Read"}}
 		return server.SessionEngineResult{

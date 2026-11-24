@@ -50,7 +50,7 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog
 				PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 				MaxAllowedMode:             session.ModeYolo,
 				EnforcingCheckerConfigured: true,
-				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, defName string) (SessionEngineResult, error) {
+				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, defName string, _ []tool.Tool) (SessionEngineResult, error) {
 					atomic.AddInt32(&agentDefCalls, 1)
 					if defName != "release-reviewer" {
 						t.Errorf("AgentDefSessionEngine called with defName=%q, want %q", defName, "release-reviewer")
@@ -153,7 +153,7 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearSkipMCPBrokerAttachment(t
 			}
 
 			if got := atomic.LoadInt32(attachCalled); got != 0 {
-				t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound fork/clear successor — it must be skipped entirely (AC2.4)", got)
+				t.Fatalf("MCPBroker.AttachSession was called %d time(s) for an agent-bound fork/clear successor without the identity broker — it must be skipped entirely (AC2.4)", got)
 			}
 		})
 	}

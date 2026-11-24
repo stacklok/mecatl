@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 )
 
@@ -29,7 +30,7 @@ func newAgentDefBoundService(t *testing.T) *Service {
 		Store:             memstore.New(),
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
-		AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string) (SessionEngineResult, error) {
+		AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string, _ []tool.Tool) (SessionEngineResult, error) {
 			// A real factory (agentDefSessionEngineFactory) always stamps
 			// BuiltForMode with the resolved/clamped mode; createPerSessionEngine
 			// reassigns its local `mode` FROM this field (ADR 0353 tighten-only
@@ -69,7 +70,7 @@ func newAgentDefBoundServiceOverStore(t *testing.T, store *memstore.Store) *Serv
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
 		SharedEngineRoot:  "/workspace",
-		AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string) (SessionEngineResult, error) {
+		AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string, _ []tool.Tool) (SessionEngineResult, error) {
 			res := agentDefinitionEngineResult(name)
 			res.BuiltForMode = mode
 			return res, nil

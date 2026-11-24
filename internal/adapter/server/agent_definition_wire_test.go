@@ -48,7 +48,7 @@ func TestAgentDefinitionCreateTransportParity(t *testing.T) {
 				svc, err := newPlacementTestService(server.Config{
 					Engine: eng, Store: store, ClientMCPOnCreate: true,
 					DefaultResolvedModel: server.ResolvedModel{ProviderID: "default-provider", ModelID: "default-model"},
-					AgentDefSessionEngine: func(_ context.Context, sel server.ProviderSelector, _ server.SessionProfile, mode session.PermissionMode, _ session.Limits, name string) (server.SessionEngineResult, error) {
+					AgentDefSessionEngine: func(_ context.Context, sel server.ProviderSelector, _ server.SessionProfile, mode session.PermissionMode, _ session.Limits, name string, _ []tool.Tool) (server.SessionEngineResult, error) {
 						calls.Add(1)
 						if name != "reviewer" {
 							return server.SessionEngineResult{}, fmt.Errorf("%w: unknown agent definition", server.ErrInvalidArgument)

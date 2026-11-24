@@ -318,8 +318,8 @@ func TestAgentDefRootRuntimePublication(t *testing.T) {
 	svc, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Model: cfg.Model}), Store: store,
 		OperationPin: runtimes.pin, OperationRevision: mcpOperationRevision,
-		AgentDefSessionEngine: func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, name string) (server.SessionEngineResult, error) {
-			res, err := factory(ctx, sel, profile, mode, limits, name)
+		AgentDefSessionEngine: func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, name string, gatewayTools []tool.Tool) (server.SessionEngineResult, error) {
+			res, err := factory(ctx, sel, profile, mode, limits, name, gatewayTools)
 			if err == nil {
 				revisions = append(revisions, res.RuntimeRevision)
 			}
@@ -375,7 +375,7 @@ func TestAgentDefRootRuntimePublication(t *testing.T) {
 	if len(runtimes.pins) != 0 {
 		t.Fatal("runtime pins leaked")
 	}
-	_, err = factory(t.Context(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "missing")
+	_, err = factory(t.Context(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "missing", nil)
 	if !errors.Is(err, server.ErrInvalidArgument) || len(runtimes.pins) != 0 {
 		t.Fatal("failed factory leaked runtime lease")
 	}
@@ -409,7 +409,7 @@ func TestAgentDefRootEffectiveProviderOptions(t *testing.T) {
 			defs := agents.NewRegistry([]agents.AgentDef{{Name: "root", Model: "definition-model", Tools: []string{"Read"}}})
 			cfg := isolateConfig(t, Config{Model: "main-model", ReasoningEffort: "low"})
 			factory := agentDefSessionEngineFactory(cfg, reg, provider, memstore.New(), testAgentDefRootPolicy(cfg), hookexec.New(nil), nil, nil, catalogAssets{agentReg: defs}, nil)
-			res, err := factory(t.Context(), server.ProviderSelector{ReasoningEffort: tc.requested}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "root")
+			res, err := factory(t.Context(), server.ProviderSelector{ReasoningEffort: tc.requested}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "root", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
