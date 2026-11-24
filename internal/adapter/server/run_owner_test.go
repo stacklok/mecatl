@@ -69,7 +69,7 @@ func writeTurn() mockllm.Turn {
 	return mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))
 }
 
-func parkRun(t *testing.T, ctx context.Context, svc *server.Service, id session.SessionID) string {
+func parkRun(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID) string {
 	t.Helper()
 	run, err := svc.StartRun(ctx, id, "go")
 	if err != nil {
@@ -137,7 +137,7 @@ func TestAResumedRunKeepsTheOwnerItStartedWith(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				askID := parkRun(t, aliceCtx, parking, sess.ID)
+				askID := parkRun(aliceCtx, t, parking, sess.ID)
 
 				parked, err := store.Load(t.Context(), sess.ID)
 				if err != nil {
@@ -205,7 +205,7 @@ func TestANewRunIsOwnedByItsCaller(t *testing.T) {
 				t.Fatalf("session owner = %+v, want %+v", sess.Owner, brokerAlice)
 			}
 			ctx := session.WithPrincipal(t.Context(), tc.caller)
-			askID := parkRun(t, ctx, parking, sess.ID)
+			askID := parkRun(ctx, t, parking, sess.ID)
 			parked, err := store.Load(t.Context(), sess.ID)
 			if err != nil {
 				t.Fatal(err)
