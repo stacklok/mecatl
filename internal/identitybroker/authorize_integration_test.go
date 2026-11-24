@@ -826,19 +826,15 @@ func TestAuthorizeCallMapsRealAS2Refusals(t *testing.T) {
 		f := newHarnessFixtureWith(t, harnessOptions{distrustAlice: true})
 		_, err := f.authorize(ownerCall(f.s, f.cred))
 		wantError(t, err, identitybroker.CodeInternal, "", f.cred)
-		// A reasonless invalid_grant is retried once with a new ID-JAG.
-		f.wantCounts(t, 2, 2)
-		redeemed := requests(f.as2, identityharness.KindRedemption)
-		if redeemed[0].Assertion == redeemed[1].Assertion {
-			t.Fatal("an ID-JAG was redeemed twice")
-		}
-		// AS-2's error_description is prose, which the broker reads as no
-		// reason code.
-		for i, r := range redeemed {
-			reason := identitybroker.NewServerRefusal(r.Status, r.Code, r.Reason).Reason
-			if !r.Reached || r.Code != "invalid_grant" || (reason != "" && reason != "unknown") || r.IssuedToken != "" {
-				t.Fatalf("AS-2 answered redemption %d with %d %q reason %q, want a reasonless invalid_grant", i, r.Status, r.Code, reason)
-			}
+		// AS-2 refuses an unknown user with access_denied and subject_unknown,
+		// which is not retried with a new ID-JAG. The design's
+		// FAILED_PRECONDITION with a gateway sign-in link is not mapped yet, so
+		// the call fails as INTERNAL.
+		f.wantCounts(t, 1, 1)
+		r := requests(f.as2, identityharness.KindRedemption)[0]
+		reason := identitybroker.NewServerRefusal(r.Status, r.Code, r.Reason).Reason
+		if !r.Reached || r.Status != http.StatusBadRequest || r.Code != "access_denied" || reason != "subject_unknown" || r.IssuedToken != "" {
+			t.Fatalf("AS-2 answered %d %q reason %q, want 400 access_denied with subject_unknown", r.Status, r.Code, reason)
 		}
 	})
 
