@@ -295,7 +295,8 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 	dir := t.TempDir()
 	certFile, keyFile := h.WriteServerKeyPair(t, dir)
 	caFile := h.WriteCACert(t, dir)
-	httpAddr := freeLoopbackPort(t)
+	listeners := boundListeners{}
+	httpAddr := listeners.bind(t)
 	issuer := "https://" + httpAddr + "/as1"
 	secretFile := h.RegisterAS1Upstream(t, dir, "mecak8s-as1", issuer)
 	cfg, err := parseFlags([]string{
@@ -304,9 +305,9 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		// AS-1's signing key, and so its access tokens, survive the restart.
 		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true}).Path,
 		"--permission-mode=yolo", "--guardrails=off",
-		"--grpc-addr", freeLoopbackPort(t),
+		"--grpc-addr", listeners.bind(t),
 		"--http-addr", httpAddr,
-		"--drain-addr", freeLoopbackPort(t),
+		"--drain-addr", listeners.bind(t),
 		"--session-lease-k8s-namespace", "",
 		"--tls-cert", certFile, "--tls-key", keyFile,
 		"--identity-broker-as1-issuer", issuer,
@@ -323,6 +324,7 @@ func TestHostedAS1SignsTheTUIIn(t *testing.T) {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	cfg.diagnostics = port.NopDiagnostics{}
+	cfg.listen = listeners.listen
 	httpsClient := h.HTTPClient()
 	// as1Grants counts the grant types of token requests that reach the
 	// hosted AS-1 over the listener.

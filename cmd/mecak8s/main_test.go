@@ -625,17 +625,19 @@ func TestDrainHTTPRouting(t *testing.T) {
 }
 
 func TestServeWiresSeparateDrainListener(t *testing.T) {
+	listeners := boundListeners{}
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
-		"--grpc-addr", freeLoopbackPort(t),
-		"--http-addr", freeLoopbackPort(t),
-		"--drain-addr", freeLoopbackPort(t),
+		"--grpc-addr", listeners.bind(t),
+		"--http-addr", listeners.bind(t),
+		"--drain-addr", listeners.bind(t),
 		"--session-lease-k8s-namespace", "",
 	})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
+	cfg.listen = listeners.listen
 	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)
@@ -691,17 +693,30 @@ func TestListenCoreListenersClosesEarlierListenersOnDrainFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = drain.Close() }()
-	cfg := config{grpcAddr: freeLoopbackPort(t), httpAddr: freeLoopbackPort(t), drainAddr: drain.Addr().String()}
+	// gRPC and HTTP bind ephemeral ports; the drain address is really occupied.
+	var opened []net.Listener
+	cfg := config{grpcAddr: "grpc", httpAddr: "http", drainAddr: drain.Addr().String()}
+	cfg.listen = func(network, address string) (net.Listener, error) {
+		if address == cfg.drainAddr {
+			return net.Listen(network, address)
+		}
+		lis, err := net.Listen(network, "127.0.0.1:0")
+		if err == nil {
+			opened = append(opened, lis)
+		}
+		return lis, err
+	}
 	_, _, _, err = listenCoreListeners(cfg)
 	if err == nil {
 		t.Fatal("listenCoreListeners succeeded with occupied drain address")
 	}
-	for _, addr := range []string{cfg.grpcAddr, cfg.httpAddr} {
-		lis, listenErr := net.Listen("tcp", addr)
-		if listenErr != nil {
-			t.Fatalf("listener %s remained open after drain failure: %v", addr, listenErr)
+	if len(opened) != 2 {
+		t.Fatalf("listenCoreListeners opened %d listeners before the drain failure, want 2", len(opened))
+	}
+	for _, lis := range opened {
+		if closeErr := lis.Close(); !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatalf("listener %s remained open after drain failure: second Close = %v", lis.Addr(), closeErr)
 		}
-		_ = lis.Close()
 	}
 }
 

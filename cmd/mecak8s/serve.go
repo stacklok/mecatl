@@ -221,16 +221,20 @@ func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {
 }
 
 func listenCoreListeners(cfg config) (net.Listener, net.Listener, net.Listener, error) {
-	grpcLis, err := net.Listen("tcp", cfg.grpcAddr)
+	listen := cfg.listen
+	if listen == nil {
+		listen = net.Listen
+	}
+	grpcLis, err := listen("tcp", cfg.grpcAddr)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("listen grpc %q: %w", cfg.grpcAddr, err)
 	}
-	httpLis, err := net.Listen("tcp", cfg.httpAddr)
+	httpLis, err := listen("tcp", cfg.httpAddr)
 	if err != nil {
 		_ = grpcLis.Close()
 		return nil, nil, nil, fmt.Errorf("listen http %q: %w", cfg.httpAddr, err)
 	}
-	drainLis, err := net.Listen("tcp", cfg.drainAddr)
+	drainLis, err := listen("tcp", cfg.drainAddr)
 	if err != nil {
 		_ = httpLis.Close()
 		_ = grpcLis.Close()

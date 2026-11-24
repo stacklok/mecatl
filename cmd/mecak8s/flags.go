@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -117,10 +118,14 @@ type config struct {
 	logLevelWarning string
 	// diagnostics is installed by run after the command root builds its operator
 	// sink; tests and alternate callers may leave it nil for a silent edge.
-	diagnostics               port.Diagnostics
-	grpcAddr                  string
-	httpAddr                  string
-	drainAddr                 string
+	diagnostics port.Diagnostics
+	grpcAddr    string
+	httpAddr    string
+	drainAddr   string
+	// listen binds the gRPC, HTTP, and drain listeners; nil is net.Listen.
+	// Tests hand serve listeners they bound and keep open, so no other test
+	// can take a port between choosing its address and serving it.
+	listen                    func(network, address string) (net.Listener, error)
 	drainTimeout              time.Duration
 	grpcStopTimeout           time.Duration
 	httpShutdownTimeout       time.Duration

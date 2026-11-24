@@ -1061,14 +1061,15 @@ type identityBrokerServeOptions struct {
 func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.IdentityBrokerAS1, opts identityBrokerServeOptions) (string, *app.Built) {
 	t.Helper()
 	brokerFile := brokerconfigtest.Write(t, brokerconfigtest.Options{BrokerClientKey: opts.clientKey, Gateways: opts.gateways}).Path
+	listeners := boundListeners{}
 	cfg, err := parseFlags(append([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell", // the identity broker refuses to run beside a shell
 		"--identity-broker-config", brokerFile,
 		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
-		"--grpc-addr", freeLoopbackPort(t),
-		"--http-addr", freeLoopbackPort(t),
-		"--drain-addr", freeLoopbackPort(t),
+		"--grpc-addr", listeners.bind(t),
+		"--http-addr", listeners.bind(t),
+		"--drain-addr", listeners.bind(t),
 		"--session-lease-k8s-namespace", "",
 		"--oidc-issuer", tokens.issuer,
 		"--oidc-audience", tokens.audience,
@@ -1087,6 +1088,7 @@ func serveIdentityBroker(t *testing.T, tokens identityBrokerAS1Tokens, as1 *app.
 		}
 	}
 	cfg.diagnostics = port.NopDiagnostics{}
+	cfg.listen = listeners.listen
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})
 	appCfg.IdentityBrokerAS1 = as1
 	if opts.edit != nil {
