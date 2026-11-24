@@ -30,28 +30,33 @@ func scriptRange(t *testing.T, file, start, end string) string {
 	return body[i:j]
 }
 
-func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
-	create := scriptRange(t, "run.sh", "kind_config=\n", "\nphase_done cluster")
+func TestKindSyncPeriodsAndDiskPreflight(t *testing.T) {
+	create := scriptRange(t, "run.sh", "kind_config=\"$state/kind.yaml\"\n", "\nphase_done cluster")
+	stubs := "kind() { :; }\ndocker() { printf 'Filesystem 1024-blocks Used Available\\n/ 1 1 %s\\n' \"$FREE_KIB\"; }\n"
 	for _, profile := range []string{"production", "development"} {
 		t.Run(profile, func(t *testing.T) {
 			state := t.TempDir()
-			out, err := runStep(t, state, "kind() { :; }\n"+create,
-				"state="+state, "cluster=owned", "kubeconfig="+filepath.Join(state, "kubeconfig"), "MECATL_EXECUTION_QUAL_PROFILE="+profile)
+			out, err := runStep(
+				t,
+				state,
+				stubs+create,
+				"state="+state,
+				"cluster=owned",
+				"runtime=docker",
+				"FREE_KIB=99999999",
+				"kubeconfig="+filepath.Join(state, "kubeconfig"),
+				"MECATL_EXECUTION_QUAL_PROFILE="+profile,
+			)
 			if err != nil {
 				t.Fatalf("render kind cluster config: %v: %s", err, out)
 			}
 			data, err := os.ReadFile(filepath.Join(state, "kind.yaml"))
-			if profile == "development" {
-				if !os.IsNotExist(err) {
-					t.Fatalf("development fixture unexpectedly wrote Kind config: %v", err)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			var cluster struct {
-				Nodes []struct {
+				Networking map[string]any `yaml:"networking"`
+				Nodes      []struct {
 					Role                 string   `yaml:"role"`
 					KubeadmConfigPatches []string `yaml:"kubeadmConfigPatches"`
 				} `yaml:"nodes"`
@@ -59,19 +64,28 @@ func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 			if err := yaml.Unmarshal(data, &cluster); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != 2 {
-				t.Fatalf("production Kind sync patches missing: %+v", cluster.Nodes)
+			patches := 1
+			if profile == "production" {
+				patches = 2
 			}
-			var patch struct {
-				APIVersion    string `yaml:"apiVersion"`
-				Kind          string `yaml:"kind"`
-				SyncFrequency string `yaml:"syncFrequency"`
+			if (cluster.Networking != nil) != (profile == "production") {
+				t.Fatalf("%s Kind networking = %v", profile, cluster.Networking)
 			}
-			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[0]), &patch); err != nil {
-				t.Fatal(err)
+			if len(cluster.Nodes) != 1 || cluster.Nodes[0].Role != "control-plane" || len(cluster.Nodes[0].KubeadmConfigPatches) != patches {
+				t.Fatalf("%s Kind sync patches = %+v", profile, cluster.Nodes)
 			}
-			if patch.APIVersion != "kubelet.config.k8s.io/v1beta1" || patch.Kind != "KubeletConfiguration" || patch.SyncFrequency != "5s" {
-				t.Fatalf("production Kind kubelet patch = %+v", patch)
+			if profile == "production" {
+				var patch struct {
+					APIVersion    string `yaml:"apiVersion"`
+					Kind          string `yaml:"kind"`
+					SyncFrequency string `yaml:"syncFrequency"`
+				}
+				if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[0]), &patch); err != nil {
+					t.Fatal(err)
+				}
+				if patch.APIVersion != "kubelet.config.k8s.io/v1beta1" || patch.Kind != "KubeletConfiguration" || patch.SyncFrequency != "5s" {
+					t.Fatalf("production Kind kubelet patch = %+v", patch)
+				}
 			}
 			var controller struct {
 				APIVersion        string `yaml:"apiVersion"`
@@ -80,14 +94,30 @@ func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 					ExtraArgs map[string]string `yaml:"extraArgs"`
 				} `yaml:"controllerManager"`
 			}
-			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[1]), &controller); err != nil {
+			if err := yaml.Unmarshal([]byte(cluster.Nodes[0].KubeadmConfigPatches[patches-1]), &controller); err != nil {
 				t.Fatal(err)
 			}
 			if controller.APIVersion != "kubeadm.k8s.io/v1beta3" || controller.Kind != "ClusterConfiguration" || len(controller.ControllerManager.ExtraArgs) != 1 || controller.ControllerManager.ExtraArgs["resource-quota-sync-period"] != "10s" {
-				t.Fatalf("production Kind controller-manager patch = %+v", controller)
+				t.Fatalf("%s Kind controller-manager patch = %+v", profile, controller)
 			}
 		})
 	}
+	t.Run("low disk", func(t *testing.T) {
+		state := t.TempDir()
+		out, err := runStep(
+			t,
+			state,
+			stubs+create,
+			"state="+state,
+			"cluster=owned",
+			"runtime=docker",
+			"FREE_KIB=1048576",
+			"kubeconfig="+filepath.Join(state, "kubeconfig"),
+		)
+		if err == nil || !strings.Contains(string(out), "under 15 GiB free") {
+			t.Fatalf("low disk was not refused: %v: %s", err, out)
+		}
+	})
 }
 
 func TestKindNetworkPolicyRuntimeValues(t *testing.T) {
@@ -455,6 +485,7 @@ esac
 if [ "$1" = --kubeconfig ]; then shift 4; fi
 case "$*" in
 'config current-context') printf 'kind-`+cluster+`\n' ;;
+'get node -o jsonpath={.items[0].status.nodeInfo.architecture}') printf 'amd64' ;;
 'config view '*)
   marker=stable; test "$fault" != config || marker=drift
   printf '{"clusters":[{"name":"owned","cluster":{"server":"%s"}}],"users":[{"name":"owned","user":{"client-certificate-data":"DATA+OMITTED","client-key-data":"DATA+OMITTED"}}]}\n' "$marker" ;;
@@ -834,7 +865,7 @@ func TestProductionPublishesOwnershipBeforePartialCreation(t *testing.T) {
 				}
 			}
 			writeFixture(t, filepath.Join(scripts, "run.sh"), string(data), 0o700)
-			writeFixture(t, filepath.Join(bin, "docker"), "#!/bin/sh\nexit 99\n", 0o700)
+			writeFixture(t, filepath.Join(bin, "docker"), "#!/bin/sh\n[ \"$1\" = run ] || exit 99\nprintf 'F\\n/ 1 1 99999999\\n'\n", 0o700)
 			writeFixture(t, filepath.Join(root, "fault"), fault+"\n", 0o600)
 			writeFixture(t, filepath.Join(bin, "kind"), `#!/bin/sh
 set -eu
