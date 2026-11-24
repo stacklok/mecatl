@@ -406366,6 +406366,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795511064456,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3fe24b6c2b7577c8e26d80ef6df81041b0b02b0",
+          "message": "feat(studio): offer the effort levels the model accepts and reset Auto on fork (#2964)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-24T10:41:08+01:00",
+          "tree_id": "453484549635268a747d4477b20e27d44c1c649a",
+          "url": "https://github.com/stacklok/mecatl/commit/d3fe24b6c2b7577c8e26d80ef6df81041b0b02b0"
+        },
+        "date": 1795513995694,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -586295,6 +586329,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795513992261,
+  "lastUpdate": 1795513996580,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
