@@ -132,7 +132,7 @@ func TestCodexModelsEntitlementProjection(t *testing.T) {
 	const validOpaqueSlug = "vendor/model:v1"
 	overlong := strings.Repeat("x", maxModelIDRunes+1)
 	body := fmt.Sprintf(`{"models":[
-		{"slug":%q,"display_name":"Image","visibility":"list","supported_in_api":false,"context_window":200000,"input_modalities":["text","image"],"supported_reasoning_levels":[{"effort":"low"}]},
+		{"slug":%q,"display_name":"Image","visibility":"list","supported_in_api":false,"context_window":200000,"input_modalities":["text","image"],"supported_reasoning_levels":[{"effort":"low"},{"description":"no effort token"}]},
 		{"slug":"text-only","display_name":"Text","visibility":"list","supported_in_api":true,"context_window":0,"max_context_window":180000,"input_modalities":["text"]},
 		{"slug":"hidden","display_name":"Hidden","visibility":"hide"},
 		{"slug":"","display_name":"Empty","visibility":"list"},
@@ -153,7 +153,7 @@ func TestCodexModelsEntitlementProjection(t *testing.T) {
 		t.Fatalf("ListModels: %v", err)
 	}
 	want := []Model{
-		{ID: validOpaqueSlug, DisplayName: "Image", ContextLimit: 200000, InputModalities: []string{"text", "image"}, InputModalitiesKnown: true, Reasoning: true, ReasoningKnown: true, ToolCall: true},
+		{ID: validOpaqueSlug, DisplayName: "Image", ContextLimit: 200000, InputModalities: []string{"text", "image"}, InputModalitiesKnown: true, Reasoning: true, ReasoningKnown: true, ReasoningEfforts: []string{"low"}, ToolCall: true},
 		{ID: "text-only", DisplayName: "Text", ContextLimit: 180000, InputModalities: []string{"text"}, InputModalitiesKnown: true, ToolCall: true},
 	}
 	if !reflect.DeepEqual(got, want) {

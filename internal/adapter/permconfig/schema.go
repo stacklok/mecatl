@@ -42,6 +42,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1843,6 +1844,13 @@ type ModelsSection struct {
 	// → total context token override map. It is intentionally not a selector map:
 	// aliases and slots are resolved before this lookup, and project values are ignored.
 	ContextWindows ContextWindows `yaml:"context_windows"`
+	// EffortLevels is the OPERATOR-TIER exact provider ID → exact final model ID →
+	// effort levels map, for models whose levels mecatl can't learn or learns
+	// wrongly. Each list names the levels the model accepts, from low, medium,
+	// high, xhigh and max; an empty list means the model takes no effort. An entry
+	// takes precedence over the live model listing and the embedded catalog.
+	// Aliases and slots are resolved before this lookup, and project values are ignored.
+	EffortLevels EffortLevels `yaml:"effort_levels"`
 }
 
 // ContextWindows is the operator-owned exact provider → final model → token map.
@@ -1852,55 +1860,110 @@ type ContextWindows map[string]map[string]int
 
 // UnmarshalYAML decodes and validates each configured context window with its full path.
 func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
-	mapping, ok := permconfigMapping(node)
-	if !ok {
-		return fmt.Errorf("models.context_windows: must be a mapping")
-	}
-	out := make(ContextWindows, len(mapping.Values))
-	for _, providerEntry := range mapping.Values {
-		provider, stringProvider := permconfigMappingKey(providerEntry.Key)
-		if !stringProvider {
-			return fmt.Errorf("models.context_windows: provider key must be a string")
+	out, err := decodeProviderModelMap(node, "models.context_windows", "model-to-token", func(path string, value ast.Node) (int, error) {
+		if _, integer := value.(*ast.IntegerNode); !integer {
+			return 0, fmt.Errorf("%s: context window must be an integer", path)
 		}
-		if strings.TrimSpace(provider) == "" {
-			return fmt.Errorf("models.context_windows: provider key must not be empty")
+		var tokens int
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(value, &tokens); err != nil {
+			return 0, fmt.Errorf("%s: context window must be a runtime-representable integer: %w", path, err)
 		}
-		if _, duplicate := out[provider]; duplicate {
-			return fmt.Errorf("models.context_windows.%s: duplicate provider key", provider)
+		if tokens <= 0 || tokens > MaxContextWindowTokens {
+			return 0, fmt.Errorf("%s: context window must be between 1 and %d tokens", path, MaxContextWindowTokens)
 		}
-		modelsNode, mappingModels := permconfigMapping(providerEntry.Value)
-		if !mappingModels {
-			return fmt.Errorf("models.context_windows.%s: must be a model-to-token mapping", provider)
-		}
-		models := make(map[string]int, len(modelsNode.Values))
-		for _, modelEntry := range modelsNode.Values {
-			model, stringModel := permconfigMappingKey(modelEntry.Key)
-			if !stringModel {
-				return fmt.Errorf("models.context_windows.%s: model key must be a string", provider)
-			}
-			path := fmt.Sprintf("models.context_windows.%s.%s", provider, model)
-			if strings.TrimSpace(model) == "" {
-				return fmt.Errorf("%s: model key must not be empty", path)
-			}
-			if _, duplicate := models[model]; duplicate {
-				return fmt.Errorf("%s: duplicate model key", path)
-			}
-			if _, integer := modelEntry.Value.(*ast.IntegerNode); !integer {
-				return fmt.Errorf("%s: context window must be an integer", path)
-			}
-			var tokens int
-			if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(modelEntry.Value, &tokens); err != nil {
-				return fmt.Errorf("%s: context window must be a runtime-representable integer: %w", path, err)
-			}
-			if tokens <= 0 || tokens > MaxContextWindowTokens {
-				return fmt.Errorf("%s: context window must be between 1 and %d tokens", path, MaxContextWindowTokens)
-			}
-			models[model] = tokens
-		}
-		out[provider] = models
+		return tokens, nil
+	})
+	if err != nil {
+		return err
 	}
 	*c = out
 	return nil
+}
+
+// EffortLevelTokens are the effort levels models.effort_levels accepts, in order.
+var EffortLevelTokens = []string{"low", "medium", "high", "xhigh", "max"}
+
+// EffortLevels is the operator-owned exact provider → final model → effort levels
+// map. An empty list declares that the model takes no effort.
+type EffortLevels map[string]map[string][]string
+
+// UnmarshalYAML decodes each configured list with its full path, rejecting a
+// level outside EffortLevelTokens and a repeated level.
+func (e *EffortLevels) UnmarshalYAML(node ast.Node) error {
+	out, err := decodeProviderModelMap(node, "models.effort_levels", "model-to-levels", func(path string, value ast.Node) ([]string, error) {
+		sequence, ok := value.(*ast.SequenceNode)
+		if !ok {
+			return nil, fmt.Errorf("%s: effort levels must be a list", path)
+		}
+		levels := make([]string, 0, len(sequence.Values))
+		for _, item := range sequence.Values {
+			level, ok := item.(*ast.StringNode)
+			if !ok {
+				return nil, fmt.Errorf("%s: effort level must be a string", path)
+			}
+			if !slices.Contains(EffortLevelTokens, level.Value) {
+				return nil, fmt.Errorf("%s: unknown effort level; use %s", path, strings.Join(EffortLevelTokens, ", "))
+			}
+			if slices.Contains(levels, level.Value) {
+				return nil, fmt.Errorf("%s: duplicate effort level", path)
+			}
+			levels = append(levels, level.Value)
+		}
+		return levels, nil
+	})
+	if err != nil {
+		return err
+	}
+	*e = out
+	return nil
+}
+
+// decodeProviderModelMap decodes an operator-tier provider ID → model ID map,
+// rejecting non-string, empty and duplicate keys with the entry's full path.
+// leafKind names the expected per-provider mapping in errors.
+func decodeProviderModelMap[V any](node ast.Node, section, leafKind string, decodeLeaf func(path string, value ast.Node) (V, error)) (map[string]map[string]V, error) {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return nil, fmt.Errorf("%s: must be a mapping", section)
+	}
+	out := make(map[string]map[string]V, len(mapping.Values))
+	for _, providerEntry := range mapping.Values {
+		provider, stringProvider := permconfigMappingKey(providerEntry.Key)
+		if !stringProvider {
+			return nil, fmt.Errorf("%s: provider key must be a string", section)
+		}
+		if strings.TrimSpace(provider) == "" {
+			return nil, fmt.Errorf("%s: provider key must not be empty", section)
+		}
+		if _, duplicate := out[provider]; duplicate {
+			return nil, fmt.Errorf("%s.%s: duplicate provider key", section, provider)
+		}
+		modelsNode, mappingModels := permconfigMapping(providerEntry.Value)
+		if !mappingModels {
+			return nil, fmt.Errorf("%s.%s: must be a %s mapping", section, provider, leafKind)
+		}
+		models := make(map[string]V, len(modelsNode.Values))
+		for _, modelEntry := range modelsNode.Values {
+			model, stringModel := permconfigMappingKey(modelEntry.Key)
+			if !stringModel {
+				return nil, fmt.Errorf("%s.%s: model key must be a string", section, provider)
+			}
+			path := fmt.Sprintf("%s.%s.%s", section, provider, model)
+			if strings.TrimSpace(model) == "" {
+				return nil, fmt.Errorf("%s: model key must not be empty", path)
+			}
+			if _, duplicate := models[model]; duplicate {
+				return nil, fmt.Errorf("%s: duplicate model key", path)
+			}
+			value, err := decodeLeaf(path, modelEntry.Value)
+			if err != nil {
+				return nil, err
+			}
+			models[model] = value
+		}
+		out[provider] = models
+	}
+	return out, nil
 }
 
 // RouterSection is the `models.router:` operator-tier subtree:
@@ -2067,6 +2130,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 		"allowlist":        &m.Allowlist,
 		"router":           newPermconfigNodePointer(&m.Router),
 		"context_windows":  &m.ContextWindows,
+		"effort_levels":    &m.EffortLevels,
 	}
 }
 

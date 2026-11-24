@@ -98,6 +98,48 @@ func TestListModels_PreservesDeclaredInputModalities(t *testing.T) {
 	}
 }
 
+// TestListModels_ReasoningEfforts pins that reasoning.supported_efforts is read
+// as upstream tokens and that an omitted list stays distinguishable from an
+// empty one, so the caller can decide what absence means for the listing.
+func TestListModels_ReasoningEfforts(t *testing.T) {
+	const body = `{"data":[` +
+		`{"id":"listed","reasoning":{"supported_efforts":["xhigh","high","minimal"],"default_effort":"high"}},` +
+		`{"id":"empty","reasoning":{"supported_efforts":[]}},` +
+		`{"id":"reasoning-without-efforts","reasoning":{"mandatory":false}},` +
+		`{"id":"null-reasoning","reasoning":null},` +
+		`{"id":"absent"}]}`
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return newResp(http.StatusOK, body), nil
+	})}
+	models, err := NewLister(testBaseURL, "", client).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	byID := map[string]Model{}
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	for _, tc := range []struct {
+		id     string
+		listed bool
+		want   []string
+	}{
+		{"listed", true, []string{"xhigh", "high", "minimal"}},
+		{"empty", true, []string{}},
+		{"reasoning-without-efforts", false, nil},
+		{"null-reasoning", false, nil},
+		{"absent", false, nil},
+	} {
+		got := byID[tc.id]
+		if got.ReasoningEffortsListed != tc.listed || !slices.Equal(got.ReasoningEfforts, tc.want) {
+			t.Errorf("%s: efforts = %v listed=%v, want %v listed=%v", tc.id, got.ReasoningEfforts, got.ReasoningEffortsListed, tc.want, tc.listed)
+		}
+	}
+	if byID["empty"].ReasoningEfforts == nil {
+		t.Error("an explicit empty supported_efforts became nil")
+	}
+}
+
 func TestListModels_NoBearerToken_NoAuthHeader(t *testing.T) {
 	var gotAuth string
 	sawAuth := false
