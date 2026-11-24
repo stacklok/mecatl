@@ -449212,6 +449212,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795463516707,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6cefdde507a65209d08e1ad9afb28082abb2994",
+          "message": "feat(mecatui): offer the levels the model accepts in /effort (#2928)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-24T09:17:14+01:00",
+          "tree_id": "debdf275b29ea8d9af7bc02b571b595ea7538468",
+          "url": "https://github.com/stacklok/mecatl/commit/c6cefdde507a65209d08e1ad9afb28082abb2994"
+        },
+        "date": 1795509018805,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13395,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12888.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -584796,6 +584835,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795509015556,
+  "lastUpdate": 1795509019720,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
