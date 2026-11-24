@@ -641,14 +641,22 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		down, memberDown bool
+		// anonymous runs the team with no verified caller.
+		anonymous bool
 	}{
 		{name: "available"},
 		{name: "unavailable", down: true},
 		{name: "unavailable for the member", memberDown: true},
+		{name: "no verified caller", anonymous: true},
 	} {
 		down := tc.down
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
+			// Alice, the root's owner, runs the team: the team run's owner is
+			// its caller.
+			ctx := session.WithPrincipal(context.Background(), brokerAlice)
+			if tc.anonymous {
+				ctx = context.Background()
+			}
 			store := memstore.New()
 			ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 			env := tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)
@@ -718,6 +726,15 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			mainAgent, _ := svc.HeldIdentityAgentForTest(source.ID, source.ID)
 			memberAgent, _ := svc.HeldIdentityAgentForTest(source.ID, session.SessionID(member.HostSessionID))
 			delegations := broker.delegationRequests()
+			if tc.anonymous {
+				// A team run with no caller has no owner, so it is no run:
+				// it never takes the root's owner, and its members' gateway
+				// calls fail closed.
+				if len(delegations) != 0 {
+					t.Fatalf("delegation reports = %+v, want none", delegations)
+				}
+				return
+			}
 			if len(delegations) != 1 {
 				t.Fatalf("delegation reports = %+v, want the member's", delegations)
 			}
