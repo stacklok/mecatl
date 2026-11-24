@@ -583,9 +583,13 @@ type ResultPayload struct {
 // tokens, identifiers, and byte/count metadata; it deliberately carries no
 // content digest that could become an offline oracle.
 type RequestManifestPayload struct {
-	Provider                  string                   `json:"provider,omitempty"`
-	Model                     string                   `json:"model,omitempty"`
-	ReasoningEffort           string                   `json:"reasoning_effort,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// AppliedReasoningEffort is the effort the request was sent at: a level, or
+	// AppliedReasoningEffortNone when it carried none. Empty when the host didn't
+	// report it. ReasoningEffort is the session's requested level.
+	AppliedReasoningEffort    string                   `json:"applied_reasoning_effort,omitempty"`
 	ContextWindow             int                      `json:"context_window,omitempty"`
 	ToolNames                 []string                 `json:"tool_names"`
 	ToolDecisions             []RequestToolDecision    `json:"tool_decisions"`
@@ -594,6 +598,10 @@ type RequestManifestPayload struct {
 	MessageBytes              int                      `json:"message_bytes"`
 	Prompt                    []RequestPromptComponent `json:"prompt"`
 }
+
+// AppliedReasoningEffortNone records that a request carried no reasoning effort,
+// so the provider's default applied.
+const AppliedReasoningEffortNone = "auto"
 
 // RequestToolDecision records a decision the final request assembly actually
 // observed. Name is a model-visible tool identifier; Source and Decision are

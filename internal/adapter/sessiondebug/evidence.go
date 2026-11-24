@@ -355,6 +355,7 @@ type manifestRow struct {
 	Provider                  string                           `json:"provider,omitempty"`
 	Model                     string                           `json:"model,omitempty"`
 	ReasoningEffort           string                           `json:"reasoning_effort,omitempty"`
+	AppliedReasoningEffort    string                           `json:"applied_reasoning_effort,omitempty"`
 	ContextWindow             int                              `json:"context_window,omitempty"`
 	MessageCount              int                              `json:"message_count"`
 	MessageBytes              int                              `json:"message_bytes"`
@@ -408,7 +409,8 @@ func (t *inspectTool) manifestView(ctx context.Context, id session.SessionID, of
 func projectManifest(p session.RequestManifestPayload) manifestRow {
 	r := manifestRow{
 		Provider: safeLine(p.Provider), Model: safeLine(p.Model), ReasoningEffort: safeLine(p.ReasoningEffort),
-		ContextWindow: p.ContextWindow, MessageCount: p.MessageCount, MessageBytes: p.MessageBytes,
+		AppliedReasoningEffort: safeLine(p.AppliedReasoningEffort),
+		ContextWindow:          p.ContextWindow, MessageCount: p.MessageCount, MessageBytes: p.MessageBytes,
 		AdvertisedToolSchemaBytes: p.AdvertisedToolSchemaBytes,
 		Tools:                     safeLines(p.ToolNames),
 	}
