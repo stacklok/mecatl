@@ -47,7 +47,7 @@ require (
 	github.com/stacklok/mecatl/provider/anthropic v0.4.0
 	github.com/stacklok/mecatl/provider/openai v0.3.1
 	github.com/stacklok/mecatl/provider/openaichat v0.3.1
-	github.com/stacklok/toolhive v0.68.0
+	github.com/stacklok/toolhive v0.69.0
 	github.com/stacklok/toolhive-core v0.0.60
 	github.com/stacklok/typesafe-go v0.1.0
 	github.com/tiktoken-go/tokenizer v0.10.0

@@ -224,7 +224,7 @@ require (
 	github.com/stacklok/mecatl/provider/openai v0.3.1 // indirect
 	github.com/stacklok/mecatl/provider/openaichat v0.3.1 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
-	github.com/stacklok/toolhive v0.68.0 // indirect
+	github.com/stacklok/toolhive v0.69.0 // indirect
 	github.com/stacklok/toolhive-core v0.0.60 // indirect
 	github.com/stacklok/toolhive-core/redisconn v0.0.60 // indirect
 	github.com/stacklok/typesafe-go v0.1.0 // indirect

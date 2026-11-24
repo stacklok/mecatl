@@ -680,7 +680,7 @@ github.com/spiffe/go-spiffe/v2 v2.9.0 h1:g5qTg3qIP1HXV+GzuyEfSJFVxUCpEP5Ui1OINVJ
 github.com/spiffe/go-spiffe/v2 v2.9.0/go.mod h1:w2CLWKLMTX/PPYUEUPv3ltH0RXsw5S8suwNF46w9/Aw=
 github.com/stacklok/go-microvm v0.0.41 h1:dWFQYb4hK0Lrm6LMrmbxvkQ9NGJWQ/FRHskcgK0p88U=
 github.com/stacklok/go-microvm v0.0.41/go.mod h1:MSeQCQZE65BY0LzaxQszGPqz9TIy8EyV8fnzZm+C+Vk=
-github.com/stacklok/toolhive v0.68.0 h1:qC5D+Sd+oApUt1h3Pwh7FOOYjvo1QhEkan4wLsUO9qo=
+github.com/stacklok/toolhive v0.69.0 h1:TcJ/opG6ywis6HWc8ovkJrQE+rw3n4TJeJikLYoqCzQ=
 github.com/stacklok/toolhive-core v0.0.60 h1:7N20L/dpDKban0P8JnT6pl9mLXeE+IZu7EmXryYztok=
 github.com/stacklok/toolhive-core v0.0.60/go.mod h1:UOs2SYvICRtGR4EVXYTrI4Gcci8zEyHXVQI97FeklVo=
 github.com/stacklok/toolhive-core/redisconn v0.0.60 h1:YXsCaGPxCdI1nYs9RFOsRBMLodFwRHlTPf5g36aphd0=
