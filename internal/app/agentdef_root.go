@@ -189,7 +189,7 @@ func agentDefSessionEngineFactory(
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.AgentDefSessionEngineFactory {
 	mainRunner := buildCommandRunner(cfg)
-	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (server.SessionEngineResult, error) {
+	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, defName string, gatewayTools []tool.Tool) (server.SessionEngineResult, error) {
 		ctx, assets, revision, release, err := pinCatalogAssets(ctx, assets)
 		if err != nil {
 			return server.SessionEngineResult{}, err
@@ -249,7 +249,7 @@ func agentDefSessionEngineFactory(
 		// resolveAgentMemoryHead's "project" tier a no-op, never an error (AC2.6).
 		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, assets.agentReg.Detail(def.Name),
 			childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn, base, allowShell, assets.skillIndex, hooks, runner, assets.globalMgr,
-			store, policy, mcpProvider, instructions, provReg, pid, guardrailWaiver, sessionRoot, profile, clampedMode, server.AgentDefGatewayToolsFromContext(ctx))
+			store, policy, mcpProvider, instructions, provReg, pid, guardrailWaiver, sessionRoot, profile, clampedMode, gatewayTools)
 
 		closeFn := func() error {
 			if mcpClose != nil {

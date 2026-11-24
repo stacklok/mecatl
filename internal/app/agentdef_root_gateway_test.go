@@ -68,8 +68,7 @@ func TestAgentBoundRootGetsItsDefinitionsGatewayTools(t *testing.T) {
 			reg := regForTest(provider, providerOpenAI, "main-model")
 			cfg := isolateConfig(t, Config{Model: "main-model"})
 			factory := agentDefSessionEngineFactory(cfg, reg, provider, memstore.New(), testAgentDefRootPolicy(cfg), hookexec.New(nil), nil, nil, catalogAssets{agentReg: defs}, nil)
-			ctx := server.ContextWithAgentDefGatewayTools(t.Context(), gatewayTools)
-			res, err := factory(ctx, server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, name)
+			res, err := factory(t.Context(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, name, gatewayTools)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,10 +79,10 @@ func TestAgentBoundRootGetsItsDefinitionsGatewayTools(t *testing.T) {
 				if res.Engine.HasTool(tn) != has {
 					t.Errorf("catalog has %s = %v, want %v", tn, !has, has)
 				}
-				if slices.Contains(res.Authority.CapabilitySet.Tools, tn) != has {
+				if res.Authority.CapabilitySet.AllowsTool(tn) != has {
 					t.Errorf("authority allows %s = %v, want %v", tn, !has, has)
 				}
-				if res.Authority.Ceiling == nil || slices.Contains(res.Authority.Ceiling.Tools, tn) != has {
+				if res.Authority.Ceiling == nil || res.Authority.Ceiling.AllowsTool(tn) != has {
 					t.Errorf("ceiling allows %s: want %v", tn, has)
 				}
 			}

@@ -7,13 +7,14 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // explicitAutoFactory models an operator default of "high": an omitted selector
 // resolves to "high", while an explicit "auto" resolves to the empty effective
 // value that the session persists. It records the selectors it was handed.
-func explicitAutoFactory(seen *[]string) func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
-	return func(_ context.Context, sel ProviderSelector, _ SessionProfile, _ session.PermissionMode, _ session.Limits, _ string) (SessionEngineResult, error) {
+func explicitAutoFactory(seen *[]string) func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
+	return func(_ context.Context, sel ProviderSelector, _ SessionProfile, _ session.PermissionMode, _ session.Limits, _ string, _ []tool.Tool) (SessionEngineResult, error) {
 		*seen = append(*seen, sel.ReasoningEffort)
 		res := agentDefinitionEngineResult("reviewer")
 		res.Limits = &session.Limits{MaxTurns: 10}
@@ -38,8 +39,8 @@ func TestAgentBoundExplicitAutoEffortSurvivesRuntimeRebuild(t *testing.T) {
 	svc.cfg.OperationRevision = func(context.Context) (uint64, bool) { return revision, true }
 	var seen []string
 	build := explicitAutoFactory(&seen)
-	svc.cfg.AgentDefSessionEngine = func(c context.Context, sel ProviderSelector, p SessionProfile, m session.PermissionMode, l session.Limits, n string) (SessionEngineResult, error) {
-		res, err := build(c, sel, p, m, l, n)
+	svc.cfg.AgentDefSessionEngine = func(c context.Context, sel ProviderSelector, p SessionProfile, m session.PermissionMode, l session.Limits, n string, gatewayTools []tool.Tool) (SessionEngineResult, error) {
+		res, err := build(c, sel, p, m, l, n, gatewayTools)
 		res.RuntimeRevision = revision
 		return res, err
 	}

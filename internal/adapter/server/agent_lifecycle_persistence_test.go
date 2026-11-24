@@ -59,7 +59,7 @@ func TestAgentSuccessorAppliesFactoryRestrictionsAfterRestart(t *testing.T) {
 				ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "owner"})
 				store := memstore.New()
 				creator := newAgentDefRetryService(t, store)
-				creator.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+				creator.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 					res := agentDefinitionEngineResult("reviewer")
 					res.Limits = &session.Limits{MaxTurns: 10, MaxToolCalls: 10}
 					res.Authority.CapabilitySet = governance.CapabilitySet{Tools: []string{"Write"}, FileSystem: true}
@@ -79,7 +79,7 @@ func TestAgentSuccessorAppliesFactoryRestrictionsAfterRestart(t *testing.T) {
 				svc.cfg.NewID = func() session.SessionID { return "successor" }
 				closed, calls := 0, 0
 				write := &agentLifecycleWriteTool{}
-				svc.cfg.AgentDefSessionEngine = func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, limits session.Limits, _ string) (SessionEngineResult, error) {
+				svc.cfg.AgentDefSessionEngine = func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, limits session.Limits, _ string, _ []tool.Tool) (SessionEngineResult, error) {
 					calls++
 					if mode != session.ModeDefault || limits != source.Limits {
 						t.Fatalf("factory input = %s/%+v, want inherited default/10", mode, limits)
@@ -174,7 +174,7 @@ func TestAgentRuntimeRebuildPreservesFixedConfiguration(t *testing.T) {
 			revision := uint64(1)
 			closed := map[uint64]int{}
 			svc.cfg.OperationRevision = func(context.Context) (uint64, bool) { return revision, true }
-			svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+			svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 				builtRevision := revision
 				res := agentDefinitionEngineResult("reviewer")
 				res.RuntimeRevision = revision

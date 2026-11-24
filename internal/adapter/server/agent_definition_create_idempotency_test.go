@@ -8,6 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // agentDefinitionEngineResult supplies the durable authority required by an
@@ -30,7 +31,7 @@ func agentDefinitionEngineResult(name string) SessionEngineResult {
 // mirroring the real agentDefSessionEngineFactory's tighten-only clamp,
 // without needing a real AgentDef/registry for this package-level test.
 func agentDefLimitsEngine(maxTurns int) AgentDefSessionEngineFactory {
-	return func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string) (SessionEngineResult, error) {
+	return func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, name string, _ []tool.Tool) (SessionEngineResult, error) {
 		res := agentDefinitionEngineResult(name)
 		limits := session.Limits{MaxTurns: maxTurns, MaxToolCalls: maxTurns}
 		res.Limits = &limits
@@ -127,7 +128,7 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 	selector := ProviderSelector{ProviderID: "requested", ModelID: "raw/vendor:model@revision", ReasoningEffort: "high"}
 	limits := session.Limits{MaxTurns: 1000, MaxToolCalls: 200, MaxConsecutiveFailures: 3}
 	svc := newAgentDefRetryService(t, store)
-	svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+	svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 		res := agentDefinitionEngineResult("reviewer")
 		res.BuiltForMode = session.ModePlan
 		res.Limits = &session.Limits{MaxTurns: 1, MaxToolCalls: 2, MaxConsecutiveFailures: 1}
@@ -161,7 +162,7 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			retry := newAgentDefRetryService(t, store)
-			retry.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+			retry.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 				t.Fatal("retry re-resolved definition or rebuilt resources")
 				return SessionEngineResult{}, nil
 			}
@@ -206,7 +207,7 @@ func TestAgentSessionPersistsRequestedEffort(t *testing.T) {
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	ctx := session.WithPrincipal(context.Background(), &alice)
 	svc := newAgentDefRetryService(t, store)
-	svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+	svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 		res := agentDefinitionEngineResult("reviewer")
 		res.ProviderID, res.ModelID = "provider", "model-without-max"
 		res.ReasoningEffort, res.RequestedReasoningEffort = "", "max"

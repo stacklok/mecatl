@@ -141,8 +141,11 @@ func TestIdentityBrokerNamedSessionGetsItsDefinitionsGatewayTools(t *testing.T) 
 	if got := diag.call(ops[0]); got["code"] != "completed" || got["outcome"] != "completed" {
 		t.Fatalf("calendar-reader's gateway call = %v, want completed at the vMCP", got)
 	}
-	if issued := gw.idjags(t); len(issued) != 1 || issued[0]["act"] == nil {
-		t.Fatalf("AS-1 issued %d ID-JAGs, want one naming the session's main agent", len(issued))
+	// idjags fails unless each ID-JAG names an agent as its actor; the
+	// broker's check of a named root against its own definition's limit is
+	// pinned by TestAuthorizeCallChecksANamedRootsOwnCeiling.
+	if issued := gw.idjags(t); len(issued) != 1 {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want one for the session's main agent", len(issued))
 	}
 	// The vMCP holds no calendar credential offline, so the backend's own
 	// answer is an error; the call reaching it is what counts.

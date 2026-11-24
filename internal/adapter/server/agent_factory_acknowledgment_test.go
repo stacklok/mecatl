@@ -34,7 +34,7 @@ func TestAgentFactoryBindingAcknowledgment(t *testing.T) {
 				}
 				svc.cfg.NewID = func() session.SessionID { return "destination" }
 				closed := 0
-				factory := func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, limits session.Limits, name string) (SessionEngineResult, error) {
+				factory := func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, limits session.Limits, name string, _ []tool.Tool) (SessionEngineResult, error) {
 					res := agentDefinitionEngineResult(name)
 					res.BuiltForMode, res.Limits = mode, &limits
 					res.Close = func() error { closed++; return nil }
@@ -59,13 +59,13 @@ func TestAgentFactoryBindingAcknowledgment(t *testing.T) {
 				if operation != "direct-create" {
 					svc.cfg.SessionContextEngine = func(ctx context.Context, _ session.SessionID, _ *session.Principal, _ ExecutionWorkspaceAcquirer, sel ProviderSelector, _ []mcp.ServerConfig, profile SessionProfile, _ string, mode session.PermissionMode, _ []tool.Tool, _ []string, _ session.SessionID) (SessionEngineResult, error) {
 						if result == "unaware" {
-							return factory(ctx, sel, profile, mode, session.Limits{}, "")
+							return factory(ctx, sel, profile, mode, session.Limits{}, "", nil)
 						}
 						selection, ok := AgentDefSessionSelectionFromContext(ctx)
 						if !ok || selection.Name != "reviewer" {
 							t.Fatal("missing named selection")
 						}
-						return factory(ctx, sel, profile, mode, selection.Limits, selection.Name)
+						return factory(ctx, sel, profile, mode, selection.Limits, selection.Name, nil)
 					}
 				}
 				var id session.SessionID

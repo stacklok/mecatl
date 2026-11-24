@@ -4678,7 +4678,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 			var result server.SessionEngineResult
 			if root, ok := server.AgentDefSessionSelectionFromContext(ctx); ok {
 				factory := agentDefSessionEngineFactory(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
-				result, err = factory(ctx, selector, profile, mode, root.Limits, root.Name)
+				result, err = factory(ctx, selector, profile, mode, root.Limits, root.Name, extra)
 			} else {
 				factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
 				result, err = factory(ctx, selector, specs, profile, workspace, mode, extra, sessionToolKeys)

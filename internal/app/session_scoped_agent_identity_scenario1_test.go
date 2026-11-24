@@ -201,7 +201,7 @@ func TestSessionScopedAgentIdentity_Scenario1_UnknownDefRejected(t *testing.T) {
 
 	factory := agentDefSessionEngineFactory(cfg, provReg, oa, memstore.New(), testAgentDefRootPolicy(cfg),
 		hookexec.New(nil), nil, nil, assets, nil)
-	_, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "ghost-agent")
+	_, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "ghost-agent", nil)
 	if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("unknown agent_definition_name must be a loud InvalidArgument, got: %v", err)
 	}

@@ -391,7 +391,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// id are the ones the factory receives. The binding is stamped on the
 	// successor before its first durable publication; broker commit happens only
 	// after that publication succeeds.
-	if (agentBound && s.agentBoundBrokerAttachment()) || (!agentBound && s.cfg.MCPBroker != nil) {
+	if s.attachesBroker(agentBound) {
 		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
 		if err != nil {
 			return "", saved, err

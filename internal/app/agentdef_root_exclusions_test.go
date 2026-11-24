@@ -27,7 +27,7 @@ func buildRootFromDef(t *testing.T, cfg Config, def agents.AgentDef, profile ser
 	cfg = isolateConfig(t, cfg)
 	factory := agentDefSessionEngineFactory(cfg, provReg, oa, memstore.New(), testAgentDefRootPolicy(cfg),
 		hookexec.New(nil), nil, nil, catalogAssets{agentReg: agents.NewRegistry([]agents.AgentDef{def})}, nil)
-	res, err := factory(t.Context(), server.ProviderSelector{}, profile, session.ModeDefault, session.Limits{}, def.Name)
+	res, err := factory(t.Context(), server.ProviderSelector{}, profile, session.ModeDefault, session.Limits{}, def.Name, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

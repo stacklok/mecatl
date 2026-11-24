@@ -307,9 +307,9 @@ func HelperGatewayTools(sessionTools []tool.Tool) []tool.Tool {
 // authority; otherwise members get none and their gateway calls fail closed.
 // A root it cannot load fails the team's start, which can then be retried,
 // rather than starting members without the tools they should have. A root
-// bound to a named agent definition gives its members none: it attaches to
-// the broker only for its own gateway tools (#2938), and helpers started from
-// such a root are not supported yet.
+// bound to a named agent definition gives its members none, so their gateway
+// calls fail closed: its attachment is for its own gateway tools (#2938), and
+// its catalog starts no helpers of its own.
 func (s *Service) teamHelperTools(ctx context.Context, root session.SessionID) ([]tool.Tool, []string, error) {
 	if s.cfg.IdentityBroker == nil || s.cfg.MemberEngineWithHelperTools == nil || root == "" {
 		return nil, nil, nil

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -19,34 +20,39 @@ import (
 // gateway route and a route that acts as the session, plus the query tool.
 type gatewayTestAttachment struct {
 	helperTestAttachment
-	binding   session.ExternalBinding
-	committed *atomic.Int32
+	binding            session.ExternalBinding
+	committed, aborted *atomic.Int32
 }
 
 func (a gatewayTestAttachment) Commit(context.Context) error {
 	a.committed.Add(1)
 	return nil
 }
-func (gatewayTestAttachment) Abort(context.Context) error        { return nil }
+func (a gatewayTestAttachment) Abort(context.Context) error {
+	a.aborted.Add(1)
+	return nil
+}
 func (a gatewayTestAttachment) Binding() session.ExternalBinding { return a.binding }
 func (gatewayTestAttachment) CallMcpWithQueryTool() tool.Tool {
 	return helperTestTool{name: "CallMcpWithQuery"}
 }
 
-// gatewayTestBroker hands each session its own gatewayTestAttachment.
+// gatewayTestBroker hands each session its own gatewayTestAttachment, with
+// extra in its catalogue too.
 type gatewayTestBroker struct {
-	attached, committed atomic.Int32
+	attached, committed, aborted atomic.Int32
+	extra                        []tool.Tool
 }
 
 func (b *gatewayTestBroker) AttachSession(_ context.Context, id session.SessionID) (brokercontract.Attachment, brokercontract.AttachOutcome, error) {
 	b.attached.Add(1)
 	return gatewayTestAttachment{
-		helperTestAttachment: helperTestAttachment{tools: []tool.Tool{
+		helperTestAttachment: helperTestAttachment{tools: append([]tool.Tool{
 			helperTestTool{name: "mcp__calendar__echo", gateway: true},
 			helperTestTool{name: "mcp__notes__ping"},
-		}},
+		}, b.extra...)},
 		binding:   session.ExternalBinding("binding-" + string(id)),
-		committed: &b.committed,
+		committed: &b.committed, aborted: &b.aborted,
 	}, brokercontract.AttachCreated, nil
 }
 
@@ -55,18 +61,23 @@ func (*gatewayTestBroker) DeleteSession(context.Context, session.SessionID) (bro
 }
 
 // gatewayToolsSeen records the gateway tools each agent-bound engine build
-// received.
+// received, failing the build when fail is set.
 type gatewayToolsSeen struct {
 	mu    sync.Mutex
 	names [][]string
+	fail  bool
 }
 
 func (g *gatewayToolsSeen) factory() AgentDefSessionEngineFactory {
-	return func(ctx context.Context, _ ProviderSelector, _ SessionProfile, _ session.PermissionMode, _ session.Limits, name string) (SessionEngineResult, error) {
-		gateway := toolNames(AgentDefGatewayToolsFromContext(ctx))
+	return func(_ context.Context, _ ProviderSelector, _ SessionProfile, _ session.PermissionMode, _ session.Limits, name string, gatewayTools []tool.Tool) (SessionEngineResult, error) {
+		gateway := toolNames(gatewayTools)
 		g.mu.Lock()
 		g.names = append(g.names, gateway)
+		fail := g.fail
 		g.mu.Unlock()
+		if fail {
+			return SessionEngineResult{}, fmt.Errorf("%w: unknown agent definition %q", ErrInvalidArgument, name)
+		}
 		// Like the real factory, mint the authority from the catalog, which
 		// holds the gateway tools.
 		res := agentDefinitionEngineResult(name)
@@ -159,6 +170,9 @@ func TestAgentBoundSessionGetsOnlyItsAttachmentsGatewayRoutes(t *testing.T) {
 		t.Fatalf("the rebuild attached %d more time(s), want it to reuse the session's attachment", broker.attached.Load()-1)
 	}
 
+	// A successor's fresh attachment holds a gateway tool the inherited
+	// authority does not allow; it is not offered either.
+	broker.extra = []tool.Tool{helperTestTool{name: "mcp__calendar__new", gateway: true}}
 	if _, err := svc.ForkSessionSuccessor(ctx, ForkSuccessorRequest{Source: created.ID}); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
@@ -196,24 +210,31 @@ func TestAgentBoundSessionWithoutIdentityBrokerAttachesNothing(t *testing.T) {
 func TestAgentBoundSessionListsNoBrokerConnectors(t *testing.T) {
 	svc, _, _ := newAgentBoundGatewayService(t, true)
 	svc.cfg.OwnershipEnforced = true
-	svc.cfg.MCPConnectorInspector = connectorInspectorFunc(func(context.Context, session.SessionID, session.ExternalBinding) (brokercontract.ConnectorInventory, error) {
-		t.Fatal("the connector inventory was inspected for an agent-bound session")
-		return brokercontract.ConnectorInventory{}, nil
-	})
+	spy := &connectorInspectorSpy{}
+	svc.cfg.MCPConnectorInspector = spy
 	ctx := session.WithPrincipal(t.Context(), mcpAuthorizationOwner)
 	created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		ProviderSelector{}, ProfileDefault, WithAgentDefinitionName("release-reviewer"))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if _, err := svc.ListSessionMcpConnectors(ctx, created.ID); err != errConnectorUnavailable {
-		t.Fatalf("ListSessionMcpConnectors = %v, want connector inspection unavailable", err)
+	if _, err := svc.ListSessionMcpConnectors(ctx, created.ID); err != errConnectorUnavailable || spy.calls != 0 {
+		t.Fatalf("ListSessionMcpConnectors = %v after %d inspection(s), want connector inspection unavailable", err, spy.calls)
 	}
 }
 
-// connectorInspectorFunc adapts a function to brokercontract.ConnectorInspector.
-type connectorInspectorFunc func(context.Context, session.SessionID, session.ExternalBinding) (brokercontract.ConnectorInventory, error)
-
-func (f connectorInspectorFunc) InspectConnectors(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.ConnectorInventory, error) {
-	return f(ctx, id, binding)
+// TestAgentBoundSessionAbortsItsAttachmentWhenTheBuildFails pins the
+// attachment's rollback: when the engine build of an agent-bound session
+// fails, its broker attachment is aborted, never committed or persisted.
+func TestAgentBoundSessionAbortsItsAttachmentWhenTheBuildFails(t *testing.T) {
+	svc, broker, seen := newAgentBoundGatewayService(t, true)
+	seen.fail = true
+	_, err := svc.CreateSessionWithProfile(session.WithPrincipal(t.Context(), mcpAuthorizationOwner), session.ModeDefault, session.Limits{},
+		ProviderSelector{}, ProfileDefault, WithAgentDefinitionName("release-reviewer"))
+	if err == nil {
+		t.Fatal("CreateSession succeeded with a failing engine build")
+	}
+	if broker.attached.Load() != 1 || broker.aborted.Load() != 1 || broker.committed.Load() != 0 {
+		t.Fatalf("attached %d, aborted %d, committed %d; want one aborted attachment", broker.attached.Load(), broker.aborted.Load(), broker.committed.Load())
+	}
 }

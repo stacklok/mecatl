@@ -190,6 +190,13 @@ consecutive-failure limit keep the inherited value. `execution.none` further
 removes filesystem and shell access; project memory is unavailable without a
 filesystem.
 
+With the identity broker on, the bound root also gets the MCP gateway tools of
+each server its definition's `mcpServers` names by reference, minus each tool
+its `disallowedTools` names, and no other MCP broker tool. The broker registers
+the root under its definition and refuses a gateway call outside that
+definition's limit. Without the identity broker, the bound root gets no MCP
+broker tools.
+
 Provider/model selection for a bound root follows these five cases:
 
 |Request selector|Result|
@@ -228,8 +235,9 @@ identity, and it does not record the definition's source or revision. Fork and
 clear create new sessions, and an existing bound session is never silently
 rebuilt from a different definition after restart. The authority ceiling bounds
 what a session can be granted; it is not an access-control or revocation
-mechanism. This feature adds no definition-specific access controls, no
-credentialed agent-instance registration, and no broker-side enforcement.
+mechanism. This feature adds no definition-specific access controls. Only the
+identity broker, when it is on, checks the bound root's gateway calls against
+its definition, as above.
 
 ### Dedicated debugger creation
 

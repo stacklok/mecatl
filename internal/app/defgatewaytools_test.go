@@ -48,8 +48,9 @@ func (f fakeGatewayTool) GatewayServer() string { return f.server }
 //
 // It also covers the parent: a helper's gateway tools come from its root's,
 // which today is always the built-in main agent (named helpers start no
-// helpers, and a session bound to a named definition starts none either), so
-// its effective ceiling is its definition's intersected with system/main's.
+// helpers, and helpers under a session bound to a named definition get no
+// gateway tools), so its effective ceiling is its definition's intersected
+// with system/main's.
 // And it covers the built-in helpers, whose catalogs hold every gateway tool.
 func TestDefGatewayToolsAgreesWithTheBrokersCeiling(t *testing.T) {
 	definitions := map[string]string{

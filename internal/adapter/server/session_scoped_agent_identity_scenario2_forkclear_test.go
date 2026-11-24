@@ -50,7 +50,7 @@ func TestSessionScopedAgentIdentity_Scenario2_ForkClearPreserveBindingAndCatalog
 				PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 				MaxAllowedMode:             session.ModeYolo,
 				EnforcingCheckerConfigured: true,
-				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, defName string) (SessionEngineResult, error) {
+				AgentDefSessionEngine: func(_ context.Context, _ ProviderSelector, _ SessionProfile, mode session.PermissionMode, _ session.Limits, defName string, _ []tool.Tool) (SessionEngineResult, error) {
 					atomic.AddInt32(&agentDefCalls, 1)
 					if defName != "release-reviewer" {
 						t.Errorf("AgentDefSessionEngine called with defName=%q, want %q", defName, "release-reviewer")

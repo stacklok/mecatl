@@ -42,7 +42,7 @@ func newAgentDefBrokerService(t *testing.T) (*Service, *int32) {
 		PlacementProvider: brokerPlacementProvider{},
 		PlacementScope:    "test",
 		MCPBroker:         countingBrokerService{inner: runtime, attachCalled: &attachCalled},
-		AgentDefSessionEngine: func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+		AgentDefSessionEngine: func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string, []tool.Tool) (SessionEngineResult, error) {
 			return agentDefinitionEngineResult("release-reviewer"), nil
 		},
 		// Keep the ordinary path working so regressions fail the attach assertion,
