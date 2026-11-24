@@ -407798,6 +407798,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795526237463,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "190f7325734dc6c500ba415f28b60243b840188b",
+          "message": "feat(identitybroker): make the broker's lifetimes, clock skew, and timeouts settings (#2976)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-24T16:04:49Z",
+          "tree_id": "3a252f1c05387ba9c117c18e66feaaf87d633af4",
+          "url": "https://github.com/stacklok/mecatl/commit/190f7325734dc6c500ba415f28b60243b840188b"
+        },
+        "date": 1795537051850,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -588339,6 +588373,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795537046847,
+  "lastUpdate": 1795537053007,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
