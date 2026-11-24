@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from "zod";
+import { effortLevelSchema } from "./chat.ts";
 
 export const modelInventoryItemSchema = z.object({
   contextLimit: z.string(),
@@ -11,6 +12,20 @@ export const modelInventoryItemSchema = z.object({
   providerDisplayName: z.string(),
   providerId: z.string(),
   reasoning: z.boolean(),
+  /**
+   * The reasoning-effort levels requests for this model are decided against.
+   * Absent when the server doesn't report per-model effort levels. With
+   * `known` false the levels are unknown: a requested level is sent and the
+   * provider may refuse it. With `known` true and no levels, the model gets no
+   * effort; otherwise a requested level the list lacks is sent as the highest
+   * listed level below it, or not at all.
+   */
+  effortLevels: z
+    .object({
+      known: z.boolean(),
+      levels: z.array(effortLevelSchema),
+    })
+    .optional(),
 });
 
 export const providerInventoryItemSchema = z.object({

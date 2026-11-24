@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ProviderSettingsResponse, RuntimeSettingsResponse } from "@mecatl-studio/contracts";
+import {
+  effortLevelSchema,
+  type ProviderSettingsResponse,
+  type RuntimeSettingsResponse,
+} from "@mecatl-studio/contracts";
 import type { Client } from "@stacklok-oss/mecatl-sdk";
 import { providerDisplayName } from "./provider-names.js";
 
@@ -16,11 +20,16 @@ export class ModelsUnsupportedError extends Error {
   }
 }
 
+export interface SettingsOptions {
+  /** The server advertises the `model_effort_levels` feature. */
+  modelEffortLevels?: boolean;
+  modelSelection: boolean;
+  serverInfo: boolean;
+}
+
 export function createMecatlSettingsService(
   client: Client,
-  options:
-    | { modelSelection: boolean; serverInfo: boolean }
-    | (() => { modelSelection: boolean; serverInfo: boolean }),
+  options: SettingsOptions | (() => SettingsOptions),
 ): SettingsService {
   const getOptions = typeof options === "function" ? options : () => options;
 
@@ -30,7 +39,7 @@ export function createMecatlSettingsService(
       if (!options.modelSelection) throw new ModelsUnsupportedError();
 
       const inventory = await client.models.list({ $typeName: "mecatl.v1.ListModelsRequest" });
-      const projected = projectInventory(inventory);
+      const projected = projectInventory(inventory, options.modelEffortLevels === true);
       const provider = projected.providers.find((candidate) => candidate.id === providerId);
       if (!provider) return null;
 
@@ -59,6 +68,7 @@ export function createMecatlSettingsService(
 
       const inventory = projectInventory(
         await client.models.list({ $typeName: "mecatl.v1.ListModelsRequest" }),
+        options.modelEffortLevels === true,
       );
 
       return {
@@ -77,6 +87,7 @@ export function createMecatlSettingsService(
 
 function projectInventory(
   inventory: Awaited<ReturnType<Client["models"]["list"]>>,
+  modelEffortLevels: boolean,
 ): Pick<RuntimeSettingsResponse, "models" | "providers"> {
   const providers = new Map(
     inventory.providerStatus.map((provider) => [
@@ -118,6 +129,17 @@ function projectInventory(
       providerDisplayName: providerDisplayName(model.providerId),
       providerId: model.providerId,
       reasoning: model.reasoning,
+      ...(modelEffortLevels
+        ? {
+            effortLevels: {
+              known: model.effortLevelsKnown,
+              // In ascending order; a level this Studio doesn't know is dropped.
+              levels: effortLevelSchema.options.filter((level) =>
+                model.effortLevels.includes(level),
+              ),
+            },
+          }
+        : {}),
     })),
     providers: [...providers.values()].sort((left, right) => left.id.localeCompare(right.id)),
   };

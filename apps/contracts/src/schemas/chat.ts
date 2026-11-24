@@ -12,7 +12,15 @@ export const sessionReportedModeSchema = z.enum(["default", "plan", "acceptEdits
 
 export const sessionToolAccessSchema = z.enum(["all", "noFilesystem"]);
 
-export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
+/** A reasoning-effort level, in ascending order. */
+export const effortLevelSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * A requested reasoning effort. "default" is Auto: a new chat omits the effort
+ * (the deployment's default applies), and a fork sends the explicit "auto"
+ * token (the provider default).
+ */
+export const reasoningEffortSchema = z.enum(["default", ...effortLevelSchema.options]);
 
 export const executionSelectionSchema = z.union([
   z.strictObject({ none: z.strictObject({}) }),
@@ -135,7 +143,14 @@ export const sessionDetailResponseSchema = z.object({
       contextWindow: z.string(),
       /** The provider's display name, as in the settings inventory. */
       providerDisplayName: z.string(),
+      /** The level requests for the session's model carry; "default" when none is sent. */
       reasoningEffort: reasoningEffortSchema,
+      /**
+       * The level the session asks for; "default" for Auto. Absent on servers
+       * that don't report per-model effort levels. It differs from
+       * `reasoningEffort` when the model doesn't accept the requested level.
+       */
+      requestedReasoningEffort: reasoningEffortSchema.optional(),
     })
     .optional(),
   placement: z

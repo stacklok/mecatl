@@ -709,6 +709,7 @@ export type GetSessionDetailResponses = {
             contextWindow: string;
             providerDisplayName: string;
             reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+            requestedReasoningEffort?: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
         };
         placement?: {
             kind: string;
@@ -4138,6 +4139,10 @@ export type GetRuntimeSettingsResponses = {
             providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
+            effortLevels?: {
+                known: boolean;
+                levels: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>;
+            };
         }>;
         modelsReason: string;
         modelsSupported: boolean;
@@ -4240,6 +4245,10 @@ export type GetProviderSettingsResponses = {
             providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
+            effortLevels?: {
+                known: boolean;
+                levels: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'>;
+            };
         }>;
         provider: {
             availableNotDefault: boolean;

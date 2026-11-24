@@ -288,6 +288,8 @@ export function createApp(dependencies: AppDependencies = {}) {
       : createMecatlSettingsService(runtime.client, () => ({
           modelSelection: snapshotOrUndefined()?.capabilities.modelSelection ?? false,
           serverInfo: snapshotOrUndefined()?.features.includes("server_info") ?? false,
+          modelEffortLevels:
+            snapshotOrUndefined()?.features.includes(ServerFeature.ModelEffortLevels) ?? false,
         })));
   registerSettingsRoutes(app, settings);
   const storage =
