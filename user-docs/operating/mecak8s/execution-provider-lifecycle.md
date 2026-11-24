@@ -137,17 +137,24 @@ changes, and `mecak8s` must come from the same release as the provider.
 1. While the old `mecak8s` and provider are still running, delete every session
    that uses an execution environment, including forks. The provider can't retire
    an environment that a session still references. `status.references` lists the
-   ID of every session that holds each environment:
+   ID of every session that holds each environment, with the state of its
+   reference:
 
    ```sh
    kubectl --namespace <NAMESPACE> get executionenvironments \
-     -o custom-columns='NAME:.metadata.name,SESSIONS:.status.references[*].bindingID'
+     -o custom-columns='NAME:.metadata.name,SESSIONS:.status.references[*].bindingID,STATES:.status.references[*].state,OPERATIONS:.status.references[*].operationID'
    ```
 
    Each owner deletes their sessions permanently with
    `POST /v1/sessions/<SESSION_ID>/delete` or the gRPC `DeleteSession` call,
    which releases the session's reference. Closing a session with
    `DELETE /v1/sessions/<SESSION_ID>` keeps its reference.
+
+   Keep `mecak8s` running until every remaining reference is `Published`. It
+   settles pending references once a minute, and the provider can't release a
+   pending one after `mecak8s` stops. A `PendingDelete` reference that stays
+   means its session still exists: delete the session again. A `PendingCreate`
+   reference whose session doesn't exist stays until you abort it in step 3.
 
 2. Stop `mecak8s`:
 
@@ -162,18 +169,48 @@ changes, and `mecak8s` must come from the same release as the provider.
    `contracts/proto` from the old release's tag. If a run claim left by the
    stopped `mecak8s` blocks retirement, retry the same request with the same
    operation ID after it expires. Retirement also fails with `conflict` while
-   `status.references` is nonempty. When a remaining reference doesn't belong
-   to a session you can delete, release it with `ReleaseReference`. The
-   provider accepts this call only from the client that created the
-   environment, with `mayAttestOwner: true` in its policy, so set `CERT_FILE`
-   and `KEY_FILE` to the `mecak8s` client certificate:
+   `status.references` is nonempty.
+
+   When a remaining reference doesn't belong to a session you can delete,
+   remove it with the `mecak8s` client identity: the provider accepts these
+   calls only from the client that created the environment, with
+   `mayAttestOwner: true` in its policy. The administration Pod can't present
+   that identity, and `mecak8s` is stopped. Run the calls from a temporary Pod
+   in `<MECAK8S_NAMESPACE>` with the Pod labels that your `mecak8s` entry in
+   `provider.clientIngressSelectors` matches, with the Secret named by
+   `execution.tlsSecret` in the `mecak8s` values mounted read-only. Delete the
+   Pod when you finish. Keep the administration identity in `CERT_FILE` and
+   `KEY_FILE` for the retirement calls, and point separate variables at the
+   `mecak8s` certificate:
 
    ```sh
-   grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+   MECAK8S_CERT_FILE=<MECAK8S_TLS_MOUNT>/tls.crt
+   MECAK8S_KEY_FILE=<MECAK8S_TLS_MOUNT>/tls.key
+   ```
+
+   Release a `Published` reference with `ReleaseReference`:
+
+   ```sh
+   grpcurl -cacert "$CA_FILE" -cert "$MECAK8S_CERT_FILE" -key "$MECAK8S_KEY_FILE" \
      -import-path contracts/proto -proto "$PROTO" \
      -d '{"context":{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"bindingId":"<BINDING_ID>"}}' \
      "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/ReleaseReference
    ```
+
+   Abort a `PendingCreate` reference with `AbortReference`, passing the
+   reference's `operationID` from step 1. `ReleaseReference` returns `conflict`
+   for a pending reference.
+
+   ```sh
+   grpcurl -cacert "$CA_FILE" -cert "$MECAK8S_CERT_FILE" -key "$MECAK8S_KEY_FILE" \
+     -import-path contracts/proto -proto "$PROTO" \
+     -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"bindingId":"<BINDING_ID>","operationId":"<OPERATION_ID>"}' \
+     "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/AbortReference
+   ```
+
+   Both calls succeed without changing anything when no reference matches
+   `<BINDING_ID>`, so rerun the step 1 query and confirm the reference is gone
+   before retrying retirement.
 
    Continue when the namespace has no `ExecutionEnvironment` left:
 
@@ -219,12 +256,18 @@ changes, and `mecak8s` must come from the same release as the provider.
    `prune-values.yaml` from later upgrades.
 6. Set `execution.templateRevision` in the `mecak8s` values to the regenerated
    key, then upgrade `mecak8s` to the same release. Helm restores the replica
-   count from `replicaCount` in your values:
+   count from `replicaCount` in your values. `kubectl scale` in step 2 took
+   ownership of the replica count, so keep client-side field ownership for
+   Helm 4:
 
    ```sh
+   HELM_APPLY_MODE=
+   case "$(helm version --template '{{.Version}}')" in
+     v4.*) HELM_APPLY_MODE=--server-side=false ;;
+   esac
    helm upgrade <MECAK8S_RELEASE> oci://ghcr.io/stacklok/mecatl/charts/mecak8s \
      --version <VERSION> --namespace <MECAK8S_NAMESPACE> \
-     --values <MECAK8S_VALUES_FILE>
+     --values <MECAK8S_VALUES_FILE> $HELM_APPLY_MODE
    ```
 
    Check that the provider is ready and `mecak8s` starts, then run the
