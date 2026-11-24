@@ -436,6 +436,14 @@ spec:
                     - {key: {{ $ref.key | quote }}, path: {{ printf "%s/%s" $dir $ref.key | quote }}}
               {{- end }}
               {{- end }}
+              {{- range $dir, $ref := dict "agent-issuer" .keys.agentIssuer "as1-signing" (.keys.as1Signing | default dict) }}
+              {{- range $i, $fallback := $ref.fallbacks }}
+              - secret:
+                  name: {{ $fallback.secretName }}
+                  items:
+                    - {key: {{ $fallback.key | quote }}, path: {{ printf "%s-fallback-%d/%s" $dir $i $fallback.key | quote }}}
+              {{- end }}
+              {{- end }}
         {{- end }}
         {{- end }}
         {{- with .Values.identityBroker.as1.upstream.clientSecret }}

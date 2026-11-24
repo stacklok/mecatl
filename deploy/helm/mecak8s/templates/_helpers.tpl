@@ -76,18 +76,35 @@ client IDs from it; the chart renders the same derived values.
 {{- end -}}
 {{- /* identityBrokerKeyDir is where the identity broker's key Secrets are projected, one directory per role. */ -}}
 {{- define "mecak8s.identityBrokerKeyDir" -}}/var/run/secrets/identity-broker{{- end -}}
+{{- /* identityBrokerSettingFields maps each identityBroker.settings value to its configuration file field. */ -}}
+{{- define "mecak8s.identityBrokerSettingFields" -}}
+{{- dict "idJAGMaxLifetime" "id_jag_max_lifetime" "idJAGLifetime" "id_jag_lifetime" "credentialLifetime" "credential_lifetime" "clientAssertionLifetime" "client_assertion_lifetime" "clockSkew" "clock_skew" "as1RequestTimeout" "as1_request_timeout" "as2RequestTimeout" "as2_request_timeout" | toJson -}}
+{{- end -}}
+{{- /* identityBrokerSigningKey is a signing key's configuration file entry: its key file under <role>/ and, only when it has fallbacks, their files under <role>-fallback-<i>/, where the key projection puts them. */ -}}
+{{- define "mecak8s.identityBrokerSigningKey" -}}
+{{- $entry := dict "key_file" (printf "%s/%s/%s" .dir .role .ref.key) -}}
+{{- $files := list -}}
+{{- range $i, $fallback := .ref.fallbacks -}}{{- $files = append $files (printf "%s/%s-fallback-%d/%s" $.dir $.role $i $fallback.key) -}}{{- end -}}
+{{- with $files -}}{{- $_ := set $entry "fallback_key_files" . -}}{{- end -}}
+{{- $entry | toJson -}}
+{{- end -}}
 {{- /* identityBrokerConfig is the identity broker's configuration file: non-secret, it names the key files the Secrets project. */ -}}
 {{- define "mecak8s.identityBrokerConfig" -}}
 {{- $broker := .Values.identityBroker -}}
 {{- $dir := include "mecak8s.identityBrokerKeyDir" . -}}
-{{- $keys := dict "agent_issuer" (dict "key_file" (printf "%s/agent-issuer/%s" $dir $broker.keys.agentIssuer.key)) -}}
+{{- $keys := dict "agent_issuer" (include "mecak8s.identityBrokerSigningKey" (dict "dir" $dir "role" "agent-issuer" "ref" $broker.keys.agentIssuer) | fromJson) -}}
 {{- with $broker.keys.brokerClient -}}{{- if .secretName -}}
 {{- $_ := set $keys "broker_client" (dict "key_file" (printf "%s/broker-client/%s" $dir .key) "key_set_file" (printf "%s/broker-client-key-set/%s" $dir .keySet.key)) -}}
 {{- end -}}{{- end -}}
 {{- with $broker.keys.as1Signing -}}{{- if .secretName -}}
-{{- $_ := set $keys "as1_signing" (dict "key_file" (printf "%s/as1-signing/%s" $dir .key)) -}}
+{{- $_ := set $keys "as1_signing" (include "mecak8s.identityBrokerSigningKey" (dict "dir" $dir "role" "as1-signing" "ref" .) | fromJson) -}}
 {{- end -}}{{- end -}}
 {{- $doc := dict "trust_domain" $broker.trustDomain "audience" $broker.audience "keys" $keys -}}
+{{- /* Each setting is rendered only when set: the loader refuses unknown fields, so an older image would refuse the file. */ -}}
+{{- $settings := $broker.settings | default dict -}}
+{{- range $value, $field := include "mecak8s.identityBrokerSettingFields" . | fromJson -}}
+{{- with get $settings $value -}}{{- $_ := set $doc $field . -}}{{- end -}}
+{{- end -}}
 {{- with $broker.gateways -}}
 {{- $entries := list -}}
 {{- range . -}}
@@ -146,9 +163,13 @@ client IDs from it; the chart renders the same derived values.
 {{- /* The same Secret key is the same key; mecak8s also compares the keys themselves. */ -}}
 {{- if $signingKey.secretName -}}
 {{- $keys := $broker.keys | default dict -}}
-{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" ($keys.agentIssuer | default dict) "identityBroker.keys.brokerClient" ($keys.brokerClient | default dict) "identityBroker.keys.as1Signing" ($keys.as1Signing | default dict) -}}
+{{- $agentIssuer := $keys.agentIssuer | default dict -}}
+{{- $as1Signing := $keys.as1Signing | default dict -}}
+{{- range $name, $refs := dict "identityBroker.keys.agentIssuer" (prepend ($agentIssuer.fallbacks | default list) $agentIssuer) "identityBroker.keys.brokerClient" (list ($keys.brokerClient | default dict)) "identityBroker.keys.as1Signing" (prepend ($as1Signing.fallbacks | default list) $as1Signing) -}}
+{{- range $ref := $refs -}}
 {{- range $own := prepend $fallbacks $signingKey -}}
 {{- if and $ref.secretName (eq $ref.secretName $own.secretName) (eq $ref.key $own.key) -}}{{ fail (printf "mcp.broker.signingKey and %s name the same Secret key %s/%s; each role needs its own key" $name $ref.secretName $ref.key) }}{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -236,17 +257,37 @@ client IDs from it; the chart renders the same derived values.
 {{- $_ := required (printf "%s.key is required when %s.secretName is set" $name $name) $ref.key -}}
 {{- end -}}
 {{- end -}}
-{{- /* mecak8s refuses one key for two roles; the same Secret key is the same key. */ -}}
+{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $agentIssuer "identityBroker.keys.as1Signing" $as1Signing -}}
+{{- if and $ref.fallbacks (not $ref.secretName) -}}{{ fail (printf "%s.fallbacks requires %s" $name $name) }}{{- end -}}
+{{- end -}}
+{{- /* mecak8s refuses one key for two roles, fallbacks included; the same Secret key is the same key. A role may repeat its own key. */ -}}
 {{- $roleOf := dict -}}
-{{- range $name, $ref := dict "identityBroker.keys.agentIssuer" $agentIssuer "identityBroker.keys.brokerClient" $brokerClient "identityBroker.keys.as1Signing" $as1Signing -}}
+{{- $nameOf := dict -}}
+{{- range $role, $refs := dict "identityBroker.keys.agentIssuer" (prepend ($agentIssuer.fallbacks | default list) $agentIssuer) "identityBroker.keys.brokerClient" (list $brokerClient) "identityBroker.keys.as1Signing" (prepend ($as1Signing.fallbacks | default list) $as1Signing) -}}
+{{- range $i, $ref := $refs -}}
 {{- if $ref.secretName -}}
+{{- $name := $role -}}
+{{- if $i -}}{{- $name = printf "%s.fallbacks[%d]" $role (sub $i 1) -}}{{- end -}}
 {{- $pair := printf "%s/%s" $ref.secretName $ref.key -}}
-{{- with get $roleOf $pair -}}{{ fail (printf "%s and %s name the same Secret key %s; each role needs its own key" . $name $pair) }}{{- end -}}
-{{- $_ := set $roleOf $pair $name -}}
+{{- if not (hasKey $roleOf $pair) -}}
+{{- $_ := set $roleOf $pair $role -}}
+{{- $_ := set $nameOf $pair $name -}}
+{{- else if ne (get $roleOf $pair) $role -}}
+{{- fail (printf "%s and %s name the same Secret key %s; each role needs its own key" (get $nameOf $pair) $name $pair) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if and (not $broker.enabled) (or $broker.trustDomain $broker.audience $agentIssuer.secretName $brokerClient.secretName $keySet.secretName $as1Signing.secretName) -}}
 {{- fail "identityBroker.trustDomain, audience, and keys require identityBroker.enabled=true" -}}
+{{- end -}}
+{{- $settings := $broker.settings | default dict -}}
+{{- range $value, $field := include "mecak8s.identityBrokerSettingFields" . | fromJson -}}
+{{- if get $settings $value -}}
+{{- if not $broker.enabled -}}{{ fail (printf "identityBroker.settings.%s requires identityBroker.enabled=true" $value) }}{{- end -}}
+{{- /* mecak8s refuses AS-1's ID-JAG values without the AS-1 they configure. */ -}}
+{{- if and (hasPrefix "idJAG" $value) (not $as1.issuer) -}}{{ fail (printf "identityBroker.settings.%s requires identityBroker.as1.issuer: only a hosted AS-1 issues ID-JAGs" $value) }}{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateOIDC" -}}

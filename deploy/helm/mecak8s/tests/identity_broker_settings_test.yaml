@@ -1,0 +1,349 @@
+suite: identity broker settings and signing-key fallbacks
+templates:
+  - templates/deployment.yaml
+  - templates/identity-broker-configmap.yaml
+release:
+  name: unit
+  namespace: test
+set:
+  guardrails.fromSettings: true
+  redis.endpoint: redis.example.internal:6379
+  redis.credentialsSecret: redis-credentials
+  mockProvider: true
+  replicaCount: 1
+  extraArgs: [--no-shell]
+  oidc.enabled: true
+  oidc.audience: https://mecatl.example.com/api
+  oidc.ownerIdentity: sub_id
+  oidc.resource: https://mecatl.example.com
+  identityBroker.enabled: true
+  identityBroker.subjectClaim: sub
+  identityBroker.trustDomain: agents.example.com
+  identityBroker.audience: https://broker.example.com
+  identityBroker.keys.agentIssuer.secretName: ib-agent
+  identityBroker.keys.agentIssuer.key: key.pem
+  identityBroker.keys.brokerClient.secretName: ib-client
+  identityBroker.keys.brokerClient.key: key.pem
+  identityBroker.keys.brokerClient.keySet.secretName: ib-client
+  identityBroker.keys.brokerClient.keySet.key: jwks.json
+  identityBroker.keys.as1Signing.secretName: ib-as1
+  identityBroker.keys.as1Signing.key: signing.pem
+  identityBroker.as1.issuer: https://mecatl.example.com/as1
+  identityBroker.as1.tuiClientID: mecatui
+  identityBroker.as1.upstream.issuer: https://login.example.com/tenant/v2.0
+  identityBroker.as1.upstream.clientID: as1
+tests:
+  # Defaults render no setting and no fallback, so an older image, whose
+  # loader refuses unknown fields, still reads the file.
+  - it: renders no setting or fallback by default
+    template: templates/identity-broker-configmap.yaml
+    asserts:
+      - notMatchRegex:
+          path: data["identity-broker.json"]
+          pattern: lifetime|clock_skew|request_timeout|fallback_key_files
+  - it: projects no fallback key by default
+    template: templates/deployment.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources
+          count: 4
+      - notMatchRegex:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources[*].secret.items[0].path
+          pattern: fallback
+
+  - it: renders every setting
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings:
+        idJAGMaxLifetime: 8h
+        idJAGLifetime: 2m
+        credentialLifetime: 30m
+        clientAssertionLifetime: 45s
+        clockSkew: 10s
+        as1RequestTimeout: 5s
+        as2RequestTimeout: 20s
+    asserts:
+      - equal:
+          path: data["identity-broker.json"]
+          value: |-
+            {
+              "as1_request_timeout": "5s",
+              "as2_request_timeout": "20s",
+              "audience": "https://broker.example.com",
+              "client_assertion_lifetime": "45s",
+              "clock_skew": "10s",
+              "credential_lifetime": "30m",
+              "id_jag_lifetime": "2m",
+              "id_jag_max_lifetime": "8h",
+              "keys": {
+                "agent_issuer": {
+                  "key_file": "/var/run/secrets/identity-broker/agent-issuer/key.pem"
+                },
+                "as1_signing": {
+                  "key_file": "/var/run/secrets/identity-broker/as1-signing/signing.pem"
+                },
+                "broker_client": {
+                  "key_file": "/var/run/secrets/identity-broker/broker-client/key.pem",
+                  "key_set_file": "/var/run/secrets/identity-broker/broker-client-key-set/jwks.json"
+                }
+              },
+              "trust_domain": "agents.example.com"
+            }
+  - it: renders idJAGMaxLifetime alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.idJAGMaxLifetime: 8h
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"id_jag_max_lifetime": "8h"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: '"id_jag_lifetime"|credential_lifetime|client_assertion_lifetime|clock_skew|request_timeout'}
+  - it: renders idJAGLifetime alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.idJAGLifetime: 2m
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"id_jag_lifetime": "2m"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: id_jag_max_lifetime|credential_lifetime|client_assertion_lifetime|clock_skew|request_timeout}
+  - it: renders credentialLifetime alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.credentialLifetime: 30m
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"credential_lifetime": "30m"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: id_jag|client_assertion_lifetime|clock_skew|request_timeout}
+  - it: renders clientAssertionLifetime alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.clientAssertionLifetime: 45s
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"client_assertion_lifetime": "45s"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: id_jag|credential_lifetime|clock_skew|request_timeout}
+  - it: renders clockSkew alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.clockSkew: 10s
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"clock_skew": "10s"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: lifetime|request_timeout}
+  - it: renders as1RequestTimeout alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.as1RequestTimeout: 5s
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"as1_request_timeout": "5s"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: lifetime|clock_skew|as2_request_timeout}
+  - it: renders as2RequestTimeout alone
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.as2RequestTimeout: 20s
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"as2_request_timeout": "20s"'}
+      - notMatchRegex: {path: 'data["identity-broker.json"]', pattern: lifetime|clock_skew|as1_request_timeout}
+
+  - it: renders the signing keys' fallbacks at their projected paths
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.keys.agentIssuer.fallbacks:
+        - {secretName: ib-agent-old, key: public.pem}
+      identityBroker.keys.as1Signing.fallbacks:
+        - {secretName: ib-as1-old, key: signing.pem}
+        - {secretName: ib-as1-older, key: signing.pem}
+    asserts:
+      - matchRegex:
+          path: data["identity-broker.json"]
+          pattern: '"agent_issuer": \{\s*"fallback_key_files": \[\s*"/var/run/secrets/identity-broker/agent-issuer-fallback-0/public.pem"\s*\],\s*"key_file": "/var/run/secrets/identity-broker/agent-issuer/key.pem"'
+      - matchRegex:
+          path: data["identity-broker.json"]
+          pattern: '"as1_signing": \{\s*"fallback_key_files": \[\s*"/var/run/secrets/identity-broker/as1-signing-fallback-0/signing.pem",\s*"/var/run/secrets/identity-broker/as1-signing-fallback-1/signing.pem"\s*\],\s*"key_file": "/var/run/secrets/identity-broker/as1-signing/signing.pem"'
+  - it: projects the fallbacks read-only into one directory each
+    template: templates/deployment.yaml
+    set:
+      identityBroker.keys.agentIssuer.fallbacks:
+        - {secretName: ib-agent-old, key: public.pem}
+      identityBroker.keys.as1Signing.fallbacks:
+        - {secretName: ib-as1-old, key: signing.pem}
+        - {secretName: ib-as1-older, key: signing.pem}
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.defaultMode
+          value: 288
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources[?(@.secret.name == "ib-agent-old")].secret.items
+          value: [{key: public.pem, path: agent-issuer-fallback-0/public.pem}]
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources[?(@.secret.name == "ib-as1-old")].secret.items
+          value: [{key: signing.pem, path: as1-signing-fallback-0/signing.pem}]
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources[?(@.secret.name == "ib-as1-older")].secret.items
+          value: [{key: signing.pem, path: as1-signing-fallback-1/signing.pem}]
+      - lengthEqual:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources
+          count: 7
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "identity-broker-keys")].readOnly
+          value: true
+  - it: accepts a role repeating its own key as a fallback
+    template: templates/deployment.yaml
+    set:
+      identityBroker.keys.agentIssuer.fallbacks:
+        - {secretName: ib-agent, key: key.pem}
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: rejects a setting that is not a Go duration
+    template: templates/deployment.yaml
+    set:
+      identityBroker.settings.clockSkew: 30 seconds
+    asserts:
+      - failedTemplate:
+          errorPattern: "/identityBroker/settings/clockSkew': '30 seconds' does not match pattern"
+  - it: rejects a bare number as a duration
+    template: templates/deployment.yaml
+    set:
+      identityBroker.settings.credentialLifetime: "30"
+    asserts:
+      - failedTemplate:
+          errorPattern: "/identityBroker/settings/credentialLifetime': '30' does not match pattern"
+  - it: rejects an unknown setting
+    template: templates/deployment.yaml
+    set:
+      identityBroker.settings.sessionLifetime: 1h
+    asserts:
+      - failedTemplate:
+          errorPattern: "/identityBroker/settings': additional properties 'sessionLifetime' not allowed"
+  - it: rejects a fallback without a key
+    template: templates/deployment.yaml
+    set:
+      identityBroker.keys.as1Signing.fallbacks:
+        - {secretName: ib-as1-old}
+    asserts:
+      - failedTemplate:
+          errorPattern: "/identityBroker/keys/as1Signing/fallbacks/0': missing property 'key'"
+  - it: rejects idJAGMaxLifetime without AS-1
+    template: templates/deployment.yaml
+    set:
+      identityBroker.settings.idJAGMaxLifetime: 8h
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.settings.idJAGMaxLifetime requires identityBroker.as1.issuer: only a hosted AS-1 issues ID-JAGs"
+  - it: rejects idJAGLifetime without AS-1
+    template: templates/deployment.yaml
+    set:
+      identityBroker.settings.idJAGLifetime: 2m
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: "identityBroker.settings.idJAGLifetime requires identityBroker.as1.issuer: only a hosted AS-1 issues ID-JAGs"
+  - it: renders the other settings without AS-1
+    template: templates/identity-broker-configmap.yaml
+    set:
+      identityBroker.settings.clockSkew: 10s
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+    asserts:
+      - matchRegex: {path: 'data["identity-broker.json"]', pattern: '"clock_skew": "10s"'}
+  - it: rejects a setting with the broker disabled
+    template: templates/deployment.yaml
+    set:
+      identityBroker.enabled: false
+      identityBroker.trustDomain: ""
+      identityBroker.audience: ""
+      identityBroker.keys:
+        agentIssuer: {secretName: "", key: ""}
+        brokerClient: {secretName: "", key: "", keySet: {secretName: "", key: ""}}
+        as1Signing: {secretName: "", key: ""}
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.settings.clockSkew: 10s
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.settings.clockSkew requires identityBroker.enabled=true
+  - it: rejects an agent issuer fallback without the agent issuer key
+    template: templates/deployment.yaml
+    set:
+      identityBroker.enabled: false
+      identityBroker.trustDomain: ""
+      identityBroker.audience: ""
+      identityBroker.keys:
+        agentIssuer: {secretName: "", key: "", fallbacks: [{secretName: ib-agent-old, key: public.pem}]}
+        brokerClient: {secretName: "", key: "", keySet: {secretName: "", key: ""}}
+        as1Signing: {secretName: "", key: ""}
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.keys.agentIssuer.fallbacks requires identityBroker.keys.agentIssuer
+  - it: rejects AS-1 signing fallbacks without AS-1's signing key
+    template: templates/deployment.yaml
+    set:
+      identityBroker.subjectClaim: ""
+      identityBroker.as1.issuer: ""
+      identityBroker.as1.tuiClientID: ""
+      identityBroker.as1.upstream.issuer: ""
+      identityBroker.as1.upstream.clientID: ""
+      identityBroker.keys.as1Signing.secretName: ""
+      identityBroker.keys.as1Signing.key: ""
+      identityBroker.keys.as1Signing.fallbacks:
+        - {secretName: ib-as1-old, key: signing.pem}
+      oidc.enabled: false
+      oidc.audience: ""
+      oidc.ownerIdentity: ""
+      oidc.resource: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.keys.as1Signing.fallbacks requires identityBroker.keys.as1Signing
+  - it: rejects an agent issuer fallback that is another role's key
+    template: templates/deployment.yaml
+    set:
+      identityBroker.keys.agentIssuer.fallbacks:
+        - {secretName: ib-client, key: key.pem}
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.keys.agentIssuer.fallbacks[0] and identityBroker.keys.brokerClient name the same Secret key ib-client/key.pem; each role needs its own key
+  - it: rejects an AS-1 signing fallback that is another role's fallback
+    template: templates/deployment.yaml
+    set:
+      identityBroker.keys.agentIssuer.fallbacks:
+        - {secretName: ib-old, key: key.pem}
+      identityBroker.keys.as1Signing.fallbacks:
+        - {secretName: ib-as1-old, key: signing.pem}
+        - {secretName: ib-old, key: key.pem}
+    asserts:
+      - failedTemplate:
+          errorMessage: identityBroker.keys.agentIssuer.fallbacks[0] and identityBroker.keys.as1Signing.fallbacks[1] name the same Secret key ib-old/key.pem; each role needs its own key

@@ -1,6 +1,7 @@
 suite: identity broker values kept from an earlier release
 templates:
   - templates/deployment.yaml
+  - templates/identity-broker-configmap.yaml
 release:
   name: unit
   namespace: test
@@ -13,6 +14,7 @@ set:
   mockProvider: true
 tests:
   - it: renders a broker-disabled release without trustDomain, audience, or keys
+    template: templates/deployment.yaml
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].args
@@ -21,6 +23,7 @@ tests:
           path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")]
 
   - it: still requires them once the broker is enabled
+    template: templates/deployment.yaml
     set:
       identityBroker.enabled: true
       replicaCount: 1
@@ -33,6 +36,7 @@ tests:
   # upgraded with --reuse-values has no brokerClient or as1Signing values, and
   # needs none.
   - it: renders an enabled broker without AS-1 when only the agent issuer key is named
+    template: templates/deployment.yaml
     values:
       - fixtures/identity-broker-agent-issuer-only-values.yaml
     set:
@@ -42,10 +46,39 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --enable-identity-broker
-      - exists:
-          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")]
+      - equal:
+          path: spec.template.spec.volumes[?(@.name == "identity-broker-keys")].projected.sources
+          value:
+            - secret:
+                name: ib-agent
+                items:
+                  - {key: key.pem, path: agent-issuer/key.pem}
+
+  # Without settings or fallbacks values, the file is the one the previous
+  # chart rendered.
+  - it: renders the previous release's configuration file unchanged
+    template: templates/identity-broker-configmap.yaml
+    values:
+      - fixtures/identity-broker-agent-issuer-only-values.yaml
+    set:
+      replicaCount: 1
+      extraArgs: [--no-shell]
+    asserts:
+      - equal:
+          path: data["identity-broker.json"]
+          value: |-
+            {
+              "audience": "https://broker.example.com",
+              "keys": {
+                "agent_issuer": {
+                  "key_file": "/var/run/secrets/identity-broker/agent-issuer/key.pem"
+                }
+              },
+              "trust_domain": "agents.example.com"
+            }
 
   - it: still requires the broker client and AS-1 signing keys with AS-1
+    template: templates/deployment.yaml
     values:
       - fixtures/identity-broker-agent-issuer-only-values.yaml
     set:
