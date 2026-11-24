@@ -27,6 +27,7 @@ case "${MECATL_EXECUTION_DEV_TOOLBOX:-}" in ''|dev) ;; *) echo "MECATL_EXECUTION
 case "${MECATL_EXECUTION_K8S_TOOLBOX:-}" in ''|sre) ;; *) echo "MECATL_EXECUTION_K8S_TOOLBOX must be empty or sre" >&2; exit 2 ;; esac
 runtime=${CONTAINER_ENGINE:-docker}
 case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) echo "CONTAINER_ENGINE must be docker or podman" >&2; exit 2 ;; esac
+command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required on PATH (coreutils or uutils)" >&2; exit 2; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
 handoff=${MECATL_EXECUTION_QUAL_HANDOFF-0}
@@ -67,7 +68,7 @@ if [ -n "$resume" ]; then
   [ "$(awk -F= '$1=="profile" {print $2}' "$state/ownership")" = "${MECATL_EXECUTION_QUAL_PROFILE:-development}" ] &&
   [ "$(awk -F= '$1=="kubeconfig" {print $2}' "$state/ownership")" = "$state/kubeconfig" ] &&
   [ "$(awk -F= '$1=="context" {print $2}' "$state/ownership")" = "kind-$cluster" ] || { echo "resume fixture record mismatch" >&2; exit 1; }
-  [ "$(podman inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')" = "$cluster" ] || { echo "resume fixture container mismatch" >&2; exit 1; }
+  [ "$("$runtime" inspect "${cluster}-control-plane" --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}')" = "$cluster" ] || { echo "resume fixture container mismatch" >&2; exit 1; }
   context="kind-$cluster"
 fi
 kubeconfig="$state/kubeconfig"
@@ -135,23 +136,30 @@ phase_done() {
   phase_start=$now
 }
 
-kind_config=
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  kind_config="$state/kind.yaml"
-  cat >"$kind_config" <<'EOF'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
+kind_config="$state/kind.yaml"
+production_kind=0
+[ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" != production ] || production_kind=1
+{
+  printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\n'
+  if [ "$production_kind" = 1 ]; then
+    cat <<'EOF'
 networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
   serviceSubnet: 10.96.0.0/12
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
+EOF
+  fi
+  printf 'nodes:\n- role: control-plane\n  kubeadmConfigPatches:\n'
+  if [ "$production_kind" = 1 ]; then
+    cat <<'EOF'
   - |
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
     syncFrequency: 5s
+EOF
+  fi
+  # Every profile waits on ResourceQuota status, which the default 5m resync outlasts.
+  cat <<'EOF'
   - |
     # Kind's kubeadm patch matcher uses v1beta3 for the pinned node image.
     apiVersion: kubeadm.k8s.io/v1beta3
@@ -160,13 +168,16 @@ nodes:
       extraArgs:
         resource-quota-sync-period: "10s"
 EOF
-fi
+} >"$kind_config"
+node_image=docker.io/kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
 if [ -z "$resume" ]; then
-  if [ -n "$kind_config" ]; then
-    kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --config "$kind_config" --kubeconfig "$kubeconfig"
-  else
-    kind create cluster --name "$cluster" --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0 --kubeconfig "$kubeconfig"
-  fi
+  retained=$(printf '%s\n' "$clusters" | grep -c '^mecatl-execution-qual-' || :)
+  [ "$retained" -lt 2 ] || echo "warning: $retained retained qualification clusters share this host's disk" >&2
+  # Workspace PVCs live on the node's disk, which is the container runtime's.
+  df_out=$("$runtime" run --rm --entrypoint df "$node_image" -Pk /) || { echo "could not probe the container runtime disk with $node_image" >&2; exit 1; }
+  free_kib=$(printf '%s\n' "$df_out" | awk 'NR==2 {print $4}')
+  [ "${free_kib:-0}" -ge 15728640 ] || { echo "container runtime disk has under 15 GiB free" >&2; exit 1; }
+  kind create cluster --name "$cluster" --image "$node_image" --config "$kind_config" --kubeconfig "$kubeconfig"
 fi
 phase_done cluster
 
@@ -199,12 +210,12 @@ if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
     https://raw.githubusercontent.com/projectcalico/calico/v3.32.2/manifests/calico.yaml \
     --output "$cni_manifest"
   printf '%s  %s\n' a8c828a06a87c629a282ebbc424895b77f3a030251993e41ea400a743675bb02 "$cni_manifest" | sha256sum -c -
-  sed -i \
+  sed \
     -e 's|quay.io/calico/cni:v3.32.2|quay.io/calico/cni@sha256:0ef740bc587f25565905adf1d1f61a7faff0d571c449c6bdd789feed743d3ef7|g' \
     -e 's|quay.io/calico/kube-controllers:v3.32.2|quay.io/calico/kube-controllers@sha256:7870b67ebb13fabc3005252b44fe6e78b21635649bd3072b80afa1684b6565d0|g' \
     -e 's|quay.io/calico/node:v3.32.2|quay.io/calico/node@sha256:99b03fe91e8bfbcb153ae65ef4b701b24ce541ffdd74ff314eb041096008f7fd|g' \
-    "$cni_manifest"
-  kube apply -f "$cni_manifest"
+    "$cni_manifest" >"$state/calico-pinned.yaml"
+  kube apply -f "$state/calico-pinned.yaml"
   kube -n kube-system rollout status daemonset/calico-node --timeout=5m
   kube -n kube-system rollout status deployment/calico-kube-controllers --timeout=5m
   kube wait --for=condition=Ready node --all --timeout=3m
@@ -227,17 +238,18 @@ image_step_done pki
 # Build the three static Go images in the development toolbox. ko emits a
 # content tag; after loading, the fixture resolves the node's actual manifest
 # digest and creates a matching digest alias for Kubernetes.
+ko_platform=linux/$(kube get node -o jsonpath='{.items[0].status.nodeInfo.architecture}')
 build_ko() {
   package=$1 repo=$2
-  dev env KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1
+  dev env KO_DEFAULTPLATFORMS="$ko_platform" KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1
 }
 provider_tag=$(build_ko ./cmd/mecatl-execution-provider ko.local/mecatl-execution-provider)
 image_step_done provider_build
 agent_tag=$(build_ko ./cmd/mecak8s ko.local/mecak8s)
 image_step_done agent_build
-oidc_tag=$(dev env GOFLAGS=-tags=kind_execution_e2e KO_DOCKER_REPO=ko.local/mecatl-oidc-fixture ko build --local --bare ./e2e/k8s_execution/fixture/oidcissuer | tail -n 1)
+oidc_tag=$(dev env GOFLAGS=-tags=kind_execution_e2e KO_DEFAULTPLATFORMS="$ko_platform" KO_DOCKER_REPO=ko.local/mecatl-oidc-fixture ko build --local --bare ./e2e/k8s_execution/fixture/oidcissuer | tail -n 1)
 image_step_done oidc_build
-netprobe_tag=$(dev env GOFLAGS=-tags=kind_execution_e2e KO_DOCKER_REPO=ko.local/mecatl-netprobe-fixture ko build --local --bare ./e2e/k8s_execution/fixture/netprobe | tail -n 1)
+netprobe_tag=$(dev env GOFLAGS=-tags=kind_execution_e2e KO_DEFAULTPLATFORMS="$ko_platform" KO_DOCKER_REPO=ko.local/mecatl-netprobe-fixture ko build --local --bare ./e2e/k8s_execution/fixture/netprobe | tail -n 1)
 image_step_done netprobe_build
 
 # Compile the test binary while the remaining images are built and loaded and

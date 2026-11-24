@@ -27,6 +27,7 @@ else
   [ -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}" ] || { echo "MECATL_EXECUTION_CREDENTIAL_FILE is required" >&2; exit 2; }
 fi
 [ -n "$MECATL_EXECUTION_QUAL_STATE" ] || { echo "MECATL_EXECUTION_QUAL_STATE is required" >&2; exit 2; }
+command -v timeout >/dev/null 2>&1 || { echo "GNU timeout is required on PATH (coreutils or uutils)" >&2; exit 2; }
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
@@ -66,7 +67,7 @@ recorded_owner=$(owned_value owner) || { echo "owned user identity unavailable" 
 kubeconfig="$state/kubeconfig"
 recorded_kubeconfig=$(owned_value kubeconfig) || { echo "owned kubeconfig identity unavailable" >&2; exit 1; }
 [ "$recorded_kubeconfig" = "$kubeconfig" ] || { echo "owned kubeconfig mismatch" >&2; exit 1; }
-[ -f "$kubeconfig" ] && [ ! -L "$kubeconfig" ] && [ "$(stat -c '%a' "$kubeconfig")" = 600 ] || { echo "owned kubeconfig must be a private regular file" >&2; exit 1; }
+[ -f "$kubeconfig" ] && [ ! -L "$kubeconfig" ] && [ -n "$(find "$kubeconfig" -prune -perm 600)" ] || { echo "owned kubeconfig must be a private regular file" >&2; exit 1; }
 context=$(optional_owned_value context) || { echo "owned context identity invalid" >&2; exit 1; }
 [ -n "$context" ] || context="kind-$cluster"
 [ "$context" = "kind-$cluster" ] || { echo "owned context mismatch" >&2; exit 1; }
@@ -90,7 +91,8 @@ helm_kube() {
   if [ -n "$MECATL_EXECUTION_K8S_TOOLBOX" ]; then toolbox run -c "$MECATL_EXECUTION_K8S_TOOLBOX" helm --kubeconfig "$kubeconfig" --kube-context "$context" "$@"; else helm --kubeconfig "$kubeconfig" --kube-context "$context" "$@"; fi
 }
 [ "$(kube config current-context)" = "$context" ] || { echo "owned kube context mismatch" >&2; exit 1; }
-build_ko() { package=$1 repo=$2; dev env KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER:-}" KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1; }
+ko_platform=linux/$(kube get node -o jsonpath='{.items[0].status.nodeInfo.architecture}')
+build_ko() { package=$1 repo=$2; dev env KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER:-}" KO_DEFAULTPLATFORMS="$ko_platform" KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1; }
 go_revision=$(awk 'NR==1 && /^v1-[0-9a-f]+$/ && length($0)==67 {print}' "$state/go-template-revision")
 [ -n "$go_revision" ] || { echo "owned template revision unavailable" >&2; exit 1; }
 . "$root/deploy/mecatl-execution-kind/images.sh"
