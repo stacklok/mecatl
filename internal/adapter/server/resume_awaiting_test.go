@@ -92,7 +92,14 @@ func newAskingServiceWithAwait(t *testing.T, store port.SessionStore, ps *permst
 // the askID. The store now holds a durable StateAwaiting snapshot.
 func driveServiceToAwaiting(t *testing.T, svc *server.Service, id session.SessionID) string {
 	t.Helper()
-	run, err := svc.StartRun(context.Background(), id, "go")
+	return parkRun(context.Background(), t, svc, id)
+}
+
+// parkRun is driveServiceToAwaiting with the run started, and the awaiting
+// session persisted, in ctx, such as a verified caller's.
+func parkRun(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID) string {
+	t.Helper()
+	run, err := svc.StartRun(ctx, id, "go")
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -100,8 +107,8 @@ func driveServiceToAwaiting(t *testing.T, svc *server.Service, id session.Sessio
 	for ev := range run.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
-			svc.Persist(context.Background(), id) // durable awaiting snapshot
-			run.Cancel()                          // the parked run "dies"
+			svc.Persist(ctx, id) // durable awaiting snapshot
+			run.Cancel()         // the parked run "dies"
 		}
 	}
 	svc.FinishRun(id, run)

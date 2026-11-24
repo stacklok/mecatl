@@ -144,7 +144,7 @@ type Snapshot struct {
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
 	RunID string `json:"run_id,omitempty"`
-	// RunOwner is the person who started the run RunID names, recorded with
+	// RunOwner is the verified caller that started the run RunID names, recorded with
 	// it so a resume after a restart keeps the run's owner. A POINTER for true
 	// omitempty, like Owner: a snapshot with no "run_owner" key restores a run
 	// with no recorded owner. Purely additive, no format-tag bump.

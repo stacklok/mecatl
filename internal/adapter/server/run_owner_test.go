@@ -69,32 +69,9 @@ func newRunProbeService(t *testing.T, store port.SessionStore, probe *runProbeTo
 	return svc
 }
 
-// parkRun starts a run in ctx that parks at its Write ask, saves the awaiting
-// session, and ends the run as a dying process would. It returns the ask.
 // writeTurn makes the Write call that asks.
 func writeTurn() mockllm.Turn {
 	return mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))
-}
-
-func parkRun(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID) string {
-	t.Helper()
-	run, err := svc.StartRun(ctx, id, "go")
-	if err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	var askID string
-	for ev := range run.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
-			askID = ev.Ask.AskID
-			svc.Persist(ctx, id)
-			run.Cancel()
-		}
-	}
-	svc.FinishRun(id, run)
-	if askID == "" {
-		t.Fatal("the run never asked")
-	}
-	return askID
 }
 
 func probedRun(t *testing.T, probe *runProbeTool) agentcredential.Run {
@@ -117,7 +94,10 @@ func brokerOwner(p *session.Principal) identitybroker.Owner {
 // restart: each resume path continues the run under that owner, both when
 // the session's owner is unchanged (today's single-owner sessions, where the
 // owner is the one the session's owner gave before) and when the session's
-// owner value has changed since the run started.
+// owner value has changed since the run started. It pins that the owner is
+// kept, not that anyone but the run's owner may approve: with shared sessions
+// the design has only the run owner approve, and today ownership admits only
+// the session's owner.
 func TestAResumedRunKeepsTheOwnerItStartedWith(t *testing.T) {
 	resumes := map[string]func(ctx context.Context, svc *server.Service, id session.SessionID, runID, askID string) error{
 		"approve": func(ctx context.Context, svc *server.Service, id session.SessionID, runID, askID string) error {
@@ -291,35 +271,58 @@ func TestARetriedRunKeepsTheOwnerItStartedWith(t *testing.T) {
 
 // TestAPlanProceedRunIsOwnedByItsApprover proves the run an approved plan
 // starts, a new run minted on a context detached from the approving request,
-// still records that request's verified caller as its owner.
+// records that request's verified caller as its owner, not the plan run's or
+// the session's. Ownership is not enforced here, so Bob may approve Alice's
+// plan.
 func TestAPlanProceedRunIsOwnedByItsApprover(t *testing.T) {
 	store := memstore.New()
-	svc := exactPlanService(t, store, mockllm.New(mockllm.TextTurn("executed")), nil)
+	llm := mockllm.New(mockllm.TextTurn("executed"))
+	svc := exactPlanService(t, store, llm, nil)
 	parked := makePlanControlSession(t, "plan-owner-session")
 	parked.Owner = brokerAlice
 	parked.BeginRunFor(parked.RunID(), brokerAlice)
 	if err := store.Save(t.Context(), parked); err != nil {
 		t.Fatal(err)
 	}
-	planRun := parked.RunID()
-	if _, err := svc.ResolvePlanAsk(session.WithPrincipal(t.Context(), brokerAlice), parked.ID, planRun, "plan-ask", session.VerdictAllowOnce); err != nil {
+	if _, err := svc.ResolvePlanAsk(session.WithPrincipal(t.Context(), runOwnerBob), parked.ID, parked.RunID(), "plan-ask", session.VerdictAllowOnce); err != nil {
 		t.Fatalf("ResolvePlanAsk: %v", err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got, err := store.Load(t.Context(), parked.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.RunID() != planRun && got.RunID() != "" {
-			if owner := got.RunOwner(); owner == nil || *owner != *brokerAlice {
-				t.Fatalf("proceed run %s owner = %+v, want %+v", got.RunID(), owner, brokerAlice)
+	waitExactPlanProceed(t, svc, parked.ID, parked.RunID(), session.ModeDefault, llm, 1)
+	got, err := store.Load(t.Context(), parked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := got.RunOwner(); owner == nil || *owner != *runOwnerBob {
+		t.Fatalf("proceed run %s owner = %+v, want %+v", got.RunID(), owner, runOwnerBob)
+	}
+}
+
+// TestAScheduledRunIsOwnedByItsSession proves a scheduled run's owner is
+// still its session's owner, the schedule's captured owner, whatever caller
+// the scheduler's context carries (#2569 replaces this).
+func TestAScheduledRunIsOwnedByItsSession(t *testing.T) {
+	for name, caller := range map[string]*session.Principal{"no caller": nil, "another caller": runOwnerBob} {
+		t.Run(name, func(t *testing.T) {
+			store := memstore.New()
+			probe := &runProbeTool{runs: make(chan agentcredential.Run, 1)}
+			svc := newRunProbeService(t, store, probe, false, true, writeTurn(), mockllm.TextTurn("done"))
+			fire, err := session.NewScheduled("sched-owner-fire", session.ModeYolo, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0), "nightly", "", "")
+			if err != nil {
+				t.Fatal(err)
 			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no proceed run started; run = %s, state = %s", got.RunID(), got.State)
-		}
-		time.Sleep(10 * time.Millisecond)
+			fire.Owner = brokerAlice
+			if err := store.Save(t.Context(), fire); err != nil {
+				t.Fatal(err)
+			}
+			run, err := svc.StartScheduledRunContent(session.WithPrincipal(t.Context(), caller), fire.ID, "fire", nil)
+			if err != nil {
+				t.Fatalf("StartScheduledRunContent: %v", err)
+			}
+			drain(run)
+			got := probedRun(t, probe)
+			if got.ID == "" || got.Owner != brokerOwner(brokerAlice) {
+				t.Fatalf("scheduled run = %+v, want one owned by %+v", got, brokerAlice)
+			}
+		})
 	}
 }

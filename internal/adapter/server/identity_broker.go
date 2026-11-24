@@ -504,7 +504,7 @@ func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) 
 	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
 		return runCtx, err
 	}
-	if owner, ok := identityBrokerOwner(session.PrincipalFromContext(ctx)); ok {
+	if owner, ok := identityBrokerOwner(newRunOwner(ctx, sess, runPurposeChat)); ok {
 		runCtx = agentcredential.WithRun(runCtx, agentcredential.Run{ID: newRunID(), Owner: owner})
 	}
 	return runCtx, nil

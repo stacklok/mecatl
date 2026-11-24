@@ -528,8 +528,8 @@ type Session struct {
 	// ended stays readable until the next run replaces it, which is what lets a
 	// terminal-state session still answer "which run was that?".
 	runID string
-	// runOwner is the person who started the run runID names, as the host
-	// recorded it when it minted the run. It is persisted with runID, so a
+	// runOwner is the verified caller that started the run runID names, as
+	// the host recorded it when it minted the run. It is persisted with runID, so a
 	// resume continues the run under the owner it started with. Like runID it
 	// is an inert stored label the aggregate never interprets.
 	runOwner *Principal
@@ -982,11 +982,17 @@ func (s *Session) BeginRun(runID string) {
 }
 
 // BeginRunFor is BeginRun that also records owner as the run's owner, the
-// person who started it. It replaces any earlier run's owner, and a nil owner
-// records none. owner is copied, so the caller cannot change it later.
+// verified caller that started it. It replaces any earlier run's owner. It
+// records none for a nil owner, for an empty runID, which names no run, and
+// for an owner whose identity is not well framed (see IdentityWellFramed),
+// which a snapshot could not restore. owner is copied, so the caller cannot
+// change it later.
 func (s *Session) BeginRunFor(runID string, owner *Principal) {
 	s.runID = runID
-	s.runOwner = owner.Clone()
+	s.runOwner = nil
+	if runID != "" && owner.IdentityWellFramed() {
+		s.runOwner = owner.Clone()
+	}
 }
 
 // RunID reports the run identity stamped by BeginRun, or "" if none was.

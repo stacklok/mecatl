@@ -92,3 +92,34 @@ func TestRunOwnerSnapshotCompatibility(t *testing.T) {
 		}
 	}
 }
+
+// TestBeginRunForRecordsNoOwnerItCannotRestore pins that a run owner is
+// recorded only for a named run and a well-framed identity, so a saved
+// snapshot always restores.
+func TestBeginRunForRecordsNoOwnerItCannotRestore(t *testing.T) {
+	t.Parallel()
+
+	owner := &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
+	for name, tc := range map[string]struct {
+		runID string
+		owner *session.Principal
+	}{
+		"no run":             {runID: "", owner: owner},
+		"NUL in the issuer":  {runID: "run_1", owner: &session.Principal{Issuer: "a\x00b", Subject: "c", GrantType: session.GrantTypeUser}},
+		"NUL in the subject": {runID: "run_1", owner: &session.Principal{Issuer: "a", Subject: "b\x00c", GrantType: session.GrantTypeUser}},
+	} {
+		s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
+		s.BeginRunFor("run_0", owner)
+		s.BeginRunFor(tc.runID, tc.owner)
+		if got := s.RunOwner(); got != nil {
+			t.Errorf("%s: run owner = %+v, want none", name, got)
+		}
+		line, err := sessnap.Marshal(s)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := sessnap.Unmarshal(line); err != nil {
+			t.Errorf("%s: saved snapshot does not restore: %v", name, err)
+		}
+	}
+}
