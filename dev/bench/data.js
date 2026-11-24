@@ -408872,6 +408872,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795539392258,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "11005e22a4ab857dec5ceeba567428e564601a26",
+          "message": "feat(mecak8s): deliver the identity broker's settings and key fallbacks through Helm (#2977)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-24T17:04:04Z",
+          "tree_id": "2643d8781afa28dd9915841688d48814e3f2565d",
+          "url": "https://github.com/stacklok/mecatl/commit/11005e22a4ab857dec5ceeba567428e564601a26"
+        },
+        "date": 1795540597376,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -589872,6 +589906,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795540593341,
+  "lastUpdate": 1795540598258,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
