@@ -3,7 +3,9 @@ package executioncontroller
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +15,8 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func testServerArgs() []string {
@@ -21,6 +25,8 @@ func testServerArgs() []string {
 		"-files",
 		"-commands",
 		"-max-file-bytes=1024",
+		"-keepalive-interval=10s",
+		"-keepalive-timeout=10s",
 		"-tls-dir=/etc/mecatl-executor/tls",
 		"-provider-trust-dir=/etc/mecatl-executor/provider",
 	}
@@ -89,6 +95,82 @@ func TestExecutorServerEnablesOnlyAdmittedServices(t *testing.T) {
 	widened.Spec.Containers[0].Args = testServerArgs()
 	if err := validatePod(env, profile, inputs, widened); err == nil {
 		t.Fatal("drift check accepted Commands on a file-only executor")
+	}
+}
+
+func TestExecutorKeepaliveReachesNewPodsAndSparesExistingOnes(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	k := kubefake.NewSimpleClientset()
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	keepalive := executionenv.ExecutorKeepalive{
+		Interval: 30 * time.Second,
+		Timeout:  5 * time.Second,
+	}
+	profiles := testProfiles().WithExecutorKeepalive(keepalive)
+	r := NewReconciler(d, k, "ns", profiles)
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := pod.Spec.Containers[0].Args
+	if !slices.Contains(args, keepaliveIntervalArg+"30s") ||
+		!slices.Contains(args, keepaliveTimeoutArg+"5s") {
+		t.Fatalf("executor args = %q", args)
+	}
+	profile, _ := profiles.get("go")
+	if err := validatePod(env, profile, testPodInputs(profiles, pod), pod); err != nil {
+		t.Fatalf("keepalive change invalidated the existing Pod: %v", err)
+	}
+}
+
+func TestExecutorDriftCheckRejectsTamperedKeepalive(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	k := kubefake.NewSimpleClientset()
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	profiles := testProfiles()
+	r := NewReconciler(d, k, "ns", profiles)
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, _ := profiles.get("go")
+	inputs := testPodInputs(profiles, pod)
+	withArgs := func(args ...string) *corev1.Pod {
+		p := pod.DeepCopy()
+		c := &p.Spec.Containers[0]
+		c.Args = append(slices.DeleteFunc(slices.Clone(c.Args), func(a string) bool {
+			return strings.HasPrefix(a, keepaliveIntervalArg) ||
+				strings.HasPrefix(a, keepaliveTimeoutArg)
+		}), args...)
+		return p
+	}
+	if err := validatePod(env, profile, inputs, withArgs()); err != nil {
+		t.Fatalf("Pod from before keepalive flags rejected: %v", err)
+	}
+	for name, args := range map[string][]string{
+		"zero interval":     {keepaliveIntervalArg + "0s"},
+		"over the maximum":  {keepaliveTimeoutArg + "1h"},
+		"unparsable":        {keepaliveIntervalArg + "soon"},
+		"repeated interval": {keepaliveIntervalArg + "10s", keepaliveIntervalArg + "10s"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := withArgs(args...)
+			if err := validatePod(env, profile, inputs, p); err == nil {
+				t.Fatalf("args %q accepted", p.Spec.Containers[0].Args)
+			}
+		})
 	}
 }
 

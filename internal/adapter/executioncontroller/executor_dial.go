@@ -69,6 +69,7 @@ type ExecutorDialer struct {
 	clientDirectory string
 	clientURI       string
 	port            int
+	keepalive       executionenv.ExecutorKeepalive
 	now             func() time.Time
 }
 
@@ -82,8 +83,15 @@ func NewExecutorDialer(
 		clientDirectory: clientDirectory,
 		clientURI:       clientURI,
 		port:            executionenv.ExecutorServerPort,
+		keepalive:       executionenv.DefaultExecutorKeepalive(),
 		now:             func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// WithKeepalive sets the client keepalive for executor connections.
+func (d *ExecutorDialer) WithKeepalive(keepalive executionenv.ExecutorKeepalive) *ExecutorDialer {
+	d.keepalive = keepalive.OrDefault()
+	return d
 }
 
 // CheckClientCertificate reports whether the projected client certificate is
@@ -172,6 +180,7 @@ func (d *ExecutorDialer) Connect(pin ExecutorPin) (grpc.ClientConnInterface, fun
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return d.dialPod(ctx, pin, d.port)
 		}),
+		executorclient.Keepalive(d.keepalive.Interval, d.keepalive.Timeout),
 	)
 	if err != nil {
 		return nil, nil, err
