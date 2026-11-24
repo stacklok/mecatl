@@ -449609,6 +449609,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795509018805,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09febfe8002f722d652596c544661130a8a12c9d",
+          "message": "docs: add a project roadmap (#2961)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T03:40:41-05:00",
+          "tree_id": "11e60eec366a43f252a305ece12eb82e74ae0d60",
+          "url": "https://github.com/stacklok/mecatl/commit/09febfe8002f722d652596c544661130a8a12c9d"
+        },
+        "date": 1795510345325,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13402,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12895,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -585307,6 +585346,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795510341858,
+  "lastUpdate": 1795510346386,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
