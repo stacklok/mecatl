@@ -169,12 +169,13 @@ EOF
         resource-quota-sync-period: "10s"
 EOF
 } >"$kind_config"
-node_image=kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
+node_image=docker.io/kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
 if [ -z "$resume" ]; then
   retained=$(printf '%s\n' "$clusters" | grep -c '^mecatl-execution-qual-' || :)
   [ "$retained" -lt 2 ] || echo "warning: $retained retained qualification clusters share this host's disk" >&2
   # Workspace PVCs live on the node's disk, which is the container runtime's.
-  free_kib=$("$runtime" run --rm --entrypoint df "$node_image" -Pk / | awk 'NR==2 {print $4}')
+  df_out=$("$runtime" run --rm --entrypoint df "$node_image" -Pk /) || { echo "could not probe the container runtime disk with $node_image" >&2; exit 1; }
+  free_kib=$(printf '%s\n' "$df_out" | awk 'NR==2 {print $4}')
   [ "${free_kib:-0}" -ge 15728640 ] || { echo "container runtime disk has under 15 GiB free" >&2; exit 1; }
   kind create cluster --name "$cluster" --image "$node_image" --config "$kind_config" --kubeconfig "$kubeconfig"
 fi

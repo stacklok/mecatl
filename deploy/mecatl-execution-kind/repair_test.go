@@ -32,7 +32,13 @@ func scriptRange(t *testing.T, file, start, end string) string {
 
 func TestKindSyncPeriodsAndDiskPreflight(t *testing.T) {
 	create := scriptRange(t, "run.sh", "kind_config=\"$state/kind.yaml\"\n", "\nphase_done cluster")
-	stubs := "kind() { :; }\ndocker() { printf 'Filesystem 1024-blocks Used Available\\n/ 1 1 %s\\n' \"$FREE_KIB\"; }\n"
+	image := "docker.io/kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
+	stubs := `kind() { printf '%s\n' "$*" > "$state/kind-args"; }
+docker() {
+  [ "$*" = "run --rm --entrypoint df ` + image + ` -Pk /" ] || exit 99
+  printf 'Filesystem 1024-blocks Used Available\n/ 1 1 %s\n' "$FREE_KIB"
+}
+`
 	for _, profile := range []string{"production", "development"} {
 		t.Run(profile, func(t *testing.T) {
 			state := t.TempDir()
@@ -49,6 +55,14 @@ func TestKindSyncPeriodsAndDiskPreflight(t *testing.T) {
 			)
 			if err != nil {
 				t.Fatalf("render kind cluster config: %v: %s", err, out)
+			}
+			args, err := os.ReadFile(filepath.Join(state, "kind-args"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "create cluster --name owned --image " + image + " --config " + filepath.Join(state, "kind.yaml") + " --kubeconfig " + filepath.Join(state, "kubeconfig") + "\n"
+			if string(args) != want {
+				t.Fatalf("kind args = %q, want %q", args, want)
 			}
 			data, err := os.ReadFile(filepath.Join(state, "kind.yaml"))
 			if err != nil {
@@ -102,22 +116,50 @@ func TestKindSyncPeriodsAndDiskPreflight(t *testing.T) {
 			}
 		})
 	}
-	t.Run("low disk", func(t *testing.T) {
-		state := t.TempDir()
-		out, err := runStep(
-			t,
-			state,
-			stubs+create,
-			"state="+state,
-			"cluster=owned",
-			"runtime=docker",
-			"FREE_KIB=1048576",
-			"kubeconfig="+filepath.Join(state, "kubeconfig"),
-		)
-		if err == nil || !strings.Contains(string(out), "under 15 GiB free") {
-			t.Fatalf("low disk was not refused: %v: %s", err, out)
-		}
-	})
+	for name, tc := range map[string]struct{ stubs, want string }{
+		"low disk":      {stubs, "under 15 GiB free"},
+		"probe failure": {stubs + "docker() { return 125; }\n", "could not probe"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state := t.TempDir()
+			out, err := runStep(
+				t,
+				state,
+				tc.stubs+create,
+				"state="+state,
+				"cluster=owned",
+				"runtime=docker",
+				"FREE_KIB=1048576",
+				"kubeconfig="+filepath.Join(state, "kubeconfig"),
+			)
+			if err == nil || !strings.Contains(string(out), tc.want) {
+				t.Fatalf("%s was not refused: %v: %s", name, err, out)
+			}
+			if _, err := os.Stat(filepath.Join(state, "kind-args")); !os.IsNotExist(err) {
+				t.Fatalf("%s still created the cluster: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestResumeInspectsWithConfiguredRuntime(t *testing.T) {
+	resume := scriptRange(t, "run.sh", "if [ -n \"$resume\" ]; then\n", "\nkubeconfig=\"$state/kubeconfig\"")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, ".scratch/k8s-execution/run")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cluster := "mecatl-execution-qual-x"
+	writeFixture(t, filepath.Join(state, "kubeconfig"), "", 0o600)
+	writeFixture(t, filepath.Join(state, "ownership"), "cluster="+cluster+"\nruntime=docker\nprofile=development\nkubeconfig="+state+"/kubeconfig\ncontext=kind-"+cluster+"\n", 0o600)
+	stub := "docker() { [ \"$1 $2\" = \"inspect " + cluster + "-control-plane\" ] && printf '%s\\n' " + cluster + "; }\n"
+	out, err := runStep(t, root, stub+resume, "root="+root, "resume="+state, "runtime=docker")
+	if err != nil {
+		t.Fatalf("docker resume rejected: %v: %s", err, out)
+	}
 }
 
 func TestKindNetworkPolicyRuntimeValues(t *testing.T) {
@@ -470,6 +512,7 @@ esac
 `, 0o700)
 			writeFixture(t, filepath.Join(root, "bin/kind"), prefix+"printf 'load\\n' >> \"$HOME/events\"\n", 0o700)
 			writeFixture(t, filepath.Join(root, "bin/ko"), prefix+`
+test "$KO_DEFAULTPLATFORMS" = linux/amd64
 printf 'build\n' >> "$HOME/events"
 case "$*" in *mecatl-execution-provider*) printf 'ko.local/provider:head\n' ;; *mecak8s*) printf 'ko.local/agent:head\n' ;; *) exit 99 ;; esac
 `, 0o700)
