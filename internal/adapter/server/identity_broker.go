@@ -32,10 +32,10 @@ func identityBrokerRoot(sess *session.Session) bool {
 	}
 }
 
-// identityBrokerOwner converts a session's owner to the broker's owner, the
-// user's company identity. It is the only place that conversion happens. A
-// scheduled session's owner is the schedule's captured owner, so it converts
-// the same way.
+// identityBrokerOwner converts a session's or a run's owner to the broker's
+// owner, the user's company identity. It is the only place that conversion
+// happens. A scheduled session's owner is the schedule's captured owner, so it
+// converts the same way.
 func identityBrokerOwner(owner *session.Principal) (identitybroker.Owner, bool) {
 	if owner == nil {
 		return identitybroker.Owner{}, false
@@ -472,15 +472,21 @@ func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin st
 // its members belong to no session tree, so they get no agent identity.
 //
 // It returns ctx carrying the team run: a RunTeam call is a run of the root's
-// main agent, owned by the root's owner, and each member's run is delegated
-// from it, the main agent being the members' stand-in creation parent. A
-// team with no broker, no root session, or a root with no owner has no such
-// run, and its members' gateway calls fail closed.
+// main agent, owned by the verified caller on the RunTeam request, the person
+// who started it, and each member's run is delegated from it, the main agent
+// being the members' stand-in creation parent. A team with no broker, no root
+// session, or no verified caller has no such run, and its members' gateway
+// calls fail closed.
 func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) (context.Context, error) {
-	if s.cfg.IdentityBroker == nil || root == "" {
+	if s.cfg.IdentityBroker == nil {
 		return ctx, nil
 	}
-	runCtx := ctx
+	// A team with no run of its own clears any run the caller's context
+	// carries, as rootedRunContext does, so its members cannot inherit it.
+	runCtx := agentcredential.WithRun(ctx, agentcredential.Run{})
+	if root == "" {
+		return runCtx, nil
+	}
 	// The team run fails if registration does, so it keeps the caller's
 	// cancellation; the timeout keeps a slow broker from holding the root's
 	// runEntryMu, as fork and clear bound theirs.
@@ -503,7 +509,7 @@ func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) 
 	if err := s.openIdentityBrokerSession(ctx, sess); err != nil {
 		return runCtx, err
 	}
-	if owner, ok := identityBrokerOwner(sess.Owner); ok {
+	if owner, ok := identityBrokerOwner(newRunOwner(ctx, sess, runPurposeChat)); ok {
 		runCtx = agentcredential.WithRun(runCtx, agentcredential.Run{ID: newRunID(), Owner: owner})
 	}
 	return runCtx, nil

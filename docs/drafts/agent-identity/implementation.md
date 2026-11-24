@@ -317,6 +317,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 
 - The broker refuses a call whose reported run owner differs from the owner recorded with the grant in use, the company identity, and records the denial.
 - A child run's owner equals its parent run's owner; the broker refuses a delegation that changes it.
+- mecak8s records an interactive run's owner from the verified caller on the request that starts it, including a `RunTeam` call, and keeps it with the run: an approval or other resume, including one after a restart, continues the run under that owner, whatever the session's owner value is by then. A run with no recorded owner names no run, so its calls fail closed.
 - `ReportDelegation` is refused for an unknown delegating run whose instance is not a root instance, an instance not registered to the session, or a delegating run that is not its parent delegation's receiving run. A repeat with the same content succeeds; a repeat with different content returns `ALREADY_EXISTS`.
 - A call naming a delegation that was not reported is denied.
 - Registration into a closed session, or a session bound to another workload, is refused.

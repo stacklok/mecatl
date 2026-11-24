@@ -269,6 +269,26 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 }
 
+// TestATeamRunWithNoCallerClearsTheContextRun pins that a team run with no
+// verified caller has no run, even when the caller's context already carries
+// one, so its members cannot inherit that run.
+func TestATeamRunWithNoCallerClearsTheContextRun(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	if err := svc.cfg.Store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	stale := agentcredential.WithRun(t.Context(), agentcredential.Run{ID: "run_stale", Owner: identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}})
+	for name, root := range map[string]session.SessionID{"a root session": sess.ID, "no root session": ""} {
+		ctx, err := svc.startTeamRootRun(stale, root)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, ok := agentcredential.RunFromContext(ctx); ok {
+			t.Errorf("%s: team run = %+v, want none", name, got)
+		}
+	}
+}
+
 func TestTeamRootRegistrationForADeletedRootIsNotFound(t *testing.T) {
 	svc, sess := newRegisteringService(t)
 	// The root is gone from the store, as a delete that won run entry's lock
@@ -579,12 +599,14 @@ func TestNewServiceRequiresIdentityDefinitionsWithABroker(t *testing.T) {
 // TestRootedRunContextCarriesTheSessionRun pins the run every server engine
 // entry hands the engine (a new run, a retry, an approval resume, and an
 // authorization continuation all pass through rootedRunContext): the
-// session's run ID and owner, and no run, masking any the caller's context
-// carried, when the session has no owner or no run ID.
+// session's run ID and the owner recorded with that run, not the session's
+// owner, and no run, masking any the caller's context carried, when the
+// session has no run ID or its run no recorded owner.
 func TestRootedRunContextCarriesTheSessionRun(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
-	outer := agentcredential.WithRun(t.Context(), agentcredential.Run{ID: "run_outer", Owner: identitybroker.Owner{Issuer: "https://login.example.com", Subject: "bob-117"}})
-	newSession := func(t *testing.T, owner *session.Principal, runID string) *session.Session {
+	bob := &session.Principal{Issuer: "https://login.example.com", Subject: "bob-117", GrantType: session.GrantTypeUser}
+	outer := agentcredential.WithRun(t.Context(), agentcredential.Run{ID: "run_outer", Owner: identitybroker.Owner{Issuer: bob.Issuer, Subject: bob.Subject}})
+	newSession := func(t *testing.T, owner, runOwner *session.Principal, runID string) *session.Session {
 		t.Helper()
 		sess := session.New("root-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "r1"}, session.Limits{}, time.Unix(1, 0))
 		if owner != nil {
@@ -592,21 +614,30 @@ func TestRootedRunContextCarriesTheSessionRun(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		sess.BeginRun(runID)
+		sess.BeginRunFor(runID, runOwner)
 		return sess
 	}
 
-	ctx := rootedRunContext(outer, newSession(t, alice, "run_a"), "/ws")
 	want := agentcredential.Run{ID: "run_a", Owner: identitybroker.Owner{Issuer: alice.Issuer, Subject: alice.Subject}}
-	if got, ok := agentcredential.RunFromContext(ctx); !ok || got != want {
-		t.Fatalf("run = %+v, %v; want %+v", got, ok, want)
-	}
-	if root, _ := port.RootSessionIDFromContext(ctx); root != "root-1" {
-		t.Fatalf("root = %q, want root-1", root)
+	for name, sess := range map[string]*session.Session{
+		"single owner": newSession(t, alice, alice, "run_a"),
+		// The run's owner, not the session's: a session's owner value
+		// changing later does not change the owner of a run it started.
+		"session owner changed": newSession(t, bob, alice, "run_a"),
+		"no session owner":      newSession(t, nil, alice, "run_a"),
+	} {
+		ctx := rootedRunContext(outer, sess, "/ws")
+		if got, ok := agentcredential.RunFromContext(ctx); !ok || got != want {
+			t.Errorf("%s: run = %+v, %v; want %+v", name, got, ok, want)
+		}
+		if root, _ := port.RootSessionIDFromContext(ctx); root != "root-1" {
+			t.Errorf("%s: root = %q, want root-1", name, root)
+		}
 	}
 	for name, sess := range map[string]*session.Session{
-		"no owner":  newSession(t, nil, "run_a"),
-		"no run ID": newSession(t, alice, ""),
+		// A run with no recorded owner is not given the session's.
+		"no run owner": newSession(t, alice, nil, "run_a"),
+		"no run ID":    newSession(t, alice, alice, ""),
 	} {
 		if got, ok := agentcredential.RunFromContext(rootedRunContext(outer, sess, "/ws")); ok {
 			t.Errorf("%s: run = %+v, want none, masking the caller's", name, got)

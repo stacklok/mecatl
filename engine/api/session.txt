@@ -8,6 +8,7 @@
     method func (*Session).AbortWorkspaceEnrollment(id WorkspaceEnrollmentID) error
     method func (*Session).ApplyTitleGeneration(generation TitleGenerationState, attempts []TitleAttempt)
     method func (*Session).BeginRun(runID string)
+    method func (*Session).BeginRunFor(runID string, owner *Principal)
     method func (*Session).BeginTurn() error
     method func (*Session).BeginWorkspaceEnrollment(pending PendingWorkspaceEnrollment) error
     method func (*Session).BindAuthority(authority Authority) error
@@ -65,6 +66,7 @@
     method func (*Session).RestoreWorkspaceEnrollmentBrokerKeys(keys []string, present bool) error
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).RunID() string
+    method func (*Session).RunOwner() *Principal
     method func (*Session).SeedHistory(messages []Message) error
     method func (*Session).SetGeneratedTitle(text string) error
     method func (*Session).SetMode(mode PermissionMode) error
