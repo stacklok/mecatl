@@ -643,11 +643,14 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 		down, memberDown bool
 		// anonymous runs the team with no verified caller.
 		anonymous bool
+		// otherCaller runs the team as a caller other than the root's owner.
+		otherCaller bool
 	}{
 		{name: "available"},
 		{name: "unavailable", down: true},
 		{name: "unavailable for the member", memberDown: true},
 		{name: "no verified caller", anonymous: true},
+		{name: "a caller other than the root's owner", otherCaller: true},
 	} {
 		down := tc.down
 		t.Run(tc.name, func(t *testing.T) {
@@ -688,7 +691,26 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			}
 			broker.setUnavailable(down)
 			broker.set(func(b *recordingBroker) { b.helperUnavailable = tc.memberDown })
-			_, err = svc.RunTeam(ctx, teamID, nil)
+			runCtx := ctx
+			if tc.otherCaller {
+				// Ownership is not enforced here, so another caller may run
+				// Alice's team.
+				runCtx = session.WithPrincipal(context.Background(), &session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117", GrantType: session.GrantTypeUser})
+			}
+			_, err = svc.RunTeam(runCtx, teamID, nil)
+			if tc.otherCaller {
+				// The team run is the caller's, not the root owner's: the
+				// member's delegation reports Bob, and the broker, whose
+				// grant is Alice's, refuses it.
+				delegations := broker.delegationRequests()
+				if len(delegations) != 1 || delegations[0].Owner.Subject != "bob-117" {
+					t.Fatalf("delegation reports = %+v, want one owned by the caller", delegations)
+				}
+				if err == nil {
+					t.Fatal("RunTeam by another caller succeeded; want the broker's refusal")
+				}
+				return
+			}
 			if tc.memberDown {
 				// The root registered; the member's refusal keeps its class.
 				if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
