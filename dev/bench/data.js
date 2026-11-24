@@ -408514,6 +408514,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795537844049,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "efdb8a119a0055d5904fe5325050c28527c9dbda",
+          "message": "fix(e2e): make the Kind execution fixture portable and arm64-native (#2978)\n\nResume compared the node container with `podman inspect` whatever\n`CONTAINER_ENGINE` was, so resuming a Docker fixture always failed.\nThe development profile wrote no Kind config, so the ResourceQuota\nwait raced the controller's 5-minute resync and timed out after 180 s.\nBoth profiles now set `resource-quota-sync-period`.\n\nko built every fixture image for `linux/amd64`, which ran emulated on\narm64 Kind nodes and OOMKilled the 32 MiB netprobe Pods. `run.sh` and\n`live.sh` now build for the node's architecture.\n\n`run.sh` refuses to create a cluster with under 15 GiB free on the\ncontainer runtime's disk, reports a failed disk probe as such, and\nwarns about other retained qualification clusters. The node image uses\nthe fully qualified `docker.io/kindest/node` reference. On macOS, the\nCalico image pins write a new file instead of `sed -i`,\n`install-cmctl.sh` gains the Darwin assets and checks owner, mode and\nhash without GNU `stat -c` or `sha256sum --check`, and both scripts\nrequire `timeout` up front.\n\n`repair_test.go` pins the `kind` and disk-probe arguments, the live\n`KO_DEFAULTPLATFORMS`, and the runtime-aware resume inspection.",
+          "timestamp": "2026-11-24T16:44:12Z",
+          "tree_id": "6da8a16761c58715507de2b0ca789c8bb08ef7ba",
+          "url": "https://github.com/stacklok/mecatl/commit/efdb8a119a0055d5904fe5325050c28527c9dbda"
+        },
+        "date": 1795539392258,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -589361,6 +589395,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795539388405,
+  "lastUpdate": 1795539393337,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
