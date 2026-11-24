@@ -136,13 +136,18 @@ changes, and `mecak8s` must come from the same release as the provider.
 
 1. While the old `mecak8s` and provider are still running, delete every session
    that uses an execution environment, including forks. The provider can't retire
-   an environment that a session still references. `spec.bindingID` names each
-   environment's session:
+   an environment that a session still references. `status.references` lists the
+   ID of every session that holds each environment:
 
    ```sh
    kubectl --namespace <NAMESPACE> get executionenvironments \
-     -o custom-columns='NAME:.metadata.name,SESSION:.spec.bindingID'
+     -o custom-columns='NAME:.metadata.name,SESSIONS:.status.references[*].bindingID'
    ```
+
+   Each owner deletes their sessions permanently with
+   `POST /v1/sessions/<SESSION_ID>/delete` or the gRPC `DeleteSession` call,
+   which releases the session's reference. Closing a session with
+   `DELETE /v1/sessions/<SESSION_ID>` keeps its reference.
 
 2. Stop `mecak8s`:
 
@@ -156,8 +161,21 @@ changes, and `mecak8s` must come from the same release as the provider.
    as in [Replace or retire an executor](#replace-or-retire-an-executor), using
    `contracts/proto` from the old release's tag. If a run claim left by the
    stopped `mecak8s` blocks retirement, retry the same request with the same
-   operation ID after it expires. Continue when the namespace has no
-   `ExecutionEnvironment` left:
+   operation ID after it expires. Retirement also fails with `conflict` while
+   `status.references` is nonempty. When a remaining reference doesn't belong
+   to a session you can delete, release it with `ReleaseReference`. The
+   provider accepts this call only from the client that created the
+   environment, with `mayAttestOwner: true` in its policy, so set `CERT_FILE`
+   and `KEY_FILE` to the `mecak8s` client certificate:
+
+   ```sh
+   grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+     -import-path contracts/proto -proto "$PROTO" \
+     -d '{"context":{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"bindingId":"<BINDING_ID>"}}' \
+     "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/ReleaseReference
+   ```
+
+   Continue when the namespace has no `ExecutionEnvironment` left:
 
    ```sh
    kubectl --namespace <NAMESPACE> get executionenvironments
@@ -167,17 +185,49 @@ changes, and `mecak8s` must come from the same release as the provider.
    `mecatl-execution-workload` image, as in
    [Build a downstream workload image](native-execution.md#build-a-downstream-workload-image).
    Regenerate each recipe with the new image digest using the new release's
-   [`deploy/execution-templates`](native-execution.md#author-and-validate-template-revisions-offline),
-   and merge the new revisions into `template-values.yaml`.
-5. Upgrade the provider by following steps 1 to 3 of
-   [Upgrade a compatible release](#upgrade-a-compatible-release) with the new
-   chart version: stop the provider, apply the new CRD, then run `helm upgrade`.
-   Because no environment uses the old revisions, remove them in the same
-   upgrade, passing each removed revision in `maintenance.pruneRevisions` as in
-   the [pruning procedure](#prune-an-unused-retained-revision).
+   [`deploy/execution-templates`](native-execution.md#author-and-validate-template-revisions-offline).
+   Replace `template-values.yaml` with the generated file rather than merging
+   it: no environment uses an old revision, and the generated file sets each
+   template ID's `default` to its new revision.
+5. Stop the provider and apply the new CRD as in steps 1 and 2 of
+   [Upgrade a compatible release](#upgrade-a-compatible-release). The old
+   revisions leave retained history in this upgrade, which the chart allows
+   only with explicit consent for every removed revision of every template ID.
+   Build that consent from the retained history, then upgrade:
+
+   ```sh
+   kubectl --namespace <NAMESPACE> get configmap mecatl-execution-templates \
+     -o jsonpath='{.data.lifetime\.json}' |
+     jq '{maintenance: {pruneRevisions: (.definitions | map_values(keys))}}' \
+     > prune-values.yaml
+   HELM_APPLY_MODE=
+   case "$(helm version --template '{{.Version}}')" in
+     v4.*) HELM_APPLY_MODE=--server-side=false ;;
+   esac
+   helm upgrade mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
+     --version <VERSION> \
+     --namespace <NAMESPACE> --values execution-values.yaml \
+     --values template-values.yaml --values prune-values.yaml \
+     --wait --timeout=4m $HELM_APPLY_MODE
+   ```
+
+   Steps 1 to 3 of this procedure already did the
+   [pruning procedure's](#prune-an-unused-retained-revision) retirement step.
+   Its inspection step is optional here: the chart repeats those checks and
+   fails if the provider Deployment hasn't observed zero replicas, a capacity
+   ledger still lists a reservation, or an execution Pod or PVC remains. Omit
+   `prune-values.yaml` from later upgrades.
 6. Set `execution.templateRevision` in the `mecak8s` values to the regenerated
-   key, then upgrade `mecak8s` to the same release and restore its replica
-   count. Check that the provider is ready and `mecak8s` starts, then run the
+   key, then upgrade `mecak8s` to the same release. Helm restores the replica
+   count from `replicaCount` in your values:
+
+   ```sh
+   helm upgrade <MECAK8S_RELEASE> oci://ghcr.io/stacklok/mecatl/charts/mecak8s \
+     --version <VERSION> --namespace <MECAK8S_NAMESPACE> \
+     --values <MECAK8S_VALUES_FILE>
+   ```
+
+   Check that the provider is ready and `mecak8s` starts, then run the
    [deployed-image smoke test](native-execution.md#smoke-test-the-deployed-image).
 
 <span id="reuse-a-full-template-history"></span>
@@ -367,7 +417,8 @@ will not disclose another creator's data to diagnose a scope mismatch.
 
 ### Capture the exact environment identity
 
-First capture the private identity while the environment still has a reference:
+First capture the private identity while the environment exists. Its spec
+keeps the owner fields after the last reference is released:
 
 ```sh
 kubectl --namespace <NAMESPACE> get executionenvironment <ENVIRONMENT_ID> \
@@ -377,8 +428,8 @@ kubectl --namespace <NAMESPACE> get executionenvironment <ENVIRONMENT_ID> \
 Record those seven lines as `<REVISION>`, `<OWNER_ISSUER>`, `<OWNER_SUBJECT>`,
 `<EPOCH>`, `<POD_UID>`, `<PVC_UID>`, and `<GRANT_GENERATION>`. The owner hash is
 not reversible, so retain the bounded `spec.ownerIssuer` and `spec.ownerSubject`
-attestation in your authorized operations record before removing the final
-reference.
+attestation in your authorized operations record before deleting the
+environment.
 
 Obtain `contracts/proto` from the
 [Mecatl source](https://github.com/stacklok/mecatl) at the same release tag as
