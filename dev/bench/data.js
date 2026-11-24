@@ -451594,6 +451594,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795524249807,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50079c0b0be2074e05592eb537e996c6475efbf",
+          "message": "feat(identity): give named-definition sessions their servers' gateway tools (#2965)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-24T15:04:34+02:00",
+          "tree_id": "b82c7b0ad3738aaf896231d7cd00244daee4601c",
+          "url": "https://github.com/stacklok/mecatl/commit/f50079c0b0be2074e05592eb537e996c6475efbf"
+        },
+        "date": 1795526242429,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13403.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12896.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -587862,6 +587901,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795526238648,
+  "lastUpdate": 1795526243547,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
