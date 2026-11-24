@@ -226,7 +226,7 @@ func (h *Handler) recheckEnvironment(reads *recheckReads, flights []*flight) {
 		probe := group[0]
 		ctx := context.WithValue(context.WithoutCancel(probe.ctx), recheckReadsKey{}, reads)
 		ctx, cancel := context.WithTimeout(ctx, h.cfg.PolicyRecheckInterval)
-		_, transient, err := probe.proxy.admit(ctx, probe.rc)
+		transient, err := probe.proxy.recheck(ctx, probe.rc)
 		cancel()
 		for _, f := range group {
 			switch {

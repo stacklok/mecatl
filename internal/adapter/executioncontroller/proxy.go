@@ -2,7 +2,6 @@ package executioncontroller
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 
@@ -64,6 +63,15 @@ type ExecutorConnectFunc func(
 	pin ExecutorPin,
 ) (conn grpc.ClientConnInterface, release func(), err error)
 
+type authorityRechecker interface {
+	RecheckAuthority(
+		ctx context.Context,
+		client string,
+		owner string,
+		rc executionenv.RequestContext,
+	) error
+}
+
 type executorRouter interface {
 	ExecutorRoute(
 		ctx context.Context,
@@ -83,10 +91,7 @@ func (s *Store) ExecutorRoute(
 	capability string,
 ) (ExecutorRoute, error) {
 	o, err := s.validateRunClaim(ctx, client, owner, rc)
-	// A briefly unready environment is unconfirmed unless a lifecycle operation
-	// refuses it; validateRunClaim already refused a revoked template.
-	var unready *unconfirmedRefusal
-	if o == nil || err != nil && !errors.As(err, &unready) {
+	if err != nil {
 		return ExecutorRoute{}, err
 	}
 	if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
@@ -94,9 +99,6 @@ func (s *Store) ExecutorRoute(
 			Code:    executionenv.CodeNotReady,
 			Message: transitioningMessage,
 		}
-	}
-	if unready != nil {
-		return ExecutorRoute{}, unready
 	}
 	if err := s.requireAdmitted(o, capability); err != nil {
 		return ExecutorRoute{}, err
@@ -170,33 +172,49 @@ func (p *executorProxy) authorize(
 	ctx context.Context,
 	rc *executorv1.RequestContext,
 ) (ExecutorRoute, error) {
-	route, _, err := p.admit(ctx, rc)
-	return route, err
-}
-
-// admit is authorize that also reports whether a refusal is unconfirmed.
-func (p *executorProxy) admit(
-	ctx context.Context,
-	rc *executorv1.RequestContext,
-) (ExecutorRoute, bool, error) {
 	c, err := p.handler.client(ctx)
 	if err != nil {
-		// The client check refuses as Unavailable only while not ready.
-		return ExecutorRoute{}, status.Code(err) == codes.Unavailable, err
+		return ExecutorRoute{}, err
 	}
 	erc, ok := requestContextFromProto(executionContext(rc))
 	if !ok || !c.policy.MayAttestOwner {
-		return ExecutorRoute{}, false, wireError(executionenv.CodePermissionDenied, false)
+		return ExecutorRoute{}, wireError(executionenv.CodePermissionDenied, false)
 	}
 	router, ok := p.handler.backend.(executorRouter)
 	if !ok || p.connector == nil {
-		return ExecutorRoute{}, false, wireError(executionenv.CodeNotReady, false)
+		return ExecutorRoute{}, wireError(executionenv.CodeNotReady, false)
 	}
 	route, err := router.ExecutorRoute(ctx, c.id, ownerHash(erc.Owner), erc, p.capability)
 	if err != nil {
-		return ExecutorRoute{}, unconfirmed(err), backendError(err)
+		return ExecutorRoute{}, backendError(err)
 	}
-	return route, false, nil
+	return route, nil
+}
+
+// recheck reports whether a forwarded call's authority ended, and whether a
+// refusal is unconfirmed because authorization state could not be read.
+func (p *executorProxy) recheck(ctx context.Context, rc *executorv1.RequestContext) (bool, error) {
+	c, err := p.handler.client(ctx)
+	if err != nil {
+		// The client check refuses as Unavailable only while not ready.
+		return status.Code(err) == codes.Unavailable, err
+	}
+	erc, ok := requestContextFromProto(executionContext(rc))
+	if !ok || !c.policy.MayAttestOwner {
+		return false, wireError(executionenv.CodePermissionDenied, false)
+	}
+	owner := ownerHash(erc.Owner)
+	if rechecker, ok := p.handler.backend.(authorityRechecker); ok {
+		err = rechecker.RecheckAuthority(ctx, c.id, owner, erc)
+	} else if router, ok := p.handler.backend.(executorRouter); ok {
+		_, err = router.ExecutorRoute(ctx, c.id, owner, erc, p.capability)
+	} else {
+		return false, wireError(executionenv.CodeNotReady, false)
+	}
+	if err != nil {
+		return unconfirmed(err), backendError(err)
+	}
+	return false, nil
 }
 
 // connect dials route's executor for a call tracked since before admission,
