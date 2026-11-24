@@ -453579,6 +453579,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795540602064,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e9226ba8c9a078713ff7a2424a7ed65043d4fee6",
+          "message": "feat(executioncontroller): withdraw forwarded executor calls (#2975)\n\nThe execution provider now closes file and command calls in flight\nwhen their authority ends (environment revocation, a lapsed run claim,\ntemplate revocation, or a client policy or trust change), instead of\nonly refusing new calls. The caller gets the refusal a new call would\nget, and the executor stops the command.\n\nOne sweep per provider rechecks open calls every\n`--policy-recheck-interval` (chart: `provider.policyRecheckInterval`,\ndefault 10s), reading each environment and the security authority\nonce per sweep. `RevokeEnvironment` closes the serving replica's calls\nat once, including calls still being admitted. A recheck that cannot\nconfirm authority, such as an API error or a transient executor\noutage, is tolerated for one sweep. The provider's Kubernetes clients\nnow allow 50 QPS with a burst of 100.\n\nNo wire API break: new calls get the same refusals as before.\n\nCloses: #2708",
+          "timestamp": "2026-11-24T17:44:08Z",
+          "tree_id": "69c0a87d05d985ec0c46c65f7e9bde069f170014",
+          "url": "https://github.com/stacklok/mecatl/commit/e9226ba8c9a078713ff7a2424a7ed65043d4fee6"
+        },
+        "date": 1795543078688,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13416.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -590417,6 +590456,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795543074946,
+  "lastUpdate": 1795543079500,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
