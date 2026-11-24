@@ -453976,6 +453976,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795543078688,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b352a40aa6abbe656567ebb2dae93affa540c147",
+          "message": "fix(executioncontroller): recheck only a forwarded call's authority (#2981)\n\nThe policy recheck from #2975 reused full new-call admission, so a\nforwarded call was closed when its environment merely stopped being\nroutable: releasing the final reference, fencing, retirement, a\nlifecycle operation, or an unready executor. The Kind qualification\n`TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete` has\nfailed on `main` since then.\n\nRechecks now use `Store.RecheckAuthority`, which checks only the\nenvironment and its owner, the template (including `Ready=False` with\nreason `InvalidTemplate`), the run claim, and the client's policy.\nRoutability stays an admission check, so new calls are unchanged. The\ntransient-readiness tolerance is removed; the one-sweep tolerance for\nunreadable state stays.",
+          "timestamp": "2026-11-24T23:11:12+01:00",
+          "tree_id": "c685d75d469643ef536041adbc19d0ff27218364",
+          "url": "https://github.com/stacklok/mecatl/commit/b352a40aa6abbe656567ebb2dae93affa540c147"
+        },
+        "date": 1795558995828,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12894,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -590928,6 +590967,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795558992164,
+  "lastUpdate": 1795558996992,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
