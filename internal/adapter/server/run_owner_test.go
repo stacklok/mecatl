@@ -166,7 +166,8 @@ func TestAResumedRunKeepsTheOwnerItStartedWith(t *testing.T) {
 // from the request that starts it, not from the session's owner. Ownership
 // enforcement makes the two equal, so the session here is unenforced; a
 // request with no verified caller starts a run with no owner, whose gateway
-// calls fail closed rather than borrow the session owner's.
+// calls fail closed rather than borrow the session owner's or, on a resume,
+// the resuming caller's.
 func TestANewRunIsOwnedByItsCaller(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -206,7 +207,9 @@ func TestANewRunIsOwnedByItsCaller(t *testing.T) {
 			}
 			probe := &runProbeTool{runs: make(chan agentcredential.Run, 1)}
 			resuming := newRunProbeService(t, reopened, probe, false, true, mockllm.TextTurn("done"))
-			run, err := resuming.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, parked.RunID())
+			// Bob resumes every case: a resume keeps the recorded owner, and a run
+			// with none does not take the resuming caller.
+			run, err := resuming.ApproveRun(session.WithPrincipal(t.Context(), runOwnerBob), sess.ID, askID, session.VerdictAllowOnce, parked.RunID())
 			if err != nil {
 				t.Fatal(err)
 			}

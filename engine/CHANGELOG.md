@@ -17,7 +17,8 @@ API snapshots live in [`engine/api/`](./api/).
   `session.Session.RunOwner`, which reports it. It records no owner for an
   empty run ID or an identity that is not well framed. The owner is independent of
   the session's `Owner`, so a run keeps the owner it started with.
-  `BeginRun` now records no owner. `sessnap.Snapshot.RunOwner` persists it
+  Beginning the current run again with its ID keeps its owner.
+  `BeginRun` records no owner for a new run. `sessnap.Snapshot.RunOwner` persists it
   beside `RunID` under the optional `"run_owner"` key; an older snapshot
   restores a run with no recorded owner. Added (minor).
 

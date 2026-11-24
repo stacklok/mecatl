@@ -478,10 +478,15 @@ func loadedDefinitionRef(loaded []identitybroker.DefinitionRef, name, builtin st
 // session, or no verified caller has no such run, and its members' gateway
 // calls fail closed.
 func (s *Service) startTeamRootRun(ctx context.Context, root session.SessionID) (context.Context, error) {
-	if s.cfg.IdentityBroker == nil || root == "" {
+	if s.cfg.IdentityBroker == nil {
 		return ctx, nil
 	}
-	runCtx := ctx
+	// A team with no run of its own clears any run the caller's context
+	// carries, as rootedRunContext does, so its members cannot inherit it.
+	runCtx := agentcredential.WithRun(ctx, agentcredential.Run{})
+	if root == "" {
+		return runCtx, nil
+	}
 	// The team run fails if registration does, so it keeps the caller's
 	// cancellation; the timeout keeps a slow broker from holding the root's
 	// runEntryMu, as fork and clear bound theirs.

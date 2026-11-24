@@ -26,8 +26,9 @@ record who produced the session; legacy data restores as `unknown`, which fails 
 lifetime of that ID. Restoration preserves the incarnation, while a newly created
 session with a reused ID gets a new one. A host-supplied `RunID` identifies one
 unit of work: fresh work gets a new ID, while approval or external-authorization
-continuation retains the pending run's ID and recorded owner across restart. Engine callers may omit
-`RunID`; it is a correlation label, not an authorization grant.
+continuation retains the pending run's ID, and the run owner the host recorded
+with it, across restart. Engine callers may omit `RunID`; it is a correlation
+label, not an authorization grant.
 
 `Limits` and `Counters` drive the stop conditions; a zero limit disables that check.
 `StopReason` is the loop's pre-turn guard and mixes the recorded reason with a limit

@@ -269,6 +269,26 @@ func TestTeamRootRegistrationWaitsForRunEntry(t *testing.T) {
 	}
 }
 
+// TestATeamRunWithNoCallerClearsTheContextRun pins that a team run with no
+// verified caller has no run, even when the caller's context already carries
+// one, so its members cannot inherit that run.
+func TestATeamRunWithNoCallerClearsTheContextRun(t *testing.T) {
+	svc, sess := newRegisteringService(t)
+	if err := svc.cfg.Store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	stale := agentcredential.WithRun(t.Context(), agentcredential.Run{ID: "run_stale", Owner: identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}})
+	for name, root := range map[string]session.SessionID{"a root session": sess.ID, "no root session": ""} {
+		ctx, err := svc.startTeamRootRun(stale, root)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, ok := agentcredential.RunFromContext(ctx); ok {
+			t.Errorf("%s: team run = %+v, want none", name, got)
+		}
+	}
+}
+
 func TestTeamRootRegistrationForADeletedRootIsNotFound(t *testing.T) {
 	svc, sess := newRegisteringService(t)
 	// The root is gone from the store, as a delete that won run entry's lock

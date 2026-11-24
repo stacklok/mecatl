@@ -123,3 +123,30 @@ func TestBeginRunForRecordsNoOwnerItCannotRestore(t *testing.T) {
 		}
 	}
 }
+
+// TestBeginRunAgainKeepsTheRunsOwner pins that beginning the current run
+// again, with or without an owner, cannot change who started it, while a new
+// run ID starts a run with its own owner.
+func TestBeginRunAgainKeepsTheRunsOwner(t *testing.T) {
+	t.Parallel()
+
+	alice := session.Principal{Issuer: "https://login.example.com", Subject: "alice-204", GrantType: session.GrantTypeUser}
+	bob := session.Principal{Issuer: "https://login.example.com", Subject: "bob-117", GrantType: session.GrantTypeUser}
+	for name, again := range map[string]func(*session.Session){
+		"BeginRun":    func(s *session.Session) { s.BeginRun("run_1") },
+		"BeginRunFor": func(s *session.Session) { b := bob; s.BeginRunFor("run_1", &b) },
+	} {
+		s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
+		a := alice
+		s.BeginRunFor("run_1", &a)
+		again(s)
+		if got := s.RunOwner(); s.RunID() != "run_1" || got == nil || *got != alice {
+			t.Errorf("%s again: run %q owner %+v, want run_1 owned by %+v", name, s.RunID(), got, alice)
+		}
+		b := bob
+		s.BeginRunFor("run_2", &b)
+		if got := s.RunOwner(); s.RunID() != "run_2" || got == nil || *got != bob {
+			t.Errorf("%s then a new run: run %q owner %+v, want run_2 owned by %+v", name, s.RunID(), got, bob)
+		}
+	}
+}
