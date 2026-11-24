@@ -101,17 +101,6 @@ type IdentityBrokerAS1Server struct {
 // would not be running beside.
 var errIdentityBrokerAS1WithoutBroker = errors.New("hosting AS-1 requires the identity broker")
 
-// as1RequestTimeout bounds one session-open token exchange the broker makes at
-// a hosted AS-1 in process. Session open holds the host session's open lock
-// while it makes at most two requests, the exchange and one resend, so this
-// bounds how long that lock is held. AS-1 answers in process, normally within
-// milliseconds.
-const as1RequestTimeout = 10 * time.Second
-
-// as2RequestTimeout bounds one call the identity broker makes at AS-2, which
-// answers in process like a hosted AS-1.
-const as2RequestTimeout = as1RequestTimeout
-
 // identityBrokerAS2 is the embedded MCP gateway's authorization server as the
 // identity broker reaches it as AS-2. Startup records it when the identity
 // broker has a broker client key and the bundled MCP broker has a protected
@@ -126,7 +115,7 @@ type identityBrokerAS2 struct {
 	// Resource is the gateway's vMCP resource, an ID-JAG's resource.
 	Resource string
 	// HTTPClient serves AS-2's token endpoint in process, each call bounded
-	// by as2RequestTimeout.
+	// by the configuration file's AS-2 request timeout.
 	HTTPClient *http.Client
 }
 
@@ -271,12 +260,6 @@ func checkAS2KeysAreNotBrokerKeys(as2Keys, brokerKeys []crypto.PublicKey) error 
 	return nil
 }
 
-// hostedAS1IDJAGMaxLifetime caps the broker refresh tokens the hosted AS-1
-// issues at session open, and so a broker session's hard expiry. Twelve hours
-// covers a working session while bounding unattended authority; #2813 makes
-// it configurable.
-const hostedAS1IDJAGMaxLifetime = 12 * time.Hour
-
 // identityBrokerParts is the identity broker as startup builds it.
 type identityBrokerParts struct {
 	// service is the boundary Mecatl calls; Mecatl never gets the core.
@@ -286,6 +269,9 @@ type identityBrokerParts struct {
 	// hostedServer is the hosted AS-1 itself, for tests; nil when none is
 	// configured.
 	hostedServer *as1server.Server
+	// as1HTTPClient is the broker's in-process client to the hosted AS-1, for
+	// tests; nil when none is configured.
+	as1HTTPClient *http.Client
 	// client signs the broker's client assertions; nil for an injected core
 	// or without a broker client key.
 	client *identitybroker.ClientAssertionSigner
@@ -314,6 +300,9 @@ type identityBrokerParts struct {
 	// gatewayServers are the servers the gateway routes; set only with
 	// gateway.
 	gatewayServers []string
+	// as2RequestTimeout bounds each request the broker makes at the AS-2 the
+	// MCP broker sets up for gatewayEntry; set with gatewayEntry.
+	as2RequestTimeout time.Duration
 	// release releases the broker and AS-1.
 	release func()
 }
@@ -475,14 +464,18 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig
 		ID:                   identitybroker.BrokerClientID,
 		KeySetFile:           file.BrokerClientKeySetFile,
 		AllowedSourceClients: sources,
-		IDJAGMaxLifetime:     hostedAS1IDJAGMaxLifetime,
+		// Every session's hard expiry. Never derived from, nor the source of,
+		// a schedule's horizon (#2569).
+		IDJAGMaxLifetime: file.Limits.IDJAGMaxLifetime,
 	}
 	if entry != nil && len(entry.Servers) != 0 {
 		// Shortcut: AS-1 issues ID-JAGs only for a gateway entry that routes servers, and production's routes none until AS-2 trusts AS-1, so production configures no target and no actor profile; removed by #2533.
 		delegate.IDJAG = &as1server.IDJAGIssuance{
 			ActIssuer: identitybroker.ActorIssuer(identityBrokerConfig(cfg, file).TrustDomain),
-			// Lifetime stays zero, ToolHive's default of a minute.
-			Targets: []as1server.IDJAGTarget{{Issuer: entry.AS2Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{entry.Resource}}},
+			Targets: []as1server.IDJAGTarget{{
+				Issuer: entry.AS2Issuer, ClientID: identitybroker.BrokerClientID, Resources: []string{entry.Resource},
+				Lifetime: file.Limits.IDJAGLifetime,
+			}},
 		}
 	}
 	server, err := buildHostedAS1(ctx, as1, file, delegate)
@@ -490,11 +483,12 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig
 		return identityBrokerParts{}, err
 	}
 	httpClient := server.InProcessClient()
-	httpClient.Timeout = as1RequestTimeout
-	// Now and AssertionNow stay nil: production uses time.Now for the broker
-	// and its assertions.
+	httpClient.Timeout = file.Limits.AS1RequestTimeout
+	// AssertionNow stays nil, and Now unless a test sets identityBrokerNow:
+	// production uses time.Now for the broker and its assertions.
 	cfg.IdentityBrokerAS1 = &IdentityBrokerAS1{
 		Issuer: server.Issuer(), TokenEndpoint: server.TokenEndpoint(), HTTPClient: httpClient,
+		Now: cfg.identityBrokerNow,
 	}
 	if delegate.IDJAG != nil {
 		cfg.IdentityBrokerAS1.ActorTokens = server
@@ -513,6 +507,7 @@ func buildBrokerWithHostedAS1(ctx context.Context, cfg Config, file brokerconfig
 	parts.service = identitybroker.NewInProcess(identitybroker.UnverifiedAuthenticator{Name: identityBrokerWorkload}, core)
 	parts.hosted = newHostedAS1Server(server)
 	parts.hostedServer = server
+	parts.as1HTTPClient = httpClient
 	return parts, nil
 }
 
@@ -573,6 +568,8 @@ type identityBroker struct {
 	gateway      bool
 	// gatewayServers are the servers the gateway routes.
 	gatewayServers []string
+	// as2RequestTimeout is the configuration file's AS-2 request timeout.
+	as2RequestTimeout time.Duration
 }
 
 // parts returns the identity broker's parts that b holds; the caller adds
@@ -581,6 +578,7 @@ func (b identityBroker) parts() identityBrokerParts {
 	return identityBrokerParts{
 		client: b.client, clientKeySetFile: b.clientKeySetFile, core: b.core, definitions: b.definitions,
 		recorder: b.recorder, gatewayEntry: b.gatewayEntry, gateway: b.gateway, gatewayServers: b.gatewayServers,
+		as2RequestTimeout: b.as2RequestTimeout,
 	}
 }
 
@@ -647,7 +645,7 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, 
 	}
 	var client *identitybroker.ClientAssertionSigner
 	if file.Keys.BrokerClient != nil {
-		if client, err = identitybroker.NewClientAssertionSigner(file.Keys.BrokerClient, 0); err != nil {
+		if client, err = identitybroker.NewClientAssertionSigner(file.Keys.BrokerClient, file.Limits.ClientAssertionLifetime); err != nil {
 			return identityBroker{}, err
 		}
 	}
@@ -684,6 +682,7 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, 
 	return identityBroker{
 		core: core, definitions: definitions, client: client, clientKeySetFile: file.BrokerClientKeySetFile,
 		recorder: recorder, gatewayEntry: entry, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
+		as2RequestTimeout: file.Limits.AS2RequestTimeout,
 	}, nil
 }
 

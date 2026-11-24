@@ -22,6 +22,12 @@ var (
 // newBroker returns a broker with its own signing key and opts.
 func newBroker(t *testing.T, opts ...identitybroker.Option) *identitybroker.Broker {
 	t.Helper()
+	return newBrokerWithSkew(t, identitybroker.ClockSkew, opts...)
+}
+
+// newBrokerWithSkew is newBroker with clock skew skew.
+func newBrokerWithSkew(t *testing.T, skew time.Duration, opts ...identitybroker.Option) *identitybroker.Broker {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("test key: %v", err)
@@ -30,6 +36,7 @@ func newBroker(t *testing.T, opts ...identitybroker.Option) *identitybroker.Brok
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
+		ClockSkew:          skew,
 	}, conformance.Definitions(), key, opts...)
 	if err != nil {
 		t.Fatalf("New: %v", err)

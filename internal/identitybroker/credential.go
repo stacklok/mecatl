@@ -16,13 +16,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// credentialClockSkew is how far the broker's clock may differ from another
-// party's: a verifier's from the credential issuer's when checking a
-// credential's expiry, and the broker's from AS-1's at a session's hard
-// expiry. The value is an interim choice until operator configuration sets it
-// (one clock-skew setting, #2813).
-const credentialClockSkew = 30 * time.Second
-
 // es256 is the only algorithm agent credentials use.
 const es256 = "ES256"
 
@@ -36,7 +29,9 @@ type credentialIssuer struct {
 	trustDomain string
 	audience    string
 	lifetime    time.Duration
-	signer      crypto.Signer
+	// skew is Config.ClockSkew, allowed past a credential's exp.
+	skew   time.Duration
+	signer crypto.Signer
 	// kid is the RFC 7638 JWK thumbprint of the signer's public key.
 	kid string
 	// keys are the public keys credentials verify with, by kid: the signer's
@@ -54,6 +49,7 @@ func newCredentialIssuer(config Config, signer crypto.Signer, pub *ecdsa.PublicK
 		trustDomain: config.TrustDomain,
 		audience:    config.Audience,
 		lifetime:    config.CredentialLifetime,
+		skew:        config.ClockSkew,
 		signer:      signer,
 		kid:         jwk.KeyID,
 		keys:        map[string]*ecdsa.PublicKey{jwk.KeyID: pub},
@@ -141,10 +137,10 @@ func (c credentialIssuer) verify(credential Token, now time.Time) (verifiedCrede
 		return verifiedCredential{}, deniedError("the credential has no expiry")
 	}
 	exp := claims.ExpiresAt.Time
-	if !now.Before(exp.Add(credentialClockSkew)) {
+	if !now.Before(exp.Add(c.skew)) {
 		return verifiedCredential{}, ReasonError(ReasonSVIDExpired, "the credential has expired")
 	}
-	if exp.After(now.Add(c.lifetime + credentialClockSkew)) {
+	if exp.After(now.Add(c.lifetime + c.skew)) {
 		return verifiedCredential{}, deniedError("the credential's expiry exceeds the credential lifetime")
 	}
 	return verifiedCredential{subject: claims.Subject, expiresAt: exp}, nil

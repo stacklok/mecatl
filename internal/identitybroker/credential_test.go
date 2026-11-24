@@ -39,8 +39,14 @@ type credentialFixture struct {
 
 func newCredentialFixture(t *testing.T) *credentialFixture {
 	t.Helper()
+	return newCredentialFixtureWith(t, testConfig())
+}
+
+// newCredentialFixtureWith is newCredentialFixture with config.
+func newCredentialFixtureWith(t *testing.T, config Config) *credentialFixture {
+	t.Helper()
 	f := &credentialFixture{key: testKey(t, "credential test key"), now: time.Unix(1_800_000_000, 0)}
-	b, err := New(testConfig(), testDefinitions(), f.key)
+	b, err := New(config, testDefinitions(), f.key)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -236,12 +242,12 @@ func TestVerifyCredentialChecks(t *testing.T) {
 		}, denied},
 		"expired": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["exp"] = f.now.Add(-credentialClockSkew).Unix()
+			c["exp"] = f.now.Add(-ClockSkew).Unix()
 			return f.forge(t, f.validHeader(), c, nil)
 		}, expired},
 		"expiry beyond the credential lifetime": {func(t *testing.T, f *credentialFixture) Token {
 			c := f.validClaims()
-			c["exp"] = f.now.Add(testConfig().CredentialLifetime + credentialClockSkew + time.Second).Unix()
+			c["exp"] = f.now.Add(testConfig().CredentialLifetime + ClockSkew + time.Second).Unix()
 			return f.forge(t, f.validHeader(), c, nil)
 		}, denied},
 		"unregistered subject": {func(t *testing.T, f *credentialFixture) Token {
@@ -320,15 +326,39 @@ func TestVerifyCredentialChecks(t *testing.T) {
 	}
 }
 
+// TestVerifyCredentialAllowsClockSkewAfterExpiry: the configured clock skew,
+// whatever it is, extends a credential's exp, and a zero skew none.
 func TestVerifyCredentialAllowsClockSkewAfterExpiry(t *testing.T) {
-	f := newCredentialFixture(t)
-	f.now = f.reg.ExpiresAt.Add(credentialClockSkew - time.Second)
-	if _, err := f.verify(f.session.ID, f.reg.Credential); err != nil {
-		t.Fatalf("VerifyCredential within the clock skew: %v", err)
+	for _, skew := range []time.Duration{ClockSkew, 45 * time.Second, 0} {
+		t.Run(skew.String(), func(t *testing.T) {
+			config := testConfig()
+			config.ClockSkew = skew
+			f := newCredentialFixtureWith(t, config)
+			f.now = f.reg.ExpiresAt.Add(skew - time.Second)
+			if _, err := f.verify(f.session.ID, f.reg.Credential); err != nil {
+				t.Fatalf("VerifyCredential within the clock skew: %v", err)
+			}
+			f.now = f.reg.ExpiresAt.Add(skew)
+			if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonSVIDExpired, "")) {
+				t.Fatalf("VerifyCredential past the clock skew = %v, want svid_expired", err)
+			}
+		})
 	}
-	f.now = f.reg.ExpiresAt.Add(credentialClockSkew)
-	if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonSVIDExpired, "")) {
-		t.Fatalf("VerifyCredential past the clock skew = %v, want svid_expired", err)
+}
+
+// TestVerifyCredentialRefusesAnExpiryBeyondTheLifetimeAndSkew: a credential
+// may expire up to the lifetime plus the configured skew from now.
+func TestVerifyCredentialRefusesAnExpiryBeyondTheLifetimeAndSkew(t *testing.T) {
+	config := testConfig()
+	config.ClockSkew = 45 * time.Second
+	f := newCredentialFixtureWith(t, config)
+	f.now = f.reg.ExpiresAt.Add(-config.CredentialLifetime - config.ClockSkew)
+	if _, err := f.verify(f.session.ID, f.reg.Credential); err != nil {
+		t.Fatalf("VerifyCredential at the lifetime plus the skew before its expiry: %v", err)
+	}
+	f.now = f.now.Add(-time.Second)
+	if _, err := f.verify(f.session.ID, f.reg.Credential); !errors.Is(err, ReasonError(ReasonDenied, "")) {
+		t.Fatalf("VerifyCredential a second earlier = %v, want denied", err)
 	}
 }
 
@@ -616,6 +646,29 @@ func TestReregistrationKeepsAtMostMaxIssuedCredentials(t *testing.T) {
 		if i >= evicted && err != nil {
 			t.Errorf("credential %d does not verify: %v", i, err)
 		}
+	}
+}
+
+// TestReregistrationPrunesCredentialsPastTheConfiguredSkew: re-registering
+// keeps a credential past its exp within the configured skew, not the
+// default, and drops it at exp plus the skew.
+func TestReregistrationPrunesCredentialsPastTheConfiguredSkew(t *testing.T) {
+	config := testConfig()
+	config.ClockSkew = 45 * time.Second
+	f := newCredentialFixtureWith(t, config)
+	kept := func() bool {
+		_, ok := f.broker.sessions.agents[f.reg.Agent.Subject].credentials[credentialHash(f.reg.Credential)]
+		return ok
+	}
+	f.now = f.reg.ExpiresAt.Add(44 * time.Second)
+	f.register(t, f.session, incMain)
+	if !kept() {
+		t.Fatal("re-registering 44s past exp dropped the credential within the 45s skew")
+	}
+	f.now = f.reg.ExpiresAt.Add(45 * time.Second)
+	f.register(t, f.session, incMain)
+	if kept() {
+		t.Fatal("re-registering at exp plus the 45s skew kept the credential")
 	}
 }
 

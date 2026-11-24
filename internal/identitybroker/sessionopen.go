@@ -98,12 +98,6 @@ type heldGrant struct {
 	owner Owner
 }
 
-// convertedClockSkew is how long past an access token's exp the broker
-// remembers that AS-1 may have converted it: at least the clock skew AS-1
-// allows an access token's exp, after which AS-1 refuses the token as
-// expired anyway.
-const convertedClockSkew = 5 * time.Minute
-
 // accessTokenClaims are the claims the broker reads from an access token
 // without verifying it.
 type accessTokenClaims struct {
@@ -176,12 +170,14 @@ func OwnerFromSubjectIdentifier(raw []byte) (Owner, error) {
 }
 
 // recordConvertedLocked remembers that AS-1 may have converted claims' token,
-// until its exp plus convertedClockSkew. A token with no jti or exp is not
-// remembered: AS-1 requires both, so it converts neither. The caller holds
-// t.mu.
+// until its exp plus the clock skew. That retention must cover at least the
+// skew AS-1 allows on an access token's exp, after which AS-1 refuses the
+// token as expired anyway; AS-1 allows none, so any skew covers it. A token
+// with no jti or exp is not remembered: AS-1 requires both, so it converts
+// neither. The caller holds t.mu.
 func (t *sessionTable) recordConvertedLocked(claims accessTokenClaims) {
 	t.pruneConvertedLocked()
-	if claims.jti != "" && !claims.exp.IsZero() && t.now().Before(claims.exp.Add(convertedClockSkew)) {
+	if claims.jti != "" && !claims.exp.IsZero() && t.now().Before(claims.exp.Add(t.skew)) {
 		t.converted[claims.jti] = claims.exp
 	}
 }
@@ -194,12 +190,12 @@ func (t *sessionTable) wasConvertedLocked(jti string) bool {
 	return jti != "" && ok
 }
 
-// pruneConvertedLocked forgets tokens past their exp plus convertedClockSkew.
+// pruneConvertedLocked forgets tokens past their exp plus the clock skew.
 // The caller holds t.mu.
 func (t *sessionTable) pruneConvertedLocked() {
 	now := t.now()
 	maps.DeleteFunc(t.converted, func(_ string, exp time.Time) bool {
-		return !now.Before(exp.Add(convertedClockSkew))
+		return !now.Before(exp.Add(t.skew))
 	})
 }
 

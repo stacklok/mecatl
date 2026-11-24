@@ -935,6 +935,7 @@ func TestConfigValidation(t *testing.T) {
 		"delegate negative life":  withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = -time.Hour }),
 		"delegate sub-second":     withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = time.Second / 2 }),
 		"delegate over 720h":      withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = 721 * time.Hour }),
+		"delegate fractional":     withDelegate(func(d *DelegateClient) { d.IDJAGMaxLifetime = time.Hour + time.Second/2 }),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid

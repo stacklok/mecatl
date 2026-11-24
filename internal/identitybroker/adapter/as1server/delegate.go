@@ -33,8 +33,8 @@ type DelegateClient struct {
 	// the client may exchange. At least one is required.
 	AllowedSourceClients []string
 	// IDJAGMaxLifetime caps the lifetime of refresh tokens that issue
-	// ID-JAGs (ToolHive's id_jag_max_lifetime): at least a second, as ToolHive
-	// caps in whole seconds, and at most maxIDJAGLifetime.
+	// ID-JAGs (ToolHive's id_jag_max_lifetime): whole seconds from
+	// identitybroker.MinLimit to identitybroker.MaxIDJAGMaxLifetime.
 	IDJAGMaxLifetime time.Duration
 	// IDJAG, when set, lets the client also exchange those refresh tokens for
 	// per-call ID-JAGs. Nil issues none.
@@ -72,17 +72,15 @@ type IDJAGTarget struct {
 	// endpoint, the client may request an ID-JAG for. At least one is
 	// required.
 	Resources []string
-	// Lifetime is each ID-JAG's lifetime in whole seconds, at most five
-	// minutes. Zero selects ToolHive's default of a minute.
+	// Lifetime is each ID-JAG's lifetime in whole seconds, at most
+	// identitybroker.MaxIDJAGLifetime. Zero selects ToolHive's default of a
+	// minute.
 	Lifetime time.Duration
 }
 
 // idjagSubjectClaims are the subject claims every ID-JAG carries: the
 // user's company identity and their identity at the upstream IdP.
 var idjagSubjectClaims = []string{"sub_id", "upstream_subject"}
-
-// maxIDJAGLifetime is ToolHive's largest id_jag_max_lifetime.
-const maxIDJAGLifetime = 720 * time.Hour
 
 // delegateScopes are the scopes a delegate client may request. ToolHive
 // requires a non-empty list; the refresh-token exchange takes no scope, so
@@ -141,8 +139,11 @@ func (d DelegateClient) validate(publicClients map[string]bool) error {
 		return fmt.Errorf("%w: delegate client %q needs a JWK Set file", ErrInvalidConfig, d.ID)
 	case len(d.AllowedSourceClients) == 0:
 		return fmt.Errorf("%w: delegate client %q needs at least one allowed source client", ErrInvalidConfig, d.ID)
-	case d.IDJAGMaxLifetime < time.Second || d.IDJAGMaxLifetime > maxIDJAGLifetime:
-		return fmt.Errorf("%w: delegate client %q ID-JAG grant lifetime %v is not between 1s and %v", ErrInvalidConfig, d.ID, d.IDJAGMaxLifetime, maxIDJAGLifetime)
+	case d.IDJAGMaxLifetime < identitybroker.MinLimit || d.IDJAGMaxLifetime > identitybroker.MaxIDJAGMaxLifetime:
+		return fmt.Errorf("%w: delegate client %q ID-JAG grant maximum lifetime %v is not between %v and %v",
+			ErrInvalidConfig, d.ID, d.IDJAGMaxLifetime, identitybroker.MinLimit, identitybroker.MaxIDJAGMaxLifetime)
+	case d.IDJAGMaxLifetime%time.Second != 0:
+		return fmt.Errorf("%w: delegate client %q ID-JAG grant maximum lifetime %v is not whole seconds", ErrInvalidConfig, d.ID, d.IDJAGMaxLifetime)
 	}
 	for _, source := range d.AllowedSourceClients {
 		if !publicClients[source] {
@@ -172,8 +173,9 @@ func (i IDJAGIssuance) validate(clientID string) error {
 		return fmt.Errorf("%w: delegate client %q issues ID-JAGs for no target", ErrInvalidConfig, clientID)
 	}
 	for _, target := range i.Targets {
-		if target.Lifetime < 0 || target.Lifetime%time.Second != 0 {
-			return fmt.Errorf("%w: delegate client %q ID-JAG lifetime %v for %q is not whole seconds", ErrInvalidConfig, clientID, target.Lifetime, target.Issuer)
+		if target.Lifetime < 0 || target.Lifetime > identitybroker.MaxIDJAGLifetime || target.Lifetime%time.Second != 0 {
+			return fmt.Errorf("%w: delegate client %q ID-JAG lifetime %v for %q is not whole seconds up to %v",
+				ErrInvalidConfig, clientID, target.Lifetime, target.Issuer, identitybroker.MaxIDJAGLifetime)
 		}
 	}
 	return nil

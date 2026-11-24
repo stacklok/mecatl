@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -87,6 +88,9 @@ type mcpBrokerIdentity struct {
 	// brokerKeys are the identity broker's public keys, which AS-2 must not
 	// sign with; set with entry.
 	brokerKeys []crypto.PublicKey
+	// as2RequestTimeout bounds each request the identity broker makes at
+	// AS-2; set with entry.
+	as2RequestTimeout time.Duration
 	// gatewayCalls is nil when the identity broker has no gateway path.
 	gatewayCalls *mcpBrokerGatewayCalls
 }
@@ -160,8 +164,8 @@ func checkGatewayResource(gateway mcpbroker.Gateway, as2 *mcpbroker.AS2) error {
 
 // as2InProcessClient reaches AS-2's token endpoint straight from the embedded
 // authorization server, without a network listener, and refuses every other
-// URL, each call bounded by as2RequestTimeout.
-func as2InProcessClient(as2 *mcpbroker.AS2) (*http.Client, error) {
+// URL, each call bounded by timeout.
+func as2InProcessClient(as2 *mcpbroker.AS2, timeout time.Duration) (*http.Client, error) {
 	token, err := url.Parse(as2.TokenEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("AS-2 token endpoint: %w", err)
@@ -172,7 +176,7 @@ func as2InProcessClient(as2 *mcpbroker.AS2) (*http.Client, error) {
 		}
 		return nil
 	})
-	client.Timeout = as2RequestTimeout
+	client.Timeout = timeout
 	return client, nil
 }
 
@@ -240,7 +244,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	}
 	var as2 *identityBrokerAS2
 	if process.AS2 != nil {
-		httpClient, err := as2InProcessClient(process.AS2)
+		httpClient, err := as2InProcessClient(process.AS2, identity.as2RequestTimeout)
 		if err != nil {
 			_ = process.Close()
 			authStorageClose()

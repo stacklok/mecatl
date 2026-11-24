@@ -352,8 +352,9 @@ than being ignored. The error names the file and the field.
 
 Rotate a signing key by making the new key `key_file` and listing the old key
 in `fallback_key_files`. Remove the fallback once everything it signed has
-expired: agent credentials last an hour, and AS-1's access tokens last their
-own lifetime. Fallbacks serve a planned rotation only. Remove a compromised key
+expired: agent credentials verify for `credential_lifetime` plus `clock_skew`
+(see [Lifetimes, clock skew, and timeouts](#lifetimes-clock-skew-and-timeouts)),
+and AS-1's access tokens last their own lifetime. Fallbacks serve a planned rotation only. Remove a compromised key
 at once instead of keeping it as a fallback. List an agent issuer fallback as
 its public key, in PKIX (`PUBLIC KEY`) form, so the retired private key leaves
 the pod:
@@ -380,6 +381,39 @@ kubectl rollout restart deployment/mecak8s-mecak8s --namespace mecatl
 AS-1's signing key is part of this file: `mecak8s` refuses to start with the
 removed `--identity-broker-as1-signing-key-file` flag, so set
 `keys.as1_signing.key_file` instead.
+
+#### Lifetimes, clock skew, and timeouts
+
+The file can also set how long the broker's sessions and tokens last, how much
+clock difference it tolerates, and how long it waits for the authorization
+servers it calls in process. Each field is optional and takes a Go duration
+string, such as `"30s"` or `"12h"`. The chart does not set these fields yet, so
+with the chart each keeps its default.
+
+```json
+"id_jag_max_lifetime": "12h",
+"id_jag_lifetime": "60s",
+"credential_lifetime": "1h",
+"client_assertion_lifetime": "60s",
+"clock_skew": "30s",
+"as1_request_timeout": "10s",
+"as2_request_timeout": "10s"
+```
+
+|Field|Default|Allowed values|What it bounds|
+|-|-|-|-|
+|`id_jag_max_lifetime`|`12h`|`1s` to `720h` in whole seconds, and at least ten times `clock_skew`|Every broker session's hard expiry: AS-1 grants the broker access for each session for this long after the session opens, and does not extend it. It caps how long agents act for a user without a fresh sign-in. A session whose agents keep running past it loses gateway access until the user's next request reopens it. Requires `--identity-broker-as1-issuer`.|
+|`id_jag_lifetime`|`60s`|`1s` to `300s` in whole seconds|How long each grant AS-1 issues for a gateway call (an ID-JAG) stays valid, and so the longest the gateway token issued for it lasts. It applies to the servers a gateway entry routes. Requires `--identity-broker-as1-issuer`.|
+|`credential_lifetime`|`1h`|More than `0s`, up to `1h`|How long an agent credential, and so a stolen one, stays usable.|
+|`client_assertion_lifetime`|`60s`|`1s` to `60s` in whole seconds|How long each client assertion the broker signs to authenticate at AS-1 and the gateway's authorization server stays valid. Each is accepted once.|
+|`clock_skew`|`30s`|`0s` to `60s`|How far the broker's clock may differ from other servers'. The broker accepts an agent credential for this long past its expiry, ends each session this long before its hard expiry, and remembers each user access token it converted into a session, refusing its reuse, for this long past the token's expiry. A larger value keeps an expired credential working longer and shortens every session. The maximum is `60s` because AS-1 tells an agent to renew its credential only within 60 seconds of its expiry.|
+|`as1_request_timeout`|`10s`|`1s` to `30s`|How long the broker waits for each request to AS-1. Other requests that open the same session wait while a session open makes up to two of them.|
+|`as2_request_timeout`|`10s`|`1s` to `1m`|How long a gateway call waits for each request to the gateway's authorization server.|
+
+`mecak8s` refuses to start when a value is not a duration or is outside its
+allowed values, when `clock_skew` is more than a tenth of
+`id_jag_max_lifetime`, or when the file sets `id_jag_max_lifetime` or
+`id_jag_lifetime` without `--identity-broker-as1-issuer`.
 
 ### Declare the embedded gateway
 

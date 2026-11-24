@@ -31,6 +31,7 @@ func testConfig() Config {
 		TrustDomain:        "agents.example.com",
 		Audience:           "https://broker.example.com",
 		CredentialLifetime: 5 * time.Minute,
+		ClockSkew:          ClockSkew,
 	}
 }
 
@@ -98,6 +99,7 @@ func TestNewAcceptsBoundaryInputs(t *testing.T) {
 	cfg := testConfig()
 	cfg.TrustDomain = "agents_1-a." + strings.Repeat("b", 255-len("agents_1-a."))
 	cfg.CredentialLifetime = MaxCredentialLifetime
+	cfg.ClockSkew = 60 * time.Second // MaxClockSkew
 	rec := testRecord("Team_A-1.x", "Code_Reviewer-2.0")
 	longest := testRecord(strings.Repeat("s", MaxSegmentBytes), strings.Repeat("n", MaxSegmentBytes))
 	if _, err := New(cfg, []DefinitionRecord{rec, longest}, testKey(t, "broker")); err != nil {
@@ -118,6 +120,8 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"zero lifetime":              func(c *Config) { c.CredentialLifetime = 0 },
 		"negative lifetime":          func(c *Config) { c.CredentialLifetime = -time.Second },
 		"lifetime above the maximum": func(c *Config) { c.CredentialLifetime = MaxCredentialLifetime + time.Second },
+		"negative clock skew":        func(c *Config) { c.ClockSkew = -time.Second },
+		"skew above the maximum":     func(c *Config) { c.ClockSkew = 60*time.Second + time.Nanosecond },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

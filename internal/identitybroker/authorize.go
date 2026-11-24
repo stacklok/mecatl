@@ -343,7 +343,7 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 // counted from redeemedAt, when AS-2 sent one, the ID-JAG's exp, and v's own
 // exp, when v is a JWT with one.
 //
-// Shortcut: the gateway token is unbound and lives as long as AS-2 issues it; removed by #2813 (lifetime) and #2727 (binding).
+// Shortcut: the gateway token is unbound and lives as long as AS-2 issues it; removed by #2727 (its own lifetime and binding, after stacklok/toolhive#7061).
 func gatewayTokenExpiry(redeemedAt, idjagExp time.Time, v GatewayTokenResult) time.Time {
 	exp := idjagExp
 	if v.ExpiresIn > 0 {

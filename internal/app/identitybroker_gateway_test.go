@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -586,6 +587,131 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	}
 }
 
+// offsetClock is wall time plus an offset a test sets. It is safe for
+// concurrent use.
+type offsetClock struct{ offset atomic.Int64 }
+
+func (c *offsetClock) Now() time.Time { return time.Now().Add(time.Duration(c.offset.Load())) }
+
+// Set moves the clock so it reads at.
+func (c *offsetClock) Set(at time.Time) { c.offset.Store(int64(time.Until(at))) }
+
+// TestBuildAppliesTheConfiguredClockSkew: the file's clock_skew reaches the
+// broker's credential check, which accepts a credential until its exp plus
+// the skew.
+func TestBuildAppliesTheConfiguredClockSkew(t *testing.T) {
+	clock := &offsetClock{}
+	g := buildWithRealAS1(t, false, nil, func(cfg *Config) {
+		cfg.IdentityBrokerAS1.Now = clock.Now
+		raw, err := os.ReadFile(cfg.IdentityBrokerConfigFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		// A short credential lifetime keeps the moved clock well inside the
+		// session's grant.
+		doc["clock_skew"], doc["credential_lifetime"] = "45s", "10m"
+		if raw, err = json.Marshal(doc); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfg.IdentityBrokerConfigFile, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	s, cred, _ := g.open(t)
+	exp, ok := jwtClaims(t, cred.Value())["exp"].(float64)
+	if !ok {
+		t.Fatal("the agent credential has no exp")
+	}
+	verify := func() error {
+		_, err := g.built.identityBrokerCore.VerifyCredential(t.Context(), identitybroker.VerifyCredentialRequest{SessionID: s.ID, Credential: cred})
+		return err
+	}
+	clock.Set(time.Unix(int64(exp), 0).Add(44 * time.Second))
+	if err := verify(); err != nil {
+		t.Fatalf("VerifyCredential 44s past exp: %v, want it accepted within the 45s skew", err)
+	}
+	clock.Set(time.Unix(int64(exp), 0).Add(45 * time.Second))
+	wantBrokerError(t, verify(), identitybroker.CodeUnauthenticated, identitybroker.ReasonSVIDExpired)
+}
+
+// TestHostedAS1AppliesTheConfiguredLifetimes builds the production path with
+// the configuration file's lifetimes away from their defaults: the broker
+// issues agent credentials of credential_lifetime, the hosted AS-1 issues a
+// call's ID-JAGs of id_jag_lifetime, and the broker's client assertions at
+// AS-2 last client_assertion_lifetime.
+func TestHostedAS1AppliesTheConfiguredLifetimes(t *testing.T) {
+	hb := buildWithHostedAS1Durations(t, embeddedEntry(gatewayTestServer), map[string]string{
+		"id_jag_lifetime": "17s", "credential_lifetime": "10m", "client_assertion_lifetime": "23s",
+	}, nil)
+	g := hb.signIn(t)
+	before := time.Now()
+	s, cred, _ := g.open(t)
+	after := time.Now()
+	credExp, ok := jwtClaims(t, cred.Value())["exp"].(float64)
+	if earliest, latest := before.Add(10*time.Minute-time.Second), after.Add(10*time.Minute); !ok ||
+		time.Unix(int64(credExp), 0).Before(earliest) || time.Unix(int64(credExp), 0).After(latest) {
+		t.Fatalf("agent credential exp = %v, want 10m after its issue", credExp)
+	}
+	// AS-2 refuses the ID-JAG (see TestHostedAS1IssuesTheGatewaysIDJAGs), so
+	// only the redemptions are read.
+	_, _ = g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
+	redeemed := hb.as2.Requests()
+	if len(redeemed) == 0 {
+		t.Fatal("no redemption reached AS-2")
+	}
+	lifetime := func(token string) float64 {
+		claims := jwtClaims(t, token)
+		exp, okExp := claims["exp"].(float64)
+		iat, okIat := claims["iat"].(float64)
+		if !okExp || !okIat {
+			t.Fatalf("claims %v lack exp or iat", claims)
+		}
+		return exp - iat
+	}
+	for i, r := range redeemed {
+		if got := lifetime(r.Assertion); got != 17 {
+			t.Errorf("redemption %d: ID-JAG lifetime %vs, want the file's 17s", i, got)
+		}
+		if got := lifetime(r.ClientAssertion); got != 23 {
+			t.Errorf("redemption %d: client assertion lifetime %vs, want the file's 23s", i, got)
+		}
+	}
+}
+
+// TestHostedAS1CapsSessionsAtTheConfiguredMaximum: the hosted AS-1 caps the
+// grant a session holds at id_jag_max_lifetime, so the broker session reaches
+// its hard expiry then. With no clock skew, nothing ends it earlier. The
+// broker's clock moves; AS-1 dates the grant's expiry from wall time during
+// the open, truncated to whole seconds, so the session is checked open two
+// seconds before the earliest expiry that allows and closed at the latest.
+func TestHostedAS1CapsSessionsAtTheConfiguredMaximum(t *testing.T) {
+	clock := &offsetClock{}
+	hb := buildWithHostedAS1Durations(t, nil, map[string]string{"id_jag_max_lifetime": "1h", "clock_skew": "0s"}, clock.Now)
+	g := hb.signIn(t)
+	before := time.Now()
+	s, _, _ := g.open(t)
+	after := time.Now()
+	find := func() (identitybroker.Session, bool) {
+		found, ok, err := g.built.IdentityBroker.FindSession(t.Context(), identitybroker.FindSessionRequest{RootHostSessionID: s.HostSessionID})
+		if err != nil {
+			t.Fatalf("FindSession: %v", err)
+		}
+		return found, ok
+	}
+	clock.Set(before.Add(time.Hour - 2*time.Second))
+	if found, ok := find(); !ok || found.ID != s.ID || !found.HoldsRefreshToken {
+		t.Fatalf("FindSession just before the 1h hard expiry = %+v, %v; want the session, holding its grant", found, ok)
+	}
+	clock.Set(after.Add(time.Hour))
+	if found, ok := find(); ok {
+		t.Fatalf("FindSession at the 1h hard expiry = %+v, want none", found)
+	}
+}
+
 // hostedBuild is a Built hosting AS-1 at issuer, served on a loopback TLS
 // listener so users can sign in there, with as2 in front of the identity
 // broker's transport to AS-2.
@@ -604,6 +730,14 @@ type hostedBuild struct {
 // entry routing servers requires and which refuses AS-1's ID-JAGs.
 func buildWithHostedAS1(t *testing.T, gateways []identitybroker.GatewayEntry) *hostedBuild {
 	t.Helper()
+	return buildWithHostedAS1Durations(t, gateways, nil, nil)
+}
+
+// buildWithHostedAS1Durations is buildWithHostedAS1 with durations, the
+// configuration file's duration fields by name, and now, the broker's clock
+// when non-nil.
+func buildWithHostedAS1Durations(t *testing.T, gateways []identitybroker.GatewayEntry, durations map[string]string, now func() time.Time) *hostedBuild {
+	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	// The issuer names the listener the hosted AS-1 is served on once built.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -615,8 +749,9 @@ func buildWithHostedAS1(t *testing.T, gateways []identitybroker.GatewayEntry) *h
 	hb.cfg = Config{
 		UseMock: true, NoSoul: true, NoShell: true,
 		IdentityBroker:           true,
-		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Gateways: gateways}).Path,
+		IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Gateways: gateways, Durations: durations}).Path,
 		IdentityBrokerHostedAS1:  hostedAS1Config(t, h, hb.issuer),
+		identityBrokerNow:        now,
 		MCPAuthority:             protectedBrokerAuthority(),
 		identityBrokerAS2Transport: func(next http.RoundTripper) http.RoundTripper {
 			hb.as2 = identityharness.NewFaultTransport(next, as2TestIssuer+"/oauth/token")
