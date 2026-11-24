@@ -409946,6 +409946,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795558991177,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a5d9010e31a43fecd5428612af82fc08684d129",
+          "message": "feat(executor): cancel calls on connection loss and add keepalives (#2971)\n\nThe executor server pings the provider after `-keepalive-interval`\nidle and closes the connection when no reply arrives within\n`-keepalive-timeout`, cancelling its calls and their commands. Both\ndefault to 10s, bounded to 1s..10m.\n\nThe provider sets them on new executor Pods through\n`--executor-keepalive-interval` and `--executor-keepalive-timeout`\n(chart value `provider.executorKeepalive`) and uses the same values\nfor its own client keepalive. Defaults and bounds live in\n`internal/executionenv`.\n\nCloses: #2697",
+          "timestamp": "2026-11-24T23:12:35+01:00",
+          "tree_id": "b2f8b801c9d09c653900a66bef0d86816644e40f",
+          "url": "https://github.com/stacklok/mecatl/commit/4a5d9010e31a43fecd5428612af82fc08684d129"
+        },
+        "date": 1795559773254,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -591405,6 +591439,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795559769003,
+  "lastUpdate": 1795559774131,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
