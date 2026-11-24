@@ -194,8 +194,10 @@ With the identity broker on, the bound root also gets the MCP gateway tools of
 each server its definition's `mcpServers` names by reference, minus each tool
 its `disallowedTools` names, and no other MCP broker tool. The broker registers
 the root under its definition and refuses a gateway call outside that
-definition's limit. Without the identity broker, the bound root gets no MCP
-broker tools.
+definition's limit. It gets only the tools a server declares statically in
+`auth.oauth.tools`: a bound session cannot use workspace enrollment, which
+discovers the tools of a server that declares none. Without the identity
+broker, the bound root gets no MCP broker tools.
 
 Provider/model selection for a bound root follows these five cases:
 

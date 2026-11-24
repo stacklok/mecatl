@@ -24,7 +24,7 @@ import (
 // references, minus those it excludes, as a named helper does: they are in
 // the catalog, in the authority and ceiling minted from it, and in the tools
 // the model is offered. A server it does not reference, a definition that
-// references none, and a tool without a gateway route grant nothing. The
+// references none, and a tool naming no gateway server grant nothing. The
 // root calls its allowed tool, and a call of an excluded one never runs.
 func TestAgentBoundRootGetsItsDefinitionsGatewayTools(t *testing.T) {
 	var lookups, echoes, reads atomic.Int32
@@ -32,8 +32,11 @@ func TestAgentBoundRootGetsItsDefinitionsGatewayTools(t *testing.T) {
 		countingGatewayTool{fakeGatewayTool{"calendar", "lookup"}, &lookups},
 		countingGatewayTool{fakeGatewayTool{"calendar", "echo"}, &echoes},
 		countingGatewayTool{fakeGatewayTool{"github", "read"}, &reads},
-		// A broker route that acts as the session; the server never passes
-		// one, and the factory would not keep it if it did.
+		// A tool that names no gateway server, which the factory drops. A
+		// broker route that acts as the session also names its server, so
+		// the factory would keep it: the server drops those before the
+		// factory (HelperGatewayTools, pinned by
+		// TestAgentBoundSessionGetsOnlyItsAttachmentsGatewayRoutes).
 		notGatewayTool{fakeGatewayTool{"calendar", "admin"}},
 	}
 	defs := agents.NewRegistry([]agents.AgentDef{
@@ -107,7 +110,7 @@ func TestAgentBoundRootGetsItsDefinitionsGatewayTools(t *testing.T) {
 	}
 }
 
-// notGatewayTool is a broker tool with no gateway route.
+// notGatewayTool is a tool that names no gateway server.
 type notGatewayTool struct{ fakeGatewayTool }
 
 func (notGatewayTool) GatewayServer() {}
