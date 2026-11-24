@@ -450403,6 +450403,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795511070133,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d3fe24b6c2b7577c8e26d80ef6df81041b0b02b0",
+          "message": "feat(studio): offer the effort levels the model accepts and reset Auto on fork (#2964)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-24T10:41:08+01:00",
+          "tree_id": "453484549635268a747d4477b20e27d44c1c649a",
+          "url": "https://github.com/stacklok/mecatl/commit/d3fe24b6c2b7577c8e26d80ef6df81041b0b02b0"
+        },
+        "date": 1795513999920,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13387,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12882.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -586329,6 +586368,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795513996580,
+  "lastUpdate": 1795514000750,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
