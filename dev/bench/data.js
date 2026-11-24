@@ -588733,9 +588733,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795537045797,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "06b542d41448b9af569052612879bbb9d8bb595d",
+          "message": "refactor(executorrpc): rename lazy gRPC Dial wrappers to NewClient (#2974)\n\nEvery `Dial` that only wraps `grpc.NewClient` opens no connection; a bad\naddress or failed handshake surfaces on the first RPC. The name, and\n`executorclient.Dial`'s doc comment and `executorclient: connect:`\nerror prefix, implied otherwise.\n\nRename `executorclient.Dial`, `cmd/mecatui/client.Dial`,\n`grpcdriver.Dial`, and the `fileconformance`, `commandconformance`, and\n`memexecutor` test helpers to `NewClient`, and update all call sites.\nThe error prefixes become `executorclient: new client:`,\n`grpcdriver: new client`, and `new client for` in the mecatui client;\n`executionclient`'s private lazy `dial` now says `new client` too.\n\n`grpcdriver.Dial` is public, so it stays as a deprecated wrapper over\n`NewClient` for at least one release, and the adapters changelog\nrecords the change. The session-store guide keeps `Dial` until an\nadapters tag exports `NewClient`. `ExecutorDialer.Dial` really dials\nand completes the TLS handshake, so it keeps its name.\n\nCloses: #2962",
+          "timestamp": "2026-11-24T17:10:17+01:00",
+          "tree_id": "5f521aa5fff7cfe6199e7d176a2c18780f217cc4",
+          "url": "https://github.com/stacklok/mecatl/commit/06b542d41448b9af569052612879bbb9d8bb595d"
+        },
+        "date": 1795537839367,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 779,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32199,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795537834950,
+  "lastUpdate": 1795537840435,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
