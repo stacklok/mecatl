@@ -104,28 +104,8 @@ would need a dedicated integration to hand its agent loop over to Mecatl.
 ## Where this is going
 
 Mecatl is early, and the cloud-native harness is a direction as well as a
-current architecture. Our aim is that every agent action is attributable and
-verifiable: which user, which agent, and which helper agent acted, with what
-authority. The work runs across five themes:
-
-- **Identity and accountability.** Each agent gets its own SPIFFE identity,
-  acts with authority derived from both the user and the agent, and leaves an
-  attributed audit trail.
-- **Bounded autonomy.** Agents get room to work without unrestricted access,
-  through isolated execution on Kubernetes, per-agent tool limits, and
-  revocation that reaches every agent.
-- **Dependable, long-running work.** Agent work recovers from interruption
-  without blindly repeating actions, keeps a history that explains it, and runs
-  on a schedule under its own identity.
-- **Where you work.** Agents come to the tools people already use, from the
-  terminal to team chat such as Slack.
-- **An open foundation.** Mecatl is easy to build on, with an SDK that can be
-  tested offline and explicit extension points for specialized agents.
-
-The [Mecatl roadmap](https://github.com/stacklok/mecatl/blob/main/ROADMAP.md)
-breaks each theme into what has shipped, what is in progress, and what comes
-next. It describes direction, not delivery dates. The operator and capability
-guides describe what Mecatl supports today.
+current architecture. The [Mecatl roadmap](/roadmap.md) sets out what has
+shipped, what is in progress, and what comes next.
 
 ## Next steps
 

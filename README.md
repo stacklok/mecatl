@@ -197,8 +197,9 @@ boundaries, and platform limits.
 
 ## Roadmap
 
-[ROADMAP.md](./ROADMAP.md) describes what Mecatl already does, what is in
-progress, and where the project is heading.
+The [Mecatl roadmap](https://mecatl.dev/docs/roadmap) describes what Mecatl
+already does, what is in progress, and where the project is heading.
+[ROADMAP.md](./ROADMAP.md) explains where to propose changes.
 
 ## Contributing, security, and license
 

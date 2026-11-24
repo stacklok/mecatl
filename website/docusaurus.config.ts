@@ -150,7 +150,7 @@ const config: Config = {
           label: 'Build',
         },
         {
-          href: 'https://github.com/stacklok/mecatl/blob/main/ROADMAP.md',
+          to: '/docs/roadmap',
           position: 'left',
           label: 'Roadmap',
         },
@@ -175,6 +175,7 @@ const config: Config = {
             {label: 'Use it now', to: '/docs/mecatui/getting-started'},
             {label: 'Run on Kubernetes', to: '/docs/operating/mecak8s'},
             {label: 'What is a cloud-native harness?', to: '/docs/cloud-native-harness'},
+            {label: 'Roadmap', to: '/docs/roadmap'},
           ],
         },
         {
@@ -191,7 +192,6 @@ const config: Config = {
           title: 'More',
           items: [
             {label: 'GitHub', href: 'https://github.com/stacklok/mecatl'},
-            {label: 'Roadmap', href: 'https://github.com/stacklok/mecatl/blob/main/ROADMAP.md'},
             {label: 'Discord', href: 'https://discord.gg/stacklok'},
             {label: 'Colophon', to: '/colophon'},
             {label: 'Stacklok', href: 'https://stacklok.com'},
