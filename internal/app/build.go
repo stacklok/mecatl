@@ -3340,7 +3340,8 @@ func resolvedSessionProjection(cfg Config, reg *providerRegistry, sel server.Pro
 	if strings.TrimSpace(sel.ReasoningEffort) == "" || !ok {
 		effort, _ = NormalizeReasoningEffort(cfg.ReasoningEffort)
 	}
-	return server.ResolvedModel{ProviderID: providerID, ModelID: model, ReasoningEffort: reg.appliedEffortFor(providerID, model, effort)}
+	return server.ResolvedModel{ProviderID: providerID, ModelID: model,
+		ReasoningEffort: reg.appliedEffortFor(providerID, model, effort), RequestedReasoningEffort: effort}
 }
 
 // debugSessionEngineFactory builds the deliberately narrow analysis engine for a

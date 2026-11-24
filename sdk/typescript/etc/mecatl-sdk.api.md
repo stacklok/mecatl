@@ -1325,6 +1325,7 @@ export const ServerFeature: {
     readonly ExecutionTemplates: "execution_templates";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
+    readonly ModelEffortLevels: "model_effort_levels";
     readonly PromptFreeControls: "prompt_free_controls";
     readonly RefusedModeRecovery: "refused_mode_recovery";
     readonly ServerInfo: "server_info";
@@ -1500,8 +1501,8 @@ export interface SessionResolvedModel {
     readonly modelId: string;
     // (undocumented)
     readonly providerId: string;
-    // (undocumented)
     readonly reasoningEffort?: string;
+    readonly requestedReasoningEffort?: string;
 }
 
 // @public

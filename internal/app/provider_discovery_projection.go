@@ -14,10 +14,21 @@ func projectModelEntry(reg *providerRegistry, cfg Config, view *discoverySnapsho
 		name = m.ID
 	}
 	cached := reg.promptCached != nil && reg.promptCached(pid, m.ID)
+	effort := publishedEffortLevels(reg, cfg, view, pid, m.ID)
 	return &mecatlv1.ModelInfo{Id: m.ID, ProviderId: pid, DisplayName: name,
 		ContextLimit: int64(resolveModelWindow(cfg, view, pid, m.ID).tokens),
 		Image:        modelCapabilityCandidate(reg, view, pid, m.ID).Image,
-		Reasoning:    m.Reasoning, PromptCached: cached}
+		Reasoning:    m.Reasoning, PromptCached: cached,
+		EffortLevels: effort.levels, EffortLevelsKnown: effort.known}
+}
+
+// publishedEffortLevels is what ListModels reports for a model: the levels a
+// session on it is sent against, under the same provider rules as the request
+// path (providerEffortLevels). The mock, and a Chat Completions model of
+// unknown levels, are reported as taking none.
+func publishedEffortLevels(reg *providerRegistry, cfg Config, view *discoverySnapshot, pid, model string) effortLevels {
+	entry, ok := reg.Lookup(pid)
+	return providerEffortLevels(pid, entry, ok, resolveModelEffortLevels(cfg, view, pid, model)).effortLevels
 }
 
 func modelCapabilityCandidate(reg *providerRegistry, view *discoverySnapshot, pid, model string) port.ProviderCapabilities {

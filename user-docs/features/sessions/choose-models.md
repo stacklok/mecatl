@@ -338,8 +338,17 @@ including:
 - provider ID and opaque model ID;
 - display name when available;
 - image-input support;
-- reasoning support; and
+- reasoning support;
+- reasoning-effort levels, and whether they're known; and
 - context limit when known.
+
+`effort_levels` lists the levels a session on the model sends. When
+`effort_levels_known` is true, an empty list means the model gets no effort;
+when it is false, Mecatl sends a requested level and the provider can refuse it.
+Clients check for `model_effort_levels` in the compatibility features before
+reading an empty list as "no effort". With the same feature,
+`resolved_model.requested_reasoning_effort` reports the level a session asked
+for beside the level its model receives.
 
 The reasoning flag is boolean: `false` can mean that the model listing did not
 report reasoning support, not that the model explicitly rejects it. Reasoning

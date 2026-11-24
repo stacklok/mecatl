@@ -345,12 +345,13 @@ func sessionCapabilitiesToJSON(
 }
 
 // resolvedModelJSON mirrors mecatlv1.ResolvedModel for the JSON surface. It carries
-// no secret material (provider id, model id, context window only).
+// no secret material (provider id, model id, context window, effort only).
 type resolvedModelJSON struct {
-	ProviderID      string `json:"provider_id"`
-	ModelID         string `json:"model_id"`
-	ContextWindow   int64  `json:"context_window"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	ProviderID               string `json:"provider_id"`
+	ModelID                  string `json:"model_id"`
+	ContextWindow            int64  `json:"context_window"`
+	ReasoningEffort          string `json:"reasoning_effort,omitempty"`
+	RequestedReasoningEffort string `json:"requested_reasoning_effort,omitempty"`
 }
 
 func placementMetadataToJSON(meta session.PlacementMetadata) *placementMetadataJSON {
@@ -364,10 +365,11 @@ func placementMetadataToJSON(meta session.PlacementMetadata) *placementMetadataJ
 // the zero value (round-trips to "absent" so the client falls back to today's
 // behavior). Mirrors resolvedModelToProto.
 func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
-	if rm.ProviderID == "" && rm.ModelID == "" && rm.ContextWindow == 0 && rm.ReasoningEffort == "" {
+	if rm.ProviderID == "" && rm.ModelID == "" && rm.ContextWindow == 0 && rm.ReasoningEffort == "" && rm.RequestedReasoningEffort == "" {
 		return nil
 	}
-	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow, ReasoningEffort: rm.ReasoningEffort}
+	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow,
+		ReasoningEffort: rm.ReasoningEffort, RequestedReasoningEffort: rm.RequestedReasoningEffort}
 }
 
 type contextOccupancyJSON struct {
