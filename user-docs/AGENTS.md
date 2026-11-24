@@ -118,7 +118,7 @@ sidebar_position: 1
 # Page title
 ```
 
-Write about current behavior in clear technical prose. Keep roadmap discussion in the repository's `ROADMAP.md` and link to it rather than restating it; public task guides and reference must describe delivered surfaces. Contributor qualification commands and test receipts belong in the owning internal documentation. Preserve verified operator limitations when trimming that material.
+Write about current behavior in clear technical prose. Roadmap detail lives in the repository's `ROADMAP.md`; `cloud-native-harness.md` may summarize its themes and link to it, but must not restate item status; public task guides and reference must describe delivered surfaces. Contributor qualification commands and test receipts belong in the owning internal documentation. Preserve verified operator limitations when trimming that material.
 
 Use sentence-case headings, descriptive links, and examples that help readers
 complete a task. Style Mecatl as a proper noun, and write the component and
