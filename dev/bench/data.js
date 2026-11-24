@@ -451991,6 +451991,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795526242429,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "190f7325734dc6c500ba415f28b60243b840188b",
+          "message": "feat(identitybroker): make the broker's lifetimes, clock skew, and timeouts settings (#2976)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-24T16:04:49Z",
+          "tree_id": "3a252f1c05387ba9c117c18e66feaaf87d633af4",
+          "url": "https://github.com/stacklok/mecatl/commit/190f7325734dc6c500ba415f28b60243b840188b"
+        },
+        "date": 1795537057907,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13416,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12910.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -588373,6 +588412,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795537053007,
+  "lastUpdate": 1795537058905,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
