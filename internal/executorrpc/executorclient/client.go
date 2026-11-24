@@ -3,9 +3,11 @@ package executorclient
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Client-side ceilings against a misbehaving executor.
@@ -63,4 +65,9 @@ func NewClient(
 		return nil, fmt.Errorf("executorclient: new client: %w", err)
 	}
 	return conn, nil
+}
+
+// Keepalive fails calls to an executor that stops answering pings.
+func Keepalive(interval, timeout time.Duration) grpc.DialOption {
+	return grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: interval, Timeout: timeout})
 }

@@ -262,29 +262,40 @@ func TestRevocationDuringAdmissionRefusesTheCall(t *testing.T) {
 	}
 }
 
-func TestRecheckToleratesTransientUnreadiness(t *testing.T) {
-	for reason, sweeps := range map[string]int{
-		"ExecutorUnavailable": 2,
-		"PVCUnavailable":      2,
-		"Reconciled":          2,
-		"InvalidTemplate":     1,
+func TestRecheckLeavesCallsRunningWhenOnlyRoutingChanges(t *testing.T) {
+	for name, mutate := range map[string]func(*unstructured.Unstructured){
+		"final reference released": setField([]string{"status", "references"}, []any{}),
+		"executor unavailable": func(o *unstructured.Unstructured) {
+			setConditionObject(o, "Ready", false, "ExecutorUnavailable", "")
+		},
+		"executor Pod unready": func(o *unstructured.Unstructured) {
+			setConditionObject(o, "Ready", false, "Reconciled", "")
+		},
+		"fence unknown":       setField([]string{"status", "fenceState"}, "FenceUnknown"),
+		"retiring":            setField([]string{"spec", "desired"}, "Retiring"),
+		"lifecycle operation": setField([]string{"status", "lifecycleOperation", "id"}, "replace"),
 	} {
-		t.Run(reason, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			f := newProxyFixture(t, proxyOptions{manualTicks: true})
-			stream := blockedCommand(t, f)
-			f.updateEnvironment(t, func(o *unstructured.Unstructured) {
-				setConditionObject(o, "Ready", false, reason, "")
-			})
-			for range sweeps - 1 {
-				f.tick(t)
-				f.requireOpen(t, 1)
-			}
-			requireWithdrawn(t, f, stream, true, codes.Unavailable)
+			blockedCommand(t, f)
+			f.updateEnvironment(t, mutate)
+			f.tick(t)
+			f.tick(t)
+			f.requireOpen(t, 1)
 		})
 	}
 }
 
-func TestPolicyChangeDuringUnreadinessClosesAtOnce(t *testing.T) {
+func TestRecheckClosesCallsOnTemplateRevokedElsewhere(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{manualTicks: true})
+	stream := blockedCommand(t, f)
+	f.updateEnvironment(t, func(o *unstructured.Unstructured) {
+		setConditionObject(o, "Ready", false, "InvalidTemplate", "")
+	})
+	requireWithdrawn(t, f, stream, true, codes.Unavailable)
+}
+
+func TestPolicyChangeClosesCallsWhileExecutorUnavailable(t *testing.T) {
 	f := newProxyFixture(t, proxyOptions{manualTicks: true})
 	stream := blockedCommand(t, f)
 	f.updateEnvironment(t, func(o *unstructured.Unstructured) {
@@ -296,16 +307,6 @@ func TestPolicyChangeDuringUnreadinessClosesAtOnce(t *testing.T) {
 	if err := f.security.Reload(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	requireWithdrawn(t, f, stream, true, codes.Unavailable)
-}
-
-func TestLifecycleOperationDuringUnreadinessClosesAtOnce(t *testing.T) {
-	f := newProxyFixture(t, proxyOptions{manualTicks: true})
-	stream := blockedCommand(t, f)
-	f.updateEnvironment(t, func(o *unstructured.Unstructured) {
-		setConditionObject(o, "Ready", false, "Reconciled", "")
-		setField([]string{"status", "lifecycleOperation", "id"}, "replace")(o)
-	})
 	requireWithdrawn(t, f, stream, true, codes.Unavailable)
 }
 

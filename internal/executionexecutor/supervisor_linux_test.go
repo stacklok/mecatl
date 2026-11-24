@@ -317,3 +317,46 @@ func sweep(marker string) int {
 	}
 	return 0
 }
+
+func TestDroppedConnectionKillsCommand(t *testing.T) {
+	supervisor := NewCommandSupervisor(
+		[]string{os.Args[0], "-test.run=^TestCommandSupervisorHelper$"},
+		[]string{helperEnv + "=1"},
+		t.TempDir())
+	srv, err := commandserver.New(supervisor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, conns := dialFaulty(t, srv, time.Hour, time.Hour)
+	marker := token(3600)
+	stream, err := client.RunCommand(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := &executorv1.RunCommandRequest{Action: &executorv1.RunCommandRequest_Start{
+		Start: &executorv1.StartCommand{Command: "printf ready; exec sleep " + marker},
+	}}
+	if err := stream.Send(start); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(msg.GetStdout(), []byte("ready")) {
+			break
+		}
+	}
+	if len(processesWith(marker)) == 0 {
+		t.Fatal("command is not running")
+	}
+	_ = (<-conns).Close()
+	deadline := time.Now().Add(failAfter)
+	for len(processesWith(marker)) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("command outlived its dropped connection: %v", processesWith(marker))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

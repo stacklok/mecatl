@@ -15,11 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -27,6 +29,7 @@ import (
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
+	"github.com/stacklok/mecatl/internal/executionenv"
 	"github.com/stacklok/mecatl/internal/executionexecutor"
 	"github.com/stacklok/mecatl/internal/executorrpc/fileconformance"
 )
@@ -79,6 +82,120 @@ func TestServeRejectsInvalidMaxFileBytes(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "max-file-bytes") {
 			t.Fatalf("-max-file-bytes %s: err = %v", value, err)
 		}
+	}
+}
+
+func TestServeRejectsInvalidKeepalive(t *testing.T) {
+	const want = "keepalive interval and timeout must be"
+	for _, flag := range []string{
+		"-" + executionenv.KeepaliveIntervalFlag,
+		"-" + executionenv.KeepaliveTimeoutFlag,
+	} {
+		for _, value := range []string{"0s", "999ms", "11m"} {
+			args := []string{serveMode, "-listen", "127.0.0.1:0", "-files", flag, value}
+			err := runServeMode(context.Background(), args)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s %s: err = %v", flag, value, err)
+			}
+		}
+	}
+}
+
+func keepaliveArgs(k executionenv.ExecutorKeepalive) []string {
+	return []string{
+		"-listen=127.0.0.1:0",
+		"-files",
+		"-" + executionenv.KeepaliveIntervalFlag + "=" + k.Interval.String(),
+		"-" + executionenv.KeepaliveTimeoutFlag + "=" + k.Timeout.String(),
+	}
+}
+
+func TestServeParsesProviderKeepaliveArgs(t *testing.T) {
+	want := executionenv.ExecutorKeepalive{Interval: 7 * time.Second, Timeout: 3 * time.Second}
+	sf, err := parseServeFlags(keepaliveArgs(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf.cfg.keepalive != want {
+		t.Fatalf("keepalive = %+v, want %+v", sf.cfg.keepalive, want)
+	}
+}
+
+// blackholeConn swallows writes and discards reads once blackholed.
+type blackholeConn struct {
+	net.Conn
+	blackholed atomic.Bool
+}
+
+func (c *blackholeConn) Read(p []byte) (int, error) {
+	for {
+		n, err := c.Conn.Read(p)
+		if err != nil || !c.blackholed.Load() {
+			return n, err
+		}
+	}
+}
+
+func (c *blackholeConn) Write(p []byte) (int, error) {
+	if c.blackholed.Load() {
+		return len(p), nil
+	}
+	return c.Conn.Write(p)
+}
+
+func TestServeKeepaliveClosesBlackholedConnection(t *testing.T) {
+	keepalive := executionenv.ExecutorKeepalive{Interval: time.Second, Timeout: time.Second}
+	sf, err := parseServeFlags(keepaliveArgs(keepalive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newExecutorServer(
+		context.Background(),
+		t.TempDir(),
+		sf.cfg,
+		insecure.NewCredentials(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lis := bufconn.Listen(1 << 20)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	conns := make(chan *blackholeConn, 1)
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			raw, err := lis.DialContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+			bc := &blackholeConn{Conn: raw}
+			select {
+			case conns <- bc:
+			default:
+			}
+			return bc, nil
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	conn.Connect()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatal("connection never became ready")
+		}
+	}
+	(<-conns).blackholed.Store(true)
+	const slack = 2 * time.Second
+	ctx, cancel = context.WithTimeout(t.Context(), keepalive.Interval+keepalive.Timeout+slack)
+	defer cancel()
+	if !conn.WaitForStateChange(ctx, connectivity.Ready) {
+		t.Fatal("server kept a blackholed connection open")
 	}
 }
 

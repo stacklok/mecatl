@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 const goFixtureRevision = "v1-3ec82c4f18bd7756f1247626978221e5543b03967d4a5cd3364386ce288aee8d"
@@ -981,12 +982,15 @@ func TestChartExecutorClientCertificateAndTrust(t *testing.T) {
 	spec, _, _ := unstructured.NestedMap(deployment, "spec", "template", "spec")
 	container := spec["containers"].([]any)[0].(map[string]any)
 	args := toStrings(container["args"].([]any))
+	keepalive := executionenv.DefaultExecutorKeepalive()
 	for _, want := range []string{
 		"--executor-client-tls-directory=/etc/mecatl-execution/executor-client",
 		"--executor-client-uri=spiffe://mecatl.test/provider/executor-client",
 		"--executor-ca-secret=platform-roots",
 		"--executor-ca-key=roots.pem",
 		"--executor-trust-configmap=test-mecatl-execution-executor-trust",
+		"--executor-keepalive-interval=" + keepalive.Interval.String(),
+		"--executor-keepalive-timeout=" + keepalive.Timeout.String(),
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("provider args missing %q: %v", want, args)
@@ -1076,6 +1080,24 @@ func TestChartRejectsInvalidExecutorClientTLS(t *testing.T) {
 			_, err := renderLifetime(t, nil, append([]string{"--set", set}, tc.extra...)...)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("render error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestChartExecutorKeepaliveMatchesTheProviderBounds(t *testing.T) {
+	lo, hi := executionenv.MinExecutorKeepalive, executionenv.MaxExecutorKeepalive
+	secs := func(d time.Duration) string { return fmt.Sprintf("%ds", d/time.Second) }
+	mins := func(d time.Duration) string { return fmt.Sprintf("%dm", d/time.Minute) }
+	for value, ok := range map[string]bool{
+		secs(lo): true, secs(hi): true, mins(time.Minute): true, mins(hi): true,
+		secs(lo - time.Second): false, secs(hi + time.Second): false,
+		mins(hi + time.Minute): false, "500ms": false, "1m30s": false,
+	} {
+		t.Run(value, func(t *testing.T) {
+			_, err := renderLifetime(t, nil, "--set", "provider.executorKeepalive.interval="+value)
+			if (err == nil) != ok {
+				t.Fatalf("render error = %v, want accepted %t", err, ok)
 			}
 		})
 	}

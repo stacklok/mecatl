@@ -27,8 +27,61 @@ func generationMatches(o *unstructured.Unstructured, generation uint64) bool {
 	return generation > 0 && generation <= math.MaxInt64 && intNested(o.Object, "status", "grantGeneration") == int64(generation)
 }
 
-//nolint:gocyclo // Every durable claim, reference, and policy precondition is checked.
 func (s *Store) validateRunClaim(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+) (*unstructured.Unstructured, error) {
+	o, err := s.currentRunClaim(ctx, client, owner, rc)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := referenceRecords(o)
+	if err != nil {
+		return nil, err
+	}
+	if !publishedReference(refs, rc.BindingID) ||
+		textNested(o.Object, "spec", "desired") != activeDesired ||
+		!conditionTrue(o, "Ready") ||
+		textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		return nil, &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: "run binding is not ready",
+		}
+	}
+	if err := s.clientPolicyRefusal(ctx, client, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// RecheckAuthority reports whether a forwarded call's authority ended: the
+// environment, its template, the run claim, or the client's policy. Unlike
+// ExecutorRoute it ignores whether a new call could be routed, so reference
+// release, readiness, fencing, and lifecycle work leave the call running.
+func (s *Store) RecheckAuthority(
+	ctx context.Context,
+	client string,
+	owner string,
+	rc executionenv.RequestContext,
+) error {
+	o, err := s.currentRunClaim(ctx, client, owner, rc)
+	if err != nil {
+		return err
+	}
+	// Replicas started with the revised template file report revocation here.
+	if conditionFalseFor(o, "Ready", "InvalidTemplate") {
+		return &executionenv.Error{
+			Code:    executionenv.CodeNotReady,
+			Message: templateRevokedMessage,
+		}
+	}
+	return s.clientPolicyRefusal(ctx, client, o)
+}
+
+//nolint:gocyclo // Every durable claim precondition is checked.
+func (s *Store) currentRunClaim(
 	ctx context.Context,
 	client string,
 	owner string,
@@ -76,43 +129,17 @@ func (s *Store) validateRunClaim(
 	if !ok || !s.now().Before(expiry) || claim.Environment != rc.Environment || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
 		return nil, errRunClaimNotCurrent
 	}
-	refs, err := referenceRecords(o)
-	if err != nil {
-		return nil, err
-	}
-	routable := publishedReference(refs, rc.BindingID) &&
-		textNested(o.Object, "spec", "desired") == activeDesired &&
-		textNested(o.Object, "status", "fenceState") == fenceHealthy
-	unready := &executionenv.Error{
-		Code:    executionenv.CodeNotReady,
-		Message: "run binding is not ready",
-	}
-	ready := routable && conditionTrue(o, "Ready")
-	transient := routable && briefly(o, "Ready")
-	if !ready && !transient {
-		return nil, unready
-	}
-	if err := s.clientPolicyRefusal(ctx, client, o); err != nil {
-		return nil, err
-	}
-	if !ready {
-		return o, &unconfirmedRefusal{unready}
-	}
 	return o, nil
 }
 
 type environmentRead string
 
-// transientReasons are condition reasons the reconciler sets while the
-// executor or its workspace is briefly unavailable, not when access ends.
-var transientReasons = []string{"ExecutorUnavailable", "PVCUnavailable", "Reconciled"}
-
-func briefly(o *unstructured.Unstructured, name string) bool {
+func conditionFalseFor(o *unstructured.Unstructured, name, reason string) bool {
 	conds, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
 	for _, raw := range conds {
 		m, ok := raw.(map[string]any)
-		if ok && text(m, "type") == name && text(m, "status") == "False" {
-			return slices.Contains(transientReasons, text(m, "reason"))
+		if ok && text(m, "type") == name {
+			return text(m, "status") == "False" && text(m, "reason") == reason
 		}
 	}
 	return false

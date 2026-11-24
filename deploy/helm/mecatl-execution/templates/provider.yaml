@@ -128,6 +128,8 @@ spec:
         - --executor-ca-secret={{ $caSecret }}
         - --executor-ca-key={{ $executorClient.caKey }}
         - --executor-trust-configmap={{ include "mecatl-execution.executorTrustConfigMap" . }}
+        - --executor-keepalive-interval={{ .Values.provider.executorKeepalive.interval }}
+        - --executor-keepalive-timeout={{ .Values.provider.executorKeepalive.timeout }}
         ports:
         - {name: grpc, containerPort: 8443}
         - {name: health, containerPort: {{ .Values.provider.healthPort }}}
