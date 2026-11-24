@@ -186,7 +186,8 @@ describe("Mecatl chat sessions", () => {
       () =>
         ({
           capabilities: { manualCompaction: false, modelSelection: false },
-        }) as ServerCompatibility,
+          features: new Set<string>(),
+        }) as unknown as ServerCompatibility,
     );
     expect(await service.executionTemplates?.()).toEqual({
       items: [
@@ -378,7 +379,10 @@ describe("Mecatl chat sessions", () => {
         sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
       } as unknown as Client,
       () =>
-        ({ capabilities: { manualCompaction: true, modelSelection: true } }) as ServerCompatibility,
+        ({
+          capabilities: { manualCompaction: true, modelSelection: true },
+          features: new Set<string>(),
+        }) as unknown as ServerCompatibility,
     );
 
     await expect(service.detail("session-1")).resolves.toEqual({
@@ -545,7 +549,8 @@ describe("Mecatl chat sessions", () => {
         () =>
           ({
             capabilities: { manualCompaction: false, modelSelection: true },
-          }) as ServerCompatibility,
+            features: new Set<string>(),
+          }) as unknown as ServerCompatibility,
       );
 
       await expect(service.detail("session-1")).resolves.toMatchObject({ mode: want });
@@ -571,7 +576,8 @@ describe("Mecatl chat sessions", () => {
       () =>
         ({
           capabilities: { manualCompaction: false, modelSelection: true },
-        }) as ServerCompatibility,
+          features: new Set<string>(),
+        }) as unknown as ServerCompatibility,
     );
 
     const detail = await service.detail("session-1");
@@ -607,7 +613,8 @@ describe("Mecatl chat sessions", () => {
         () =>
           ({
             capabilities: { manualCompaction: false, modelSelection: true },
-          }) as ServerCompatibility,
+            features: new Set<string>(),
+          }) as unknown as ServerCompatibility,
       );
 
       const detail = await service.detail("session-1");
@@ -642,13 +649,67 @@ describe("Mecatl chat sessions", () => {
         () =>
           ({
             capabilities: { manualCompaction: false, modelSelection: false },
-          }) as ServerCompatibility,
+            features: new Set<string>(),
+          }) as unknown as ServerCompatibility,
       );
 
       await expect(service.detail("session-1")).resolves.toMatchObject({
         model: { reasoningEffort },
       });
     }
+  });
+
+  it("reports the requested effort only when the server has per-model effort levels", async () => {
+    const detailFor = async (
+      features: string[],
+      resolved: { reasoningEffort?: string; requestedReasoningEffort?: string },
+    ) => {
+      const snapshot = vi.fn().mockResolvedValue({
+        resolvedModel: {
+          contextWindow: 128_000n,
+          modelId: "gpt-5",
+          providerId: "openai",
+          ...resolved,
+        },
+        kind: "main",
+        sessionId: "session-1",
+        state: "idle",
+        mode: SessionMode.Default,
+        tokenUsage: {},
+      });
+      const service = createMecatlChatService(
+        { sessions: { get: vi.fn().mockResolvedValue({ snapshot }) } } as unknown as Client,
+        () =>
+          ({
+            capabilities: { manualCompaction: false, modelSelection: true },
+            features: new Set(features),
+          }) as unknown as ServerCompatibility,
+      );
+      const detail = await service.detail("session-1");
+      expect(sessionDetailResponseSchema.parse(detail)).toEqual(detail);
+      return detail.model;
+    };
+
+    // A lowered request: the session asks for xhigh and its model gets high.
+    await expect(
+      detailFor(["model_effort_levels"], {
+        reasoningEffort: "high",
+        requestedReasoningEffort: "xhigh",
+      }),
+    ).resolves.toMatchObject({ reasoningEffort: "high", requestedReasoningEffort: "xhigh" });
+    // A request the model takes no level for: nothing is sent.
+    await expect(
+      detailFor(["model_effort_levels"], { requestedReasoningEffort: "max" }),
+    ).resolves.toMatchObject({ reasoningEffort: "default", requestedReasoningEffort: "max" });
+    // With the feature, an absent request is Auto.
+    await expect(detailFor(["model_effort_levels"], {})).resolves.toMatchObject({
+      reasoningEffort: "default",
+      requestedReasoningEffort: "default",
+    });
+    // Without it the request is unknown, so the field is absent.
+    const legacy = await detailFor([], { reasoningEffort: "high" });
+    expect(legacy).toMatchObject({ reasoningEffort: "high" });
+    expect(legacy).not.toHaveProperty("requestedReasoningEffort");
   });
 
   it("uses public SDK operations for mode, compaction, clearing, and model forks", async () => {
@@ -703,7 +764,24 @@ describe("Mecatl chat sessions", () => {
     expect(fork).toHaveBeenCalledWith("source", {
       modelId: "model",
       providerId: "provider",
+      reasoningEffort: "auto",
       worktreeSelector: "opaque-choice",
+    });
+  });
+
+  it("forks with Auto as the explicit auto token so the successor doesn't inherit the source's level", async () => {
+    const fork = vi.fn().mockResolvedValue({ id: "fork-successor" });
+    const service = createMecatlChatService({ sessions: { fork } } as unknown as Client);
+
+    await service.forkSession("source", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+    });
+
+    expect(fork).toHaveBeenCalledWith("source", {
+      modelId: "model",
+      providerId: "provider",
+      reasoningEffort: "auto",
     });
   });
 
@@ -804,7 +882,8 @@ describe("Mecatl chat sessions", () => {
       () =>
         ({
           capabilities: { manualCompaction: true, modelSelection: false },
-        }) as ServerCompatibility,
+          features: new Set<string>(),
+        }) as unknown as ServerCompatibility,
     );
 
     await expect(service.detail("s")).resolves.toMatchObject({

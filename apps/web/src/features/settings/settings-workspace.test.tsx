@@ -265,6 +265,30 @@ describe("settings facts", () => {
     );
     expect(noCapabilities).toMatch(/Images<\/dt><dd>No<\/dd>/);
     expect(noCapabilities).toMatch(/Reasoning<\/dt><dd>No<\/dd>/);
+    // A server with per-model effort levels lists them instead of the reasoning flag.
+    for (const [effortLevels, shown] of [
+      [{ known: true, levels: ["low", "xhigh"] }, "Low, Extra high"],
+      [{ known: true, levels: [] }, "None"],
+      [{ known: false, levels: [] }, "Unknown"],
+    ] as const) {
+      const page = await renderSection(
+        "models",
+        seededClient(
+          runtime(),
+          settings({
+            models: [
+              {
+                ...model,
+                effortLevels: { ...effortLevels, levels: [...effortLevels.levels] },
+                reasoning: false,
+              },
+            ],
+          }),
+        ),
+      );
+      expect(page).toContain(`Effort levels</dt><dd>${shown}</dd>`);
+      expect(page).not.toContain("Reasoning</dt>");
+    }
 
     const router = createRouter({
       history: createMemoryHistory({ initialEntries: ["/workspace/settings/models"] }),

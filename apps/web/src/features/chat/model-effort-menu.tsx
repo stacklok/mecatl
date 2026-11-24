@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Toggle } from "../../components/ui/toggle";
-import { effortLabel } from "../../lib/reasoning-effort";
+import { type EffortChoices, effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import type { ComposerModelOption } from "./chat-composer";
 import { GHOST_TRIGGER_CLASS } from "./composer-option-menu";
@@ -64,9 +64,11 @@ export function ModelEffortMenu({
   className,
   disabled,
   effort,
+  effortChoices,
   groupedModels,
   model,
   onEffortChange,
+  onEffortOpen,
   onModelChange,
   onReset,
 }: {
@@ -74,17 +76,18 @@ export function ModelEffortMenu({
   className?: string;
   disabled?: boolean;
   effort: string;
+  /** What the Effort submenu offers for `model`, from `effortChoicesFor`. */
+  effortChoices: EffortChoices;
   groupedModels: Map<string, ComposerModelOption[]>;
   model?: ModelSelection;
   onEffortChange: (value: string) => void;
+  /** The Effort submenu opened. */
+  onEffortOpen?: () => void;
   onModelChange: (model: ModelSelection | undefined) => void;
   /** Omit to hide "Reset to default" and the Default row: a live chat has no default to revert to, since every change is an explicit fork. */
   onReset?: () => void;
 }) {
   const label = modelLabel(groupedModels, model);
-  const resolvedModel = [...groupedModels.values()]
-    .flat()
-    .find((candidate) => sameModel(model, candidate));
   const canReset = model !== undefined || effort !== "default";
 
   return (
@@ -119,8 +122,9 @@ export function ModelEffortMenu({
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <EffortSubmenu
+          choices={effortChoices}
           effort={effort}
-          modelSupportsReasoning={resolvedModel?.reasoning}
+          onOpen={onEffortOpen}
           onSelect={onEffortChange}
         />
         {onReset && (

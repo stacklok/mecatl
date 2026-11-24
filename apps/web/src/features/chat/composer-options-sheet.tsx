@@ -15,7 +15,7 @@ import { Button } from "../../components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui/sheet";
 import { Toggle } from "../../components/ui/toggle";
 import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
-import { EFFORT_OPTIONS, effortLabel } from "../../lib/reasoning-effort";
+import { type EffortChoices, effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import type { ComposerModelOption } from "./chat-composer";
@@ -33,9 +33,13 @@ export interface ComposerModeControl {
 export interface ComposerModelControl {
   disabled: boolean;
   effort: string;
+  /** What the Effort choices offer for `model`, from `effortChoicesFor`. */
+  effortChoices: EffortChoices;
   groupedModels: Map<string, ComposerModelOption[]>;
   model?: ModelSelection;
   onEffortChange: (effort: string) => void;
+  /** The Effort choices became visible: the Effort submenu, or the sheet's Model view, opened. */
+  onEffortOpen?: () => void;
   onModelChange: (model: ModelSelection | undefined) => void;
   /** A draft's "Reset to default". A live chat has none, and no Default row either. */
   onReset?: () => void;
@@ -191,7 +195,10 @@ export function ComposerOptionsSheet({
                 <button
                   className={rowClass}
                   disabled={model.disabled}
-                  onClick={() => setView("model")}
+                  onClick={() => {
+                    setView("model");
+                    model.onEffortOpen?.();
+                  }}
                   type="button"
                 >
                   <Bot aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -240,7 +247,7 @@ export function ComposerOptionsSheet({
                   Effort
                 </legend>
                 <div className="clear-left flex flex-wrap gap-1.5">
-                  {EFFORT_OPTIONS.map((option) => (
+                  {model.effortChoices.options.map((option) => (
                     // Separate Toggles, not a single-choice ToggleGroup: that
                     // would turn the pills into radios with roving focus.
                     // Pressing the current pill picks it again.
@@ -258,6 +265,11 @@ export function ComposerOptionsSheet({
                     </Toggle>
                   ))}
                 </div>
+                {model.effortChoices.note && (
+                  <p className="mt-2 text-xs text-muted-foreground" role="note">
+                    {model.effortChoices.note}
+                  </p>
+                )}
               </fieldset>
               {model.onReset && (
                 <button

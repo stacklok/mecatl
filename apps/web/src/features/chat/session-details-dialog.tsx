@@ -11,6 +11,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { copyToClipboard } from "../../lib/clipboard";
 import { formatRelativeTime } from "../../lib/formatters";
+import { requestedEffort, type SessionEffort } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 
 /**
@@ -66,6 +67,22 @@ function formatInstant(iso: string): string {
   const relative = formatRelativeTime(millis);
   const absolute = new Date(millis).toLocaleString();
   return relative ? `${absolute} (${relative} ago)` : absolute;
+}
+
+/**
+ * The level the session asks for, and the level its requests carry when the
+ * model doesn't accept that one. Hidden while both are Auto.
+ */
+function EffortRow({ model }: { model: SessionEffort }) {
+  const requested = requestedEffort(model);
+  const applied = model.reasoningEffort;
+  if (requested === "default" && applied === "default") return null;
+  return (
+    <Row label="Reasoning effort">
+      {requested === "default" ? "auto" : requested}
+      {requested !== applied && ` (sent: ${applied === "default" ? "provider default" : applied})`}
+    </Row>
+  );
 }
 
 function Row({
@@ -240,9 +257,7 @@ export function SessionDetailsView({
             )}
             <Row label="Provider">{model?.providerId || "Unavailable"}</Row>
             <Row label="Model">{model?.id ?? (session.modelId || "Unavailable")}</Row>
-            {model?.reasoningEffort && model.reasoningEffort !== "default" && (
-              <Row label="Reasoning effort">{model.reasoningEffort}</Row>
-            )}
+            {model && <EffortRow model={model} />}
             {model?.contextWindow && Number(model.contextWindow) > 0 && (
               <Row label="Context window">
                 {`${Number(model.contextWindow).toLocaleString()} tokens`}

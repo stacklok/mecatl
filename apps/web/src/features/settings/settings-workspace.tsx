@@ -19,6 +19,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
+import { effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import { LearningSettingsPage } from "../learning/learning-settings-page";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
@@ -550,8 +551,23 @@ function ModelCard({
         <dd>{formatContextLimit(model.contextLimit)}</dd>
         <dt className="text-muted-foreground">Images</dt>
         <dd>{model.image ? "Yes" : "No"}</dd>
-        <dt className="text-muted-foreground">Reasoning</dt>
-        <dd>{model.reasoning ? "Yes" : "No"}</dd>
+        {model.effortLevels ? (
+          <>
+            <dt className="text-muted-foreground">Effort levels</dt>
+            <dd>
+              {!model.effortLevels.known
+                ? "Unknown"
+                : model.effortLevels.levels.length === 0
+                  ? "None"
+                  : model.effortLevels.levels.map(effortLabel).join(", ")}
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-muted-foreground">Reasoning</dt>
+            <dd>{model.reasoning ? "Yes" : "No"}</dd>
+          </>
+        )}
       </dl>
     </article>
   );

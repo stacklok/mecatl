@@ -116,6 +116,7 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { requestedEffort } from "../../lib/reasoning-effort";
 import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
@@ -924,17 +925,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
     panelWasOpen.current = Boolean(contentPreview);
   }, [contentPreview]);
-  const models: ComposerModelOption[] =
-    runtimeSettings.data?.models
-      .filter((model) => !disabledModels.has(modelPreferenceId(model)))
-      .map((model) => ({
-        id: model.id,
-        image: model.image,
-        label: model.displayName,
-        providerId: model.providerId,
-        providerLabel: model.providerDisplayName,
-        reasoning: model.reasoning,
-      })) ?? [];
+  const modelInventory: ComposerModelOption[] =
+    runtimeSettings.data?.models.map((model) => ({
+      ...(model.effortLevels ? { effortLevels: model.effortLevels } : {}),
+      id: model.id,
+      image: model.image,
+      label: model.displayName,
+      providerId: model.providerId,
+      providerLabel: model.providerDisplayName,
+      reasoning: model.reasoning,
+    })) ?? [];
+  const models = modelInventory.filter((model) => !disabledModels.has(modelPreferenceId(model)));
   const watchable =
     Boolean(selectedSession && isProvenChatSession(selectedSession)) &&
     isActiveSessionState(selectedSession?.state);
@@ -1335,7 +1336,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       const successor = await forkSession.mutateAsync({
         body: {
           model: { id: detail.model.id, providerId: detail.model.providerId },
-          reasoningEffort: detail.model.reasoningEffort,
+          reasoningEffort: requestedEffort(detail.model),
         },
         path: { sessionId: row.id },
       });
@@ -1367,7 +1368,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       const successor = await forkSession.mutateAsync({
         body: {
           model: { id: displayedDetail.model.id, providerId: displayedDetail.model.providerId },
-          reasoningEffort: displayedDetail.model.reasoningEffort,
+          reasoningEffort: requestedEffort(displayedDetail.model),
         },
         path: { sessionId },
       });
@@ -1482,7 +1483,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       const successor = await forkSession.mutateAsync({
         body: {
           model: { id: model.id, providerId: model.providerId },
-          reasoningEffort: model.reasoningEffort,
+          reasoningEffort: requestedEffort(model),
         },
         path: { sessionId: sourceId },
       });
@@ -3500,8 +3501,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 ? displayedDetail.mode
                 : undefined
             }
-            liveModel={sessionId ? displayedDetail?.model : undefined}
+            liveModel={
+              sessionId && displayedDetail?.model
+                ? {
+                    appliedReasoningEffort: displayedDetail.model.reasoningEffort,
+                    id: displayedDetail.model.id,
+                    providerId: displayedDetail.model.providerId,
+                    reasoningEffort: requestedEffort(displayedDetail.model),
+                  }
+                : undefined
+            }
+            modelInventory={modelInventory}
             models={models}
+            onRefreshModels={() => {
+              void runtimeSettings.refetch();
+            }}
             onConfigurationChange={setDraftConfiguration}
             onDraftChange={setComposerDraftPresent}
             onForkModel={(model, effort) => void forkConversation(model, effort)}

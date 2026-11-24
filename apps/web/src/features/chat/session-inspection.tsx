@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { requestedEffort } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import { SessionDetailsView } from "./session-details-dialog";
 import { SoulView } from "./soul-dialog";
@@ -157,7 +158,7 @@ export function SessionInspection({
                   id: detail.data?.model?.id ?? "",
                   providerId: detail.data?.model?.providerId ?? "",
                 },
-                reasoningEffort: detail.data?.model?.reasoningEffort ?? "default",
+                reasoningEffort: requestedEffort(detail.data?.model),
                 worktreeSelector: selected.selector,
               },
               path: { sessionId: session.id },

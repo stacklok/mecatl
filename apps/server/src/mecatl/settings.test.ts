@@ -234,6 +234,49 @@ describe("Mecatl runtime settings", () => {
     expect(detail?.models[0]).toMatchObject(model);
   });
 
+  it("reports each model's effort levels only when the server has per-model levels", async () => {
+    const list = vi.fn().mockResolvedValue({
+      models: [
+        // Out of order, with a level this Studio doesn't know.
+        {
+          ...sdkModel("gpt-5", "openai"),
+          effortLevels: ["high", "ultra", "low", "medium"],
+          effortLevelsKnown: true,
+        },
+        { ...sdkModel("plain", "openai"), effortLevels: [], effortLevelsKnown: true },
+        {
+          ...sdkModel("gateway-model", "team-gateway"),
+          effortLevels: [],
+          effortLevelsKnown: false,
+        },
+      ],
+      providerStatus: [],
+    });
+    const client = { models: { list }, server: { info: vi.fn() } } as unknown as Client;
+
+    const withLevels = createMecatlSettingsService(client, {
+      modelEffortLevels: true,
+      modelSelection: true,
+      serverInfo: false,
+    });
+    const settings = await withLevels.get();
+    expect(runtimeSettingsResponseSchema.parse(settings)).toEqual(settings);
+    expect(settings.models.map((model) => [model.id, model.effortLevels])).toEqual([
+      ["gpt-5", { known: true, levels: ["low", "medium", "high"] }],
+      ["plain", { known: true, levels: [] }],
+      ["gateway-model", { known: false, levels: [] }],
+    ]);
+    await expect(withLevels.getProvider("team-gateway")).resolves.toMatchObject({
+      models: [{ effortLevels: { known: false, levels: [] } }],
+    });
+
+    const legacy = await createMecatlSettingsService(client, {
+      modelSelection: true,
+      serverInfo: false,
+    }).get();
+    for (const model of legacy.models) expect(model).not.toHaveProperty("effortLevels");
+  });
+
   it("names each provider, and each model's provider, for the browser", async () => {
     const status = (providerId: string) => ({
       availableNotDefault: false,
@@ -281,7 +324,14 @@ describe("Mecatl runtime settings", () => {
 
   it("projects exactly the contract's provider and model fields", async () => {
     const list = vi.fn().mockResolvedValue({
-      models: [{ ...sdkModel("gpt-5", "openai"), credential: "secret" }],
+      models: [
+        {
+          ...sdkModel("gpt-5", "openai"),
+          credential: "secret",
+          effortLevels: ["low"],
+          effortLevelsKnown: true,
+        },
+      ],
       providerStatus: [
         {
           availableNotDefault: false,
@@ -296,7 +346,7 @@ describe("Mecatl runtime settings", () => {
     });
     const service = createMecatlSettingsService(
       { models: { list }, server: { info: vi.fn() } } as unknown as Client,
-      { modelSelection: true, serverInfo: false },
+      { modelEffortLevels: true, modelSelection: true, serverInfo: false },
     );
     const settings = await service.get();
     const providerFields = Object.keys(providerInventoryItemSchema.shape).sort();

@@ -7,38 +7,36 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "../../components/ui/dropdown-menu";
-import { EFFORT_OPTIONS, effortLabel, NO_REASONING_SUPPORT_NOTE } from "../../lib/reasoning-effort";
+import { type EffortChoices, effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 
 /**
- * The Model pill's Effort submenu, from the prototype (`stack-08`): Auto
- * through Max, the tiers `reasoningEffortSchema` accepts on both
- * `createSession` and `forkSession`.
- *
- * `modelSupportsReasoning` gates only the caveat line. The daemon still
- * accepts a tier for a model that reports no reasoning support, so the choice
- * stays available.
+ * The Model pill's Effort submenu, from the prototype (`stack-08`): Auto and
+ * the levels `choices` offers for the model (see `effortChoicesFor`), with its
+ * note underneath.
  */
 export function EffortSubmenu({
+  choices,
   disabled,
   effort,
-  modelSupportsReasoning,
+  onOpen,
   onSelect,
 }: {
+  choices: EffortChoices;
   disabled?: boolean;
   effort: string;
-  /** Undefined until a model is resolved; the caveat shows only when this is `false`. */
-  modelSupportsReasoning?: boolean;
+  /** Called each time the submenu opens, such as to list models whose levels are unknown again. */
+  onOpen?: () => void;
   onSelect: (value: string) => void;
 }) {
   return (
-    <DropdownMenuSub>
+    <DropdownMenuSub onOpenChange={(open) => open && onOpen?.()}>
       <DropdownMenuSubTrigger disabled={disabled}>
         <span className="flex-1">Effort</span>
         <span className="text-muted-foreground">{effortLabel(effort)}</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-56">
-        {EFFORT_OPTIONS.map((option) => (
+        {choices.options.map((option) => (
           <DropdownMenuItem key={option.value} onSelect={() => onSelect(option.value)}>
             <Check
               aria-hidden="true"
@@ -47,9 +45,9 @@ export function EffortSubmenu({
             {option.label}
           </DropdownMenuItem>
         ))}
-        {modelSupportsReasoning === false && (
-          <p className="border-t px-2.5 py-2 text-xs text-muted-foreground">
-            {NO_REASONING_SUPPORT_NOTE}
+        {choices.note && (
+          <p className="border-t px-2.5 py-2 text-xs text-muted-foreground" role="note">
+            {choices.note}
           </p>
         )}
       </DropdownMenuSubContent>

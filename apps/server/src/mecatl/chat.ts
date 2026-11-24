@@ -24,6 +24,7 @@ import {
   type PlanApprovalVerdict,
   type Run,
   type ServerCompatibility,
+  ServerFeature,
   SessionMode,
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
@@ -318,7 +319,7 @@ export function createMecatlChatService(
     async detail(sessionId, signal) {
       const session = await client.sessions.get(sessionId, { signal });
       const snapshot = await session.snapshot({ signal });
-      const { capabilities } = compatibility();
+      const { capabilities, features } = compatibility();
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
@@ -364,6 +365,15 @@ export function createMecatlChatService(
                 providerDisplayName: providerDisplayName(resolvedModel.providerId),
                 providerId: resolvedModel.providerId,
                 reasoningEffort: toReasoningEffort(resolvedModel.reasoningEffort),
+                // Only a server with per-model levels reports the request; there
+                // an absent one means Auto.
+                ...(features.has(ServerFeature.ModelEffortLevels)
+                  ? {
+                      requestedReasoningEffort: toReasoningEffort(
+                        resolvedModel.requestedReasoningEffort,
+                      ),
+                    }
+                  : {}),
               },
             }),
         state: snapshot.state,
@@ -375,9 +385,9 @@ export function createMecatlChatService(
       const session = await client.sessions.fork(sessionId, {
         modelId: request.model.id,
         providerId: request.model.providerId,
-        ...(request.reasoningEffort === "default"
-          ? {}
-          : { reasoningEffort: request.reasoningEffort }),
+        // An omitted effort would inherit the source session's; Auto resets it
+        // to the provider default.
+        reasoningEffort: request.reasoningEffort === "default" ? "auto" : request.reasoningEffort,
         ...(request.worktreeSelector === undefined
           ? {}
           : { worktreeSelector: request.worktreeSelector }),

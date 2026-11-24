@@ -1815,6 +1815,107 @@ describe("mounted chat workspace BFF boundary", () => {
     });
   });
 
+  it("offers a live chat's model levels once relisted, and forks with Auto or the request", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    const current = (effortLevels: { known: boolean; levels: ("low" | "medium" | "high")[] }) =>
+      inventoryModels.map((model) => (model.id === "current" ? { ...model, effortLevels } : model));
+    // The first listing doesn't know the levels; the one opening Effort asks for does.
+    bff.nextReplies.set("/api/v1/settings/runtime", [
+      Promise.resolve(
+        json({ models: current({ known: false, levels: [] }), modelsSupported: true }),
+      ),
+      Promise.resolve(
+        json({
+          models: current({ known: true, levels: ["low", "medium", "high"] }),
+          modelsSupported: true,
+        }),
+      ),
+    ]);
+    const model = {
+      ...currentModel,
+      reasoningEffort: "high" as const,
+      requestedReasoningEffort: "xhigh" as const,
+    };
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        detailResponse("chat-a", "idle", {
+          capabilities: {
+            image: false,
+            audio: false,
+            executionFiles: false,
+            builtInShell: false,
+            manualCompaction: false,
+            modelSelection: true,
+          },
+          model,
+        }),
+      ),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+
+    // The pill shows the level the session asks for, not the level sent.
+    await user.click(
+      await within(controls).findByRole("button", { name: /Model Current model · Extra high/ }),
+    );
+    await user.hover(screen.getByRole("menuitem", { name: /^Effort/ }));
+    await waitFor(() => expect(bff.requestsAt("GET", "/api/v1/settings/runtime")).toHaveLength(2));
+    expect(
+      await screen.findByText("This model doesn't accept Extra high; requests use High."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Max" })).toBeNull();
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "chat-b" }, 201)),
+    ]);
+    const auto = screen.getByRole("menuitem", { name: "Auto" });
+    act(() => auto.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "default",
+    });
+  });
+
+  it("carries the requested effort, not the level sent, into a side thread", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "question", toolCalls: [] },
+        { images: [], role: "assistant", text: "answer", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        detailResponse("chat-a", "idle", {
+          // The model takes no level below max, so nothing is sent.
+          model: { ...currentModel, reasoningEffort: "default", requestedReasoningEffort: "max" },
+        }),
+      ),
+    ]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "thread-a" }, 201)),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const [root] = screen.getAllByRole("article", { name: "You message" });
+    fireEvent.click(
+      within(root as HTMLElement).getByRole("button", { name: "Reply in side thread" }),
+    );
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "max",
+    });
+  });
+
   it("changes an existing mode in place but forks to change its model", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture(session("chat-a"));

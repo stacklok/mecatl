@@ -164,6 +164,34 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     expect(removed.status).toBe(204);
   });
 
+  it("reports the requested effort and resets it when a fork chooses Auto", async () => {
+    const created = await json("/api/v1/sessions", {
+      body: JSON.stringify({ mode: "default", reasoningEffort: "high" }),
+      headers: csrf,
+      method: "POST",
+    });
+    expect(created.status).toBe(201);
+    const source = created.body.id as string;
+    const detail = await json(`/api/v1/sessions/${source}`);
+    const model = detail.body.model as { id: string; providerId: string };
+    expect(detail.body.model).toMatchObject({ requestedReasoningEffort: "high" });
+
+    const forked = await json(`/api/v1/sessions/${source}/fork`, {
+      body: JSON.stringify({
+        model: { id: model.id, providerId: model.providerId },
+        reasoningEffort: "default",
+      }),
+      headers: csrf,
+      method: "POST",
+    });
+    expect(forked.status).toBe(201);
+    const successor = await json(`/api/v1/sessions/${forked.body.id as string}`);
+    expect(successor.body.model).toMatchObject({
+      reasoningEffort: "default",
+      requestedReasoningEffort: "default",
+    });
+  });
+
   it("answers 409 stale_run_control for a control on an unknown run", async () => {
     const created = await json("/api/v1/sessions", {
       body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),

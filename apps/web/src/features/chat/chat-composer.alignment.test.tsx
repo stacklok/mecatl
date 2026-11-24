@@ -574,7 +574,7 @@ describe("composer pills", () => {
   it("blocks a live chat's pills while its controls are busy or model selection is off", () => {
     const props = {
       liveMode: "plan" as const,
-      liveModel: { id: "deep", providerId: "provider", reasoningEffort: "default" },
+      liveModel: { id: "deep", providerId: "provider", reasoningEffort: "default" as const },
       models,
       onForkModel: vi.fn(),
       onLiveModeChange: vi.fn(),
