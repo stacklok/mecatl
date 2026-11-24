@@ -92,9 +92,6 @@ developers can build on Mecatl.
   once for the deployment. A user connects their accounts for a session in one
   browser trip, and the gateway keeps the tokens away from the agent and the
   model.
-- **Studio, in early access.** A browser client for any Mecatl deployment,
-  with OIDC sign-in and a signed image. It never receives a provider API key.
-  Its interface and endpoints can still change between releases.
 
 ### An open foundation
 
@@ -245,9 +242,6 @@ together.
 
 - **Multiplayer sessions.** Several people work with the same agents in one
   session, with shared controls and a clear record of who asked for what.
-- **Studio as a team workspace.** Studio grows from an early-access client
-  into a stable browser workspace for teams, with agent mentions, commands and
-  shared sessions alongside the terminal.
 
 ## Being explored
 
@@ -257,4 +251,4 @@ Not scheduled, and may not happen in this form.
   user → agent → helper delegation chain themselves; provenance for agent
   definitions, prompts and skills; extending authorization and audit beyond
   MCP tool calls to file tools, shell and agent spawning.
-- **Where you work:** desktop and mobile clients.
+- **Where you work:** web, desktop and mobile clients.
