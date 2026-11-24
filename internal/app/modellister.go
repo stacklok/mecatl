@@ -42,21 +42,20 @@ func anyProviderHasLister(reg *providerRegistry) bool {
 }
 
 // modelEntry is source-neutral observed metadata. Nil modalities mean unknown;
-// a non-nil declaration, including an empty one, is authoritative. An omitted
-// reasoning capability can be marked unknown without changing other listers'
-// existing interpretation of a listed Reasoning:false row. Effort's zero value
-// is unknown, so a lister that can't tell leaves it unset.
+// a non-nil declaration, including an empty one, is authoritative. Reasoning is
+// the inventory's two-state flag; Effort carries what is known about the model's
+// effort levels, and its zero value is unknown, so a lister that can't tell
+// leaves it unset.
 type modelEntry struct {
-	ID               string
-	DisplayName      string
-	ContextLimit     int
-	OutputLimit      int
-	InputModalities  []string
-	Reasoning        bool
-	reasoningUnknown bool // a listed model may omit reasoning support; false preserves legacy known-row behavior
-	ToolCall         bool
-	Thinking         thinkingDescriptor
-	Effort           effortLevels
+	ID              string
+	DisplayName     string
+	ContextLimit    int
+	OutputLimit     int
+	InputModalities []string
+	Reasoning       bool
+	ToolCall        bool
+	Thinking        thinkingDescriptor
+	Effort          effortLevels
 }
 
 type thinkingDescriptor struct{ Known, Adaptive, Enabled bool }
@@ -171,10 +170,15 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 			mods = append(mods, "image")
 		}
 		entry := modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
-			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, reasoningUnknown: !m.Thinking.Known, ToolCall: true,
+			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, ToolCall: true,
 			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}}
-		if m.Effort.Known {
+		switch {
+		case m.Effort.Known:
 			entry.Effort = knownEffortLevels(m.Effort.Levels)
+		case m.Thinking.Known && !m.Thinking.Adaptive && !m.Thinking.Enabled:
+			// A model known not to think takes no effort, even when a sparse
+			// listing omits the effort capability.
+			entry.Effort = knownEffortLevels(nil)
 		}
 		out = append(out, entry)
 	}
@@ -191,8 +195,9 @@ func (l gatewayLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	publishes := publishesEffortLevels(raw)
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
+		effort := gatewayEffortLevels(m, publishes)
 		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, InputModalities: m.InputModalities, ToolCall: true,
-			Effort: gatewayEffortLevels(m, publishes)})
+			Reasoning: len(effort.levels) > 0, Effort: effort})
 	}
 	return out, nil
 }
@@ -227,8 +232,9 @@ func (l openCodeLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 	publishes := publishesEffortLevels(raw)
 	out := make([]modelEntry, 0, len(raw))
 	for _, m := range raw {
+		effort := gatewayEffortLevels(m, publishes)
 		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, ToolCall: true, InputModalities: []string{"text", "image"},
-			Effort: gatewayEffortLevels(m, publishes)})
+			Reasoning: len(effort.levels) > 0, Effort: effort})
 	}
 	return out, nil
 }

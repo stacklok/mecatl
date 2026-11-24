@@ -49,92 +49,44 @@ func NormalizeReasoningEffort(token string) (string, bool) {
 	return t, true
 }
 
-// clampEffortForProvider maps a NORMALISED neutral effort token to the value the
-// given provider can accept, returning (clamped value, whether a clamp happened).
-// OpenAI (and OpenRouter, which shares the openai adapter) is documented to
-// support only low/medium/high in this contract, so xhigh/max clamp DOWN to high;
-// Anthropic identity-maps all five tiers. An empty token (unset) passes through
-// unchanged (no clamp). This is the COMPOSITION clamp — it runs here, not in the
-// adapter, because composition holds the port.Diagnostics needed to NARRATE a
-// clamp (the openai adapter has none). Per the locked user decision the clamp is
-// conservative (xhigh/max→high for openai) even though the current openai-go SDK
-// happens to expose an xhigh tier.
-func clampEffortForProvider(providerID, effort string) (string, bool) {
-	if effort == "" {
-		return "", false
-	}
-	switch providerID {
-	case providerOpenAI, providerOpenAICodex, providerOpenRouter, providerToolhive:
-		// The ToolHive LLM gateway (issue #262) fronts MIXED upstreams over the
-		// OpenAI protocol — the same conservative clamp applies since we cannot
-		// know which upstream model backs a given selector.
-		if effort == effortXHigh || effort == effortMax {
-			return effortHigh, true
-		}
-		return effort, false
-	default:
-		// anthropic, mock, and any future provider: identity (the neutral
-		// vocabulary == anthropic's native tiers; the mock ignores effort entirely).
-		return effort, false
-	}
+// sessionEffort is a session's reasoning effort: the level it asks for, which is
+// what it keeps, and the level its own model is sent, which is what it echoes.
+// Other models the session's provider serves (subagents, slots, plan mode) are
+// checked per request.
+type sessionEffort struct {
+	requested string
+	applied   string
 }
 
-// operatorDefaultEffortFor normalises + per-provider-clamps the OPERATOR-DEFAULT
-// reasoning effort the registry bakes into a provider's shared adapter,
-// and NARRATES a clamp via cfg.diag() naming BOTH the requested and clamped-to
-// values — so an operator who runs `--reasoning-effort max` against OpenAI sees the
-// promised "(with a WARN)" downgrade at startup, not only silently in the
-// per-session path. It is the startup twin of the per-session clamp narration in
-// sessionEngineFactory. nil-safe on diag (cfg.diag() is never nil).
-func operatorDefaultEffortFor(cfg Config, providerID string) string {
-	norm, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
-	clamped, didClamp := clampEffortForProvider(providerID, norm)
-	if didClamp {
-		cfg.diag().Log(context.Background(), port.LevelWarn,
-			"reasoning-effort: clamped operator default for provider (this provider supports low/medium/high only)",
-			"provider", providerID, "requested", norm, "clamped_to", clamped)
-	}
-	return clamped
-}
-
-// sessionProviderOptions applies the same effort/capability contract to ordinary
-// and agent-bound roots. Utility reviewers keep the original provider.
-func sessionProviderOptions(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, providerID, model, requestedEffort string) (port.LLMProvider, string, port.ProviderCapabilities) {
-	effort := resolveSessionEffort(ctx, cfg, requestedEffort)
-	effort, clamped := clampEffortForProvider(providerID, effort)
-	if clamped {
-		cfg.diag().Log(ctx, port.LevelWarn,
-			"reasoning-effort: clamped for provider (this provider supports low/medium/high only)",
-			"provider", providerID, "effort", effort)
-	}
-	if effort != "" {
-		if supported, known := modelReasoningSupport(reg, providerID, model); known && !supported {
-			cfg.diag().Log(ctx, port.LevelWarn,
-				"reasoning-effort: model does not support reasoning effort; ignoring",
-				"provider", providerID, "model", model, "effort", effort)
-			effort = ""
-		}
+// sessionProviderOptions wraps a session's provider so each request sends the
+// session's requested effort only when its model accepts it, and returns the
+// capability intersection for the session's model. Ordinary and agent-bound
+// roots share it. A provider that can't re-mint (the mock, test seams) is
+// returned unchanged: it can't apply an effort, and its echo follows the same
+// per-model rule.
+func sessionProviderOptions(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, providerID, model, requestedEffort string) (port.LLMProvider, sessionEffort, port.ProviderCapabilities) {
+	requested := resolveSessionEffort(ctx, cfg, requestedEffort)
+	if requested != "" {
+		// Learn the model's levels before echoing them, so the echo and the
+		// first request agree on a gateway that lists models on demand.
+		awaitEffortLevels(ctx, reg, providerID, model)
 	}
 	caps := modelCapability(reg, providerID, model)
-	if entry, ok := reg.Lookup(providerID); ok && entry.remint != nil {
-		entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
-		entryEffort, _ = clampEffortForProvider(providerID, entryEffort)
-		capsDiff := entry.defaultCaps != caps && entry.defaultCaps != (port.ProviderCapabilities{})
-		if effort != entryEffort || capsDiff {
-			provider = entry.remint(effort, caps)
-		}
+	entry, ok := reg.Lookup(providerID)
+	if !ok || entry.remint == nil {
+		return provider, sessionEffort{requested: requested, applied: reg.appliedEffortFor(providerID, model, requested)}, caps
 	}
-	return provider, effort, caps
+	wrapped := reg.newEffortProvider(entry, model, requested, capsAdapters(entry, caps))
+	return wrapped, sessionEffort{requested: requested, applied: wrapped.appliedFor(ctx, model)}, caps
 }
 
-// resolveSessionEffort resolves the EFFECTIVE reasoning effort for a session:
+// resolveSessionEffort resolves the REQUESTED reasoning effort for a session:
 // per-session selector value (when non-empty) OUT-RANKS the operator default
 // (cfg.ReasoningEffort). Both are normalised; an invalid per-session token falls
 // back to the operator default with a WARN, and an invalid operator default
-// normalises to unset. The returned value is the normalised neutral token BEFORE
-// the per-provider clamp (clampEffortForProvider is applied at the construction
-// site so the clamp diagnostic names the provider). nil-safe on diag (cfg.diag()
-// is never nil).
+// normalises to unset. Whether a request carries it is decided per request by
+// effortProvider against that request's model. nil-safe on diag (cfg.diag() is
+// never nil).
 func resolveSessionEffort(ctx context.Context, cfg Config, sessionEffort string) string {
 	diag := cfg.diag()
 	if strings.TrimSpace(sessionEffort) != "" {

@@ -235,14 +235,50 @@ important distinction is:
 
 An invalid server value is ignored with a warning and becomes unset. An invalid
 per-session value is ignored with a warning and falls back to the server
-default. The server may normalize, clamp, or drop a value according to the
-selected provider and known model capabilities.
+default.
 
-The effective result is returned in `resolved_model.reasoning_effort`, so
-clients can display what the server actually applied. Provider-specific effort
-mapping belongs in the
-[configuration reference](/reference/configuration.md#reasoning-effort), not in
-the selection workflow.
+Each request carries the effort level its model accepts. Mecatl learns a
+model's effort levels from the first source that knows them: the
+`models.effort_levels` setting, the provider's live model listing, then the
+models.dev catalog built into Mecatl. A model whose levels include the requested
+one gets it. Otherwise the model gets the highest level it lists below the
+requested one: `max` on a model that lists `low`, `medium`, and `high` sends
+`high`. A model that takes no effort, or lists no level below the requested one,
+gets no effort field. The server logs a warning once per session and model when
+a request carries a different level than the session asked for.
+
+When no source knows the model's levels, Mecatl sends the requested level and
+the provider can reject it. On the `openai`, `openai-codex`, `openrouter`, and
+`toolhive` providers, such a model gets at most `high`, because these providers
+serve models that don't accept `xhigh` or `max`. An OpenRouter reasoning model
+that lists no levels counts as unknown, because OpenRouter converts the level
+into the model's own reasoning control, such as a thinking budget. On Chat
+Completions providers, a model gets an effort only when its levels are known,
+from `models.effort_levels` or from a listing that publishes them. A gateway
+listing that publishes levels for some models declares that the models it lists
+without levels take no effort.
+
+The session keeps the level it requested, so a later model that accepts it gets
+it again. `resolved_model.reasoning_effort` reports the level the session's own
+model receives. Subagents, team members, and routed children inherit the
+session's requested level and check it against their own model. Compaction,
+title generation, the guardrail and ask reviewers, the model router's
+classifier, and learning run without an effort.
+
+To set the levels for a model that Mecatl doesn't know, or knows wrongly, list
+them per provider and model in the operator's `settings.yaml`. An empty list
+declares that the model takes no effort:
+
+```yaml
+models:
+  effort_levels:
+    <PROVIDER_ID>:
+      <MODEL_ID>: [low, medium, high]
+      <MODEL_WITHOUT_EFFORT>: []
+```
+
+The [configuration reference](/reference/configuration.md#models) describes the
+setting.
 
 OpenAI Responses providers request display summaries automatically, regardless
 of your effort setting. A model can complete without producing a summary. If a
@@ -305,11 +341,11 @@ including:
 - reasoning support; and
 - context limit when known.
 
-The reasoning flag is boolean: `false` can mean that an Anthropic-compatible
-model listing did not report thinking support, not that the model explicitly
-rejects it. Mecatl keeps a configured reasoning effort when support is unknown;
-an explicit unsupported declaration suppresses it. A compatible endpoint can
-still reject the request, in which case Mecatl reports the provider error.
+The reasoning flag is boolean: `false` can mean that the model listing did not
+report reasoning support, not that the model explicitly rejects it. Reasoning
+effort follows the model's effort levels instead, as described in
+[Configure reasoning effort](#configure-reasoning-effort). A compatible endpoint
+can still reject a request, in which case Mecatl reports the provider error.
 
 These endpoints do not expose API keys or provider-private credentials. The inventory is
 server-specific and depends on the providers and credentials configured at
@@ -416,6 +452,18 @@ For an embedded terminal session, set `--llm-recovery-budget` and
 `--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
 server owns these values. Daemon, Kubernetes, and CI configuration is described
 in [Model-call resilience](/features/runtime/observability-and-resilience.md#model-call-resilience).
+
+### The model didn't receive the requested effort
+
+When `resolved_model.reasoning_effort` is empty or lower than the level a
+session requested, the session's model doesn't accept that level. The server's
+warning names the model's levels and where they came from: `config`, `live`, or
+`catalog`, or `capped` when no source knows them and the provider limits the
+level to `high`. If those levels are wrong, set the model's levels in
+`models.effort_levels`, as shown in
+[Configure reasoning effort](#configure-reasoning-effort). On a Chat
+Completions provider, a warning that names `models.effort_levels` means no source
+knows the model's levels; list them in that setting to send an effort.
 
 ### A provider request failed
 

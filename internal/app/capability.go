@@ -60,46 +60,6 @@ func modelCapability(reg *providerRegistry, providerID, modelID string) port.Pro
 	return modelCapabilityCandidate(reg, view, providerID, modelID)
 }
 
-// modelReasoningSupport reports whether the (provider, model) is known to support
-// reasoning-effort, and whether that fact is known (the reasoning-effort
-// capability gate). A live entry's Reasoning bit is authoritative only when its
-// support is known: Anthropic listings preserve omitted thinking as unknown
-// even when a model row exists. When no live row exists, the embedded catalog
-// supplies a floor; a model with no evidence also fails open, forwarding a configured effort so
-// the provider can reject it. The public inventory's boolean reasoning flag
-// cannot express unknown and does not control this gate. The mock provider is
-// known-incapable so offline tests never send effort to it.
-func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (supported, known bool) {
-	if providerID == providerMock {
-		return false, true
-	}
-	// (1) Live-first.
-	if reg != nil && reg.meta != nil {
-		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
-			return entry.Reasoning, !entry.reasoningUnknown
-		}
-	}
-	// Preserve the configured default's presence floor for non-Messages protocols.
-	// Anthropic's missing live row is not an explicit unsupported declaration.
-	if reg != nil && modelID != "" {
-		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID && entry.protocol != protocolAnthropicMessages {
-			return false, true
-		}
-	}
-	// (2) Catalog floor.
-	if providerID != "" && modelID != "" {
-		if p, ok := providercatalog.Default().Provider(metadataCatalogProviderID(providerID)); ok {
-			for _, m := range p.Models() {
-				if m.ID() == modelID {
-					return m.SupportsReasoning(), true
-				}
-			}
-		}
-	}
-	// (3) Unknown → caller fails open.
-	return false, false
-}
-
 // modelAdapterCaps returns the wired adapter's transmit capabilities for a
 // provider (the AUTHORITY on what it can actually send), or the zero value
 // (text-only) for an unknown/unavailable provider or a nil registry — a provider

@@ -158,7 +158,7 @@ func resolveChildProvider(cfg Config, provReg *providerRegistry, def agents.Agen
 	childProvider = parentProvider
 	if pid != parentProviderID {
 		if entry, ok := provReg.Lookup(pid); ok {
-			childProvider = entry.provider
+			childProvider = inheritEffort(parentProvider, entry.provider)
 		}
 	}
 	windowFn = childWindowFor(cfg, provReg, pid, model)

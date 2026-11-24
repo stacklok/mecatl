@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -44,6 +45,14 @@ const (
 	effortLevelsFromLive    effortLevelsSource = "live"
 	effortLevelsFromCatalog effortLevelsSource = "catalog"
 	effortLevelsUnknown     effortLevelsSource = "unknown"
+	// effortLevelsNotSent: the provider never sends effort (the mock).
+	effortLevelsNotSent effortLevelsSource = "provider"
+	// effortLevelsNotConfigured: a Chat Completions model whose levels nothing
+	// knows; models.effort_levels opts it in.
+	effortLevelsNotConfigured effortLevelsSource = "chat-completions"
+	// effortLevelsCapped: a model whose levels nothing knows, on a provider that
+	// can front models without xhigh or max; it is sent at most high.
+	effortLevelsCapped effortLevelsSource = "capped"
 )
 
 type effortLevelsResolution struct {
@@ -67,6 +76,47 @@ func resolveModelEffortLevels(cfg Config, view *discoverySnapshot, pid, model st
 		return effortLevelsResolution{levels, effortLevelsFromCatalog}
 	}
 	return effortLevelsResolution{source: effortLevelsUnknown}
+}
+
+// awaitEffortLevels gives a provider whose live listing hasn't answered yet one
+// bounded chance to, before a request goes out, when neither the operator
+// setting nor the listing knows the model's effort levels. The catalog doesn't
+// settle it: a gateway's listing can differ from the catalog, and one that lists
+// models only on demand would otherwise decide a session's first requests on the
+// catalog or on "unknown". A failed or slow listing leaves the other sources to
+// decide; once the provider has answered, it never waits.
+func awaitEffortLevels(ctx context.Context, reg *providerRegistry, pid, model string) {
+	if reg == nil || reg.discovery == nil {
+		return
+	}
+	if source := reg.modelEffortLevels(pid, model).source; source == effortLevelsFromConfig || source == effortLevelsFromLive {
+		return
+	}
+	entry, ok := reg.Lookup(pid)
+	view := reg.discovery.snapshot()
+	if !ok || entry.lister == nil || view == nil {
+		return
+	}
+	if state := view.providers[pid]; !state.eligible || !state.completedAt.IsZero() {
+		return
+	}
+	bounded, cancel := context.WithTimeout(ctx, liveModelRefreshTimeout)
+	defer cancel()
+	_, _ = reg.discovery.request(bounded, pid, discoveryAdmission)
+}
+
+// awaitRunEffortLevels is the effort half of the wait before a run. A session
+// with its own engine learned its model's levels when the engine was built;
+// this wait is for the shared engine, which asks for the operator default. At
+// Auto no request carries effort, so there is nothing to wait for.
+func awaitRunEffortLevels(ctx context.Context, reg *providerRegistry, pid, model string) {
+	if reg == nil {
+		return
+	}
+	if entry, ok := reg.Lookup(pid); !ok || entry.defaultEffort == "" {
+		return
+	}
+	awaitEffortLevels(ctx, reg, pid, model)
 }
 
 // catalogEffortLevels reads a catalogued model's levels. A catalogued model is

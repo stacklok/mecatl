@@ -384,17 +384,18 @@ func TestAgentDefRootRuntimePublication(t *testing.T) {
 func TestAgentDefRootEffectiveProviderOptions(t *testing.T) {
 	for _, tc := range []struct {
 		name, requested, effective string
-		reasoning                  bool
+		levels                     effortLevels
 	}{
-		{name: "incapable", requested: " MAX "},
-		{name: "reasoning", requested: " MAX ", effective: "high", reasoning: true},
-		{name: "capabilities only", requested: "low", effective: "low", reasoning: true},
+		{name: "no effort levels", requested: " MAX ", levels: knownEffortLevels(nil)},
+		{name: "listed", requested: " MAX ", effective: "max", levels: knownEffortLevels([]string{"low", "max"})},
+		{name: "unlisted", requested: " MAX ", effective: "high", levels: knownEffortLevels([]string{"low", "high"})},
+		{name: "capabilities only", requested: "low", effective: "low", levels: knownEffortLevels([]string{"low"})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithCapabilities(port.ProviderCapabilities{Image: true, Audio: true})}, mockllm.TextTurn("WRONG shared provider"))
 			reg := regForTest(provider, providerOpenAI, "main-model")
 			reg.meta = newMetadataFixture()
-			reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {{ID: "definition-model", Reasoning: tc.reasoning, InputModalities: []string{"text", "image"}}}})
+			reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {{ID: "definition-model", Effort: tc.levels, InputModalities: []string{"text", "image"}}}})
 			var effort string
 			var caps port.ProviderCapabilities
 			var request port.LLMRequest
@@ -413,12 +414,17 @@ func TestAgentDefRootEffectiveProviderOptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer res.Close()
-			if effort != tc.effective || res.ReasoningEffort != tc.effective || caps != (port.ProviderCapabilities{Image: true}) || res.Capabilities != caps {
-				t.Fatalf("effort=%q result=%+v caps=%+v", effort, res, caps)
+			if res.ReasoningEffort != tc.effective || res.RequestedReasoningEffort != strings.ToLower(strings.TrimSpace(tc.requested)) || res.Capabilities != (port.ProviderCapabilities{Image: true}) {
+				t.Fatalf("result=%+v", res)
 			}
 			sess := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 			if got := drainRun(res.Engine.Run(t.Context(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"})); got != "reminted" || request.Model != "definition-model" {
 				t.Fatalf("reply=%q request model=%q", got, request.Model)
+			}
+			// The request ran on an adapter built for the session's capabilities and
+			// the level its model accepts.
+			if effort != tc.effective || caps != (port.ProviderCapabilities{Image: true}) {
+				t.Fatalf("request adapter effort=%q caps=%+v", effort, caps)
 			}
 		})
 	}

@@ -131,7 +131,7 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 		res := agentDefinitionEngineResult("reviewer")
 		res.BuiltForMode = session.ModePlan
 		res.Limits = &session.Limits{MaxTurns: 1, MaxToolCalls: 2, MaxConsecutiveFailures: 1}
-		res.ProviderID, res.ModelID, res.ReasoningEffort = "resolved", selector.ModelID, "low"
+		res.ProviderID, res.ModelID, res.ReasoningEffort, res.RequestedReasoningEffort = "resolved", selector.ModelID, "low", "low"
 		return res, nil
 	}
 	first, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, limits, selector, ProfileDefault, WithSessionID(id), WithAgentDefinitionName("reviewer"))
@@ -169,6 +169,7 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 				t.Fatal("persisted agent identity was re-resolved")
 				return ResolvedModel{}
 			}
+			retry.cfg.AppliedReasoningEffort = func(_, _, requested string) string { return requested }
 			again, err := retry.CreateSessionWithProfile(ctx, tc.mode, tc.limits, tc.selector, ProfileDefault, WithSessionID(id), WithAgentDefinitionName(tc.binding))
 			if !tc.ok {
 				if !errors.Is(err, ErrInvalidArgument) {
@@ -195,5 +196,54 @@ func TestCreateSessionAgentIntentSurvivesSnapshotAndFreshService(t *testing.T) {
 	_, err = newAgentDefRetryService(t, store).CreateSessionWithProfile(ctx, session.ModeDefault, limits, selector, ProfileDefault, WithSessionID(id), WithAgentDefinitionName("reviewer"))
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("legacy missing intent = %v, want fail-closed conflict", err)
+	}
+}
+
+// TestAgentSessionPersistsRequestedEffort: an agent-bound session stores the
+// level it asked for, not the one its model accepted, and echoes the applied one.
+func TestAgentSessionPersistsRequestedEffort(t *testing.T) {
+	store := memstore.New()
+	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
+	ctx := session.WithPrincipal(context.Background(), &alice)
+	svc := newAgentDefRetryService(t, store)
+	svc.cfg.AgentDefSessionEngine = func(context.Context, ProviderSelector, SessionProfile, session.PermissionMode, session.Limits, string) (SessionEngineResult, error) {
+		res := agentDefinitionEngineResult("reviewer")
+		res.ProviderID, res.ModelID = "provider", "model-without-max"
+		res.ReasoningEffort, res.RequestedReasoningEffort = "", "max"
+		return res, nil
+	}
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
+		ProviderSelector{ProviderID: "provider", ModelID: "model-without-max", ReasoningEffort: "max"}, ProfileDefault, WithAgentDefinitionName("reviewer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReasoningEffort != "max" {
+		t.Fatalf("persisted effort = %q, want the requested max", sess.ReasoningEffort)
+	}
+	if got := svc.ResolvedModel(sess.ID).ReasoningEffort; got != "" {
+		t.Fatalf("echoed effort = %q, want the applied none", got)
+	}
+
+	// Before its engine is built again, the echo is decided against the model,
+	// not read back from the persisted request.
+	svc.DropSessionEngineForTest(sess.ID)
+	for _, tc := range []struct {
+		name    string
+		applied func(providerID, modelID, requested string) string
+		want    string
+	}{
+		{"model refuses the level", func(_, model, requested string) string {
+			if model == "model-without-max" {
+				return ""
+			}
+			return requested
+		}, ""},
+		{"model accepts the level", func(_, _, requested string) string { return requested }, "max"},
+		{"no composition hook", nil, ""},
+	} {
+		svc.cfg.AppliedReasoningEffort = tc.applied
+		if got := svc.resolvedModelFor(sess).ReasoningEffort; got != tc.want {
+			t.Errorf("%s: unloaded echo = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

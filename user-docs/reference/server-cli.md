@@ -921,8 +921,9 @@ Usage: mecak8s [flags]
         Print product-metrics observations to stderr instead of sending them
   --reasoning-effort string
         Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto
-        uses configured or provider defaults; unsupported or invalid values fall back
-        to a supported default
+        uses configured or provider defaults; invalid values fall back to them, and a
+        model that doesn't accept the level gets the highest level it lists below it,
+        or none
   --redis-allow-plaintext
         Allow unauthenticated plaintext Redis for a disposable local or Kind fixture.
         Production Redis requires CA-verified TLS
