@@ -334,12 +334,20 @@ identityBroker:
   # https://broker.example.com.
   audience: ""
   # One key per role; each is an existing Secret key. Never reuse a key for two
-  # roles: mecak8s refuses to start.
+  # roles: mecak8s refuses to start. To rotate a signing key (agentIssuer,
+  # as1Signing, or mcp.broker.signingKey), make the new key current, list the
+  # old one in its fallbacks, and keep it there until what it signed has
+  # expired. Each fallback is an existing Secret key ({secretName, key}),
+  # projected read-only; fallbacks require the key they back.
   keys:
     # PEM EC P-256 private key that signs agent credentials. Required.
+    # fallbacks are earlier agent issuer keys whose credentials still verify;
+    # the broker only verifies with them, so a PEM public key ("PUBLIC KEY")
+    # is accepted and recommended.
     agentIssuer:
       secretName: ""
       key: ""
+      fallbacks: []
     # PEM EC P-256 private key the broker authenticates with at AS-1, and at
     # the MCP gateway when gateways has an entry, and keySet, its public JWK
     # Set (RFC 7517), which must hold this key's public key under its RFC 7638
@@ -354,10 +362,28 @@ identityBroker:
         key: ""
     # PEM private key (EC P-256 or RSA) AS-1 signs access tokens with; AS-1
     # publishes its public key under <issuer>/.well-known/jwks.json. Required
-    # with as1.issuer, and allowed only with it.
+    # with as1.issuer, and allowed only with it. fallbacks are earlier AS-1
+    # signing keys AS-1 still publishes; they must be PEM private keys, as
+    # AS-1 loads them as signing keys.
     as1Signing:
       secretName: ""
       key: ""
+      fallbacks: []
+  # Optional lifetimes, clock skew, and timeouts, each a Go duration string
+  # such as "30s" or "12h". An empty value is left out of the configuration
+  # file, so mecak8s applies its default: idJAGMaxLifetime 12h,
+  # idJAGLifetime 60s, credentialLifetime 1h, clientAssertionLifetime 60s,
+  # clockSkew 30s, as1RequestTimeout 10s, as2RequestTimeout 10s. The chart
+  # checks only the duration syntax; mecak8s checks each value's bounds at
+  # startup. idJAGMaxLifetime and idJAGLifetime require as1.issuer.
+  settings:
+    idJAGMaxLifetime: ""
+    idJAGLifetime: ""
+    credentialLifetime: ""
+    clientAssertionLifetime: ""
+    clockSkew: ""
+    as1RequestTimeout: ""
+    as2RequestTimeout: ""
   # Upstream ID-token claim that names the company identity, required with
   # as1.issuer and allowed only with it. It must identify a user the same way in
   # every IdP application the identity broker uses: oid for Microsoft Entra ID,

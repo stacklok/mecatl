@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -145,6 +146,95 @@ func TestMecak8sHelmChart_GatewayEntryAndSigningKey(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_IdentityBrokerSettingsAndFallbacksLoad loads a render
+// with every setting, both signing keys' fallbacks, the subject claim, and a
+// gateway entry through the broker's own loader, so a field the chart and the
+// loader name differently, or a fallback path the projection does not
+// produce, fails here.
+func TestMecak8sHelmChart_IdentityBrokerSettingsAndFallbacksLoad(t *testing.T) {
+	rendered, err := renderGatewayEntry(t,
+		"identityBroker.settings.idJAGMaxLifetime=8h", "identityBroker.settings.idJAGLifetime=2m",
+		"identityBroker.settings.credentialLifetime=30m", "identityBroker.settings.clientAssertionLifetime=45s",
+		"identityBroker.settings.clockSkew=10s", "identityBroker.settings.as1RequestTimeout=5s",
+		"identityBroker.settings.as2RequestTimeout=20s",
+		"identityBroker.keys.agentIssuer.fallbacks[0].secretName=identity-broker-agent-issuer-old",
+		"identityBroker.keys.agentIssuer.fallbacks[0].key=public.pem",
+		"identityBroker.keys.as1Signing.fallbacks[0].secretName=as1-signing-key-old",
+		"identityBroker.keys.as1Signing.fallbacks[0].key=signing-key.pem",
+	)
+	if err != nil {
+		t.Fatalf("render: %v\n%s", err, rendered)
+	}
+	spec := deploymentFromRender(t, rendered).Spec.Template.Spec
+	if !slices.Contains(spec.Containers[0].Args, "--identity-broker-subject-claim=oid") {
+		t.Fatalf("args %v lack the subject claim", spec.Containers[0].Args)
+	}
+	i := slices.IndexFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == "identity-broker-keys" })
+	if i < 0 || spec.Volumes[i].Projected == nil {
+		t.Fatalf("no identity-broker-keys projected volume: %+v", spec.Volumes)
+	}
+	projected := map[string]string{}
+	for _, source := range spec.Volumes[i].Projected.Sources {
+		for _, item := range source.Secret.Items {
+			projected[item.Path] = source.Secret.Name + "/" + item.Key
+		}
+	}
+	for path, want := range map[string]string{
+		"agent-issuer-fallback-0/public.pem":     "identity-broker-agent-issuer-old/public.pem",
+		"as1-signing-fallback-0/signing-key.pem": "as1-signing-key-old/signing-key.pem",
+	} {
+		if projected[path] != want {
+			t.Fatalf("projected %s = %q, want %q; all: %v", path, projected[path], want, projected)
+		}
+	}
+
+	// Each projected path holds a real key under a test directory: the agent
+	// issuer's fallback as a public key, AS-1's as a private key.
+	const dir = "/var/run/secrets/identity-broker/"
+	keys := t.TempDir()
+	write := func(rel string) string {
+		path := filepath.Join(keys, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	client := brokerconfigtest.NewKey(t)
+	brokerconfigtest.WriteKey(t, write("agent-issuer/key.pem"), brokerconfigtest.NewKey(t))
+	brokerconfigtest.WritePublicKey(t, write("agent-issuer-fallback-0/public.pem"), brokerconfigtest.NewKey(t))
+	brokerconfigtest.WriteKey(t, write("broker-client/key.pem"), client)
+	brokerconfigtest.WriteKeySet(t, write("broker-client-key-set/jwks.json"), client)
+	brokerconfigtest.WriteKey(t, write("as1-signing/signing-key.pem"), brokerconfigtest.NewKey(t))
+	brokerconfigtest.WriteKey(t, write("as1-signing-fallback-0/signing-key.pem"), brokerconfigtest.NewKey(t))
+	raw := identityBrokerConfigFromRender(t, rendered)
+	configFile := filepath.Join(t.TempDir(), "identity-broker.json")
+	if err := os.WriteFile(configFile, []byte(strings.ReplaceAll(raw, dir, keys+"/")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := brokerconfig.Load(configFile, brokerconfig.Host{AS1: true, AS1Issuer: "https://mecatl.example.com/as1"})
+	if err != nil {
+		t.Fatalf("brokerconfig.Load of the rendered file: %v\n%s", err, raw)
+	}
+	wantLimits := identitybroker.Limits{
+		IDJAGMaxLifetime: 8 * time.Hour, IDJAGLifetime: 2 * time.Minute, ClientAssertionLifetime: 45 * time.Second,
+		AS1RequestTimeout: 5 * time.Second, AS2RequestTimeout: 20 * time.Second,
+	}
+	if loaded.Limits != wantLimits {
+		t.Errorf("loaded limits = %+v, want %+v", loaded.Limits, wantLimits)
+	}
+	if loaded.Config.CredentialLifetime != 30*time.Minute || loaded.Config.ClockSkew != 10*time.Second {
+		t.Errorf("loaded credential lifetime %s and clock skew %s, want 30m and 10s", loaded.Config.CredentialLifetime, loaded.Config.ClockSkew)
+	}
+	// Only counts are printed: the loaded value holds parsed private keys.
+	if len(loaded.Keys.AgentIssuerFallbacks) != 1 || len(loaded.AS1FallbackKeyFiles) != 1 || len(loaded.Keys.AS1Signing) != 2 {
+		t.Errorf("loaded %d agent issuer fallbacks, %d AS-1 fallback files, %d AS-1 signing keys; want 1, 1, and 2",
+			len(loaded.Keys.AgentIssuerFallbacks), len(loaded.AS1FallbackKeyFiles), len(loaded.Keys.AS1Signing))
+	}
+	if len(loaded.Gateways) != 1 || len(loaded.Gateways[0].Servers) != 0 {
+		t.Errorf("loaded %d gateway entries, want the one embedded entry routing no servers", len(loaded.Gateways))
+	}
+}
+
 // TestMecak8sHelmChart_GatewayEntryRefusals mirrors mecak8s's startup rules
 // at render time.
 func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
@@ -179,6 +269,12 @@ func TestMecak8sHelmChart_GatewayEntryRefusals(t *testing.T) {
 		"a signing key Secret with no key": {[]string{"mcp.broker.signingKey.key="}, "mcp.broker.signingKey.key is required when mcp.broker.signingKey.secretName is set"},
 		"fallbacks without a signing key":  {[]string{"mcp.broker.signingKey.secretName=", "mcp.broker.signingKey.key="}, "mcp.broker.signingKey.fallbacks requires mcp.broker.signingKey"},
 		"a fallback that is a broker key":  {[]string{"mcp.broker.signingKey.fallbacks[0].secretName=identity-broker-agent-issuer"}, "name the same Secret key identity-broker-agent-issuer/key.pem"},
+		"an agent issuer fallback that is the signing key": {[]string{
+			"identityBroker.keys.agentIssuer.fallbacks[0].secretName=mcp-gateway-signing", "identityBroker.keys.agentIssuer.fallbacks[0].key=key.pem",
+		}, "mcp.broker.signingKey and identityBroker.keys.agentIssuer name the same Secret key mcp-gateway-signing/key.pem"},
+		"an AS-1 fallback that is a signing key fallback": {[]string{
+			"identityBroker.keys.as1Signing.fallbacks[0].secretName=mcp-gateway-signing-old", "identityBroker.keys.as1Signing.fallbacks[0].key=key.pem",
+		}, "mcp.broker.signingKey and identityBroker.keys.as1Signing name the same Secret key mcp-gateway-signing-old/key.pem"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, err := renderGatewayEntry(t, tc.set...)

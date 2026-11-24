@@ -79,7 +79,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "agentIssuer": {"$ref": "#/definitions/optionalSecretKey"},
+            "agentIssuer": {"$ref": "#/definitions/optionalSigningKey"},
             "brokerClient": {
               "type": "object",
               "additionalProperties": false,
@@ -90,7 +90,20 @@
                 "keySet": {"$ref": "#/definitions/optionalSecretKey"}
               }
             },
-            "as1Signing": {"$ref": "#/definitions/optionalSecretKey"}
+            "as1Signing": {"$ref": "#/definitions/optionalSigningKey"}
+          }
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "idJAGMaxLifetime": {"$ref": "#/definitions/optionalDuration"},
+            "idJAGLifetime": {"$ref": "#/definitions/optionalDuration"},
+            "credentialLifetime": {"$ref": "#/definitions/optionalDuration"},
+            "clientAssertionLifetime": {"$ref": "#/definitions/optionalDuration"},
+            "clockSkew": {"$ref": "#/definitions/optionalDuration"},
+            "as1RequestTimeout": {"$ref": "#/definitions/optionalDuration"},
+            "as2RequestTimeout": {"$ref": "#/definitions/optionalDuration"}
           }
         },
         "subjectClaim": {"type": "string", "pattern": "^\\S*$"},
@@ -242,27 +255,7 @@
           "required": ["callbackURL"],
           "properties": {
             "callbackURL": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^https://[^@/\\s#]+(?:/[^\\s?#]*)?$"}]},
-            "signingKey": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["secretName", "key"],
-              "properties": {
-                "secretName": {"$ref": "#/definitions/optionalSecretKey/properties/secretName"},
-                "key": {"$ref": "#/definitions/optionalSecretKey/properties/key"},
-                "fallbacks": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["secretName", "key"],
-                    "properties": {
-                      "secretName": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"},
-                      "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"}
-                    }
-                  }
-                }
-              }
-            }
+            "signingKey": {"$ref": "#/definitions/optionalSigningKey"}
           }
         },
         "servers": {
@@ -670,6 +663,33 @@
         "secretName": {"type": "string", "maxLength": 253, "pattern": "^(|[a-z0-9]([-.a-z0-9]*[a-z0-9])?)$"},
         "key": {"type": "string", "maxLength": 253, "pattern": "^(|[-._a-zA-Z0-9]+)$"}
       }
+    },
+    "optionalSigningKey": {
+      "description": "An optional signing key's Secret key and the Secret keys of its fallbacks: earlier keys whose signatures still verify during a rotation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretName", "key"],
+      "properties": {
+        "secretName": {"$ref": "#/definitions/optionalSecretKey/properties/secretName"},
+        "key": {"$ref": "#/definitions/optionalSecretKey/properties/key"},
+        "fallbacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["secretName", "key"],
+            "properties": {
+              "secretName": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"},
+              "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"}
+            }
+          }
+        }
+      }
+    },
+    "optionalDuration": {
+      "description": "Empty, or a Go duration string such as 30s or 12h; mecak8s checks its bounds at startup.",
+      "type": "string",
+      "pattern": "^([-+]?(0|(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+))?$"
     },
     "secretKeyRef": {
       "type": "object",

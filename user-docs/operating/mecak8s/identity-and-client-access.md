@@ -255,6 +255,8 @@ identityBroker:
 |`identityBroker.keys.agentIssuer`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key that signs agent credentials.|
 |`identityBroker.keys.brokerClient`|`--identity-broker-config`|Secret key holding the PEM EC P-256 private key the broker authenticates with at AS-1. Its `keySet` names the Secret key holding the matching public JWK Set, whose `kid` is the key's RFC 7638 thumbprint. Every key in the set must be EC P-256. Required with `identityBroker.as1.issuer` or an `identityBroker.gateways` entry, which also registers the key at the MCP gateway.|
 |`identityBroker.keys.as1Signing`|`--identity-broker-config`|Secret key holding AS-1's PEM signing key (EC P-256 or RSA). Required with `identityBroker.as1.issuer`, and allowed only with it.|
+|`identityBroker.keys.agentIssuer.fallbacks`, `identityBroker.keys.as1Signing.fallbacks`|`--identity-broker-config`|_Optional._ Lists of `{secretName, key}` naming earlier signing keys during a [rotation](#rotate-keys-with-the-chart). Each requires the key it backs.|
+|`identityBroker.settings`|`--identity-broker-config`|_Optional._ [Lifetimes, clock skew, and timeouts](#lifetimes-clock-skew-and-timeouts). Each value is empty by default, which keeps `mecak8s`'s default.|
 |`identityBroker.subjectClaim`|`--identity-broker-subject-claim`|The company IdP's ID-token claim that names each user. Required with `identityBroker.as1.issuer`, and allowed only with it.|
 |`identityBroker.as1.issuer`|`--identity-broker-as1-issuer`|AS-1's HTTPS issuer URL. Setting it hosts AS-1 and requires `oidc.enabled`, `oidc.audience`, and `oidc.resource`. AS-1 accepts only an absolute `http` or `https` URL with a host and no fragment as the audience, such as `https://mecatl.example.com/api`.|
 |`identityBroker.as1.tuiClientID`|`--identity-broker-as1-tui-client-id`|The client ID `mecatui` uses at AS-1.|
@@ -334,15 +336,19 @@ from the JSON file `--identity-broker-config` names, which
 }
 ```
 
-|Field|Meaning|
-|-|-|
-|`trust_domain`|The agent trust domain: lowercase letters, digits, `.`, `-`, and `_`. Required.|
-|`audience`|The broker audience every agent credential names. Required.|
-|`keys.agent_issuer.key_file`|EC P-256 private key that signs agent credentials. Required.|
-|`keys.agent_issuer.fallback_key_files`|_Optional._ Earlier agent issuer keys. Credentials they signed keep verifying while they are listed.|
-|`keys.broker_client.key_file`, `key_set_file`|EC P-256 private key the broker authenticates with at AS-1, and at the MCP gateway's authorization server when the file declares a gateway, and the public JWK Set those servers register for it. Every key in the set must be EC P-256. Required together, required with `--identity-broker-as1-issuer`, and required with a gateway entry.|
-|`keys.as1_signing.key_file`|AS-1's EC P-256 or RSA private key, which signs access tokens. Required with `--identity-broker-as1-issuer`, and refused without it.|
-|`keys.as1_signing.fallback_key_files`|_Optional._ Earlier AS-1 signing keys. AS-1 publishes them in its key set, so tokens they signed keep verifying, and never signs with them. Requires `key_file`.|
+|Field|Chart value|Meaning|
+|-|-|-|
+|`trust_domain`|`identityBroker.trustDomain`|The agent trust domain: lowercase letters, digits, `.`, `-`, and `_`. Required.|
+|`audience`|`identityBroker.audience`|The broker audience every agent credential names. Required.|
+|`keys.agent_issuer.key_file`|`identityBroker.keys.agentIssuer`|EC P-256 private key that signs agent credentials. Required.|
+|`keys.agent_issuer.fallback_key_files`|`identityBroker.keys.agentIssuer.fallbacks`|_Optional._ Earlier agent issuer keys. Credentials they signed keep verifying while they are listed.|
+|`keys.broker_client.key_file`, `key_set_file`|`identityBroker.keys.brokerClient` and its `keySet`|EC P-256 private key the broker authenticates with at AS-1, and at the MCP gateway's authorization server when the file declares a gateway, and the public JWK Set those servers register for it. Every key in the set must be EC P-256. Required together, required with `--identity-broker-as1-issuer`, and required with a gateway entry.|
+|`keys.as1_signing.key_file`|`identityBroker.keys.as1Signing`|AS-1's EC P-256 or RSA private key, which signs access tokens. Required with `--identity-broker-as1-issuer`, and refused without it.|
+|`keys.as1_signing.fallback_key_files`|`identityBroker.keys.as1Signing.fallbacks`|_Optional._ Earlier AS-1 signing keys. AS-1 publishes them in its key set, so tokens they signed keep verifying, and never signs with them. Requires `key_file`.|
+
+The chart mounts each key, and each fallback, in its own directory under
+`/var/run/secrets/identity-broker` and writes those paths into the file. It
+writes a fallback list only when the list is non-empty.
 
 Every path is absolute. A private key is a PEM file in PKCS #1
 (`RSA PRIVATE KEY`), SEC 1 (`EC PRIVATE KEY`, as `openssl ecparam -genkey`
@@ -350,24 +356,9 @@ writes), or PKCS #8 (`PRIVATE KEY`) form; only its first PEM block is read.
 `mecak8s` refuses an unknown field, so a misspelled field fails startup rather
 than being ignored. The error names the file and the field.
 
-Rotate a signing key by making the new key `key_file` and listing the old key
-in `fallback_key_files`. Remove the fallback once everything it signed has
-expired: agent credentials verify for `credential_lifetime` plus `clock_skew`
-(see [Lifetimes, clock skew, and timeouts](#lifetimes-clock-skew-and-timeouts)),
-and AS-1's access tokens last their own lifetime. Fallbacks serve a planned rotation only. Remove a compromised key
-at once instead of keeping it as a fallback. List an agent issuer fallback as
-its public key, in PKIX (`PUBLIC KEY`) form, so the retired private key leaves
-the pod:
-
-```sh
-openssl ec -in agent-issuer-old.pem -pubout -out agent-issuer-old-public.pem
-```
-
-The broker also accepts the old private key there. AS-1's fallbacks must stay
-private keys, because AS-1 loads every key file as a signing key. The broker
-client rotates through its key set instead: add the next key's public key to
-`key_set_file`, switch `key_file` to the next key, then remove the old public
-key. The chart does not yet set fallback keys.
+Signing keys rotate through their fallbacks and the broker client key through
+its key set; [Rotate keys with the chart](#rotate-keys-with-the-chart) gives
+the steps, which apply to the file's fields as well.
 
 `mecak8s` reads the file and the keys only at startup. The chart rolls the pod
 when the rendered file changes, such as a new key path. After changing a key
@@ -387,8 +378,18 @@ removed `--identity-broker-as1-signing-key-file` flag, so set
 The file can also set how long the broker's sessions and tokens last, how much
 clock difference it tolerates, and how long it waits for the authorization
 servers it calls in process. Each field is optional and takes a Go duration
-string, such as `"30s"` or `"12h"`. The chart does not set these fields yet, so
-with the chart each keeps its default.
+string, such as `"30s"` or `"12h"`. With the chart, set them under
+`identityBroker.settings`; the chart writes a field only when its value is
+set, so an empty value keeps the default:
+
+```yaml
+identityBroker:
+  settings:
+    credentialLifetime: 30m
+    clockSkew: 10s
+```
+
+Without the chart, add the fields to the file:
 
 ```json
 "id_jag_max_lifetime": "12h",
@@ -400,20 +401,24 @@ with the chart each keeps its default.
 "as2_request_timeout": "10s"
 ```
 
-|Field|Default|Allowed values|What it bounds|
-|-|-|-|-|
-|`id_jag_max_lifetime`|`12h`|`1s` to `720h` in whole seconds, and at least ten times `clock_skew`|Every broker session's hard expiry: AS-1 grants the broker access for each session for this long after the session opens, and does not extend it. It caps how long agents act for a user without a fresh sign-in. A session whose agents keep running past it loses gateway access until the user's next request reopens it. Requires `--identity-broker-as1-issuer`.|
-|`id_jag_lifetime`|`60s`|`1s` to `300s` in whole seconds|How long each grant AS-1 issues for a gateway call (an ID-JAG) stays valid, and so the longest the gateway token issued for it lasts. It applies to the servers a gateway entry routes. Requires `--identity-broker-as1-issuer`.|
-|`credential_lifetime`|`1h`|More than `0s`, up to `1h`|How long an agent credential, and so a stolen one, stays usable.|
-|`client_assertion_lifetime`|`60s`|`1s` to `60s` in whole seconds|How long each client assertion the broker signs to authenticate at AS-1 and the gateway's authorization server stays valid. Each is accepted once.|
-|`clock_skew`|`30s`|`0s` to `60s`|How far the broker's clock may differ from other servers'. The broker accepts an agent credential for this long past its expiry, ends each session this long before its hard expiry, and remembers each user access token it converted into a session, refusing its reuse, for this long past the token's expiry. A larger value keeps an expired credential working longer and shortens every session. The maximum is `60s` because AS-1 tells an agent to renew its credential only within 60 seconds of its expiry.|
-|`as1_request_timeout`|`10s`|`1s` to `30s`|How long the broker waits for each request to AS-1. Other requests that open the same session wait while a session open makes up to two of them.|
-|`as2_request_timeout`|`10s`|`1s` to `1m`|How long a gateway call waits for each request to the gateway's authorization server.|
+|Field|Chart value|Default|Allowed values|What it bounds|
+|-|-|-|-|-|
+|`id_jag_max_lifetime`|`identityBroker.settings.idJAGMaxLifetime`|`12h`|`1s` to `720h` in whole seconds, and at least ten times `clock_skew`|Every broker session's hard expiry: AS-1 grants the broker access for each session for this long after the session opens, and does not extend it. It caps how long agents act for a user without a fresh sign-in. A session whose agents keep running past it loses gateway access until the user's next request reopens it. Requires `--identity-broker-as1-issuer`.|
+|`id_jag_lifetime`|`identityBroker.settings.idJAGLifetime`|`60s`|`1s` to `300s` in whole seconds|How long each grant AS-1 issues for a gateway call (an ID-JAG) stays valid, and so the longest the gateway token issued for it lasts. It applies to the servers a gateway entry routes. Requires `--identity-broker-as1-issuer`.|
+|`credential_lifetime`|`identityBroker.settings.credentialLifetime`|`1h`|More than `0s`, up to `1h`|How long an agent credential, and so a stolen one, stays usable.|
+|`client_assertion_lifetime`|`identityBroker.settings.clientAssertionLifetime`|`60s`|`1s` to `60s` in whole seconds|How long each client assertion the broker signs to authenticate at AS-1 and the gateway's authorization server stays valid. Each is accepted once.|
+|`clock_skew`|`identityBroker.settings.clockSkew`|`30s`|`0s` to `60s`|How far the broker's clock may differ from other servers'. The broker accepts an agent credential for this long past its expiry, ends each session this long before its hard expiry, and remembers each user access token it converted into a session, refusing its reuse, for this long past the token's expiry. A larger value keeps an expired credential working longer and shortens every session. The maximum is `60s` because AS-1 tells an agent to renew its credential only within 60 seconds of its expiry.|
+|`as1_request_timeout`|`identityBroker.settings.as1RequestTimeout`|`10s`|`1s` to `30s`|How long the broker waits for each request to AS-1. Other requests that open the same session wait while a session open makes up to two of them.|
+|`as2_request_timeout`|`identityBroker.settings.as2RequestTimeout`|`10s`|`1s` to `1m`|How long a gateway call waits for each request to the gateway's authorization server.|
 
 `mecak8s` refuses to start when a value is not a duration or is outside its
 allowed values, when `clock_skew` is more than a tenth of
 `id_jag_max_lifetime`, or when the file sets `id_jag_max_lifetime` or
-`id_jag_lifetime` without `--identity-broker-as1-issuer`.
+`id_jag_lifetime` without `--identity-broker-as1-issuer`. The chart refuses
+to render a value that is not a Go duration, any setting with the broker
+off, and `idJAGMaxLifetime` or `idJAGLifetime` without
+`identityBroker.as1.issuer`. It leaves the allowed values to `mecak8s`, so a
+value out of range renders and the pod then fails to start.
 
 ### Declare the embedded gateway
 
@@ -497,6 +502,100 @@ then file-less. To give them files, use the
 [Redis virtual workspace](state-and-execution.md#redis-virtual-workspace)
 (`redis.filesystem.enabled`) or [Kubernetes execution](native-execution.md)
 (`execution.enabled`); both keep session files outside the pod's filesystem.
+
+### Rotate keys with the chart
+
+`mecak8s` reads every key only at startup, so each rotation step ends with a
+restart. A `helm upgrade` that changes a key's Secret or key name rolls the pod
+by itself; after changing a key inside an existing Secret, run
+`kubectl rollout restart deployment/<RELEASE>-mecak8s`.
+
+AS-1, the embedded gateway's authorization server (AS-2), and the broker run
+in one `mecak8s` process with one replica and the `Recreate` strategy, so
+every restart is a brief outage. Each restart drops the in-memory broker
+sessions, agent registrations, and AS-1's sign-ins and refresh tokens, and
+users sign in again, as [Sign-in and restarts](#sign-in-and-restarts)
+describes. Plan rotations for a maintenance window.
+
+#### Rotate the broker client key
+
+AS-1 and AS-2 accept the broker client's assertions signed by any key in
+`identityBroker.keys.brokerClient.keySet`, so the key set holds both keys
+while the broker switches:
+
+1. Generate the next key and its key set, and merge the old and new key sets:
+
+   ```sh
+   openssl ecparam -name prime256v1 -genkey -noout -out broker-client-next.pem
+   deploy/mecak8s-idbroker/broker-client-key-set.sh < broker-client-next.pem > broker-client-next-jwks.json
+   jq -s '{keys: (.[0].keys + .[1].keys)}' broker-client-jwks.json broker-client-next-jwks.json > broker-client-both-jwks.json
+   ```
+
+2. Put the merged key set in the Secret key `keySet` names, and restart.
+3. Put the next private key in the Secret key `brokerClient` names, or point
+   `brokerClient.key` at a new Secret key holding it, and restart.
+4. Put the next key's key set alone in the `keySet` Secret key, and restart.
+
+Because every server that checks the broker client's key restarts with the
+broker, the overlap prevents no refused request in this layout. It matters
+for a server outside the process, such as an external gateway, which reads
+the key set on its own schedule.
+
+#### Rotate a signing key
+
+The agent issuer, AS-1, and AS-2 signing keys rotate the same way: make the
+new key current with the old one as a fallback, restart, and remove the
+fallback once everything the old key signed has expired.
+
+|Key|Chart values|Keep the fallback for|
+|-|-|-|
+|Agent issuer|`identityBroker.keys.agentIssuer` and its `fallbacks`|`credential_lifetime` plus `clock_skew`: one hour and 30 seconds by default.|
+|AS-1|`identityBroker.keys.as1Signing` and its `fallbacks`|AS-1's access token lifetime: one hour.|
+|AS-2|`mcp.broker.signingKey` and its `fallbacks`|AS-2's token lifetime: one hour.|
+
+For example, to rotate AS-1's key, add the new key to the `mecak8s-as1`
+Secret as `signing-key-next.pem` and run `helm upgrade` with:
+
+```yaml
+identityBroker:
+  keys:
+    as1Signing:
+      secretName: mecak8s-as1
+      key: signing-key-next.pem
+      fallbacks:
+        - secretName: mecak8s-as1
+          key: signing-key.pem
+```
+
+An hour after the pod restarts, set `fallbacks: []`, run `helm upgrade`
+again, and delete the old key from the Secret.
+
+AS-1's and AS-2's fallbacks must be private keys, because their servers load
+every key file as a signing key and publish its public key. The broker only
+verifies with an agent issuer fallback, so name its public key, in PKIX
+(`PUBLIC KEY`) form, and the retired private key leaves the pod:
+
+```sh
+openssl ec -in agent-issuer.pem -pubout -out agent-issuer-old-public.pem
+```
+
+The restart that makes a new agent issuer key current also drops every agent
+registration, and the broker refuses a credential issued before it whichever
+key signed it. The agent issuer fallback therefore has no effect while the
+broker runs in the `mecak8s` process, but the same procedure applies.
+
+Fallbacks serve a planned rotation only. Remove a compromised key at once
+instead of keeping it as a fallback.
+
+### Keep keys in a secret manager
+
+The chart mounts the broker's keys from Kubernetes Secrets. To hold them in
+a secret manager such as HashiCorp Vault or AWS Secrets Manager, sync them
+into the Secrets the `identityBroker.keys` and `mcp.broker.signingKey` values
+name, for example with the External Secrets Operator or the Secrets Store CSI
+Driver's Secret sync. The broker reads its keys only at startup, so restart
+the Deployment after a sync changes a key. `mecak8s` cannot read keys from a
+secret manager or use a signing service directly.
 
 ### Choose the issuer
 
