@@ -150,6 +150,11 @@ const config: Config = {
           label: 'Build',
         },
         {
+          href: 'https://github.com/stacklok/mecatl/blob/main/ROADMAP.md',
+          position: 'left',
+          label: 'Roadmap',
+        },
+        {
           href: 'https://github.com/stacklok/mecatl',
           label: 'GitHub',
           position: 'right',
@@ -186,6 +191,7 @@ const config: Config = {
           title: 'More',
           items: [
             {label: 'GitHub', href: 'https://github.com/stacklok/mecatl'},
+            {label: 'Roadmap', href: 'https://github.com/stacklok/mecatl/blob/main/ROADMAP.md'},
             {label: 'Discord', href: 'https://discord.gg/stacklok'},
             {label: 'Colophon', to: '/colophon'},
             {label: 'Stacklok', href: 'https://stacklok.com'},

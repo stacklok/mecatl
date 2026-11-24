@@ -104,34 +104,14 @@ would need a dedicated integration to hand its agent loop over to Mecatl.
 ## Where this is going
 
 Mecatl is early, and the cloud-native harness is a direction as well as a
-current architecture. We are working toward:
+current architecture. The
+[Mecatl roadmap](https://github.com/stacklok/mecatl/blob/main/ROADMAP.md)
+shows what has shipped and what we are working on next across five themes:
+identity and accountability, bounded autonomy, dependable long-running work,
+where you work, and an open foundation.
 
-- **More clients.** Mecatl already supports the TUI, Studio, gRPC, HTTP/SSE, and
-  the TypeScript SDK. Future directions include desktop and mobile clients,
-  along with new interaction models such as Slack and collaborative documents,
-  all over the same client/server core. See the
-  [TypeScript SDK](https://github.com/stacklok/mecatl/tree/main/sdk/typescript)
-  and
-  [gRPC and HTTP/SSE contracts](https://github.com/stacklok/mecatl/tree/main/contracts/proto).
-- **Strong identity.** We want external systems to receive a verifiable
-  delegation chain showing which user, agent, and subagent acted with which
-  authority. The proposed design makes Mecatl its own SPIFFE trust domain and
-  encodes that chain in JWTs. See the [agent identity model](https://github.com/stacklok/mecatl/blob/main/docs/drafts/agent-identity-model.md)
-  working draft.
-- **More tools.** We want a richer ecosystem beyond MCP, including tools that
-  can call each other directly with narrowly scoped resources instead of
-  copying large inputs through the harness and agent context. [Scoped Resource
-  Grants](https://github.com/stacklok/mecatl/blob/main/docs/drafts/scoped-resource-grants.md)
-  proposes short-lived, attenuable grants and direct tool-to-service data paths;
-  it is also a working draft.
-- **Cryptographic context attestation.** We want packaged agent context to be
-  versioned, signed, attributable, distributable, and subject to policy, like
-  modern software supply-chain artifacts, and to make that provenance available
-  in the agent identity chain.
-
-These are directions, not guarantees of current availability. The linked agent
-identity and scoped-resource-grants documents are explicitly speculative; the
-operator and capability guides describe what Mecatl supports today.
+The roadmap describes direction, not delivery dates. The operator and
+capability guides describe what Mecatl supports today.
 
 ## Next steps
 
