@@ -58,9 +58,9 @@ func TestSessionMediaWireRefreshControlsClipboardImages(t *testing.T) {
 			go func() { _ = grpcServer.Serve(listener) }()
 			t.Cleanup(func() { grpcServer.Stop(); _ = listener.Close() })
 
-			cl, err := client.Dial(client.DialConfig{Server: listener.Addr().String()})
+			cl, err := client.NewClient(client.DialConfig{Server: listener.Addr().String()})
 			if err != nil {
-				t.Fatalf("Dial: %v", err)
+				t.Fatalf("NewClient: %v", err)
 			}
 			t.Cleanup(func() { _ = cl.Close() })
 			id, createdCaps, _, err := cl.CreateSession(t.Context(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, tc.selection)

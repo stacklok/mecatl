@@ -422,7 +422,10 @@ func TestKindExecutionTUIClientMockJourney(t *testing.T) {
 	grpcForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8080)
 	httpForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
 	defer httpForward.stop()
-	wire, err := tuiClient.Dial(tuiClient.DialConfig{Server: grpcForward.addr, AuthToken: token})
+	wire, err := tuiClient.NewClient(tuiClient.DialConfig{
+		Server:    grpcForward.addr,
+		AuthToken: token,
+	})
 	if err != nil {
 		t.Fatal("dial TUI transport:", err)
 	}
@@ -459,7 +462,10 @@ func TestKindExecutionTUIClientMockJourney(t *testing.T) {
 	defer grpcForward.stop()
 	httpForward = portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
 	defer httpForward.stop()
-	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpcForward.addr, AuthToken: token})
+	wire, err = tuiClient.NewClient(tuiClient.DialConfig{
+		Server:    grpcForward.addr,
+		AuthToken: token,
+	})
 	if err != nil {
 		t.Fatal("reconnect TUI transport:", err)
 	}

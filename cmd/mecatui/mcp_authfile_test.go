@@ -99,7 +99,7 @@ func TestConnectSkipsEmbeddedAuthFileComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	cl, err := client.Dial(dial)
+	cl, err := client.NewClient(dial)
 	if err != nil {
 		t.Fatal(err)
 	}

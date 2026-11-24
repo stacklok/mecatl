@@ -38,6 +38,6 @@
 // classification — store consumers already treat Save/Load errors as unit
 // failures. If drivers ever need retries/breakers the house pattern is a
 // resilience DECORATOR over these clients (the llmresilience precedent), not
-// knobs here. Dial is lazy (grpc.NewClient): the first RPC surfaces a
+// knobs here. NewClient is lazy (grpc.NewClient): the first RPC surfaces a
 // connect error.
 package grpcdriver

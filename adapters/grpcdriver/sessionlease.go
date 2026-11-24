@@ -27,7 +27,7 @@ type SessionLease struct {
 // compile-time assertion that SessionLease satisfies the port.
 var _ port.SessionLease = (*SessionLease)(nil)
 
-// NewSessionLease wraps an established driver connection (see Dial) as a
+// NewSessionLease wraps an established driver connection (see NewClient) as a
 // port.SessionLease.
 func NewSessionLease(conn grpc.ClientConnInterface) *SessionLease {
 	return &SessionLease{client: driverv1.NewSessionLeaseServiceClient(conn)}

@@ -18,7 +18,7 @@ import (
 )
 
 func commandClient(t *testing.T, r *memexecutor.Runner) executorv1.CommandServiceClient {
-	conn := memexecutor.Dial(t, memexecutor.Executor{Commands: r})
+	conn := memexecutor.NewClient(t, memexecutor.Executor{Commands: r})
 	return executorv1.NewCommandServiceClient(conn)
 }
 
@@ -204,7 +204,7 @@ func TestRefusedStartNeverRuns(t *testing.T) {
 }
 
 func TestUnregisteredServiceIsUnimplemented(t *testing.T) {
-	conn := memexecutor.Dial(t, memexecutor.Executor{Commands: memexecutor.NewRunner()})
+	conn := memexecutor.NewClient(t, memexecutor.Executor{Commands: memexecutor.NewRunner()})
 	_, err := executorv1.NewFileServiceClient(conn).StatFile(t.Context(),
 		&executorv1.StatFileRequest{Path: "x"})
 	if status.Code(err) != codes.Unimplemented {

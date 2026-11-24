@@ -57,7 +57,7 @@ var (
 	_ port.ScheduleOneShotReArmer = (*ScheduleStore)(nil)
 )
 
-// NewScheduleStore wraps an established driver connection (see Dial) as a
+// NewScheduleStore wraps an established driver connection (see NewClient) as a
 // port.ScheduleStore. The connection serves BOTH ScheduleStoreService AND
 // ScheduleOneShotReArmerService over the same conn; a driver that omits the
 // re-arm service is tolerated (ReArmOneShot maps its UNIMPLEMENTED to

@@ -204,7 +204,7 @@ func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 				t.Fatalf("start embedded server: %v", err)
 			}
 			defer func() { _ = srv.Close() }()
-			cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+			cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}

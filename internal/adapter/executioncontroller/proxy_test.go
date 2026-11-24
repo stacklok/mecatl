@@ -179,7 +179,7 @@ func newProxyFixture(t *testing.T, opts proxyOptions) *proxyFixture {
 
 	files := memfs.NewFileSystem(proxyRoot)
 	runner := memexecutor.NewRunner()
-	executor := memexecutor.Dial(t, memexecutor.Executor{
+	executor := memexecutor.NewClient(t, memexecutor.Executor{
 		Files:    memfs.NewWorkspaceOverFileSystem(files),
 		Commands: runner,
 	})
@@ -794,7 +794,7 @@ func reasonOf(err error) executorv1.ErrorReason {
 
 func TestCommandProxyRelaysAnUnservedCommandServiceAsNotStarted(t *testing.T) {
 	f := newProxyFixture(t, proxyOptions{})
-	f.connect.conn = memexecutor.Dial(t, memexecutor.Executor{
+	f.connect.conn = memexecutor.NewClient(t, memexecutor.Executor{
 		Files: memfs.NewWorkspaceOverFileSystem(f.files),
 	})
 	r := executorclient.NewRunner(

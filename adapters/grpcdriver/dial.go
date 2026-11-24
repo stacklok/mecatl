@@ -15,7 +15,7 @@ import (
 )
 
 // This dial path MIRRORS the mecatui client's connection posture
-// (cmd/mecatui/client/client.go, Dial): grpc.NewClient (lazy, never the
+// (cmd/mecatui/client/client.go, NewClient): grpc.NewClient (lazy, never the
 // deprecated grpc.Dial), loopback plaintext as the single-user default, a
 // per-RPC bearer credential whose RequireTransportSecurity() is true for any
 // non-loopback target, a hard pre-dial refusal of token-over-cleartext to a
@@ -37,7 +37,7 @@ type TLSOptions struct {
 	ClientKeyFile  string
 }
 
-// Option customises Dial.
+// Option customises NewClient.
 type Option func(*dialConfig)
 
 type dialConfig struct {
@@ -63,12 +63,12 @@ func WithTLS(o TLSOptions) Option {
 	}
 }
 
-// Dial connects to a store driver at target ("host:port") per opts. The
-// connection is LAZY (grpc.NewClient): the first RPC surfaces a connect
+// NewClient returns a LAZY connection (grpc.NewClient) to a store driver at
+// target ("host:port") per opts: the first RPC connects and surfaces a connect
 // error. Plaintext is the LOCAL single-user default (loopback hosts and unix
 // sockets); ANY other target requires WithTLS — token or not (see the
 // cleartext refusal in dialOptions).
-func Dial(target string, opts ...Option) (*grpc.ClientConn, error) {
+func NewClient(target string, opts ...Option) (*grpc.ClientConn, error) {
 	var cfg dialConfig
 	for _, o := range opts {
 		o(&cfg)
@@ -79,12 +79,19 @@ func Dial(target string, opts ...Option) (*grpc.ClientConn, error) {
 	}
 	conn, err := grpc.NewClient(target, dialOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("grpcdriver: dial %q: %w", target, err)
+		return nil, fmt.Errorf("grpcdriver: new client %q: %w", target, err)
 	}
 	return conn, nil
 }
 
-// dialOptions builds the grpc.DialOptions for target per cfg. Split from Dial
+// Dial is NewClient under its former name.
+//
+// Deprecated: Use NewClient. Dial never connected; the connection is lazy.
+func Dial(target string, opts ...Option) (*grpc.ClientConn, error) {
+	return NewClient(target, opts...)
+}
+
+// dialOptions builds the grpc.DialOptions for target per cfg. Split from NewClient
 // so tests can append a bufconn dialer without opening a real socket.
 func dialOptions(target string, cfg dialConfig) ([]grpc.DialOption, error) {
 	// The snapshot-size contract: raise the per-call send AND receive caps to

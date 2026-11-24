@@ -19,7 +19,7 @@ const root = "/workspace"
 func TestFileServiceConformance(t *testing.T) {
 	fileconformance.Run(t, func(t *testing.T) fileconformance.Target {
 		backend := memfs.NewFileSystem(root)
-		conn := memexecutor.Dial(t, memexecutor.Executor{
+		conn := memexecutor.NewClient(t, memexecutor.Executor{
 			Files: memfs.NewWorkspaceOverFileSystem(backend),
 		})
 		return fileconformance.Target{
@@ -38,7 +38,7 @@ func TestFileServiceConformance(t *testing.T) {
 }
 
 func TestPathEscapeIsReported(t *testing.T) {
-	conn := memexecutor.Dial(t, memexecutor.Executor{Files: memfs.NewWorkspace(root)})
+	conn := memexecutor.NewClient(t, memexecutor.Executor{Files: memfs.NewWorkspace(root)})
 	_, err := executorv1.NewFileServiceClient(conn).StatFile(t.Context(),
 		&executorv1.StatFileRequest{Path: "../outside"})
 	if status.Code(err) != codes.PermissionDenied ||
@@ -48,7 +48,7 @@ func TestPathEscapeIsReported(t *testing.T) {
 }
 
 func TestUnregisteredCommandServiceIsUnimplemented(t *testing.T) {
-	conn := memexecutor.Dial(t, memexecutor.Executor{Files: memfs.NewWorkspace(root)})
+	conn := memexecutor.NewClient(t, memexecutor.Executor{Files: memfs.NewWorkspace(root)})
 	stream, err := executorv1.NewCommandServiceClient(conn).RunCommand(t.Context())
 	if err != nil {
 		t.Fatal(err)

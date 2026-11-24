@@ -47,7 +47,7 @@ func startBufconnServer(t *testing.T, register func(gs *grpc.Server), serverOpts
 // with optional extra client dial options (e.g. per-RPC credentials), closing
 // it via t.Cleanup. The base options come from the PRODUCTION dialOptions
 // assembly (loopback target, zero dialConfig ⇒ plaintext, snapshot-sized call
-// options), so the fixture's client posture cannot drift from Dial's.
+// options), so the fixture's client posture cannot drift from NewClient's.
 func dialBufconnListener(t *testing.T, lis *bufconn.Listener, extra ...grpc.DialOption) *grpc.ClientConn {
 	t.Helper()
 	base, err := dialOptions("127.0.0.1:0", dialConfig{})

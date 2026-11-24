@@ -49,7 +49,7 @@ func supervisorClient(t *testing.T, root, spare string) executorv1.CommandServic
 	if err != nil {
 		t.Fatal(err)
 	}
-	return commandconformance.Dial(t, srv)
+	return commandconformance.NewClient(t, srv)
 }
 
 // processesWith lists live processes whose command line contains marker.
@@ -228,7 +228,7 @@ func TestStartFailuresAreTaggedOnlyWhenNothingRan(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stream, err := commandconformance.Dial(t, srv).RunCommand(t.Context())
+			stream, err := commandconformance.NewClient(t, srv).RunCommand(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}

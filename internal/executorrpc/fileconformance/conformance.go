@@ -45,8 +45,8 @@ func Run(t *testing.T, newTarget func(t *testing.T) Target) {
 	})
 }
 
-// Dial serves srv in memory and returns a connection to it.
-func Dial(t *testing.T, srv executorv1.FileServiceServer) *grpc.ClientConn {
+// NewClient serves srv in memory and returns a connection to it.
+func NewClient(t *testing.T, srv executorv1.FileServiceServer) *grpc.ClientConn {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
@@ -56,7 +56,7 @@ func Dial(t *testing.T, srv executorv1.FileServiceServer) *grpc.ClientConn {
 	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 		return lis.DialContext(ctx)
 	}
-	conn, err := executorclient.Dial(
+	conn, err := executorclient.NewClient(
 		"passthrough:///bufnet",
 		insecure.NewCredentials(),
 		grpc.WithContextDialer(dialer),

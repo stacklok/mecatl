@@ -156,7 +156,7 @@ func TestDurableRunAuthorizationOverMTLS(t *testing.T) {
 			if err := files.Write(t.Context(), "sentinel", []byte("ok")); err != nil {
 				t.Fatal(err)
 			}
-			executor := &recordingConnector{conn: memexecutor.Dial(t, memexecutor.Executor{
+			executor := &recordingConnector{conn: memexecutor.NewClient(t, memexecutor.Executor{
 				Files: memfs.NewWorkspaceOverFileSystem(files),
 			})}
 			store := NewStore(dynamic, "ns", testProfiles()).WithSecurityManager(manager)

@@ -241,8 +241,8 @@ func testRejectsInvalidStart(t *testing.T, h Harness) {
 	}
 }
 
-// Dial serves srv on an in-process listener for the test's lifetime and returns its client.
-func Dial(t *testing.T, srv executorv1.CommandServiceServer) executorv1.CommandServiceClient {
+// NewClient serves srv on an in-process listener for the test's lifetime and returns its client.
+func NewClient(t *testing.T, srv executorv1.CommandServiceServer) executorv1.CommandServiceClient {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()

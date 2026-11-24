@@ -109,7 +109,7 @@ func run(ctx context.Context, cfg config, args []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	conn, err := executorclient.Dial(cfg.addr, creds)
+	conn, err := executorclient.NewClient(cfg.addr, creds)
 	if err != nil {
 		return 0, err
 	}

@@ -62,7 +62,7 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 			t.Fatalf("embedded sockets=%v err=%v", fresh, err)
 		}
 		target := "unix://" + fresh[0]
-		cl, err := client.Dial(client.DialConfig{Server: target})
+		cl, err := client.NewClient(client.DialConfig{Server: target})
 		if err != nil {
 			t.Fatal(err)
 		}

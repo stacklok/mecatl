@@ -36,7 +36,7 @@ const SnapshotFormat = "sessnap-json/1"
 // snapshot envelope: 64 MiB. A session snapshot legitimately reaches multiple
 // MiB (inline media parts alone may carry session.MaxPromptMediaBytes = 20 MiB
 // in one prompt, base64-inflated by sessnap's JSON encoding), so gRPC's
-// default 4 MiB receive cap would brick Save/Load mid-session. Dial raises
+// default 4 MiB receive cap would brick Save/Load mid-session. NewClient raises
 // the client's per-call send AND receive limits to this value; a conforming
 // driver MUST accept payloads up to it on its server too
 // (grpc.MaxRecvMsgSize(MaxSnapshotBytes) — see the server-wrapper notes in
@@ -81,7 +81,7 @@ const (
 	sessionStoreContract     = "session-store/1"
 )
 
-// NewSessionStore wraps an established driver connection (see Dial) and
+// NewSessionStore wraps an established driver connection (see NewClient) and
 // requires the exact current base contract before trusting optional capability
 // bits. There is no old-peer or UNIMPLEMENTED fallback.
 func NewSessionStore(ctx context.Context, conn grpc.ClientConnInterface) (*SessionStore, error) {

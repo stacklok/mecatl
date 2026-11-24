@@ -63,7 +63,7 @@ func validMap(m map[string]string) map[string]string {
 // with grpc.MaxRecvMsgSize(MaxSnapshotBytes) (the protocol's required minimum
 // snapshot capacity; gRPC's default 4 MiB receive cap rejects a legitimate
 // media-carrying snapshot). The harness client's send/receive limits are
-// already raised to the same value by Dial; the bufconn conformance fixture
+// already raised to the same value by NewClient; the bufconn conformance fixture
 // does the same server-side.
 
 // sessionStoreServer adapts a port.SessionStore to SessionStoreServiceServer.

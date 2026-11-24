@@ -145,7 +145,7 @@ func newDriverConns() *driverConns {
 }
 
 // dial returns the cached connection for target (dialling lazily via
-// grpcdriver.Dial on first use, with the auth/TLS posture from cfg) plus an
+// grpcdriver.NewClient on first use, with the auth/TLS posture from cfg) plus an
 // idempotent close func. The dial itself never touches the network
 // (grpc.NewClient is lazy); the first RPC surfaces a connect error.
 func (d *driverConns) dial(cfg Config, target string) (*grpc.ClientConn, func(), error) {
@@ -154,7 +154,7 @@ func (d *driverConns) dial(cfg Config, target string) (*grpc.ClientConn, func(),
 	if dc, ok := d.conns[target]; ok {
 		return dc.conn, dc.close, nil
 	}
-	conn, err := grpcdriver.Dial(target, driverDialOptions(cfg)...)
+	conn, err := grpcdriver.NewClient(target, driverDialOptions(cfg)...)
 	if err != nil {
 		return nil, nil, err
 	}

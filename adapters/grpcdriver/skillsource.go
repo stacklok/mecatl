@@ -44,7 +44,7 @@ const (
 	maxSkillInventoryNameBytes    = 32 << 10
 )
 
-// NewSkillSource wraps an established driver connection (see Dial) as a
+// NewSkillSource wraps an established driver connection (see NewClient) as a
 // tool.SkillSource.
 func NewSkillSource(conn grpc.ClientConnInterface) *SkillSource {
 	return &SkillSource{client: driverv1.NewSkillSourceServiceClient(conn)}

@@ -51,8 +51,8 @@ func WithMaxOutputBytes(n int) Option {
 	}
 }
 
-// Dial connects with gRPC retries disabled, so no call is sent twice.
-func Dial(
+// NewClient creates a lazy client with gRPC retries disabled, so no call is sent twice.
+func NewClient(
 	target string,
 	creds credentials.TransportCredentials,
 	opts ...grpc.DialOption,
@@ -60,7 +60,7 @@ func Dial(
 	opts = append(opts, grpc.WithTransportCredentials(creds), grpc.WithDisableRetry())
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("executorclient: connect: %w", err)
+		return nil, fmt.Errorf("executorclient: new client: %w", err)
 	}
 	return conn, nil
 }

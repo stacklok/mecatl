@@ -13,19 +13,22 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 )
 
-// TestDialRefusesCleartextNonLoopback pins the hardened transport posture: a
-// NON-LOCAL driver target must never ride cleartext at all — token or not —
+// TestNewClientRefusesCleartextNonLoopback pins the hardened transport posture:
+// a NON-LOCAL driver target must never ride cleartext at all — token or not —
 // because drivers deliver session payloads, memory, model-steering skill
-// bodies, and executable assets. Dial refuses pre-dial with an actionable
+// bodies, and executable assets. NewClient refuses pre-dial with an actionable
 // error. (This supersedes the Phase-B token-only rule for every driver seam.)
-func TestDialRefusesCleartextNonLoopback(t *testing.T) {
+func TestNewClientRefusesCleartextNonLoopback(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithBearerToken("secret")}, // token over cleartext: still refused
 		nil,                         // token-LESS cleartext: refused too (the hardening)
 	} {
-		_, err := Dial("driver.example.com:7443", opts...)
+		_, err := NewClient("driver.example.com:7443", opts...)
 		if err == nil {
-			t.Fatalf("Dial(non-loopback, no TLS, opts=%v) = nil error, want refusal", opts)
+			t.Fatalf(
+				"NewClient(non-loopback, no TLS, opts=%v) = nil error, want refusal",
+				opts,
+			)
 		}
 		if !strings.Contains(err.Error(), "CLEARTEXT") || !strings.Contains(err.Error(), "--driver-tls") {
 			t.Errorf("refusal error %q should name the cleartext hazard and the --driver-tls fix", err)
@@ -33,40 +36,55 @@ func TestDialRefusesCleartextNonLoopback(t *testing.T) {
 	}
 }
 
-// TestDialLocalCleartextAllowed pins the LOCAL plaintext single-user default:
-// loopback hosts and unix sockets dial (lazily) without TLS, with or without
+func TestDeprecatedDialKeepsNewClientPosture(t *testing.T) {
+	if _, err := Dial("driver.example.com:7443"); err == nil {
+		t.Fatal("Dial(non-loopback, no TLS) = nil error, want refusal")
+	}
+	conn, err := Dial("127.0.0.1:7443")
+	if err != nil {
+		t.Fatalf("Dial(loopback) = %v, want lazy success", err)
+	}
+	_ = conn.Close()
+}
+
+// TestNewClientLocalCleartextAllowed pins the LOCAL plaintext single-user
+// default: loopback hosts and unix sockets dial (lazily) without TLS, with or without
 // a token.
-func TestDialLocalCleartextAllowed(t *testing.T) {
+func TestNewClientLocalCleartextAllowed(t *testing.T) {
 	for _, target := range []string{"127.0.0.1:7443", "localhost:7443", "[::1]:7443", "unix:///run/mecatl/driver.sock"} {
-		conn, err := Dial(target)
+		conn, err := NewClient(target)
 		if err != nil {
-			t.Errorf("Dial(%q) = %v, want lazy success (local plaintext default)", target, err)
+			t.Errorf("NewClient(%q) = %v, want lazy success (local plaintext default)", target, err)
 			continue
 		}
 		_ = conn.Close()
 	}
 }
 
-// TestDialLoopbackTokenAllowed pins the loopback plaintext single-user
+// TestNewClientLoopbackTokenAllowed pins the loopback plaintext single-user
 // default: a token to a loopback target dials (lazily) without TLS.
-func TestDialLoopbackTokenAllowed(t *testing.T) {
+func TestNewClientLoopbackTokenAllowed(t *testing.T) {
 	for _, target := range []string{"127.0.0.1:7443", "localhost:7443", "[::1]:7443"} {
-		conn, err := Dial(target, WithBearerToken("secret"))
+		conn, err := NewClient(target, WithBearerToken("secret"))
 		if err != nil {
-			t.Errorf("Dial(%q, token) = %v, want lazy success (loopback plaintext default)", target, err)
+			t.Errorf(
+				"NewClient(%q, token) = %v, want lazy success (loopback plaintext default)",
+				target,
+				err,
+			)
 			continue
 		}
 		_ = conn.Close()
 	}
 }
 
-// TestDialAssembledBearerMetadataOverBufconn pins DIAL's OWN plumbing of the
-// per-RPC bearer credential, without a real socket: it takes the EXACT option
-// set Dial assembles (dialOptions is Dial's body — Dial is dialOptions +
-// grpc.NewClient), appends only a bufconn dialer, and asserts the
+// TestNewClientAssembledBearerMetadataOverBufconn pins NewClient's OWN plumbing
+// of the per-RPC bearer credential, without a real socket: it takes the EXACT
+// option set NewClient assembles (dialOptions is NewClient's body — NewClient is
+// dialOptions + grpc.NewClient), appends only a bufconn dialer, and asserts the
 // "authorization: Bearer <token>" metadata arrives at the server. A loopback
 // target keeps the documented plaintext-token path.
-func TestDialAssembledBearerMetadataOverBufconn(t *testing.T) {
+func TestNewClientAssembledBearerMetadataOverBufconn(t *testing.T) {
 	var gotAuth string
 	intercept := grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if md, ok := metadata.FromIncomingContext(ctx); ok {
@@ -80,7 +98,7 @@ func TestDialAssembledBearerMetadataOverBufconn(t *testing.T) {
 		driverv1.RegisterSessionStoreServiceServer(gs, NewSessionStoreServer(memstore.New()))
 	}, intercept)
 
-	// The production assembly, exactly as Dial("127.0.0.1:7443",
+	// The production assembly, exactly as NewClient("127.0.0.1:7443",
 	// WithBearerToken("tok-123")) would build it.
 	opts, err := dialOptions("127.0.0.1:7443", dialConfig{token: "tok-123"})
 	if err != nil {

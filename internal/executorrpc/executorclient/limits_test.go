@@ -45,7 +45,7 @@ func dialScripted(
 	lis := bufconn.Listen(1 << 20)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
-	conn, err := executorclient.Dial(
+	conn, err := executorclient.NewClient(
 		"passthrough:///scripted",
 		insecure.NewCredentials(),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {

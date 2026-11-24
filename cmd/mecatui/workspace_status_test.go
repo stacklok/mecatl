@@ -645,7 +645,7 @@ func TestWorkspaceSnapshotEmbeddedConfirmedTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	cl, err := client.Dial(client.DialConfig{Server: srv.Target()})
+	cl, err := client.NewClient(client.DialConfig{Server: srv.Target()})
 	if err != nil {
 		t.Fatal(err)
 	}
