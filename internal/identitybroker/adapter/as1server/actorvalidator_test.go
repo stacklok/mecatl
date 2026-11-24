@@ -433,6 +433,7 @@ func TestIDJAGIssuanceConfig(t *testing.T) {
 		"no trust domain":       func(i *IDJAGIssuance) { i.ActIssuer = "spiffe://" },
 		"a fractional lifetime": func(i *IDJAGIssuance) { i.Targets[0].Lifetime = 1500 * time.Millisecond },
 		"a negative lifetime":   func(i *IDJAGIssuance) { i.Targets[0].Lifetime = -time.Second },
+		"a lifetime over 5m":    func(i *IDJAGIssuance) { i.Targets[0].Lifetime = 5*time.Minute + time.Second },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig(t, h, issuer)

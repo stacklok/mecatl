@@ -117,7 +117,7 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 		config:      config,
 		definitions: snapshot,
 		issuer:      issuer,
-		sessions:    newSessionTable(),
+		sessions:    newSessionTable(config.ClockSkew),
 	}
 	for _, opt := range opts {
 		opt(b)

@@ -963,6 +963,62 @@ func TestIdentityDefinitionRefsUnderAHarnessPolicy(t *testing.T) {
 	}
 }
 
+// TestHostedAS1RequestsUseTheConfiguredTimeout: the broker's in-process
+// client to a hosted AS-1 is bounded by the file's as1_request_timeout, and
+// by its default without one.
+func TestHostedAS1RequestsUseTheConfiguredTimeout(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	for want, durations := range map[time.Duration]map[string]string{
+		7 * time.Second:  {"as1_request_timeout": "7s"},
+		10 * time.Second: nil,
+	} {
+		cfg := Config{
+			IdentityBroker: true, NoShell: true,
+			IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Durations: durations}).Path,
+			IdentityBrokerHostedAS1:  hostedAS1Config(t, h, "https://as1.mecatl.test/as1"),
+		}
+		parts, err := buildIdentityBroker(t.Context(), cfg, nil, as2SigningKey{})
+		if err != nil {
+			t.Fatalf("buildIdentityBroker: %v", err)
+		}
+		t.Cleanup(parts.release)
+		if parts.as1HTTPClient == nil || parts.as1HTTPClient.Timeout != want {
+			t.Errorf("AS-1 client = %+v, want one bounded by %v", parts.as1HTTPClient, want)
+		}
+	}
+}
+
+// TestBuildRefusesAnUnworkableBrokerDuration: startup fails on a file whose
+// durations cannot work, naming the file.
+func TestBuildRefusesAnUnworkableBrokerDuration(t *testing.T) {
+	h := identityharness.New(t, identityharness.Options{})
+	for name, tc := range map[string]struct {
+		hosted    bool
+		durations map[string]string
+		want      string
+	}{
+		"a skew above a tenth of the ID-JAG grant maximum": {hosted: true, durations: map[string]string{"id_jag_max_lifetime": "5m", "clock_skew": "31s"}, want: "at most a tenth"},
+		"an ID-JAG lifetime without a hosted AS-1":         {durations: map[string]string{"id_jag_lifetime": "60s"}, want: "id_jag_lifetime requires a hosted AS-1"},
+		"an AS-1 timeout above its maximum":                {hosted: true, durations: map[string]string{"as1_request_timeout": "2m"}, want: "AS-1 request timeout"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: tc.hosted, Durations: tc.durations})
+			cfg := Config{UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true, IdentityBrokerConfigFile: files.Path}
+			if tc.hosted {
+				cfg.IdentityBrokerHostedAS1 = hostedAS1Config(t, h, "https://as1.mecatl.test/as1")
+			}
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err == nil {
+				built.Close()
+				t.Fatal("Build accepted the file")
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), files.Path) {
+				t.Fatalf("Build = %v, want an error naming %s and containing %q", err, files.Path, tc.want)
+			}
+		})
+	}
+}
+
 // TestIdentityBrokerWithAnInjectedCoreSendsTheConfiguredDefinitions pins that
 // the server gets the references of the definitions this configuration loads
 // even when a test injects the broker core, so it never starts without them

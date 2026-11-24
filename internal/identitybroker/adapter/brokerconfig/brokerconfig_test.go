@@ -32,7 +32,7 @@ func TestLoadReadsTheFileAndItsKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := identitybroker.Config{TrustDomain: brokerconfigtest.TrustDomain, Audience: brokerconfigtest.Audience, CredentialLifetime: time.Hour}
+	want := identitybroker.Config{TrustDomain: brokerconfigtest.TrustDomain, Audience: brokerconfigtest.Audience, CredentialLifetime: time.Hour, ClockSkew: 30 * time.Second}
 	if got.Config != want {
 		t.Errorf("Config = %+v, want %+v", got.Config, want)
 	}
@@ -328,6 +328,95 @@ func TestLoadRefuses(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.field) {
 				t.Errorf("Load = %v, want it to name the field %s", err, tc.field)
+			}
+		})
+	}
+}
+
+// TestLoadAppliesTheDefaultDurations: a file without the optional durations
+// loads with today's values, and AS-1's ID-JAG values only beside a hosted
+// AS-1.
+func TestLoadAppliesTheDefaultDurations(t *testing.T) {
+	t.Parallel()
+	want := identitybroker.Limits{
+		IDJAGMaxLifetime: 12 * time.Hour, IDJAGLifetime: time.Minute, ClientAssertionLifetime: time.Minute,
+		AS1RequestTimeout: 10 * time.Second, AS2RequestTimeout: 10 * time.Second,
+	}
+	for _, hosted := range []bool{true, false} {
+		files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: hosted})
+		got, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: hosted})
+		if err != nil {
+			t.Fatalf("hosted AS-1 %v: Load: %v", hosted, err)
+		}
+		w := want
+		if !hosted {
+			w.IDJAGMaxLifetime, w.IDJAGLifetime = 0, 0
+		}
+		if got.Limits != w || got.Config.CredentialLifetime != time.Hour || got.Config.ClockSkew != 30*time.Second {
+			t.Errorf("hosted AS-1 %v: Limits = %+v, Config = %+v; want %+v, a 1h credential lifetime, and a 30s skew", hosted, got.Limits, got.Config, w)
+		}
+	}
+}
+
+func TestLoadReadsTheDurations(t *testing.T) {
+	t.Parallel()
+	files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Durations: map[string]string{
+		"id_jag_max_lifetime": "720h", "id_jag_lifetime": "300s", "credential_lifetime": "15m",
+		"client_assertion_lifetime": "20s", "clock_skew": "0s", "as1_request_timeout": "30s", "as2_request_timeout": "1m",
+	}})
+	got, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: true})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := identitybroker.Limits{
+		IDJAGMaxLifetime: 720 * time.Hour, IDJAGLifetime: 5 * time.Minute, ClientAssertionLifetime: 20 * time.Second,
+		AS1RequestTimeout: 30 * time.Second, AS2RequestTimeout: time.Minute,
+	}
+	if got.Limits != want || got.Config.CredentialLifetime != 15*time.Minute || got.Config.ClockSkew != 0 {
+		t.Errorf("Limits = %+v, Config = %+v; want %+v, a 15m credential lifetime, and no skew", got.Limits, got.Config, want)
+	}
+}
+
+func TestLoadRefusesADuration(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		durations map[string]any
+		// hosted reports whether the process hosts AS-1.
+		hosted bool
+		want   string
+	}{
+		"not a duration":            {durations: map[string]any{"clock_skew": "thirty seconds"}, hosted: true, want: `clock_skew: "thirty seconds" is not a Go duration`},
+		"a duration without a unit": {durations: map[string]any{"credential_lifetime": "3600"}, hosted: true, want: `credential_lifetime: "3600" is not a Go duration`},
+		"a number":                  {durations: map[string]any{"as1_request_timeout": 10}, hosted: true, want: "as1_request_timeout"},
+		"a credential lifetime above the maximum": {durations: map[string]any{"credential_lifetime": "61m"}, hosted: true, want: "credential lifetime 1h1m0s must be positive and at most 1h0m0s"},
+		"a zero credential lifetime":              {durations: map[string]any{"credential_lifetime": "0s"}, hosted: true, want: "credential lifetime 0s"},
+		"a negative clock skew":                   {durations: map[string]any{"clock_skew": "-1s"}, hosted: true, want: "clock skew -1s must be between 0s and 1m0s"},
+		"a clock skew above the maximum":          {durations: map[string]any{"clock_skew": "61s"}, hosted: true, want: "clock skew 1m1s must be between 0s and 1m0s"},
+		"a client assertion lifetime above 60s":   {durations: map[string]any{"client_assertion_lifetime": "2m"}, hosted: true, want: "client assertion lifetime 2m0s must be between 1s and 1m0s"},
+		"an AS-1 timeout above the maximum":       {durations: map[string]any{"as1_request_timeout": "1m"}, hosted: true, want: "AS-1 request timeout 1m0s must be between 1s and 30s"},
+		"a zero AS-2 timeout":                     {durations: map[string]any{"as2_request_timeout": "0s"}, hosted: true, want: "AS-2 request timeout 0s"},
+		"an ID-JAG grant maximum above 720h":      {durations: map[string]any{"id_jag_max_lifetime": "721h"}, hosted: true, want: "ID-JAG grant maximum lifetime 721h0m0s must be between 1s and 720h0m0s"},
+		"an ID-JAG lifetime above 300s":           {durations: map[string]any{"id_jag_lifetime": "301s"}, hosted: true, want: "ID-JAG lifetime 5m1s must be between 1s and 5m0s"},
+		"a fractional ID-JAG lifetime":            {durations: map[string]any{"id_jag_lifetime": "1.5s"}, hosted: true, want: "ID-JAG lifetime 1.5s must be whole seconds"},
+		"a skew above a tenth of the ID-JAG grant maximum": {
+			durations: map[string]any{"id_jag_max_lifetime": "5m", "clock_skew": "31s"}, hosted: true,
+			want: "clock skew 31s must be at most a tenth of the ID-JAG grant maximum lifetime 5m0s",
+		},
+		"an ID-JAG grant maximum without a hosted AS-1": {durations: map[string]any{"id_jag_max_lifetime": "12h"}, want: "id_jag_max_lifetime requires a hosted AS-1"},
+		"an ID-JAG lifetime without a hosted AS-1":      {durations: map[string]any{"id_jag_lifetime": "60s"}, want: "id_jag_lifetime requires a hosted AS-1"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			files := brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: tc.hosted})
+			doc := readDoc(t, files.Path)
+			for field, value := range tc.durations {
+				doc[field] = value
+			}
+			writeJSON(t, files.Path, doc)
+			_, err := brokerconfig.Load(files.Path, brokerconfig.Host{AS1: tc.hosted})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), files.Path) {
+				t.Fatalf("Load = %v, want an error naming the file and containing %q", err, tc.want)
 			}
 		})
 	}

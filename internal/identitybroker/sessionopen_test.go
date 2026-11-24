@@ -71,9 +71,21 @@ func newOpenFixture(t *testing.T) *openFixture {
 // edit.
 func newOpenFixtureWith(t *testing.T, edit func(*as1server.Config, *as1server.DelegateClient)) *openFixture {
 	t.Helper()
+	return startOpenFixture(t, edit, identitybroker.ClockSkew)
+}
+
+// newOpenFixtureWithSkew is newOpenFixture with the broker's clock skew
+// skew.
+func newOpenFixtureWithSkew(t *testing.T, skew time.Duration) *openFixture {
+	t.Helper()
+	return startOpenFixture(t, nil, skew)
+}
+
+func startOpenFixture(t *testing.T, edit func(*as1server.Config, *as1server.DelegateClient), skew time.Duration) *openFixture {
+	t.Helper()
 	a := as1servertest.Start(t, identityharness.New(t, identityharness.Options{}), edit)
 	clock := &brokerClock{}
-	b := newBroker(t, identitybroker.WithAuthServer(a.Client(t)))
+	b := newBrokerWithSkew(t, skew, identitybroker.WithAuthServer(a.Client(t)))
 	identitybroker.SetClock(b, clock.Now)
 	return &openFixture{as1: a, clock: clock, b: b}
 }
@@ -506,27 +518,81 @@ func TestSessionOpenFailedReplaceKeepsTheHeldToken(t *testing.T) {
 // as reached one clock skew before the held refresh token's expiry, so it
 // never presents a grant AS-1 may already have expired.
 func TestSessionHardExpiryCountsOneSkewEarly(t *testing.T) {
-	f := newOpenFixture(t)
-	old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice))
-	if err != nil {
+	for _, skew := range []time.Duration{identitybroker.ClockSkew, 45 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			f := newOpenFixtureWithSkew(t, skew)
+			old, err := f.open(openHost, f.owner(identityharness.Alice), f.token(t, identityharness.Alice))
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, ok := identitybroker.SessionGrant(f.b, old.ID)
+			if !ok {
+				t.Fatal("the session holds no refresh token")
+			}
+
+			f.clock.Set(held.ExpiresAt.Add(-skew - time.Second))
+			if s, ok := f.find(t, openHost); !ok || s.ID != old.ID || !s.HoldsRefreshToken {
+				t.Fatalf("one second before the skew margin: FindSession = %+v, %v; want the session, holding its refresh token", s, ok)
+			}
+
+			f.clock.Set(held.ExpiresAt.Add(-skew))
+			if s, ok := f.find(t, openHost); ok {
+				t.Fatalf("at the skew margin, before the token's own expiry: FindSession = %+v, want none", s)
+			}
+			if _, ok := identitybroker.SessionGrant(f.b, old.ID); ok {
+				t.Fatal("the expired session still holds a refresh token")
+			}
+		})
+	}
+}
+
+// TestSessionOpenRemembersAConvertedTokenForOneSkewPastItsExp: the broker
+// refuses a converted access token itself until its exp plus the configured
+// skew, and presents it to AS-1 again only after that. AS-1 stamps nothing
+// here, so the broker's clock alone moves.
+func TestSessionOpenRemembersAConvertedTokenForOneSkewPastItsExp(t *testing.T) {
+	const skew = 45 * time.Second
+	f := newOpenFixtureWithSkew(t, skew)
+	alice := f.owner(identityharness.Alice)
+	a := f.token(t, identityharness.Alice)
+	if _, err := f.open(openHost, alice, a); err != nil {
 		t.Fatal(err)
 	}
-	held, ok := identitybroker.SessionGrant(f.b, old.ID)
-	if !ok {
-		t.Fatal("the session holds no refresh token")
+	exp := time.Unix(readClaims(t, a).Exp, 0)
+
+	f.clock.Set(exp.Add(skew - time.Second))
+	_, err := f.open("hostS43", alice, a)
+	wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonTokenUsed, a)
+	if f.attempts() != 1 {
+		t.Fatalf("%d requests reached AS-1 within the skew past exp, want only the first open's", f.attempts())
 	}
 
-	f.clock.Set(held.ExpiresAt.Add(-identitybroker.ClockSkew - time.Second))
-	if s, ok := f.find(t, openHost); !ok || s.ID != old.ID || !s.HoldsRefreshToken {
-		t.Fatalf("one second before the skew margin: FindSession = %+v, %v; want the session, holding its refresh token", s, ok)
+	f.clock.Set(exp.Add(skew))
+	_, _ = f.open("hostS44", alice, a)
+	if f.attempts() != 2 {
+		t.Fatalf("%d requests reached AS-1 one skew past exp, want the forgotten token presented again", f.attempts())
 	}
+}
 
-	f.clock.Set(held.ExpiresAt.Add(-identitybroker.ClockSkew))
-	if s, ok := f.find(t, openHost); ok {
-		t.Fatalf("at the skew margin, before the token's own expiry: FindSession = %+v, want none", s)
+// TestAS1AllowsNoSkewOnAnAccessTokensExp pins the rule the broker's
+// converted-token retention relies on (recordConvertedLocked): the real AS-1
+// refuses an access token whose exp has passed by a second, with no leeway,
+// and converts one whose exp has not.
+func TestAS1AllowsNoSkewOnAnAccessTokensExp(t *testing.T) {
+	withExp := func(exp time.Time) as1servertest.Forgery {
+		return as1servertest.Forgery{Claims: func(c jwt.MapClaims) { c["exp"] = exp.Unix() }}
 	}
-	if _, ok := identitybroker.SessionGrant(f.b, old.ID); ok {
-		t.Fatal("the expired session still holds a refresh token")
+	f := newOpenFixture(t)
+	alice := f.owner(identityharness.Alice)
+
+	expired := f.crafted(t, withExp(time.Now().Add(-time.Second)))
+	_, err := f.open(openHost, alice, expired)
+	wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid, expired)
+	f.wantAS1Refused(t, "invalid_request", "subject_token_invalid")
+
+	live := f.crafted(t, withExp(time.Now().Add(30*time.Second)))
+	if s, err := f.open(openHost, alice, live); err != nil || !s.HoldsRefreshToken {
+		t.Fatalf("open with a token expiring in 30s = %+v, %v; want it converted", s, err)
 	}
 }
 
@@ -1439,7 +1505,7 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 		}
 		held := f.expire(t, first.ID)
 		// A outlives the first session's grant.
-		if aExp := time.Unix(readClaims(t, a).Exp, 0); !f.clock.Now().Before(aExp.Add(5 * time.Minute)) {
+		if aExp := time.Unix(readClaims(t, a).Exp, 0); !f.clock.Now().Before(aExp.Add(identitybroker.ClockSkew)) {
 			t.Fatalf("A expires at %v, which the broker forgets before the grant expiring at %v", aExp, held.ExpiresAt)
 		}
 		if s, ok := f.find(t, openHost); ok {
@@ -1484,7 +1550,7 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 		if n := identitybroker.ConvertedTokens(f.b); n != 1 {
 			t.Fatalf("%d converted tokens remembered, want 1", n)
 		}
-		f.clock.Set(time.Unix(readClaims(t, a).Exp, 0).Add(5 * time.Minute))
+		f.clock.Set(time.Unix(readClaims(t, a).Exp, 0).Add(identitybroker.ClockSkew))
 		if n := identitybroker.ConvertedTokens(f.b); n != 0 {
 			t.Fatalf("%d converted tokens remembered past exp plus the skew, want 0", n)
 		}

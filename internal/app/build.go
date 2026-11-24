@@ -999,6 +999,10 @@ type Config struct {
 	// test-only and no production path sets it: it sees every ID-JAG
 	// redeemed.
 	identityBrokerAS2Transport func(http.RoundTripper) http.RoundTripper
+	// identityBrokerNow replaces the broker's clock (IdentityBrokerAS1.Now)
+	// on the hosted AS-1 path, so tests can move past a session's hard
+	// expiry. It is test-only; nil selects time.Now.
+	identityBrokerNow func() time.Time
 	// IdentityBrokerAS2Trust makes the bundled MCP broker's AS-2 trust an
 	// ID-JAG issuer, such as a test's AS-1 from mcpbrokertest.TrustAS1. It is
 	// test-only: production leaves it zero, and cannot build another, so
@@ -2377,7 +2381,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// without the identity broker.
 		var identity mcpBrokerIdentity
 		if ib.gatewayEntry != nil {
-			identity = mcpBrokerIdentity{entry: ib.gatewayEntry, brokerKeys: ib.brokerPublicKeys, clientKeySetFile: ib.clientKeySetFile}
+			identity = mcpBrokerIdentity{
+				entry: ib.gatewayEntry, brokerKeys: ib.brokerPublicKeys, clientKeySetFile: ib.clientKeySetFile,
+				as2RequestTimeout: ib.as2RequestTimeout,
+			}
 		}
 		if ib.gateway && len(ib.gatewayServers) != 0 && agentCredentials != nil {
 			// One list for both sides: the MCP broker sends only these

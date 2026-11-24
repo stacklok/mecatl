@@ -44,6 +44,9 @@ type Options struct {
 	AS1Fallbacks int
 	// Gateways are the gateway entries to write, such as EmbeddedGateway's.
 	Gateways []identitybroker.GatewayEntry
+	// Durations are duration fields to write by name, such as
+	// {"clock_skew": "45s"}; a field not named is left to its default.
+	Durations map[string]string
 }
 
 // EmbeddedGateway is the embedded gateway entry for AS-2 at as2Issuer,
@@ -122,6 +125,9 @@ func Write(t testing.TB, opts Options) Files {
 			}
 		}
 		doc["gateways"] = entries
+	}
+	for field, value := range opts.Durations {
+		doc[field] = value
 	}
 	writeJSON(t, files.Path, doc)
 	return files

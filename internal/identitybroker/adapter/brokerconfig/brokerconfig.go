@@ -23,8 +23,21 @@
 //	    "token_endpoint": "https://mecatl.example.com/v1/mcp/broker/oauth/token",
 //	    "resource": "https://mecatl.example.com/v1/mcp/broker/mcp",
 //	    "servers": ["calendar"]
-//	  }]
+//	  }],
+//	  "id_jag_max_lifetime": "12h",
+//	  "id_jag_lifetime": "60s",
+//	  "credential_lifetime": "1h",
+//	  "client_assertion_lifetime": "60s",
+//	  "clock_skew": "30s",
+//	  "as1_request_timeout": "10s",
+//	  "as2_request_timeout": "10s"
 //	}
+//
+// The lifetimes, skew, and timeouts are optional Go duration strings, each
+// defaulting to the value shown (the Default constants); the broker core
+// checks their bounds (identitybroker.Config.Validate and
+// identitybroker.Limits.Validate). id_jag_max_lifetime and id_jag_lifetime
+// configure a hosted AS-1 and are refused without one.
 //
 // Every path is absolute. Key files are PEM private keys: PKCS #1, SEC 1, or
 // PKCS #8, the forms AS-1's signing key file takes. The agent issuer and
@@ -65,18 +78,40 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
-// credentialLifetime is the agent credential lifetime the file does not yet
-// set.
-//
-// Shortcut: every deployment's agent credentials live an hour; removed by #2813 (the lifetime becomes a setting in this file).
-const credentialLifetime = time.Hour
+// Defaults of the file's optional lifetimes, skew, and timeouts.
+const (
+	// defaultIDJAGMaxLifetime is id_jag_max_lifetime's: twelve hours covers a
+	// working day's session while bounding how long agents act without the
+	// user.
+	defaultIDJAGMaxLifetime = 12 * time.Hour
+	// defaultIDJAGLifetime is id_jag_lifetime's, ToolHive's own default.
+	defaultIDJAGLifetime = time.Minute
+	// defaultCredentialLifetime is credential_lifetime's.
+	defaultCredentialLifetime = time.Hour
+	// defaultClientAssertionLifetime is client_assertion_lifetime's, the
+	// largest the broker signs.
+	defaultClientAssertionLifetime = identitybroker.MaxClientAssertionLifetime
+	// defaultClockSkew is clock_skew's: thirty seconds covers the drift of
+	// NTP-synchronized hosts many times over, while extending an agent
+	// credential and shortening a session by little.
+	defaultClockSkew = 30 * time.Second
+	// defaultAS1RequestTimeout and defaultAS2RequestTimeout are
+	// as1_request_timeout's and as2_request_timeout's. Both servers answer in
+	// process, normally within milliseconds.
+	defaultAS1RequestTimeout = 10 * time.Second
+	defaultAS2RequestTimeout = 10 * time.Second
+)
 
 // File is the identity broker's configuration file, loaded and validated.
 type File struct {
-	// Config is the broker's configuration: the file's trust domain and
-	// audience, and the interim credential lifetime, validated with
+	// Config is the broker's configuration: the file's trust domain,
+	// audience, credential lifetime, and clock skew, validated with
 	// identitybroker.Config.Validate.
 	Config identitybroker.Config
+	// Limits are the file's other lifetimes and timeouts, defaults applied,
+	// validated with identitybroker.Limits.Validate. AS-1's ID-JAG values are
+	// zero without a hosted AS-1.
+	Limits identitybroker.Limits
 	// Keys are the keys the file names, validated with
 	// identitybroker.Keys.Validate.
 	Keys identitybroker.Keys
@@ -106,6 +141,15 @@ type document struct {
 		AS1Signing signingKey `json:"as1_signing"`
 	} `json:"keys"`
 	Gateways []gatewayEntry `json:"gateways"`
+
+	// Durations are Go duration strings; nil selects the default.
+	IDJAGMaxLifetime        *string `json:"id_jag_max_lifetime"`
+	IDJAGLifetime           *string `json:"id_jag_lifetime"`
+	CredentialLifetime      *string `json:"credential_lifetime"`
+	ClientAssertionLifetime *string `json:"client_assertion_lifetime"`
+	ClockSkew               *string `json:"clock_skew"`
+	AS1RequestTimeout       *string `json:"as1_request_timeout"`
+	AS2RequestTimeout       *string `json:"as2_request_timeout"`
 }
 
 // gatewayEntry is a gateway entry's JSON form.
@@ -169,13 +213,20 @@ func load(raw []byte, host Host) (File, error) {
 		return File{}, fmt.Errorf("trust_domain: %w", err)
 	}
 	file := File{
-		Config:                 identitybroker.Config{TrustDomain: doc.TrustDomain, Audience: doc.Audience, CredentialLifetime: credentialLifetime},
+		Config:                 identitybroker.Config{TrustDomain: doc.TrustDomain, Audience: doc.Audience},
 		BrokerClientKeySetFile: doc.Keys.BrokerClient.KeySetFile,
 		AS1SigningKeyFile:      doc.Keys.AS1Signing.KeyFile,
 		AS1FallbackKeyFiles:    doc.Keys.AS1Signing.FallbackKeyFiles,
 	}
-	// The core's own errors name the trust domain and audience fields.
+	if err := resolveDurations(doc, host, &file); err != nil {
+		return File{}, err
+	}
+	// The core's own errors name the trust domain, audience, and each
+	// lifetime, skew, and timeout.
 	if err := file.Config.Validate(); err != nil {
+		return File{}, err
+	}
+	if err := file.Limits.Validate(file.Config, host); err != nil {
 		return File{}, err
 	}
 	if file.Gateways, err = gateways(doc.Gateways, host); err != nil {
@@ -188,6 +239,59 @@ func load(raw []byte, host Host) (File, error) {
 		return File{}, err
 	}
 	return file, nil
+}
+
+// resolveDurations stores doc's durations, or their defaults, in file for a
+// broker beside host. AS-1's ID-JAG values are refused without a hosted AS-1
+// and left zero.
+func resolveDurations(doc document, host Host, file *File) error {
+	switch {
+	case !host.AS1 && doc.IDJAGMaxLifetime != nil:
+		return errors.New("id_jag_max_lifetime requires a hosted AS-1, which this process does not run")
+	case !host.AS1 && doc.IDJAGLifetime != nil:
+		return errors.New("id_jag_lifetime requires a hosted AS-1, which this process does not run")
+	}
+	durations := []durationField{
+		{"credential_lifetime", doc.CredentialLifetime, defaultCredentialLifetime, &file.Config.CredentialLifetime},
+		{"clock_skew", doc.ClockSkew, defaultClockSkew, &file.Config.ClockSkew},
+		{"client_assertion_lifetime", doc.ClientAssertionLifetime, defaultClientAssertionLifetime, &file.Limits.ClientAssertionLifetime},
+		{"as1_request_timeout", doc.AS1RequestTimeout, defaultAS1RequestTimeout, &file.Limits.AS1RequestTimeout},
+		{"as2_request_timeout", doc.AS2RequestTimeout, defaultAS2RequestTimeout, &file.Limits.AS2RequestTimeout},
+	}
+	if host.AS1 {
+		durations = append(durations,
+			durationField{"id_jag_max_lifetime", doc.IDJAGMaxLifetime, defaultIDJAGMaxLifetime, &file.Limits.IDJAGMaxLifetime},
+			durationField{"id_jag_lifetime", doc.IDJAGLifetime, defaultIDJAGLifetime, &file.Limits.IDJAGLifetime})
+	}
+	for _, d := range durations {
+		if err := d.resolve(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// durationField is one of the file's optional duration fields: its name, its
+// raw value, nil when absent, its default, and where its value goes.
+type durationField struct {
+	field string
+	raw   *string
+	def   time.Duration
+	into  *time.Duration
+}
+
+// resolve stores d's value, or its default when it is absent.
+func (d durationField) resolve() error {
+	*d.into = d.def
+	if d.raw == nil {
+		return nil
+	}
+	v, err := time.ParseDuration(*d.raw)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a Go duration such as \"30s\" or \"12h\"", d.field, *d.raw)
+	}
+	*d.into = v
+	return nil
 }
 
 // gateways converts and validates the file's gateway entries for a broker

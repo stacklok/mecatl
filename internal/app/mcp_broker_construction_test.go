@@ -190,7 +190,10 @@ func TestBuildRecordsAS2(t *testing.T) {
 			declaration, _ := protectedBrokerAuthority().Broker()
 			declaration.SigningKeyFile = writeAS2Key(t, as2Key)
 			cfg.IdentityBroker, cfg.MCPAuthority = true, mcpauthority.NewBroker(declaration)
-			cfg.IdentityBrokerConfigFile = brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: cfg.IdentityBrokerHostedAS1 != nil, Gateways: embeddedEntry()}).Path
+			cfg.IdentityBrokerConfigFile = brokerconfigtest.Write(t, brokerconfigtest.Options{
+				HostedAS1: cfg.IdentityBrokerHostedAS1 != nil, Gateways: embeddedEntry(),
+				Durations: map[string]string{"as2_request_timeout": "17s"},
+			}).Path
 			built, err := buildIsolated(t, t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -203,8 +206,9 @@ func TestBuildRecordsAS2(t *testing.T) {
 			if as2.Issuer != as2TestIssuer || as2.TokenEndpoint != as2TestIssuer+"/oauth/token" || as2.Resource != as2TestIssuer+"/mcp" {
 				t.Fatalf("AS-2 = issuer %q, token endpoint %q, resource %q", as2.Issuer, as2.TokenEndpoint, as2.Resource)
 			}
-			if as2.HTTPClient == nil || as2.HTTPClient.Timeout != as2RequestTimeout {
-				t.Fatalf("AS-2 client = %+v, want one bounded by %v", as2.HTTPClient, as2RequestTimeout)
+			// The configuration file's as2_request_timeout.
+			if as2.HTTPClient == nil || as2.HTTPClient.Timeout != 17*time.Second {
+				t.Fatalf("AS-2 client = %+v, want one bounded by the file's 17s", as2.HTTPClient)
 			}
 			// The in-process client serves the token endpoint and nothing else.
 			for _, other := range []string{as2TestIssuer + "/.well-known/jwks.json", "https://other.example/v1/mcp/broker/oauth/token", as2.Resource} {

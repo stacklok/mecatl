@@ -2,8 +2,8 @@ package identitybroker
 
 import "time"
 
-// ClockSkew is the interim clock-skew allowance.
-const ClockSkew = credentialClockSkew
+// ClockSkew is the clock skew the package's test brokers configure.
+const ClockSkew = 30 * time.Second
 
 // MaxRunsPerSession is how many run records, and how many delegation
 // records, a session keeps before forgetting the oldest.

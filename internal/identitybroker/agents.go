@@ -192,7 +192,7 @@ func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, re
 		// Registering again in the same session keeps the credentials issued
 		// there, dropping expired ones and, past maxIssuedCredentials, the
 		// earliest to expire.
-		rec.pruneCredentials(t.now())
+		rec.pruneCredentials(t.now(), t.skew)
 	}
 	if !ok || rec.sessionID != sessionID {
 		// A new instance, or one moving to another session: only the
@@ -203,11 +203,12 @@ func (t *sessionTable) recordLocked(identity agentIdentity, sessionID string, re
 	rec.credentials[credentialHash(credential)] = expiresAt
 }
 
-// pruneCredentials drops expired credentials, then the earliest to expire
-// until there is room for one more within maxIssuedCredentials.
-func (r *agentRecord) pruneCredentials(now time.Time) {
+// pruneCredentials drops credentials expired, allowing skew, then the
+// earliest to expire until there is room for one more within
+// maxIssuedCredentials.
+func (r *agentRecord) pruneCredentials(now time.Time, skew time.Duration) {
 	for h, exp := range r.credentials {
-		if !now.Before(exp.Add(credentialClockSkew)) {
+		if !now.Before(exp.Add(skew)) {
 			delete(r.credentials, h)
 		}
 	}

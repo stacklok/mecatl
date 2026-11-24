@@ -33,8 +33,10 @@ type sessionTable struct {
 	incarnations map[string]string
 	// converted holds the jti of every access token AS-1 may have converted,
 	// for any session, with the token's exp; entries are dropped once exp
-	// plus convertedClockSkew has passed.
+	// plus skew has passed.
 	converted map[string]time.Time
+	// skew is Config.ClockSkew.
+	skew time.Duration
 	// attempts holds the attempts AuthorizeCall issued, per session, until
 	// the session closes.
 	attempts *attemptLedger
@@ -70,11 +72,11 @@ type brokerSession struct {
 	grant *heldGrant
 }
 
-func newSessionTable() *sessionTable {
+func newSessionTable(skew time.Duration) *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
-		incarnations: map[string]string{},
-		converted:    map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
+		incarnations: map[string]string{}, skew: skew,
+		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
 	}
 }
 
@@ -175,7 +177,7 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 // a grant AS-1 may already have expired (design step (6), check 2). Skew in
 // either direction fails closed: the session ends early instead.
 func (t *sessionTable) pastHardExpiry(g *heldGrant) bool {
-	return !t.now().Add(credentialClockSkew).Before(g.expiresAt)
+	return !t.now().Add(t.skew).Before(g.expiresAt)
 }
 
 // expireLocked closes s with ReasonSessionClosed if it is open and its
