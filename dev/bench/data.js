@@ -406724,6 +406724,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795513995694,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2be336f5df57ca6f288a0be38205bfd05b4e3a6f",
+          "message": "chore(deps): update node.js to d5b583c (#2940)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-24T10:42:40+01:00",
+          "tree_id": "077963ca981c456e53aa8b31a6eebf08965be36a",
+          "url": "https://github.com/stacklok/mecatl/commit/2be336f5df57ca6f288a0be38205bfd05b4e3a6f"
+        },
+        "date": 1795514721827,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -586806,6 +586840,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795514717393,
+  "lastUpdate": 1795514722750,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
