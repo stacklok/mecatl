@@ -80,19 +80,43 @@ func (s *Store) validateRunClaim(
 	if err != nil {
 		return nil, err
 	}
-	if !publishedReference(refs, rc.BindingID) || textNested(o.Object, "spec", "desired") != activeDesired || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
-		return nil, &executionenv.Error{
-			Code:    executionenv.CodeNotReady,
-			Message: "run binding is not ready",
-		}
+	routable := publishedReference(refs, rc.BindingID) &&
+		textNested(o.Object, "spec", "desired") == activeDesired &&
+		textNested(o.Object, "status", "fenceState") == fenceHealthy
+	unready := &executionenv.Error{
+		Code:    executionenv.CodeNotReady,
+		Message: "run binding is not ready",
+	}
+	ready := routable && conditionTrue(o, "Ready")
+	transient := routable && briefly(o, "Ready")
+	if !ready && !transient {
+		return nil, unready
 	}
 	if err := s.clientPolicyRefusal(ctx, client, o); err != nil {
 		return nil, err
+	}
+	if !ready {
+		return o, &unconfirmedRefusal{unready}
 	}
 	return o, nil
 }
 
 type environmentRead string
+
+// transientReasons are condition reasons the reconciler sets while the
+// executor or its workspace is briefly unavailable, not when access ends.
+var transientReasons = []string{"ExecutorUnavailable", "PVCUnavailable", "Reconciled"}
+
+func briefly(o *unstructured.Unstructured, name string) bool {
+	conds, _, _ := unstructured.NestedSlice(o.Object, "status", "conditions")
+	for _, raw := range conds {
+		m, ok := raw.(map[string]any)
+		if ok && text(m, "type") == name && text(m, "status") == "False" {
+			return slices.Contains(transientReasons, text(m, "reason"))
+		}
+	}
+	return false
+}
 
 // unconfirmedRefusal is a refusal because authorization state could not be read.
 type unconfirmedRefusal struct{ refusal *executionenv.Error }

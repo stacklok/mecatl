@@ -67,15 +67,21 @@ type proxyFixture struct {
 }
 
 type recordingConnector struct {
-	conn grpc.ClientConnInterface
-	mu   sync.Mutex
-	pins []ExecutorPin
+	before func() error
+	conn   grpc.ClientConnInterface
+	mu     sync.Mutex
+	pins   []ExecutorPin
 }
 
 func (c *recordingConnector) Connect(pin ExecutorPin) (grpc.ClientConnInterface, func(), error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pins = append(c.pins, pin)
+	if c.before != nil {
+		if err := c.before(); err != nil {
+			return nil, nil, err
+		}
+	}
 	return c.conn, func() {}, nil
 }
 

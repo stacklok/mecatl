@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/status"
@@ -35,7 +36,11 @@ type flight struct {
 	key        string
 	generation uint64
 	withdraw   context.CancelCauseFunc
-	missed     int
+	release    func()
+	// admitted is set once the call is connected; the sweep skips calls still
+	// in admission, which revocation here already closes.
+	admitted atomic.Bool
+	missed   int
 }
 
 // inflightCalls indexes forwarded calls by environment ID.
@@ -89,6 +94,18 @@ func (r *inflightCalls) snapshot() map[string][]*flight {
 	return out
 }
 
+// admit marks f admitted unless it was withdrawn first; withdrawBelow holds
+// the same lock, so a revocation cannot fall between the check and the mark.
+func (r *inflightCalls) admit(f *flight) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f.ctx.Err() != nil {
+		return false
+	}
+	f.admitted.Store(true)
+	return true
+}
+
 // withdrawBelow closes env's calls admitted under a grant generation before generation.
 func (r *inflightCalls) withdrawBelow(env string, generation uint64, err error) int {
 	r.mu.Lock()
@@ -137,7 +154,7 @@ func (h *Handler) logWithdrawal(ctx context.Context, trigger string, err error) 
 func (p *executorProxy) track(
 	ctx context.Context,
 	rc *executorv1.RequestContext,
-) (context.Context, func()) {
+) (context.Context, *flight) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	env := rc.GetEnvironment().GetId()
 	f := &flight{
@@ -148,13 +165,14 @@ func (p *executorProxy) track(
 		generation: rc.GetGrantGeneration(),
 		withdraw:   cancel,
 	}
-	if p.handler.flights.add(env, f) {
-		go p.handler.sweep()
-	}
-	return ctx, func() {
+	f.release = func() {
 		p.handler.flights.remove(env, f)
 		cancel(nil)
 	}
+	if p.handler.flights.add(env, f) {
+		go p.handler.sweep()
+	}
+	return ctx, f
 }
 
 // recheckKey groups calls whose authorization one check decides.
@@ -200,7 +218,7 @@ func (h *Handler) sweep() {
 func (h *Handler) recheckEnvironment(reads *recheckReads, flights []*flight) {
 	groups := map[string][]*flight{}
 	for _, f := range flights {
-		if f.ctx.Err() == nil {
+		if f.ctx.Err() == nil && f.admitted.Load() {
 			groups[f.key] = append(groups[f.key], f)
 		}
 	}

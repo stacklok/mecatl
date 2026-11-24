@@ -2,6 +2,7 @@ package executioncontroller
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -82,7 +83,10 @@ func (s *Store) ExecutorRoute(
 	capability string,
 ) (ExecutorRoute, error) {
 	o, err := s.validateRunClaim(ctx, client, owner, rc)
-	if err != nil {
+	// A briefly unready environment is unconfirmed unless a lifecycle operation
+	// refuses it; validateRunClaim already refused a revoked template.
+	var unready *unconfirmedRefusal
+	if o == nil || err != nil && !errors.As(err, &unready) {
 		return ExecutorRoute{}, err
 	}
 	if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
@@ -90,6 +94,9 @@ func (s *Store) ExecutorRoute(
 			Code:    executionenv.CodeNotReady,
 			Message: transitioningMessage,
 		}
+	}
+	if unready != nil {
+		return ExecutorRoute{}, unready
 	}
 	if err := s.requireAdmitted(o, capability); err != nil {
 		return ExecutorRoute{}, err
@@ -149,11 +156,13 @@ func (p *executorProxy) open(
 	ctx context.Context,
 	rc *executorv1.RequestContext,
 ) (context.Context, authorizedCall, error) {
+	ctx, f := p.track(ctx, rc)
 	route, err := p.authorize(ctx, rc)
 	if err != nil {
-		return ctx, authorizedCall{}, notForwarded(err)
+		f.release()
+		return ctx, authorizedCall{}, notForwarded(withdrawnOr(ctx, err))
 	}
-	ctx, a, err := p.connect(ctx, rc, route)
+	a, err := p.connect(ctx, route, f)
 	return ctx, a, notForwarded(err)
 }
 
@@ -190,19 +199,25 @@ func (p *executorProxy) admit(
 	return route, false, nil
 }
 
-// connect dials route's executor and tracks the call until release.
+// connect dials route's executor for a call tracked since before admission,
+// refusing it if it was withdrawn meanwhile; release ends the tracking.
 func (p *executorProxy) connect(
 	ctx context.Context,
-	rc *executorv1.RequestContext,
 	route ExecutorRoute,
-) (context.Context, authorizedCall, error) {
+	f *flight,
+) (authorizedCall, error) {
 	conn, release, err := p.connector(route.Pin)
 	if err != nil {
-		return ctx, authorizedCall{}, wireError(executionenv.CodeNotReady, true)
+		f.release()
+		return authorizedCall{}, withdrawnOr(ctx, wireError(executionenv.CodeNotReady, true))
 	}
-	ctx, stop := p.track(ctx, rc)
-	return ctx, authorizedCall{route: route, conn: conn, release: func() {
-		stop()
+	if !p.handler.flights.admit(f) {
+		release()
+		f.release()
+		return authorizedCall{}, withdrawnOr(ctx, status.FromContextError(ctx.Err()).Err())
+	}
+	return authorizedCall{route: route, conn: conn, release: func() {
+		f.release()
 		release()
 	}}, nil
 }

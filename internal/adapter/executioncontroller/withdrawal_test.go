@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -200,12 +202,10 @@ func TestWithdrawalClosesInFlightCommands(t *testing.T) {
 	}
 }
 
-func TestRevocationHereClosesCallsWithoutARecheck(t *testing.T) {
-	f := newProxyFixture(t, proxyOptions{administrator: true, manualTicks: true})
-	stream := blockedCommand(t, f)
+func (f *proxyFixture) revokeEnvironment(ctx context.Context) error {
 	owner := &executionv1.Owner{Issuer: scopeOwner.Issuer, Subject: scopeOwner.Subject}
 	resp, err := executionv1.NewExecutionProviderServiceClient(f.conn).RevokeEnvironment(
-		t.Context(),
+		ctx,
 		&executionv1.RevokeEnvironmentRequest{
 			Environment:             &executionv1.EnvironmentRef{Id: "env", Revision: "rev"},
 			Owner:                   owner,
@@ -213,10 +213,217 @@ func TestRevocationHereClosesCallsWithoutARecheck(t *testing.T) {
 			OperationId:             "revoke",
 		},
 	)
-	if err != nil || resp.GetGrantGeneration() != 2 {
-		t.Fatalf("RevokeEnvironment = %v, %v", resp, err)
+	if err == nil && resp.GetGrantGeneration() != 2 {
+		err = fmt.Errorf("RevokeEnvironment granted generation %d", resp.GetGrantGeneration())
 	}
+	return err
+}
+
+func (f *proxyFixture) revoke(t *testing.T) {
+	t.Helper()
+	if err := f.revokeEnvironment(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRevocationHereClosesCallsWithoutARecheck(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{administrator: true, manualTicks: true})
+	stream := blockedCommand(t, f)
+	f.revoke(t)
 	requireWithdrawn(t, f, stream, false, codes.Unauthenticated)
+}
+
+func TestRevocationDuringAdmissionRefusesTheCall(t *testing.T) {
+	for name, dialErr := range map[string]error{
+		"dial succeeds": nil,
+		"dial fails":    errors.New("dial failed"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newProxyFixture(t, proxyOptions{administrator: true, manualTicks: true})
+			revoked := make(chan error, 1)
+			f.connect.before = func() error {
+				f.connect.before = nil
+				revoked <- f.revokeEnvironment(t.Context())
+				return dialErr
+			}
+			f.runner.Script("block", memexecutor.Block("ready"))
+			_, err := startCommand(t.Context(), t, f.conn, proxyRequestContext(), "block").Recv()
+			if err := <-revoked; err != nil {
+				t.Fatal(err)
+			}
+			if status.Code(err) != codes.Unauthenticated ||
+				!refusedBeforeForwarding(status.Convert(err)) {
+				t.Fatalf("revoked during admission = %v, want Unauthenticated, NOT_FORWARDED", err)
+			}
+			if f.runner.Running() != 0 {
+				t.Fatal("command revoked during admission reached the executor")
+			}
+		})
+	}
+}
+
+func TestRecheckToleratesTransientUnreadiness(t *testing.T) {
+	for reason, sweeps := range map[string]int{
+		"ExecutorUnavailable": 2,
+		"PVCUnavailable":      2,
+		"Reconciled":          2,
+		"InvalidTemplate":     1,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			f := newProxyFixture(t, proxyOptions{manualTicks: true})
+			stream := blockedCommand(t, f)
+			f.updateEnvironment(t, func(o *unstructured.Unstructured) {
+				setConditionObject(o, "Ready", false, reason, "")
+			})
+			for range sweeps - 1 {
+				f.tick(t)
+				f.requireOpen(t, 1)
+			}
+			requireWithdrawn(t, f, stream, true, codes.Unavailable)
+		})
+	}
+}
+
+func TestPolicyChangeDuringUnreadinessClosesAtOnce(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{manualTicks: true})
+	stream := blockedCommand(t, f)
+	f.updateEnvironment(t, func(o *unstructured.Unstructured) {
+		setConditionObject(o, "Ready", false, "ExecutorUnavailable", "")
+	})
+	f.manifest.Generation++
+	f.manifest.Clients[0].ExecutionTemplates = nil
+	writeManifest(t, f.manifestPath, f.manifest)
+	if err := f.security.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	requireWithdrawn(t, f, stream, true, codes.Unavailable)
+}
+
+func TestLifecycleOperationDuringUnreadinessClosesAtOnce(t *testing.T) {
+	f := newProxyFixture(t, proxyOptions{manualTicks: true})
+	stream := blockedCommand(t, f)
+	f.updateEnvironment(t, func(o *unstructured.Unstructured) {
+		setConditionObject(o, "Ready", false, "Reconciled", "")
+		setField([]string{"status", "lifecycleOperation", "id"}, "replace")(o)
+	})
+	requireWithdrawn(t, f, stream, true, codes.Unavailable)
+}
+
+// stallingConn reports each executor stream it opens and stops it after its
+// first message until the forwarded call's context ends.
+type stallingConn struct {
+	grpc.ClientConnInterface
+	opened  chan struct{}
+	stalled chan struct{}
+}
+
+func (c *stallingConn) NewStream(
+	ctx context.Context,
+	desc *grpc.StreamDesc,
+	method string,
+	opts ...grpc.CallOption,
+) (grpc.ClientStream, error) {
+	s, err := c.ClientConnInterface.NewStream(ctx, desc, method, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.opened <- struct{}{}
+	return &stallingStream{ClientStream: s, ctx: ctx, stalled: c.stalled}, nil
+}
+
+type stallingStream struct {
+	grpc.ClientStream
+	ctx      context.Context
+	stalled  chan struct{}
+	received bool
+}
+
+func (s *stallingStream) RecvMsg(m any) error {
+	if s.received {
+		s.stalled <- struct{}{}
+		<-s.ctx.Done()
+		return status.FromContextError(s.ctx.Err()).Err()
+	}
+	s.received = true
+	return s.ClientStream.RecvMsg(m)
+}
+
+func (f *proxyFixture) stall() *stallingConn {
+	c := &stallingConn{
+		ClientConnInterface: f.connect.conn,
+		opened:              make(chan struct{}, 1),
+		stalled:             make(chan struct{}, 1),
+	}
+	f.connect.conn = c
+	return c
+}
+
+func await(t *testing.T, signal <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(withdrawalWait):
+		t.Fatal(what)
+	}
+}
+
+func requireWithdrawnStream(t *testing.T, err error) {
+	t.Helper()
+	if status.Code(err) != codes.Unauthenticated || refusedBeforeForwarding(status.Convert(err)) {
+		t.Fatalf("withdrawn stream = %v, want Unauthenticated without NOT_FORWARDED", err)
+	}
+}
+
+func TestWithdrawalClosesInFlightFileStreams(t *testing.T) {
+	revoke := func(t *testing.T, f *proxyFixture) {
+		f.updateEnvironment(t, setField([]string{"status", "grantGeneration"}, int64(2)))
+		f.tick(t)
+	}
+	t.Run("read", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{manualTicks: true})
+		if err := f.files.Write(t.Context(), "a.txt", []byte("a")); err != nil {
+			t.Fatal(err)
+		}
+		conn := f.stall()
+		read, err := executorv1.NewFileServiceClient(f.conn).ReadFile(
+			t.Context(),
+			&executorv1.ReadFileRequest{Context: proxyRequestContext(), Path: "a.txt"},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := read.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		await(t, conn.stalled, "ReadFile never waited on the executor")
+		revoke(t, f)
+		_, err = read.Recv()
+		requireWithdrawnStream(t, err)
+	})
+	t.Run("upload", func(t *testing.T) {
+		f := newProxyFixture(t, proxyOptions{manualTicks: true})
+		conn := f.stall()
+		up, err := executorv1.NewFileServiceClient(f.conn).CreateFile(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := &executorv1.CreateFileRequest{
+			Context: proxyRequestContext(),
+			Path:    "new.txt",
+			Data:    []byte("a"),
+		}
+		if err := up.Send(first); err != nil {
+			t.Fatal(err)
+		}
+		await(t, conn.opened, "the upload never reached the executor")
+		revoke(t, f)
+		_ = up.Send(&executorv1.CreateFileRequest{Data: []byte("b")})
+		_, err = up.CloseAndRecv()
+		requireWithdrawnStream(t, err)
+		if _, err := f.files.Read(t.Context(), "new.txt"); err == nil {
+			t.Fatal("withdrawn upload wrote its file")
+		}
+	})
 }
 
 func TestTemplateRevocationDeletesTheExecutorAndClosesCalls(t *testing.T) {

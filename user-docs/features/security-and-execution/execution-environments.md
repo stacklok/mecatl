@@ -323,11 +323,11 @@ call. Once revocation, a lapsed run claim, a revoked template, or a client polic
 or TLS trust change would refuse a new call, the provider closes the call in
 progress and the executor stops the command and every process it started. A
 call survives one recheck that can't confirm its authority, for example because
-the Kubernetes API is unreachable or this replica hasn't loaded a newer security
-policy yet, and closes if the next recheck can't confirm it either. The caller
-receives the same status a new call would; a closed command ends with an unknown
-outcome and isn't retried, and files written before the close stay written.
-Operators set the interval with the
+the Kubernetes API or the executor is briefly unavailable or this replica hasn't
+loaded a newer security policy yet, and closes if the next recheck can't confirm
+it either. The caller receives the same status a new call would; a closed
+command ends with an unknown outcome and isn't retried, and files written before
+the close stay written. Operators set the interval with the
 [`provider.policyRecheckInterval` chart value](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
 ### Network and resource limits

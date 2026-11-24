@@ -42,16 +42,18 @@ func (p *CommandProxy) RunCommand(stream commandStream) error {
 	if err != nil {
 		return err
 	}
-	ctx := stream.Context()
+	ctx, f := p.proxy.track(stream.Context(), first.GetContext())
 	route, err := p.proxy.authorize(ctx, first.GetContext())
 	if err != nil {
-		return notForwarded(err)
+		f.release()
+		return notForwarded(withdrawnOr(ctx, err))
 	}
 	forward, err := boundedStart(first, route)
 	if err != nil {
+		f.release()
 		return notForwarded(err)
 	}
-	ctx, a, err := p.proxy.connect(ctx, first.GetContext(), route)
+	a, err := p.proxy.connect(ctx, route, f)
 	if err != nil {
 		return notForwarded(err)
 	}
