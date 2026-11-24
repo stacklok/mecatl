@@ -6113,8 +6113,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	// the id is on the snapshot the moment the run can park awaiting an approval —
 	// which is what lets a cross-process resume continue THE SAME run rather than
 	// mint a second one. Every prompt-entry path funnels through here
-	// (StartRun, RetryFailedRun, scheduler fires, steer promotion), so this is the
-	// one mint site for a new run. The run's owner is recorded with it.
+	// (StartRun, scheduler fires, steer promotion, plan-approved proceed runs), so
+	// this is the one mint site for a new run. The run's owner is recorded with
+	// it. A retry or a resume mints nothing: it continues the stored run and owner.
 	runID := newRunID()
 	sess.BeginRunFor(runID, newRunOwner(ctx, sess, purpose))
 	env, err = s.acquireExecution(ctx, st, sess, runID, env)

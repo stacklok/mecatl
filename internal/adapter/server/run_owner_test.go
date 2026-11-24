@@ -3,10 +3,12 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/adapters/jsonlstore"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -23,7 +25,7 @@ var runOwnerBob = &session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-1
 
 // runProbeTool is a Write tool that asks for approval and sends the main
 // agent's run its call's context carries, the run a gateway call made there
-// would name.
+// would name. A second execution is reported rather than blocking the run.
 type runProbeTool struct{ runs chan agentcredential.Run }
 
 func (*runProbeTool) Spec() tool.ToolSpec {
@@ -32,7 +34,11 @@ func (*runProbeTool) Spec() tool.ToolSpec {
 func (*runProbeTool) ReadOnly() bool { return false }
 func (p *runProbeTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	run, _ := agentcredential.RunFromContext(ctx)
-	p.runs <- run
+	select {
+	case p.runs <- run:
+	default:
+		return session.ToolResult{}, errors.New("runProbeTool: executed more than once")
+	}
 	return session.NewToolResult(in.ID, "wrote"), nil
 }
 
@@ -52,6 +58,7 @@ func newRunProbeService(t *testing.T, store port.SessionStore, probe *runProbeTo
 	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model", Store: engineStore}),
 		Store:             store,
+		EventLog:          memstore.NewEventLog(),
 		OwnershipEnforced: ownershipEnforced,
 		Now:               func() time.Time { return time.Unix(0, 0) },
 	})
@@ -235,5 +242,84 @@ func TestANewRunIsOwnedByItsCaller(t *testing.T) {
 				t.Fatalf("run = %+v, want %+v", got, want)
 			}
 		})
+	}
+}
+
+// TestARetriedRunKeepsTheOwnerItStartedWith proves retrying a failed run
+// continues it under the owner it started with, though the retry is a later
+// request and the session's owner value has changed since.
+func TestARetriedRunKeepsTheOwnerItStartedWith(t *testing.T) {
+	store := memstore.New()
+	probe := &runProbeTool{runs: make(chan agentcredential.Run, 1)}
+	retryable := mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressPrecommit})
+	svc := newRunProbeService(t, store, probe, true, true, retryable, writeTurn(), mockllm.TextTurn("done"))
+	aliceCtx := session.WithPrincipal(t.Context(), brokerAlice)
+	sess, err := svc.CreateSession(aliceCtx, session.ModeYolo, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(aliceCtx, sess.ID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(run)
+	svc.Persist(aliceCtx, sess.ID)
+	svc.FinishRun(sess.ID, run)
+	failed, err := store.Load(t.Context(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != session.StateFailed {
+		t.Fatalf("state = %s, want failed", failed.State)
+	}
+	runID := failed.RunID()
+	failed.Owner = runOwnerBob
+	if err := store.Save(t.Context(), failed); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := svc.RetryFailedRun(session.WithPrincipal(t.Context(), runOwnerBob), sess.ID)
+	if err != nil {
+		t.Fatalf("RetryFailedRun: %v", err)
+	}
+	drain(retried)
+	want := agentcredential.Run{ID: runID, Owner: brokerOwner(brokerAlice)}
+	if got := probedRun(t, probe); got != want {
+		t.Fatalf("retried run = %+v, want %+v", got, want)
+	}
+}
+
+// TestAPlanProceedRunIsOwnedByItsApprover proves the run an approved plan
+// starts, a new run minted on a context detached from the approving request,
+// still records that request's verified caller as its owner.
+func TestAPlanProceedRunIsOwnedByItsApprover(t *testing.T) {
+	store := memstore.New()
+	svc := exactPlanService(t, store, mockllm.New(mockllm.TextTurn("executed")), nil)
+	parked := makePlanControlSession(t, "plan-owner-session")
+	parked.Owner = brokerAlice
+	parked.BeginRunFor(parked.RunID(), brokerAlice)
+	if err := store.Save(t.Context(), parked); err != nil {
+		t.Fatal(err)
+	}
+	planRun := parked.RunID()
+	if _, err := svc.ResolvePlanAsk(session.WithPrincipal(t.Context(), brokerAlice), parked.ID, planRun, "plan-ask", session.VerdictAllowOnce); err != nil {
+		t.Fatalf("ResolvePlanAsk: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := store.Load(t.Context(), parked.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.RunID() != planRun && got.RunID() != "" {
+			if owner := got.RunOwner(); owner == nil || *owner != *brokerAlice {
+				t.Fatalf("proceed run %s owner = %+v, want %+v", got.RunID(), owner, brokerAlice)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no proceed run started; run = %s, state = %s", got.RunID(), got.State)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
