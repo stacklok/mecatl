@@ -454373,6 +454373,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795558995828,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a5d9010e31a43fecd5428612af82fc08684d129",
+          "message": "feat(executor): cancel calls on connection loss and add keepalives (#2971)\n\nThe executor server pings the provider after `-keepalive-interval`\nidle and closes the connection when no reply arrives within\n`-keepalive-timeout`, cancelling its calls and their commands. Both\ndefault to 10s, bounded to 1s..10m.\n\nThe provider sets them on new executor Pods through\n`--executor-keepalive-interval` and `--executor-keepalive-timeout`\n(chart value `provider.executorKeepalive`) and uses the same values\nfor its own client keepalive. Defaults and bounds live in\n`internal/executionenv`.\n\nCloses: #2697",
+          "timestamp": "2026-11-24T23:12:35+01:00",
+          "tree_id": "b2f8b801c9d09c653900a66bef0d86816644e40f",
+          "url": "https://github.com/stacklok/mecatl/commit/4a5d9010e31a43fecd5428612af82fc08684d129"
+        },
+        "date": 1795559777846,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -591439,6 +591478,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795559774131,
+  "lastUpdate": 1795559778939,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
