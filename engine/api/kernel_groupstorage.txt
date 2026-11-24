@@ -1,0 +1,37 @@
+    ifacemethod func (Backend).Bind(Generation, id.ID) history.Backend
+    ifacemethod func (Backend).Claim(context.Context, AcquisitionID, time.Duration) (Grant, error)
+    ifacemethod func (Backend).GroupID() id.GroupID
+    ifacemethod func (Backend).MemberKinds(context.Context) ([]id.Kind, error)
+    ifacemethod func (Backend).Members(context.Context, id.Kind, MemberPageRequest) (MemberPage, error)
+    ifacemethod func (Backend).Release(context.Context, Generation) error
+    ifacemethod func (Backend).Renew(context.Context, Generation, time.Duration) (Validity, error)
+    method func (*AcquireError).Error() string
+    method func (*AcquireError).Failure() AcquireFailure
+    method func (*AcquireError).Unwrap() error
+    method func (AcquisitionID).ResourceID() id.ID
+    method func (AcquisitionID).String() string
+    method func (Generation).ResourceID() id.ID
+    method func (Generation).String() string
+    method func (MemberPageRequest).Validate(kind id.Kind) error
+const AcquireHeld AcquireFailure = 1
+const AcquireInvalid AcquireFailure = 0
+const AcquireRetryable AcquireFailure = 2
+const AcquireUncertain AcquireFailure = 3
+func NewAcquireError(failure AcquireFailure, cause error) *AcquireError
+func NewAcquisitionID() AcquisitionID
+func NewGeneration() Generation
+func ParseAcquisitionID(s string) (AcquisitionID, error)
+func ParseGeneration(s string) (Generation, error)
+type AcquireError struct{}
+type AcquireFailure uint8
+type AcquisitionID struct{}
+type Backend interface{Bind(Generation, id.ID) history.Backend; Claim(context.Context, AcquisitionID, time.Duration) (Grant, error); GroupID() id.GroupID; MemberKinds(context.Context) ([]id.Kind, error); Members(context.Context, id.Kind, MemberPageRequest) (MemberPage, error); Release(context.Context, Generation) error; Renew(context.Context, Generation, time.Duration) (Validity, error)}
+type Generation struct{}
+type Grant struct{Generation Generation; Validity Validity}
+type MemberPage struct{Members []id.ID; Next id.ID}
+type MemberPageRequest struct{After id.ID; Limit int}
+type Validity struct{Until time.Time}
+var ErrNotMember error
+var ErrReleased error
+var ErrSuperseded error
+var ErrValidityUnknown error

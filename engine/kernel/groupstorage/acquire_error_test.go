@@ -1,4 +1,4 @@
-package lease_test
+package groupstorage_test
 
 import (
 	"context"
@@ -7,31 +7,31 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/kernel/lease"
+	"github.com/stacklok/mecatl/engine/kernel/groupstorage"
 )
 
 func TestAcquireError(t *testing.T) {
 	private := errors.New("private adapter payload")
 	for _, tt := range []struct {
-		failure lease.AcquireFailure
+		failure groupstorage.AcquireFailure
 		text    string
 	}{
-		{lease.AcquireInvalid, "lease acquisition invalid"},
-		{lease.AcquireHeld, "lease acquisition held elsewhere"},
-		{lease.AcquireRetryable, "lease acquisition retryable"},
-		{lease.AcquireUncertain, "lease acquisition uncertain"},
+		{groupstorage.AcquireInvalid, "group claim invalid"},
+		{groupstorage.AcquireHeld, "group claim held elsewhere"},
+		{groupstorage.AcquireRetryable, "group claim retryable"},
+		{groupstorage.AcquireUncertain, "group claim uncertain"},
 	} {
 		t.Run(tt.text, func(t *testing.T) {
 			cause := errors.Join(private, context.DeadlineExceeded)
-			err := lease.NewAcquireError(tt.failure, cause)
+			err := groupstorage.NewAcquireError(tt.failure, cause)
 			if err.Failure() != tt.failure || err.Error() != tt.text || err.Unwrap() != cause {
 				t.Fatalf("wrong error contract: %v", err)
 			}
 			if !errors.Is(err, private) || !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatal("lost programmatic causes")
 			}
-			wrapped := fmt.Errorf("opening group: %w", err)
-			var acquired *lease.AcquireError
+			wrapped := fmt.Errorf("claiming group: %w", err)
+			var acquired *groupstorage.AcquireError
 			if !errors.As(wrapped, &acquired) || acquired.Failure() != tt.failure {
 				t.Fatal("lost wrapped classification")
 			}
@@ -45,17 +45,17 @@ func TestAcquireError(t *testing.T) {
 }
 
 func TestAcquireErrorFailClosed(t *testing.T) {
-	var zero lease.AcquireError
-	if zero.Failure() != lease.AcquireInvalid || zero.Unwrap() != nil || zero.Error() != "lease acquisition invalid" {
-		t.Fatal("zero must stop acquisition")
+	var zero groupstorage.AcquireError
+	if zero.Failure() != groupstorage.AcquireInvalid || zero.Unwrap() != nil || zero.Error() != "group claim invalid" {
+		t.Fatal("zero must stop claiming")
 	}
 	for n := 0; n <= 255; n++ {
-		failure := lease.AcquireFailure(n)
+		failure := groupstorage.AcquireFailure(n)
 		want := failure
-		if failure > lease.AcquireUncertain {
-			want = lease.AcquireInvalid
+		if failure > groupstorage.AcquireUncertain {
+			want = groupstorage.AcquireInvalid
 		}
-		err := lease.NewAcquireError(failure, nil)
+		err := groupstorage.NewAcquireError(failure, nil)
 		if err.Failure() != want || err.Unwrap() != nil {
 			t.Fatalf("classification %d did not fail closed", n)
 		}

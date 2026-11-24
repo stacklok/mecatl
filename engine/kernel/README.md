@@ -23,6 +23,16 @@ must be accepted by `session` before an execution boundary can use it. The
 [model-request example](modelrequest/example_test.go) shows the complete authoring
 and reconstruction flow.
 
+[`resourcegroup`](resourcegroup/doc.go) declares generic local residency: Manager
+owns registered resource factories and resident Groups; each Group owns its loaded
+resources and lifecycle accounting. [`groupstorage`](groupstorage/doc.go) declares
+the compatible ownership/history authority, with generation-fenced append acceptance.
+[`sessionruntime`](sessionruntime/doc.go) supplies the concrete Session factory and
+typed Load/Create surface. These are **nonoperational declarations**: constructors,
+load/create, registration, and lifecycle operations return `ErrNotImplemented`.
+The [two-kind example](sessionruntime/example_test.go) compile-checks composition,
+not execution or storage fencing. Actual residency and adapter proofs are later work.
+
 Each layer's `format` package owns mutable persistence DTOs, generated codecs,
 and payload-local validation. Aggregates own cross-record legality; valid encoding
 alone proves neither lifecycle legality nor storage acceptance.
