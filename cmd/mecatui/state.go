@@ -90,9 +90,9 @@ const maxStateBytes = 1 << 20 // 1 MiB
 var stateSubpath = filepath.Join("mecatui", "models.yaml")
 
 // modelSelectionEntry is one persisted (provider, model, effort) tuple on disk. The
-// reasoningEffort field is omitempty + backward-compatible: an old file
-// with no key loads "" (the auto/unset tier), and an "auto"/unset pick (the picker
-// maps auto→"" before persisting) writes no key, keeping the file clean.
+// reasoningEffort field is omitempty + backward-compatible: an old file with no
+// key loads "" (unset: the operator default applies), and an explicit Auto pick
+// persists "auto" (the provider default).
 type modelSelectionEntry struct {
 	ProviderID      string `yaml:"providerId"`
 	ModelID         string `yaml:"modelId"`

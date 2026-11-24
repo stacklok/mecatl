@@ -371,10 +371,19 @@ func TestEffortPickRefetchFailureKeepsFork(t *testing.T) {
 	}
 }
 
-// TestEffortPickAutoSendsEmpty asserts the auto sentinel maps to the EMPTY effort on
-// the fork (and in the persisted selection) — the clean-state convention. The pick
-// applies DIRECTLY (one enter, no confirm).
-func TestEffortPickAutoSendsEmpty(t *testing.T) {
+// echoedEffort is the effort the server echoes for a session at tier: none ("")
+// for auto, the tier itself otherwise.
+func echoedEffort(tier string) string {
+	if tier == effortAuto {
+		return ""
+	}
+	return tier
+}
+
+// TestEffortPickAutoSendsExplicitAuto: picking auto sends the explicit "auto"
+// token, so the fork resets to the provider default instead of inheriting the
+// source session's level (an empty effort would).
+func TestEffortPickAutoSendsExplicitAuto(t *testing.T) {
 	store := &fakeStore{}
 	m := newModelsModel(t, sampleModels(), store, modelsCaps(), client.ModelSelection{})
 	m.resolvedSessionModel.ReasoningEffort = "high" // start from a non-auto state
@@ -391,30 +400,23 @@ func TestEffortPickAutoSendsEmpty(t *testing.T) {
 	}
 	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // apply directly
 	m = mm.(Model)
-	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: ""}
+	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "auto"}
 	if m.createModelSelection != want {
-		t.Fatalf("createModelSelection = %+v, want %+v (auto ⇒ empty effort)", m.createModelSelection, want)
+		t.Fatalf("createModelSelection = %+v, want %+v (explicit auto)", m.createModelSelection, want)
 	}
 	m = feedCmd(t, m, cmd)
-	if conv.forkedEffort != "" {
-		t.Fatalf("auto pick forked effort %q, want empty (the auto sentinel maps to unset)", conv.forkedEffort)
+	if conv.forkedEffort != "auto" {
+		t.Fatalf("auto pick forked effort %q, want the explicit auto token", conv.forkedEffort)
 	}
 }
 
-// TestEffortValueLabelRoundTrip locks the auto↔"" sentinel mapping in both
-// directions, and that real tiers are pass-through.
-func TestEffortValueLabelRoundTrip(t *testing.T) {
-	if effortValue("auto") != "" {
-		t.Errorf("effortValue(auto) = %q, want empty", effortValue("auto"))
-	}
-	if effortValue("high") != "high" {
-		t.Errorf("effortValue(high) = %q, want high", effortValue("high"))
-	}
-	if effortLabel("") != "auto" {
-		t.Errorf("effortLabel(\"\") = %q, want auto", effortLabel(""))
-	}
-	if effortLabel("medium") != "medium" {
-		t.Errorf("effortLabel(medium) = %q, want medium", effortLabel("medium"))
+// TestEffortLabel locks the label mapping: unset and explicit auto display as
+// auto, and real tiers are pass-through.
+func TestEffortLabel(t *testing.T) {
+	for value, want := range map[string]string{"": "auto", "auto": "auto", "medium": "medium"} {
+		if got := effortLabel(value); got != want {
+			t.Errorf("effortLabel(%q) = %q, want %q", value, got, want)
+		}
 	}
 }
 
@@ -477,8 +479,8 @@ func TestEffortPickCurrentTierForksToo(t *testing.T) {
 	if conv.forkCount != 1 {
 		t.Fatalf("forkCount = %d, want 1 (the fork fires even on the current tier)", conv.forkCount)
 	}
-	if conv.forkedEffort != "" {
-		t.Errorf("forkedEffort = %q, want empty (the current tier is unset/auto)", conv.forkedEffort)
+	if conv.forkedEffort != "auto" {
+		t.Errorf("forkedEffort = %q, want the explicit auto token (the current tier is auto)", conv.forkedEffort)
 	}
 }
 
@@ -580,5 +582,160 @@ func TestEffortForkReturnsCapsFromSnapshot(t *testing.T) {
 	// by applySessionReady when it processes SessionReadyMsg).
 	if !reflect.DeepEqual(m.caps, wantCaps) {
 		t.Fatalf("after fork: caps = %+v, want %+v (adopted from the GetSession snapshot)", m.caps, wantCaps)
+	}
+}
+
+// openEffortRows opens the picker for a gpt-5 session over a catalog entry with
+// the given levels and returns the offered tiers and the rendered view.
+func openEffortRows(t *testing.T, feature bool, levels []string, known bool, requested, applied string, inCatalog bool) ([]string, string) {
+	t.Helper()
+	caps := modelsCaps()
+	caps.ModelEffortLevels = feature
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, caps, client.ModelSelection{})
+	m.modelCatalog.models = nil
+	if inCatalog {
+		m.modelCatalog.models = []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true, EffortLevels: levels, EffortLevelsKnown: known}}
+	}
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: applied, RequestedReasoningEffort: requested}
+	mm, _ := m.runEffort()
+	m = mm.(Model)
+	state, ok := m.modal.(*effortState)
+	if !ok {
+		t.Fatalf("modal = %T, want the effort picker", m.modal)
+	}
+	return state.choices.tiers, stripANSIstr(m.View().Content)
+}
+
+// TestEffortPickerOffersModelLevels: with per-model levels the picker offers auto
+// plus the levels the session's model accepts, and explains when that is fewer.
+func TestEffortPickerOffersModelLevels(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		feature, known, in bool
+		levels             []string
+		requested, applied string
+		tiers              []string
+		note               string
+	}{
+		{name: "listed levels", feature: true, known: true, in: true, levels: []string{"low", "medium", "high"}, tiers: []string{"auto", "low", "medium", "high"}},
+		{name: "no effort levels", feature: true, known: true, in: true, tiers: []string{"auto"}, note: effortNoLevels},
+		{name: "unknown levels", feature: true, in: true, tiers: effortTiers, note: effortUnknownLevels},
+		{name: "model not in inventory", feature: true, tiers: effortTiers},
+		{name: "requested level not accepted", feature: true, known: true, in: true, levels: []string{"low", "high"}, requested: "max", applied: "high", tiers: []string{"auto", "low", "high"}, note: "This model doesn't accept max"},
+		{name: "explicit auto requested", feature: true, known: true, in: true, levels: []string{"low"}, requested: "auto", tiers: []string{"auto", "low"}},
+		{name: "server without the feature", known: true, in: true, levels: []string{"low"}, tiers: effortTiers},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tiers, view := openEffortRows(t, tc.feature, tc.levels, tc.known, tc.requested, tc.applied, tc.in)
+			if !reflect.DeepEqual(tiers, tc.tiers) {
+				t.Fatalf("tiers = %v, want %v", tiers, tc.tiers)
+			}
+			for _, note := range []string{effortNoLevels, effortUnknownLevels, "doesn't accept"} {
+				want := tc.note != "" && strings.Contains(tc.note, note)
+				if got := strings.Contains(view, note); got != want {
+					t.Errorf("view mentions %q = %v, want %v:\n%s", note, got, want, view)
+				}
+			}
+		})
+	}
+}
+
+// TestEffortNoteNamesTheLevelSent: a requested level the model doesn't list is
+// named with the level the server echoes in its place, or the provider default
+// when the model lists none below it.
+func TestEffortNoteNamesTheLevelSent(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, caps, client.ModelSelection{})
+	for _, tc := range []struct {
+		levels             []string
+		requested, applied string
+		want               string
+	}{
+		{[]string{"low", "high"}, "max", "high", "This model doesn't accept max; requests use high"},
+		{[]string{"medium", "high"}, "low", "", "This model doesn't accept low; requests use the provider default"},
+	} {
+		m.modelCatalog.models = []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", EffortLevels: tc.levels, EffortLevelsKnown: true}}
+		m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: tc.applied, RequestedReasoningEffort: tc.requested}
+		if got := m.effortChoicesFor().note; got != tc.want {
+			t.Errorf("%s on %v: note = %q, want %q", tc.requested, tc.levels, got, tc.want)
+		}
+	}
+}
+
+// TestEffortPickerRelistsUnknownLevels: when the loaded inventory doesn't know the
+// model's levels, opening the picker lists models again and the rows follow the
+// answer; known levels fire no listing.
+func TestEffortPickerRelistsUnknownLevels(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	lister := &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true}}}
+	m := newModelsModel(t, lister, &fakeStore{}, caps, client.ModelSelection{})
+	m.modelCatalog.models = lister.models
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	calls := lister.calls
+
+	mm, cmd := m.runEffort()
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("opening the picker on unknown levels fired no listing")
+	}
+	lister.models = []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true,
+		EffortLevels: []string{"low", "high"}, EffortLevelsKnown: true}}
+	m = feedCmd(t, m, cmd)
+	if lister.calls != calls+1 {
+		t.Fatalf("listing calls = %d, want %d", lister.calls, calls+1)
+	}
+	state, ok := m.modal.(*effortState)
+	if !ok {
+		t.Fatalf("modal = %T, want the effort picker still open", m.modal)
+	}
+	if want := []string{"auto", "low", "high"}; !reflect.DeepEqual(state.choices.tiers, want) {
+		t.Fatalf("tiers after the listing = %v, want %v", state.choices.tiers, want)
+	}
+	if view := stripANSIstr(m.View().Content); strings.Contains(view, effortUnknownLevels) {
+		t.Errorf("the unknown-levels note survived the listing:\n%s", view)
+	}
+
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = mm.(Model)
+	if _, cmd = m.runEffort(); cmd != nil {
+		t.Error("known levels fired another listing")
+	}
+}
+
+// TestEffortRelistDuringForkCreatesNoSession: a listing the picker started can
+// land while the effort fork is connecting. It refreshes the inventory but must
+// not create a session: only the startup listing does.
+func TestEffortRelistDuringForkCreatesNoSession(t *testing.T) {
+	caps := modelsCaps()
+	caps.ModelEffortLevels = true
+	lister := &fakeModels{models: []client.ModelInfo{{ID: "gpt-5", ProviderID: "openai", DisplayName: "GPT-5", Reasoning: true}}}
+	m := newModelsModel(t, lister, &fakeStore{}, caps, client.ModelSelection{})
+	m.modelCatalog.models = lister.models
+	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
+	conv := m.deps.Session.(*fakeConv)
+	creates := conv.createCount
+
+	mm, listCmd := m.runEffort()
+	m = mm.(Model)
+	if listCmd == nil {
+		t.Fatal("opening the picker on unknown levels fired no listing")
+	}
+	listing := runCmd(listCmd)
+	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	mm, forkCmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.phase != phaseConnecting {
+		t.Fatalf("phase = %v after picking a level, want connecting", m.phase)
+	}
+	mm, next := m.Update(listing)
+	m = feedCmd(t, mm.(Model), next)
+	m = feedCmd(t, m, forkCmd)
+	if conv.createCount != creates {
+		t.Fatalf("CreateSession calls = %d, want %d: the listing created a session during the fork", conv.createCount, creates)
+	}
+	if conv.forkCount != 1 || m.sessionID != "sess-fork-1" || m.phase != phaseIdle {
+		t.Fatalf("forks = %d, session = %q, phase = %v; want one fork adopted as sess-fork-1 and idle", conv.forkCount, m.sessionID, m.phase)
 	}
 }
