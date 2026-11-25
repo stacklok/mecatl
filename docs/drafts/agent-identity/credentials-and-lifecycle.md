@@ -342,7 +342,7 @@ Broker checks 1 and 2 exist because only mecak8s checks that Alice owns `hostS42
 
 ### (4) Agent-instance JWT-SVID
 
-**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, the registered main-instance reference, not the main's token, and the main's host session, `hostS42`, as the parent host session. For a team member created over the API, mecak8s reports the root's main agent as the parent and says that it is a stand-in. Both calls also report the instance's host session and owner, and carry the workload credential.
+**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, the registered main-instance reference, not the main's token, and the main's host session, `hostS42`, as the parent host session. Both calls also report the instance's host session and owner, and carry the workload credential.
 
 **Registration checks, at the agent-instance issuer:**
 
@@ -390,6 +390,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 | Registration 7 | `ALREADY_EXISTS` | No. |
 | Registration 5, 6 | `INVALID_ARGUMENT` | No. |
 | Registration repeated | The same instance reference for the same session and content; `ALREADY_EXISTS` for the same SPIFFE ID with different content | A lost response is retried safely. |
+| Registration record not accepted | `UNAVAILABLE` ([write order](audit.md#delivery-protection-and-reconciliation)) | No. The instance does not run. |
 | SVID 6, expired | `UNAUTHENTICATED` with `svid_expired` at the broker; 400 `invalid_request` with `actor_token_expired` at AS-1, which the broker reports as `svid_expired` | mecak8s renews the SVID, one renewal per instance at a time, and retries once. |
 | Any other SVID check | `PERMISSION_DENIED` at the broker; 400 `invalid_request` with `denied` at AS-1 (RFC 8693 §2.2.2) | No. |
 
@@ -449,7 +450,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 
 ### Delegation report
 
-**Input.** When main delegates the review, mecak8s calls `ReportDelegation` with the workload credential, session `A42`, delegation `D42`, the delegating run `R41` and instance `mainRef`, the receiving run `R42` and instance `reviewerRef`, the receiving run's owner, and whether `R41` is a run of the root's main agent standing in for a `RunTeam` request. That mark is part of the report's content for check 6.
+**Input.** When main delegates the review, mecak8s calls `ReportDelegation` with the workload credential, session `A42`, delegation `D42`, the delegating run `R41` and instance `mainRef`, the receiving run `R42` and instance `reviewerRef`, and the receiving run's owner.
 
 **Checks, at the broker:**
 
@@ -472,6 +473,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 | 6, different content | `ALREADY_EXISTS` | No. |
 | 6, same content | Success | A lost response is retried safely. |
 | 6, `R42` already recorded | `PERMISSION_DENIED` | No. |
+| Delegation record not accepted | `UNAVAILABLE` ([write order](audit.md#delivery-protection-and-reconciliation)) | No. The receiving helper or team member does not run. |
 
 **Why.** The broker sees delegations only through these reports. Checking each one when it arrives keeps a later call from naming a run the broker never heard of, or a run whose owner changed on the way down.
 
@@ -948,6 +950,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `subject_token_audience`, `subject_token_source_client`, `subject_token_offline_access` | AS-1, session open | `INTERNAL` | Fail the open; a configuration fault: the token's audience or client is not allowed for `mecatl`, or the signing-in client did not request `offline_access`. |
 | `grant_invalid` | AS-1 | `INTERNAL` | Fail the call; the broker checks the stored expiry first, so this is a broker bug or clock skew. |
 | `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
+| `record_not_accepted` | Broker, when its audit sink does not accept a record the event waits for ([write order](audit.md#delivery-protection-and-reconciliation)) | `UNAVAILABLE`, or, for an open that converted the request's token, as for `token_used` | Fail the open, registration, delegation report, or call as a retryable infrastructure error. A converted open is spent: the client refreshes its access token before opening again. |
 | `owner_mismatch` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug. |
 | `session_owned` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug or a closed session ID reused. A create naming an explicit session ID that another owner's broker session holds is refused before saving, as for an ID that is taken. |
 | `session_closed` | Broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |

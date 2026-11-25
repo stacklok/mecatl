@@ -45,6 +45,7 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 | Owner | `(https://login.example.com, alice-204)` | Verified when AS-1 first accepts a token for the session; until then the owner mecak8s reports only pairs the session. Later opens for another user are refused. |
 | Host session and incarnation | `hostS42` | Restart and recovery continuity. |
 | Source access-token `jti` | | Joins the broker's open record to AS-1's conversion record. |
+| Open record | `rec_…` | The `AuditID` of the open record that stored the refresh token, so a later open names the token it replaces. |
 | Expiry | | The `expires_at` AS-1 echoed; the broker does not use a grant past it. |
 | Revocation reason | | Set when the broker revokes it: `session_closed`, `signed_out`, `upstream_revoked`, `owner_action_required`, or, for a schedule grant, `schedule_ended`. |
 
@@ -296,7 +297,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
 - With a lossless sink configured, an unavailable sink blocks dispatch, and no record is dropped under back-pressure or when the sink restarts.
 - The broker refuses to dispatch when its decision record cannot be delivered, and dispatches only after the sink accepts it.
-- A session open, instance registration, or accepted delegation report whose record the sink does not accept fails as `UNAVAILABLE` and leaves no session, instance, or delegation behind. A close or a refusal whose record is not accepted still takes effect.
+- A session open, instance registration, or accepted delegation report whose record the sink does not accept leaves no session, instance, or delegation behind, and the broker records a refusal that supersedes it. The open fails as for `token_used` when it converted the request's token and as `UNAVAILABLE` otherwise; registration and delegation reports fail as `UNAVAILABLE`, and the helper does not run. A close or a refusal whose record is not accepted still takes effect, and a refused open never leaves a session.
 - Removing a record or ending a stream without its stop event shows as a sequence gap.
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
 - The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
