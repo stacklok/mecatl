@@ -286,7 +286,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Each field means the same in the JSON record and in the slog output, including `Metadata.Extra`, `Data`, and the occurrence time; the two outputs name some fields differently.
 - A caller-supplied `AuditID` and `LoggedAt` are unchanged when the event is sent again.
 - Records with a missing identity, a reported-only identity, and an unauthenticated denial carry the right provenance marks, and an unverified identity never appears as `user_id`.
-- An unknown outcome, a retry, and a late result produce distinct attempts and events, and the late result references the earlier event.
+- A retry after an unknown outcome is a new attempt. A late result is a new observed-outcome event in the unknown outcome's attempt, with the same operation and attempt IDs and `mecatl.late_result=true`.
 - Each event type rejects outcomes outside its fixed set.
 - `Data` is valid JSON matching its structure version, and `Subjects`, `Target`, and `Data` contain only keys allowlisted for the type.
 - No token, assertion, refresh token, authorization header, or token-endpoint request body appears in any record, including errors.
