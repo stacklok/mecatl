@@ -593843,9 +593843,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795626454825,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "244c963211d2699abf1c53a4794f985da6374e9b",
+          "message": "feat(executioncontroller): fence on lost volume and unknown outcome (#2991)\n\nThe reconciler fences an environment whose workspace PVC reports phase\n`Lost` and never provisions a replacement. A fenced environment is no\nlonger reconciled, and `Ready=True` is never written over a fence. Once\n`RecoverEnvironment` proves the current executor terminal, a lost PVC\nstops fencing so the environment can be retired.\n\n`RunCommand` treats a `CommandResult` with a known state as the\nterminal signal that replaces `terminal_receipt`. An unknown or empty\nresult, or a stream that ends after any executor event without a\nresult, fences the environment before the caller sees the outcome. A\nstream that ends before the first event does not fence, and no receipt\nis synthesized.\n\nOn withdrawal or caller disconnect, the proxy sends `CancelCommand` and\nwaits up to 30 seconds for the outcome instead of closing the stream,\nso a confirmed cancellation does not fence.\n\nCloses: #2709",
+          "timestamp": "2026-11-25T20:43:38+01:00",
+          "tree_id": "dc16fb7236b37bfc1c873fc30c5c05e656859581",
+          "url": "https://github.com/stacklok/mecatl/commit/244c963211d2699abf1c53a4794f985da6374e9b"
+        },
+        "date": 1795636535025,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 783,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32184,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795636530773,
+  "lastUpdate": 1795636536013,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
