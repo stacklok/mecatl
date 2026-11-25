@@ -443,6 +443,25 @@ func TestProxyRefusesBeforeForwarding(t *testing.T) {
 			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
 		},
 		{
+			name:      "status epoch advanced",
+			mutate:    setField([]string{"status", "epoch"}, int64(2)),
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
+		},
+		{
+			name:   "claim from an earlier epoch",
+			mutate: setField([]string{"status", "epoch"}, int64(2)),
+			request: func(r *executorv1.RequestContext) *executorv1.RequestContext {
+				r.Epoch = 2
+				return r
+			},
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
+		},
+		{
+			name:      "environment revised",
+			mutate:    setField([]string{"spec", "revision"}, "rev-2"),
+			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
+		},
+		{
 			name:      "revoked grant generation",
 			mutate:    setField([]string{"status", "grantGeneration"}, int64(2)),
 			wantFiles: codes.Unauthenticated, wantCommands: codes.Unauthenticated,
