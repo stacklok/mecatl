@@ -320,9 +320,10 @@ The broker checks that the echoed entry has the type and `issuable_token_types` 
 | AS-1 3 | 400 `invalid_request`, `invalid_scope` for a `scope` parameter, `invalid_target` for `resource` or `audience`, or `invalid_authorization_details` for a malformed entry | No; a broker bug. |
 | AS-1 4 | 400 `invalid_request` (RFC 8693 §2.2.2) with `subject_token_invalid` when a fresh access token can pass, `subject_token_audience` or `subject_token_source_client` when the token's audience or client is not allowed, `subject_token_offline_access` when it was issued without `offline_access`, or the user-wide revocation's reason for a token issued before it | `subject_token_invalid`: after the client refreshes its access token. `subject_token_audience`, `subject_token_source_client`, `subject_token_offline_access`: no; a configuration fault. A revocation reason: after Alice signs in again. |
 | AS-1 5 | 400 `invalid_request` with `token_used` | After the client refreshes its access token. |
+| Broker, open record not accepted | `record_not_accepted` ([write order](audit.md#delivery-protection-and-reconciliation)); the refresh token the open got is discarded and revoked | After the client refreshes its access token, when the open converted it; otherwise as a retryable infrastructure error. |
 | Lost response, or 502 or 504 | None received, or a proxy's, which AS-1 may have processed | Once: resend the same request with a new client assertion. If AS-1 never processed it, the resend succeeds. If it did, check 5 refuses the resend with `token_used` and revokes the grant the first request created (replay-revoke); the client then refreshes its access token and opens again. |
 
-The broker reports AS-1's `subject_token_invalid` at session open as `subject_invalid`. It builds every other part of the request, so an `invalid_request` with no reason is a broker bug or a configuration fault, not a subject problem. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid` and `token_used` with 401 `invalid_token`, so the client refreshes its access token and tries once more; the error code is `bearer_rejected`. A user-wide revocation reason gets 401 with code `sign_in_required`, so the client signs in again.
+The broker reports AS-1's `subject_token_invalid` at session open as `subject_invalid`. It builds every other part of the request, so an `invalid_request` with no reason is a broker bug or a configuration fault, not a subject problem. mecak8s reports any of these to the client as a failed session open. It answers `subject_invalid`, `token_used`, and `record_not_accepted` for an open that converted the token with 401 `invalid_token`, so the client refreshes its access token and tries once more; the error code is `bearer_rejected`. A user-wide revocation reason gets 401 with code `sign_in_required`, so the client signs in again. Any other `UNAVAILABLE` open gets 503 with code `identity_broker_unavailable`, which the client retries.
 
 If the broker loses the response after AS-1 issued `RT-A42`, the resend above revokes it. If the broker crashes before it can resend, nothing holds that refresh token. It stays valid at AS-1 until its hard expiry, usable only with the broker's key, and sign out everywhere ends it. mecak8s opens the session again with a fresh access token when the broker returns.
 
@@ -390,7 +391,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 | Registration 7 | `ALREADY_EXISTS` | No. |
 | Registration 5, 6 | `INVALID_ARGUMENT` | No. |
 | Registration repeated | The same instance reference for the same session and content; `ALREADY_EXISTS` for the same SPIFFE ID with different content | A lost response is retried safely. |
-| Registration record not accepted | `UNAVAILABLE` ([write order](audit.md#delivery-protection-and-reconciliation)) | No. The instance does not run. |
+| Registration record not accepted | `UNAVAILABLE` with `record_not_accepted` ([write order](audit.md#delivery-protection-and-reconciliation)) | A new helper's or team member's first registration: no, it does not run. The root's registration: when the run starts. A re-registration after a reopen, a move, or a renewal: on the instance's next call. |
 | SVID 6, expired | `UNAUTHENTICATED` with `svid_expired` at the broker; 400 `invalid_request` with `actor_token_expired` at AS-1, which the broker reports as `svid_expired` | mecak8s renews the SVID, one renewal per instance at a time, and retries once. |
 | Any other SVID check | `PERMISSION_DENIED` at the broker; 400 `invalid_request` with `denied` at AS-1 (RFC 8693 §2.2.2) | No. |
 
@@ -473,7 +474,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 | 6, different content | `ALREADY_EXISTS` | No. |
 | 6, same content | Success | A lost response is retried safely. |
 | 6, `R42` already recorded | `PERMISSION_DENIED` | No. |
-| Delegation record not accepted | `UNAVAILABLE` ([write order](audit.md#delivery-protection-and-reconciliation)) | No. The receiving helper or team member does not run. |
+| Delegation record not accepted | `UNAVAILABLE` with `record_not_accepted` ([write order](audit.md#delivery-protection-and-reconciliation)) | A new helper's or team member's first report: no, it does not run. A delegation reported again after a reopen: on the helper's next call. |
 
 **Why.** The broker sees delegations only through these reports. Checking each one when it arrives keeps a later call from naming a run the broker never heard of, or a run whose owner changed on the way down.
 
@@ -885,6 +886,7 @@ client_assertion=<private_key_jwt for mecatl>
 | 3, not a schedule grant | 400 `invalid_request` with `not_issuable` | No; a broker bug. |
 | 4 | As step (7) check 5 | As step (7) check 5. |
 | Lost response | None received | Yes: the same request with a new client assertion. The first child is an orphan, usable only with the broker's key, and ends with the schedule grant. |
+| Open record not accepted | `UNAVAILABLE` with `record_not_accepted` ([write order](audit.md#delivery-protection-and-reconciliation)); the run's refresh token is discarded and revoked | Yes, as for a lost response. If the record is still not accepted, the run does not start, and its fire fails as a retryable infrastructure error. |
 
 When Alice sets up the schedule, every connector the schedule may use must be connected: in external mode, the gateway link; in every mode, the provider connection. Anything missing is fixed right then through the existing authorization-pending flow, while she is present.
 
@@ -909,6 +911,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Access token already opened a session | AS-1 | `invalid_request` with `token_used` | Client refreshes and retries once | Nothing |
 | Access token issued before a user-wide revocation | AS-1 | `invalid_request` with that revocation's reason | Alice signs in again | Nothing more |
 | Echoed entry differs | Broker | Open fails | Session open fails | The new `RT-A42`, closing `A42` |
+| Audit sink does not accept a record the event waits for | Broker | `record_not_accepted` ([write order](audit.md#delivery-protection-and-reconciliation)) | Session open: the client refreshes and retries once when the open converted its token, and retries otherwise. A new helper or team member does not start. A tool call fails and can be retried | The refresh token the open got |
 | Registration into a closed or foreign session | Agent-instance issuer | The closing reason's status, or `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
 | Re-registration with a different owner, host session, definition reference or revision, or parent | Agent-instance issuer | `ALREADY_EXISTS` | Agent cannot start | Nothing |
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
@@ -949,8 +952,8 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `subject_invalid` | Broker, for AS-1's `subject_token_invalid` at session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
 | `subject_token_audience`, `subject_token_source_client`, `subject_token_offline_access` | AS-1, session open | `INTERNAL` | Fail the open; a configuration fault: the token's audience or client is not allowed for `mecatl`, or the signing-in client did not request `offline_access`. |
 | `grant_invalid` | AS-1 | `INTERNAL` | Fail the call; the broker checks the stored expiry first, so this is a broker bug or clock skew. |
-| `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
-| `record_not_accepted` | Broker, when its audit sink does not accept a record the event waits for ([write order](audit.md#delivery-protection-and-reconciliation)) | `UNAVAILABLE`, or, for an open that converted the request's token, as for `token_used` | Fail the open, registration, delegation report, or call as a retryable infrastructure error. A converted open is spent: the client refreshes its access token before opening again. |
+| `token_used` | AS-1, session open | `UNAUTHENTICATED` | Ask the client to refresh its access token and retry once. |
+| `record_not_accepted` | Broker, when its audit sink does not accept a record the event waits for ([write order](audit.md#delivery-protection-and-reconciliation)) | `UNAUTHENTICATED` for an open that converted the request's token; `UNAVAILABLE` otherwise | A converted open: as `token_used`. Any other open, an ID-JAG, or a call: fail as a retryable infrastructure error. A new helper's or team member's first registration or delegation report: not retried, it does not run. The root's registration, re-registrations, and re-reports are retried as [step (4)](#4-agent-instance-jwt-svid) and the [delegation report](#delegation-report) say. |
 | `owner_mismatch` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug. |
 | `session_owned` | Broker, session open | `PERMISSION_DENIED` | Fail the open with 403 and the client code `identity_broker_session_refused`; a mecak8s pairing bug or a closed session ID reused. A create naming an explicit session ID that another owner's broker session holds is refused before saving, as for an ID that is taken. |
 | `session_closed` | Broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |

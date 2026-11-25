@@ -6,7 +6,7 @@ This companion records implementation and verification requirements for the [age
 
 Verify that session enumeration, session access, and event replay enforce the authenticated caller's ownership, including on shared storage. Include negative tests proving another user cannot obtain session titles, prompts, or archived conversation content.
 
-Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration, provided the IdP gives the same issuer and subject across application registrations rather than pairwise subjects per application. mecak8s keys ownership on the `sub_id` identity alone, so the audit records must also carry AS-1's own subject and the token's `client_id` (see [audit](audit.md#auditevent-profile) and the evidence for [step (1)](credentials-and-lifecycle.md#1-as-1-access-token)). Test the following:
+Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration, provided the IdP gives the same issuer and subject across application registrations rather than pairwise subjects per application. mecak8s keys ownership on the `sub_id` identity alone, so the audit records must also carry AS-1's own subject and the client the token was issued to, `user_client_id` (see [audit](audit.md#auditevent-profile) and the evidence for [step (1)](credentials-and-lifecycle.md#1-as-1-access-token)). Test the following:
 
 - mecak8s rejects an AS-1 token without `sub_id`.
 - It accepts `sub_id` only from tokens AS-1 issued.
