@@ -410662,6 +410662,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795601258410,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d9079ffb88f3d9ba3348157ad9a5af14dcf98df",
+          "message": "chore(deps): bump toolhive to v0.69.0 (#2982)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T09:55:55Z",
+          "tree_id": "a28be67d329d2c1e3a0ea31c7585f87a469c543c",
+          "url": "https://github.com/stacklok/mecatl/commit/9d9079ffb88f3d9ba3348157ad9a5af14dcf98df"
+        },
+        "date": 1795602102814,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -592427,6 +592461,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795602098489,
+  "lastUpdate": 1795602104010,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
