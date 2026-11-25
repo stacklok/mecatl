@@ -150,6 +150,11 @@ const config: Config = {
           label: 'Build',
         },
         {
+          to: '/docs/roadmap',
+          position: 'left',
+          label: 'Roadmap',
+        },
+        {
           href: 'https://github.com/stacklok/mecatl',
           label: 'GitHub',
           position: 'right',
@@ -170,6 +175,7 @@ const config: Config = {
             {label: 'Use it now', to: '/docs/mecatui/getting-started'},
             {label: 'Run on Kubernetes', to: '/docs/operating/mecak8s'},
             {label: 'What is a cloud-native harness?', to: '/docs/cloud-native-harness'},
+            {label: 'Roadmap', to: '/docs/roadmap'},
           ],
         },
         {
