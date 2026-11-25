@@ -261,3 +261,14 @@ Not scheduled, and may not happen in this form.
   definitions, prompts and skills; extending authorization and audit beyond
   MCP tool calls to file tools, shell and agent spawning.
 - **Where you work:** web, desktop and mobile clients.
+
+## Get involved
+
+The roadmap changes as we learn, and your feedback shapes it.
+
+- Tell us what you need in a [GitHub issue](https://github.com/stacklok/mecatl/issues)
+  or on [Discord](https://discord.gg/stacklok).
+- Suggest a change to this page by editing
+  [`user-docs/roadmap.md`](https://github.com/stacklok/mecatl/blob/main/user-docs/roadmap.md).
+- To contribute code, start with the
+  [contributing guide](https://github.com/stacklok/mecatl/blob/main/CONTRIBUTING.md).
