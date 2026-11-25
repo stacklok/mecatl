@@ -454770,6 +454770,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795559777846,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4a46d058b9d46d885b17e1249ea8b3f3592c7fdf",
+          "message": "test(mecak8s): keep test listeners bound so parallel tests cannot take their ports (#2980)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-25T09:55:00Z",
+          "tree_id": "92d838bd4c7fbb675219a80646f663d53ce92978",
+          "url": "https://github.com/stacklok/mecatl/commit/4a46d058b9d46d885b17e1249ea8b3f3592c7fdf"
+        },
+        "date": 1795601262949,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13420.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12915,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -591950,6 +591989,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795601259126,
+  "lastUpdate": 1795601263782,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
