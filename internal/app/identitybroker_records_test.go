@@ -61,3 +61,20 @@ func TestLoggedRecorderSummarisesWithoutSubjects(t *testing.T) {
 		t.Fatalf("a refused record was logged as accepted: %v", refusing.msgs)
 	}
 }
+
+// TestShutdownSendsTheIdentityBrokersQueuedRecords pins that Built.Close
+// drains the identity broker's queued close records into its sink, so none
+// queued at shutdown is lost unreported, and an end-to-end test can read them
+// after Close.
+func TestShutdownSendsTheIdentityBrokersQueuedRecords(t *testing.T) {
+	g := buildWithRealAS1(t, false, nil, nil)
+	s, _, _ := g.open(t)
+	if err := g.built.IdentityBroker.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	g.built.Close()
+	closes := g.built.IdentityBrokerRecords().Closes()
+	if len(closes) != 1 || closes[0].SessionID != s.ID {
+		t.Fatalf("close records after shutdown = %+v, want the close of %s", closes, s.ID)
+	}
+}

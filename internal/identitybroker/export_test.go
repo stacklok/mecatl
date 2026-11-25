@@ -1,6 +1,9 @@
 package identitybroker
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ClockSkew is the clock skew the package's test brokers configure.
 const ClockSkew = 30 * time.Second
@@ -93,16 +96,20 @@ func ConvertedTokens(b *Broker) int {
 	return len(t.converted)
 }
 
-// RecordsQueued reports whether b has close records queued or being sent.
-func RecordsQueued(b *Broker) bool {
-	q := b.sessions.closes
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.running
+// PreviousReports returns how many delegations' accepted reports b keeps
+// for root host session host.
+func PreviousReports(b *Broker, host string) int {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if p, ok := t.runs.previous[host]; ok {
+		return len(p.byID)
+	}
+	return 0
 }
 
-// WaitRecords returns once b has sent every queued close record.
-func WaitRecords(b *Broker) { b.sessions.closes.wait() }
+// WaitRecords returns once b has sent every queued close and refusal record.
+func WaitRecords(b *Broker) { _ = b.sessions.queue.wait(context.Background()) }
 
 // SetRecorder replaces b's record sink. Call it while no call is running.
 func SetRecorder(b *Broker, r Recorder) { b.recorder = r }

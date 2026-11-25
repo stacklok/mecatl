@@ -65,11 +65,23 @@ const (
 	// ReasonConsentRequired: the gateway's authorization server needs the
 	// user's consent before it issues a token for the call.
 	ReasonConsentRequired Reason = "consent_required"
-	// ReasonRecordNotAccepted: the broker's audit sink did not accept a
-	// record the operation waits for, so the operation changed nothing; retry
-	// it. An open that converted the request's token fails with
-	// CodeUnauthenticated instead, since the token is spent: refresh it and
-	// open again.
+	// ReasonRecordNotAccepted: the broker's audit sink did not accept, within
+	// its deadline, a record the operation waits for, so the operation changed
+	// nothing (credentials-and-lifecycle.md, "Error reasons"). What follows
+	// depends on the operation:
+	//   - an open that converted the request's token fails with
+	//     CodeUnauthenticated, as token_used: the token is spent, so the
+	//     client refreshes it and opens again;
+	//   - any other open, an ID-JAG, or a call fails with CodeUnavailable and
+	//     is retried as an infrastructure error;
+	//   - a new helper's or team member's first registration or delegation
+	//     report is not retried: it does not run;
+	//   - the root's registration is retried when its run starts, and a
+	//     re-registration or a delegation reported again after a reopen, a
+	//     move, or a renewal on the agent's next call.
+	// Because of the first variant its code is not always Code(), so
+	// errors.Is with ReasonError(ReasonRecordNotAccepted, "") misses a
+	// converted open: match on the reason, as mecak8s does.
 	ReasonRecordNotAccepted Reason = "record_not_accepted"
 )
 

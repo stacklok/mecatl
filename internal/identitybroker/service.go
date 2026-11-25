@@ -104,7 +104,10 @@ type Service interface {
 	// the one already open for it.
 	OpenSession(ctx context.Context, req OpenSessionRequest) (Session, error)
 	// FindSession returns the open broker session for a root host session, and
-	// whether one is open.
+	// whether one is open. While an open of the host session is creating a
+	// new broker session, it waits for that open to end, so a find-then-close
+	// closes the session the open made; a cancelled wait fails with
+	// CodeUnavailable.
 	FindSession(ctx context.Context, req FindSessionRequest) (Session, bool, error)
 	// CloseSession closes a broker session with a closing reason. Closing an
 	// already closed session succeeds and keeps its first reason.

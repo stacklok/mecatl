@@ -98,7 +98,7 @@ const registerAttempts = 2
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
 func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
-		return Registration{}, b.refuseInvalid(ctx, &RegistrationRecord{RecordHeader: b.newHeader(TypeInstanceRegistered), Workload: workload}, err)
+		return Registration{}, b.refuseInvalid(&RegistrationRecord{RecordHeader: b.newHeader(TypeInstanceRegistered), Workload: workload}, err)
 	}
 	t := b.sessions
 	rec := RegistrationRecord{
@@ -110,7 +110,7 @@ func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req Regis
 	for range registerAttempts {
 		identity, err := b.registrationIdentity(workload, req, &rec)
 		if err != nil {
-			return Registration{}, b.refuseRegistration(ctx, rec, err)
+			return Registration{}, b.refuseRegistration(rec, err)
 		}
 
 		// Sign outside the lock: a remote signer may be slow.
@@ -118,7 +118,7 @@ func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req Regis
 		if err != nil {
 			// The signer's error is not passed on: from a key service it can
 			// name keys or endpoints, and the broker has no log of its own.
-			return Registration{}, b.refuseRegistration(ctx, rec, NewError(CodeInternal, "", "the agent credential could not be issued"))
+			return Registration{}, b.refuseRegistration(rec, NewError(CodeInternal, "", "the agent credential could not be issued"))
 		}
 
 		reg, retry, err := b.admitRegistration(ctx, workload, req, identity, credential, expiresAt, &rec)
@@ -129,7 +129,7 @@ func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req Regis
 			return reg, nil
 		}
 	}
-	return Registration{}, b.refuseRegistration(ctx, rec, NewError(CodeAborted, "", "the agent registration raced another registration of the same agent"))
+	return Registration{}, b.refuseRegistration(rec, NewError(CodeAborted, "", "the agent registration raced another registration of the same agent"))
 }
 
 // admitRegistration records the registration of identity and admits the
@@ -141,14 +141,14 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 	t := b.sessions
 	unlock, err := t.registering.lock(ctx, req.Incarnation, "the agent registration was cancelled")
 	if err != nil {
-		return Registration{}, false, b.refuseRegistration(ctx, *rec, err)
+		return Registration{}, false, b.refuseRegistration(*rec, err)
 	}
 	defer unlock()
 	t.mu.Lock()
 	retry, err = b.checkIdentityLocked(workload, req, identity, rec)
 	t.mu.Unlock()
 	if err != nil {
-		return Registration{}, false, b.refuseRegistration(ctx, *rec, err)
+		return Registration{}, false, b.refuseRegistration(*rec, err)
 	}
 	if retry {
 		return Registration{}, true, nil
@@ -160,7 +160,7 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 		// refusal names it.
 		refused := accepted
 		refused.RecordHeader = accepted.supersede()
-		return Registration{}, false, b.refuseRegistration(ctx, refused, errNotRecorded("agent registration"))
+		return Registration{}, false, b.refuseRegistration(refused, errNotRecorded("agent registration"))
 	}
 	t.mu.Lock()
 	// The session may have closed while the record was sent; nothing else
@@ -171,7 +171,7 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 		t.mu.Unlock()
 		refused := accepted
 		refused.RecordHeader = accepted.supersede()
-		return Registration{}, false, b.refuseRegistration(ctx, refused, err)
+		return Registration{}, false, b.refuseRegistration(refused, err)
 	}
 	defer t.mu.Unlock()
 	// A new instance's effective ceiling is computed once, here; one
@@ -187,10 +187,10 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 
 // refuseRegistration records err as the refusal of rec's registration and
 // returns err.
-func (b *Broker) refuseRegistration(ctx context.Context, rec RegistrationRecord, err error) error {
+func (b *Broker) refuseRegistration(rec RegistrationRecord, err error) error {
 	rec.refused(err)
 	rec.CredentialExpiresAt = time.Time{}
-	b.recordAnyway(ctx, &rec)
+	b.recordAnyway(&rec)
 	return err
 }
 

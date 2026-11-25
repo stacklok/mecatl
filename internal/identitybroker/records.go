@@ -287,11 +287,9 @@ const (
 	CloseGrantLost CloseCause = "grant_lost"
 	// CloseOpenRefused means the open that created the session was refused,
 	// or undone because its record was not accepted, so the session does not
-	// stay open. The close refers to the refusal's record.
+	// stay open. The close refers to the refusal's record, which is queued
+	// before it.
 	CloseOpenRefused CloseCause = "open_refused"
-	// CloseOpenNotRecorded is CloseOpenRefused when the refusal's record was
-	// not accepted either, so the close refers to no open record.
-	CloseOpenNotRecorded CloseCause = "open_not_recorded"
 )
 
 // SessionCloseRecord records a broker session closing, once per session,
@@ -307,8 +305,8 @@ type SessionCloseRecord struct {
 	// ClosingReason is the reason later calls on the session fail with.
 	ClosingReason Reason
 	Cause         CloseCause
-	// SessionRecord is the AuditID of the open that created the session;
-	// empty for CloseOpenNotRecorded, whose open was never recorded.
+	// SessionRecord is the AuditID of the open that created the session: for
+	// CloseOpenRefused, its refusal.
 	SessionRecord string
 	// UserRecord is the AuditID of the open that verified the session's
 	// user, and User that user; empty when none did.
@@ -501,22 +499,34 @@ type DeliveryFailure struct {
 
 // WithDeliveryFailures has the broker report each record its sink refuses to
 // report, apart from the records, so a failing sink does not hide its own
-// failure (audit.md, "Write order and failure"). Without it, or with nil,
+// failure (audit.md, "Write order and failure"), and each record it drops
+// unsent: past the queue's bound, or at Close. Without it, or with nil,
 // refused records are reported nowhere but in the failing operation's
-// error, and a refusal or close whose record is refused in none.
+// error, and a refusal or close whose record is refused in none. report
+// may be called with the broker's locks held, so it must return promptly
+// and must not call the broker.
 //
 // Shortcut: delivery failures are reported to a callback, which mecak8s logs, not on a separate delivery-failure channel; removed by #2848.
 func WithDeliveryFailures(report func(DeliveryFailure)) Option {
 	return func(b *Broker) { b.deliveryFailures = report }
 }
 
-// record sends rec to the sink, if one is configured, and returns nil once
-// it is accepted. A refused record is reported as a delivery failure, and
-// the caller decides what the refusal means for its event.
+// recordTimeout bounds each send to the sink, so a slow sink fails a record
+// an event waits for with record_not_accepted instead of holding the call,
+// and holds a queued close or refusal no longer than this. A sink must honour
+// its context's deadline.
+const recordTimeout = 10 * time.Second
+
+// record sends rec to the sink, if one is configured, within recordTimeout,
+// and returns nil once it is accepted. A refused record is reported as a
+// delivery failure, and the caller decides what the refusal means for its
+// event.
 func (b *Broker) record(ctx context.Context, rec Record) error {
 	if b.recorder == nil {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, recordTimeout)
+	defer cancel()
 	err := b.recorder.Record(ctx, rec)
 	if err != nil && b.deliveryFailures != nil {
 		h := rec.Header()
@@ -541,27 +551,27 @@ type invalidRecord interface {
 // validation and returns err. rec names only the calling workload: the
 // request's fields were not validated, so none is recorded (design steps (3)
 // and (4) and "Delegation report", "Evidence": every refusal is recorded).
-func (b *Broker) refuseInvalid(ctx context.Context, rec invalidRecord, err error) error {
+func (b *Broker) refuseInvalid(rec invalidRecord, err error) error {
 	rec.refused(err)
-	b.recordAnyway(ctx, rec)
+	b.recordAnyway(rec)
 	return err
 }
 
 // dropRecord reports rec, which the broker dropped unsent, as a delivery
-// failure.
-func (b *Broker) dropRecord(rec Record) {
+// failure with err.
+func (b *Broker) dropRecord(rec Record, err error) {
 	if b.deliveryFailures != nil {
 		h := rec.Header()
-		b.deliveryFailures(DeliveryFailure{AuditID: h.AuditID, Type: h.Type, Err: errRecordQueueFull})
+		b.deliveryFailures(DeliveryFailure{AuditID: h.AuditID, Type: h.Type, Err: err})
 	}
 }
 
-// recordAnyway records rec, a refusal or a close, which takes effect whether
-// or not its record is accepted; a refused record is only reported as a
-// delivery failure. It is recorded even when ctx is cancelled, as the event
-// happened anyway.
-func (b *Broker) recordAnyway(ctx context.Context, rec Record) {
-	_ = b.record(context.WithoutCancel(ctx), rec)
+// recordAnyway queues rec, a refusal, which takes effect whether or not its
+// record is accepted, on the queue closes go through, so neither the caller
+// nor a per-key lock it holds waits on the sink. A refused record is only
+// reported as a delivery failure.
+func (b *Broker) recordAnyway(rec Record) {
+	b.sessions.queueRecord(rec)
 }
 
 // errNotRecorded is the error of an operation whose record the sink refused.

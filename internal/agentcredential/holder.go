@@ -330,7 +330,16 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target s
 	h.mu.Unlock()
 	if again {
 		if _, err := h.reportCurrent(ctx, key, r, reg.Agent, target); err != nil {
-			return n.credential(), err
+			// The new session has not seen the helper's current delegation:
+			// put the old entry back, so the next lookup moves the helper
+			// again and reports it then, rather than keep a move whose calls
+			// the new session refuses.
+			h.mu.Lock()
+			if !h.closed && h.roots[key.RootSessionID] == r && r.entries[key.AgentSessionID] == n {
+				r.entries[key.AgentSessionID] = e
+			}
+			h.mu.Unlock()
+			return Credential{}, err
 		}
 	}
 	return n.credential(), nil

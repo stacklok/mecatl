@@ -47,18 +47,25 @@ func (d delegationRecord) sameContent(o delegationRecord) bool {
 // Shortcut: runs and delegations are held in memory, have no end, and are per replica; removed by #2563 (durable state) and #2805 (runs across replicas).
 type runLedger struct {
 	bySession map[string]*sessionRuns
-	// previous holds, by root host session, the AuditID of each
-	// delegation's latest accepted report. It outlives the session, so a
-	// delegation reported again into a reopened broker session refers to
-	// the record of its earlier report.
+	// previous holds, by root host session, each delegation's latest
+	// accepted report. It outlives the broker session, so a delegation
+	// reported again into a reopened broker session refers to the record of
+	// its earlier report, and is forgotten when mecak8s closes the root's
+	// broker session itself, as when the host session is deleted, after
+	// which nothing reports the delegations again.
 	previous map[string]*delegationRecords
 }
 
-// delegationRecords is a root host session's latest accepted report record
-// per delegation ID, keeping at most maxRunsPerSession.
+// delegationRecords is a root host session's latest accepted report per
+// delegation ID, keeping at most maxRunsPerSession.
 type delegationRecords struct {
-	byID  map[string]string
+	byID  map[string]acceptedReport
 	order []string
+}
+
+// acceptedReport is an accepted report's broker session and record.
+type acceptedReport struct {
+	sessionID, auditID string
 }
 
 type sessionRuns struct {
@@ -73,20 +80,28 @@ func newRunLedger() *runLedger {
 }
 
 // previousLocked returns the AuditID of delegation id's latest accepted
-// report in host's broker sessions; empty when there is none.
-func (m *runLedger) previousLocked(host, id string) string {
+// report in an earlier broker session of host than sessionID; empty when
+// there is none.
+func (m *runLedger) previousLocked(host, sessionID, id string) string {
 	if p, ok := m.previous[host]; ok {
-		return p.byID[id]
+		if r := p.byID[id]; r.sessionID != sessionID {
+			return r.auditID
+		}
 	}
 	return ""
 }
 
-// notePreviousLocked keeps auditID as delegation id's latest accepted
-// report in host's broker sessions.
-func (m *runLedger) notePreviousLocked(host, id, auditID string) {
+// forgetPreviousLocked forgets host's accepted reports.
+func (m *runLedger) forgetPreviousLocked(host string) {
+	delete(m.previous, host)
+}
+
+// notePreviousLocked keeps auditID, in broker session sessionID, as
+// delegation id's latest accepted report in host's broker sessions.
+func (m *runLedger) notePreviousLocked(host, sessionID, id, auditID string) {
 	p, ok := m.previous[host]
 	if !ok {
-		p = &delegationRecords{byID: map[string]string{}}
+		p = &delegationRecords{byID: map[string]acceptedReport{}}
 		m.previous[host] = p
 	}
 	if _, ok := p.byID[id]; !ok {
@@ -96,7 +111,7 @@ func (m *runLedger) notePreviousLocked(host, id, auditID string) {
 		}
 		p.order = append(p.order, id)
 	}
-	p.byID[id] = auditID
+	p.byID[id] = acceptedReport{sessionID: sessionID, auditID: auditID}
 }
 
 // forLocked returns sessionID's records, creating them if needed.
@@ -160,7 +175,7 @@ func (s *sessionRuns) delegationTo(run, agent string) (string, delegationRecord,
 // refused, superseding that record.
 func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req ReportDelegationRequest) error {
 	if err := checkCall(workload, req); err != nil {
-		return b.refuseInvalid(ctx, &DelegationRecord{RecordHeader: b.newHeader(TypeDelegation), Workload: workload}, err)
+		return b.refuseInvalid(&DelegationRecord{RecordHeader: b.newHeader(TypeDelegation), Workload: workload}, err)
 	}
 	t := b.sessions
 	rec := DelegationRecord{
@@ -172,7 +187,7 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	}
 	unlock, err := t.reporting.lock(ctx, req.SessionID, "the delegation report was cancelled")
 	if err != nil {
-		return b.refuseDelegation(ctx, rec, err)
+		return b.refuseDelegation(rec, err)
 	}
 	defer unlock()
 	t.mu.Lock()
@@ -182,14 +197,14 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 		return nil
 	}
 	if err != nil {
-		return b.refuseDelegation(ctx, rec, err)
+		return b.refuseDelegation(rec, err)
 	}
 	rec.Outcome = OutcomeSuccess
 	if err := b.record(ctx, &rec); err != nil {
 		// The sink may have kept the record without confirming it, so the
 		// refusal names it.
 		rec.RecordHeader = rec.supersede()
-		return b.refuseDelegation(ctx, rec, errNotRecorded("delegation report"))
+		return b.refuseDelegation(rec, errNotRecorded("delegation report"))
 	}
 	t.mu.Lock()
 	plan, err := t.checkDelegationLocked(workload, req, nil)
@@ -199,7 +214,7 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	t.mu.Unlock()
 	if err != nil && !errors.Is(err, errRepeatedDelegation) {
 		rec.RecordHeader = rec.supersede()
-		return b.refuseDelegation(ctx, rec, err)
+		return b.refuseDelegation(rec, err)
 	}
 	return nil
 }
@@ -213,6 +228,7 @@ var errRepeatedDelegation = errors.New("delegation already reported with the sam
 type delegationPlan struct {
 	ledger     *runLedger
 	host       string
+	sessionID  string
 	runs       *sessionRuns
 	delegating runRecord
 	known      bool
@@ -228,16 +244,16 @@ func (p delegationPlan) storeLocked(req ReportDelegationRequest, auditID string)
 	}
 	p.d.record = auditID
 	p.runs.addDelegation(req.DelegationID, p.d)
-	p.ledger.notePreviousLocked(p.host, req.DelegationID, auditID)
+	p.ledger.notePreviousLocked(p.host, p.sessionID, req.DelegationID, auditID)
 	p.runs.addRun(req.ReceivingRun, runRecord{agent: req.ReceivingAgent.Subject, owner: req.Owner, delegationID: req.DelegationID})
 }
 
 // refuseDelegation records err as the refusal of rec's report and returns
 // err.
-func (b *Broker) refuseDelegation(ctx context.Context, rec DelegationRecord, err error) error {
+func (b *Broker) refuseDelegation(rec DelegationRecord, err error) error {
 	rec.refused(err)
 	rec.DelegatingRunRecorded = false
-	b.recordAnyway(ctx, &rec)
+	b.recordAnyway(&rec)
 	return err
 }
 
@@ -288,7 +304,7 @@ func (t *sessionTable) checkDelegationLocked(workload Workload, req ReportDelega
 	if _, ok := runs.runs[req.ReceivingRun]; ok {
 		return delegationPlan{}, deniedError("the receiving run is already recorded")
 	}
-	return delegationPlan{ledger: t.runs, host: s.HostSessionID, runs: runs, delegating: delegating, known: known, d: d}, nil
+	return delegationPlan{ledger: t.runs, host: s.HostSessionID, sessionID: s.ID, runs: runs, delegating: delegating, known: known, d: d}, nil
 }
 
 // describeDelegationLocked fills rec with what the broker knows of req's
@@ -301,7 +317,7 @@ func (t *sessionTable) describeDelegationLocked(workload Workload, req ReportDel
 	}
 	rec.Owner = s.Owner
 	rec.UserRecord, rec.User = sessionUser(s)
-	rec.PreviousRecord = t.runs.previousLocked(s.HostSessionID, req.DelegationID)
+	rec.PreviousRecord = t.runs.previousLocked(s.HostSessionID, s.ID, req.DelegationID)
 	if a, ok := t.agents[req.DelegatingAgent.Subject]; ok && a.sessionID == s.ID {
 		rec.DelegatingAgentID, rec.DelegatingInstance, rec.DelegatingRecord = a.agentID, a.incarnation, a.registrationRecord
 	}

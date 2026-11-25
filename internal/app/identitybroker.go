@@ -25,6 +25,11 @@ import (
 // verified identity.
 const identityBrokerWorkload = "mecak8s-unverified"
 
+// identityBrokerDrainTimeout bounds how long shutdown waits for the identity
+// broker to send its queued close and refusal records; it reports each it
+// cannot send by then.
+const identityBrokerDrainTimeout = 10 * time.Second
+
 // errNoIdentityBrokerConfigFile refuses the identity broker without its
 // configuration file, which holds its keys.
 var errNoIdentityBrokerConfigFile = errors.New("the identity broker requires its configuration file (--identity-broker-config), which names its agent trust domain, audience, and keys")

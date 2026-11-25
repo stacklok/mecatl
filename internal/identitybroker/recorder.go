@@ -187,7 +187,9 @@ func WithRecorder(r Recorder) Option {
 // its record is accepted.
 func (b *Broker) recordDecision(ctx context.Context, rec DecisionRecord) {
 	rec.AuditID = newAuditID()
-	b.recordAnyway(ctx, &rec)
+	// A call holds no per-key lock, so its refusal is sent here, within
+	// recordTimeout, and never cancelled with the call.
+	_ = b.record(context.WithoutCancel(ctx), &rec)
 }
 
 // maxMemoryRecords bounds each kind of MemoryRecorder's records.

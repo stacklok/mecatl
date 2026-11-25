@@ -125,9 +125,9 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 	for _, opt := range opts {
 		opt(b)
 	}
-	// A close takes effect under the table's lock; its record is sent from a
-	// queue, apart from the call that closed the session.
-	b.sessions.closes = newRecordQueue(func(ctx context.Context, rec Record) { _ = b.record(ctx, rec) }, b.dropRecord)
+	// Closes and refusals take effect whether or not their record is
+	// accepted; their records are sent from a queue, apart from the call.
+	b.sessions.queue = newRecordQueue(func(ctx context.Context, rec Record) { _ = b.record(ctx, rec) }, b.dropRecord)
 	if err := b.issuer.addFallbacks(b.issuerFallbacks); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
 	}
@@ -135,6 +135,17 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
 	return b, nil
+}
+
+// Close sends the records the broker has queued, of closes and refusals,
+// until ctx ends, and reports each it could not send by then as a delivery
+// failure, returning an error that counts them. A record queued after Close
+// is reported as dropped. Call it at shutdown, once calls have stopped; an
+// end-to-end test calls it to wait for every record.
+//
+// Shortcut: records still queued at Close are reported, not kept for a later delivery; removed by #2848 (lossless delivery).
+func (b *Broker) Close(ctx context.Context) error {
+	return b.sessions.queue.close(ctx)
 }
 
 // Definition returns a copy of the loaded record for ref, and whether one

@@ -3158,6 +3158,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		childLiveness.Close()
 		closeBroker()
+		if ib.core != nil {
+			// Send the identity broker's queued close and refusal records,
+			// reporting any it cannot send in time.
+			drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
+			_ = ib.core.Close(drainCtx)
+			cancel()
+		}
 		ib.release()
 		mcpClose()
 		closeProfiles()

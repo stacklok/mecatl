@@ -2,6 +2,7 @@ package identitybroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -28,10 +29,12 @@ func TestRecordQueueNeverWaitsOnTheSink(t *testing.T) {
 			deadlines++
 		}
 		sent = append(sent, rec.Header().AuditID)
-	}, func(rec Record) {
+	}, func(rec Record, err error) {
 		mu.Lock()
 		defer mu.Unlock()
-		dropped = append(dropped, rec.Header().AuditID)
+		if errors.Is(err, errRecordQueueFull) {
+			dropped = append(dropped, rec.Header().AuditID)
+		}
 	})
 	record := func(i int) Record {
 		return &SessionCloseRecord{RecordHeader: RecordHeader{AuditID: fmt.Sprintf("rec_%04d", i)}}
@@ -57,7 +60,9 @@ func TestRecordQueueNeverWaitsOnTheSink(t *testing.T) {
 		t.Fatal("push waited on a stalled sink")
 	}
 	close(release)
-	q.wait()
+	if err := q.wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(sent) != maxQueuedRecords+1 || len(dropped) != 1 || deadlines != len(sent) {
@@ -71,5 +76,49 @@ func TestRecordQueueNeverWaitsOnTheSink(t *testing.T) {
 	}
 	if dropped[0] != record(maxQueuedRecords+1).Header().AuditID {
 		t.Fatalf("dropped %s, want the record pushed past the bound", dropped[0])
+	}
+}
+
+// TestRecordQueueCloseReportsWhatItCouldNotSend pins that close sends what is
+// queued until its context ends, then reports each record still queued, and
+// that a record pushed after close is reported rather than queued.
+func TestRecordQueueCloseReportsWhatItCouldNotSend(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enter sync.Once
+	var mu sync.Mutex
+	var sent []string
+	reported := map[string]error{}
+	q := newRecordQueue(func(_ context.Context, rec Record) {
+		enter.Do(func() { close(entered) })
+		<-release
+		mu.Lock()
+		defer mu.Unlock()
+		sent = append(sent, rec.Header().AuditID)
+	}, func(rec Record, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported[rec.Header().AuditID] = err
+	})
+	record := func(id string) Record { return &SessionCloseRecord{RecordHeader: RecordHeader{AuditID: id}} }
+	q.push(record("rec_first"))
+	<-entered
+	q.push(record("rec_second"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := q.close(ctx); err == nil {
+		t.Fatal("close with a record unsent returned nil")
+	}
+	q.push(record("rec_after"))
+	close(release)
+	if err := q.wait(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 || sent[0] != "rec_first" {
+		t.Fatalf("sent %v, want only the record in flight at close", sent)
+	}
+	if !errors.Is(reported["rec_second"], errRecordQueueClosed) || !errors.Is(reported["rec_after"], errRecordQueueClosed) || len(reported) != 2 {
+		t.Fatalf("reported %v, want the unsent record and the one pushed after close", reported)
 	}
 }
