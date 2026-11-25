@@ -593332,9 +593332,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795615034467,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4665d4e864bb4a30d9668e0b21cee6f6c4fc191f",
+          "message": "fix(executioncontroller): check the claim's epoch in `ExecutorRoute` (#2989)\n\n`activeRunFrom` takes a claim's epoch from `status.epoch` and its\nrevision from `spec.revision`, so `currentRunClaim` already refuses a\nrequest whose epoch or revision differs from the environment. The epoch\npersisted with the claim in `status.activeRun.epoch` was never read: if\na replacement bumped the status epoch while a claim survived, a request\ncarrying the new epoch and the old claim's IDs would be routed.\n\n`validateRunClaim` now also requires the claim's own epoch to equal the\nrequest's, refusing with `errRunClaimNotCurrent` like any stale claim.\nThe check reads the environment already fetched, so the call path adds\nno Kubernetes writes.\n\n`TestProxyRefusesBeforeForwarding` gains cases for an advanced status\nepoch, a claim from an earlier epoch, and a revised environment, each\nrefused as `Unauthenticated` before any executor connection.\n\nCloses: #2929",
+          "timestamp": "2026-11-25T17:53:43+01:00",
+          "tree_id": "01ce94a8053ecf1ffb4a8b5e22d42509448ead13",
+          "url": "https://github.com/stacklok/mecatl/commit/4665d4e864bb4a30d9668e0b21cee6f6c4fc191f"
+        },
+        "date": 1795626454825,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 779.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3104.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32199,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2159,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795626449378,
+  "lastUpdate": 1795626456051,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
