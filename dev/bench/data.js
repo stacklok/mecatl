@@ -411020,6 +411020,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795602102814,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b4b8d197904caed27616fae870cdb62a8ec4739",
+          "message": "docs: publish the roadmap as a page on mecatl.dev (#2983)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T08:44:14-05:00",
+          "tree_id": "5b56b520485524252e88d6deec36ba5178f241b1",
+          "url": "https://github.com/stacklok/mecatl/commit/5b4b8d197904caed27616fae870cdb62a8ec4739"
+        },
+        "date": 1795615039677,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -592938,6 +592972,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795615035776,
+  "lastUpdate": 1795615041002,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
