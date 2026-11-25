@@ -356,14 +356,17 @@ func TestConcurrentFileCallsReachTheExecutorTogether(t *testing.T) {
 }
 
 func TestCommandProxyConformance(t *testing.T) {
-	f := newProxyFixture(t, proxyOptions{})
-	f.runner.Script("succeed", memexecutor.Exit("out", "err", 0))
-	f.runner.Script("fail", memexecutor.Exit("", "", 3))
-	f.runner.Script("block", memexecutor.Block("ready"))
-	f.runner.Script("survivor", memexecutor.OutcomeUnknown(memexecutor.Exit("", "", 0)))
-	client := executorv1.NewCommandServiceClient(f.conn)
+	// Each call gets its own environment: the survivor fences the one it ran in.
+	var f *proxyFixture
 	commandconformance.Run(t, commandconformance.Harness{
-		Client:         func(*testing.T) executorv1.CommandServiceClient { return client },
+		Client: func(t *testing.T) executorv1.CommandServiceClient {
+			f = newProxyFixture(t, proxyOptions{})
+			f.runner.Script("succeed", memexecutor.Exit("out", "err", 0))
+			f.runner.Script("fail", memexecutor.Exit("", "", 3))
+			f.runner.Script("block", memexecutor.Block("ready"))
+			f.runner.Script("survivor", memexecutor.OutcomeUnknown(memexecutor.Exit("", "", 0)))
+			return executorv1.NewCommandServiceClient(f.conn)
+		},
 		Succeed:        "succeed",
 		Fail:           "fail",
 		Block:          "block",

@@ -545,10 +545,11 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
 
 Foreground command cancellation is cooperative and bounded. The executor kills
 the command's process group and reports the result. If it cannot confirm that
-every process the command started has ended, the command ends with an unknown
-outcome and the provider does not fence the environment; verify
-termination or fence the environment externally before you continue. There is
-no detached command status or cancellation API for this deployment.
+every process the command started has ended, or the provider's stream to the
+executor breaks after the command started and before its result, the provider
+fences the environment.
+[Recover it](#recover-a-fenced-environment) once the executor Pod is terminal.
+There is no detached command status or cancellation API for this deployment.
 
 ## Recover a fenced environment
 
@@ -565,6 +566,11 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
   -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"recover-<STABLE_UUID>"}' \
   "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment
 ```
+
+An environment fenced because its PVC is `Lost` stays healthy after recovery
+while the recovered executor is the current one, so you can then
+[retire it and delete its storage](#run-an-administrative-lifecycle-operation).
+Replacing its executor fences it again.
 
 ## Next steps
 

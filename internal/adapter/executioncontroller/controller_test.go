@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -438,6 +439,140 @@ func TestRepeatedReconcileDoesNotRewriteUnchangedStatus(t *testing.T) {
 	if statusUpdateCount(d.Actions()) != writes+1 {
 		t.Fatalf("status writes=%d, want %d", statusUpdateCount(d.Actions()), writes+1)
 	}
+}
+
+func TestLostPVCFencesWithoutProvisioningAnotherVolume(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	env.SetFinalizers([]string{environmentFinalizer})
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	r := NewReconciler(d, k, "ns", testProfiles())
+	t.Cleanup(r.queue.ShutDown)
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	pvcs, pods := k.CoreV1().PersistentVolumeClaims("ns"), k.CoreV1().Pods("ns")
+	pvc, err := pvcs.Get(ctx, "workspace-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc.Status.Phase = corev1.ClaimLost
+	if _, err := pvcs.UpdateStatus(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := pods.Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}
+	pod.Status.Conditions = []corev1.PodCondition{ready}
+	if _, err := pods.UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	requireFenced(t, d, env.GetName())
+
+	if err := pvcs.Delete(ctx, pvc.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	k.ClearActions()
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requireFenced(t, d, env.GetName())
+	for _, action := range k.Actions() {
+		if action.GetVerb() == "create" {
+			t.Fatalf("fenced environment provisioned %s", action.GetResource().Resource)
+		}
+	}
+}
+
+func requireFenced(t *testing.T, d dynamic.Interface, name string) {
+	t.Helper()
+	res := d.Resource(ExecutionEnvironmentGVR).Namespace("ns")
+	got, err := res.Get(t.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence := textNested(got.Object, statusField, "fenceState")
+	if fence != fenceUnknown || conditionTrue(got, "Ready") {
+		t.Fatalf("environment is not fenced: %v", got.Object[statusField])
+	}
+}
+
+func TestRecoveredLostVolumeStopsFencing(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	env.SetFinalizers([]string{environmentFinalizer})
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	k.PrependReactor("create", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		obj := action.(k8stesting.CreateAction).GetObject().(metav1.Object)
+		obj.SetUID(types.UID(obj.GetName() + "-uid"))
+		return false, nil, nil
+	})
+	r := NewReconciler(d, k, "ns", testProfiles())
+	t.Cleanup(r.queue.ShutDown)
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	pvcs := k.CoreV1().PersistentVolumeClaims("ns")
+	pvc, err := pvcs.Get(ctx, "workspace-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc.Status.Phase = corev1.ClaimLost
+	if _, err := pvcs.UpdateStatus(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	requireFenced(t, d, env.GetName())
+
+	res := d.Resource(ExecutionEnvironmentGVR).Namespace("ns")
+	got, err := res.Get(ctx, env.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unstructured.SetNestedField(got.Object, fenceHealthy, statusField, "fenceState")
+	_ = unstructured.SetNestedMap(got.Object, map[string]any{
+		"podUID": textNested(got.Object, statusField, "pod", "uid"),
+		"pvcUID": textNested(got.Object, statusField, "pvc", "uid"),
+		"epoch":  intNested(got.Object, statusField, "epoch"),
+	}, statusField, "terminationProof")
+	if _, err := res.UpdateStatus(ctx, got, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Reconcile(ctx, env.GetName())
+	got, err = res.Get(ctx, env.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fence := textNested(got.Object, statusField, "fenceState"); fence != fenceHealthy {
+		t.Fatalf("recovered lost volume fenced again: %q", fence)
+	}
+}
+
+func TestRuntimeStatusKeepsAConcurrentFence(t *testing.T) {
+	ctx := t.Context()
+	observed := testEnvironment()
+	fenced := observed.DeepCopy()
+	_ = unstructured.SetNestedField(fenced.Object, fenceUnknown, statusField, "fenceState")
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), fenced)
+	r := NewReconciler(d, kubefake.NewSimpleClientset(), "ns", testProfiles())
+	t.Cleanup(r.queue.ShutDown)
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace-test"}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor-test"}}
+	if err := r.updateRuntimeStatus(ctx, observed, pvc, pod, true); err != nil {
+		t.Fatal(err)
+	}
+	requireFenced(t, d, observed.GetName())
 }
 
 func TestRuntimeAndRelevantStatusUpdatesEnqueue(t *testing.T) {

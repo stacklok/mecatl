@@ -703,8 +703,10 @@ uninstall preserve committed workspace data. Retirement requires no live
 references and a terminal executor, and retains the PVC until an explicit
 storage-deletion operation succeeds.
 
-A missing executor moves the environment to
-`FenceUnknown` and requires external operator fencing. The built-in recovery RPC
+The provider moves an environment to `FenceUnknown` when its executor
+disappears, its workspace PVC is reported `Lost`, or a command's outcome is
+unknown. It never provisions a replacement PVC. A missing executor requires
+external operator fencing. The built-in recovery RPC
 accepts only a still-observable Pod in `Succeeded` or `Failed` phase with every
 container terminated and the exact PVC still present. If that proof is missing,
 use your platform's external fencing runbook; there is no acknowledgement flag.
@@ -714,8 +716,8 @@ Follow
 when terminal proof is required.
 
 After an executor container restart, the session reattaches once the server is
-ready. A command that was running ends with an unknown outcome and isn't
-retried. The executor writes files without `fsync`, so a node or storage failure
+ready. A command that was running ends with an unknown outcome, which fences
+the environment, and isn't retried. The executor writes files without `fsync`, so a node or storage failure
 can lose a recent write, and a restart during a write can leave the file partly
 written.
 
