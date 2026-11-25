@@ -197,7 +197,7 @@ const maxMemoryRecords = 10000
 // to maxMemoryRecords of each kind, dropping the oldest. It accepts every
 // record. Its methods are safe for concurrent use.
 //
-// Shortcut: records held in memory, dropping the oldest beyond 10,000 of each kind; removed by #2566 (records written in the AuditEvent profile and delivered) and #2563 (durable state).
+// Shortcut: records held in memory, dropping the oldest beyond 10,000 of each kind; removed by #2566 (records written in the AuditEvent profile and delivered).
 type MemoryRecorder struct {
 	mu            sync.Mutex
 	opens         []SessionOpenRecord

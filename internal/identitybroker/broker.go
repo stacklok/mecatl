@@ -125,9 +125,9 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 	for _, opt := range opts {
 		opt(b)
 	}
-	// A close takes effect under the table's lock; its record is sent once
-	// the lock is released.
-	b.sessions.mu.deliver = func(rec Record) { b.recordAnyway(context.Background(), rec) }
+	// A close takes effect under the table's lock; its record is sent from a
+	// queue, apart from the call that closed the session.
+	b.sessions.closes = newRecordQueue(func(ctx context.Context, rec Record) { _ = b.record(ctx, rec) }, b.dropRecord)
 	if err := b.issuer.addFallbacks(b.issuerFallbacks); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +46,31 @@ type sink struct {
 	mu       sync.Mutex
 	refuse   func(identitybroker.Record) bool
 	failures []identitybroker.DeliveryFailure
+	// queued waits for the broker's queued close records; nil waits for
+	// none.
+	queued func()
+	// sent is the AuditID of each accepted record, in the order sent.
+	sent []string
+}
+
+// sentOrder returns the AuditIDs of the accepted records in the order they
+// were sent, once the broker has sent the queued ones.
+func (s *sink) sentOrder() []string {
+	if s.queued != nil {
+		s.queued()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.sent...)
+}
+
+// Closes returns the close records, once the broker has sent the queued
+// ones.
+func (s *sink) Closes() []identitybroker.SessionCloseRecord {
+	if s.queued != nil {
+		s.queued()
+	}
+	return s.MemoryRecorder.Closes()
 }
 
 func newSink() *sink { return &sink{MemoryRecorder: identitybroker.NewMemoryRecorder()} }
@@ -56,6 +82,9 @@ func (s *sink) Record(ctx context.Context, rec identitybroker.Record) error {
 	if refuse != nil && refuse(rec) {
 		return errors.New("sink unavailable")
 	}
+	s.mu.Lock()
+	s.sent = append(s.sent, rec.Header().AuditID)
+	s.mu.Unlock()
 	return s.MemoryRecorder.Record(ctx, rec)
 }
 
@@ -87,6 +116,9 @@ func (s *sink) report(f identitybroker.DeliveryFailure) {
 }
 
 func (s *sink) reported() []identitybroker.DeliveryFailure {
+	if s.queued != nil {
+		s.queued()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]identitybroker.DeliveryFailure(nil), s.failures...)
@@ -117,6 +149,7 @@ func newRecordFixture(t *testing.T, opts ...identitybroker.Option) *recordFixtur
 		identitybroker.WithClock(func() time.Time { return *f.clock }),
 	}, f.sink.options()...), opts...)
 	f.b = newBroker(t, opts...)
+	f.sink.queued = func() { identitybroker.WaitRecords(f.b) }
 	return f
 }
 
@@ -456,10 +489,26 @@ func TestSessionCloseRecordsEveryPathOnce(t *testing.T) {
 		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
 			return identitybroker.TokenExchangeResult{}, fmt.Errorf("%w %w", identitybroker.ErrMalformedResponse, identitybroker.ErrTransportConfiguration)
 		}
+		// When the refused open's record reaches the sink, the close that
+		// names it is neither sent nor queued yet.
+		var closeFirst bool
+		f.sink.refuse = func(rec identitybroker.Record) bool {
+			if o, ok := rec.(*identitybroker.SessionOpenRecord); ok && o.Outcome != identitybroker.OutcomeSuccess {
+				closeFirst = identitybroker.RecordsQueued(f.b) || len(f.sink.MemoryRecorder.Closes()) != 0
+			}
+			return false
+		}
 		if _, err := f.open(openHost, testOwner, userToken(t, testOwner)); err == nil {
 			t.Fatal("an undecodable answer opened the session")
 		}
-		wantClose(t, f, identitybroker.Session{ID: f.sink.Opens()[0].SessionID}, identitybroker.CloseMismatchedAnswer)
+		refusal := f.sink.Opens()[0]
+		wantClose(t, f, identitybroker.Session{ID: refusal.SessionID}, identitybroker.CloseMismatchedAnswer)
+		// The close names the refused open, so its record follows it.
+		closed := f.sink.Closes()[0]
+		order := f.sink.sentOrder()
+		if closeFirst || closed.SessionRecord != refusal.AuditID || slices.Index(order, refusal.AuditID) > slices.Index(order, closed.AuditID) {
+			t.Fatalf("records sent %v: close %+v, want it after the refusal %s it names", order, closed, refusal.AuditID)
+		}
 	})
 
 	t.Run("grant lost", func(t *testing.T) {
@@ -471,6 +520,7 @@ func TestSessionCloseRecordsEveryPathOnce(t *testing.T) {
 		}
 		_, err := f.authorize(callRequest(f.s.ID, f.cred))
 		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed, f.cred)
+		identitybroker.WaitRecords(f.b)
 		closes := rec.Closes()
 		if len(closes) != 1 || closes[0].Cause != identitybroker.CloseGrantLost || closes[0].SessionID != f.s.ID {
 			t.Fatalf("close records = %+v, want the grant's loss", closes)
@@ -1028,26 +1078,71 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 
 	t.Run("a session closed while its open is recorded is not returned", func(t *testing.T) {
 		f := newRecordFixture(t)
+		// Only an existing session can close meanwhile: a new one is not in
+		// the table until its open is recorded.
+		s, err := f.open(openHost, testOwner, identitybroker.Token{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		var b *identitybroker.Broker
 		f.sink.refuse = func(rec identitybroker.Record) bool {
-			if o, ok := rec.(*identitybroker.SessionOpenRecord); ok && o.Outcome == identitybroker.OutcomeSuccess {
+			if o, ok := rec.(*identitybroker.SessionOpenRecord); ok && o.Outcome == identitybroker.OutcomeSuccess && o.Kind == identitybroker.OpenConverted {
 				identitybroker.CloseSessionWithReason(b, o.SessionID, identitybroker.ReasonSessionClosed)
 			}
 			return false
 		}
 		b = f.b
-		_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+		_, err = f.open(openHost, testOwner, userToken(t, testOwner))
 		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
-		opens := f.sink.Opens()
-		if _, ok := identitybroker.SessionGrant(f.b, opens[0].SessionID); ok {
+		if _, ok := identitybroker.SessionGrant(f.b, s.ID); ok {
 			t.Fatal("a session closed during its open's record kept a refresh token")
 		}
 		// The success is followed by a refusal, so the records show the open
 		// was not honoured.
+		opens := f.sink.Opens()[1:]
 		if len(opens) != 2 || opens[0].Outcome != identitybroker.OutcomeSuccess || opens[1].Reason != identitybroker.ReasonSessionClosed ||
 			opens[1].AuditID == opens[0].AuditID || opens[1].Supersedes != opens[0].AuditID || opens[1].User != nil ||
-			opens[1].SessionID != opens[0].SessionID {
+			opens[1].SessionID != s.ID || opens[0].SessionID != s.ID {
 			t.Fatalf("open records = %+v, want a success then a session_closed refusal", opens)
+		}
+	})
+
+	t.Run("a new session cannot be reached while its open is recorded", func(t *testing.T) {
+		f := newRecordFixture(t)
+		var b *identitybroker.Broker
+		var found bool
+		var closeErr, regErr, reportErr error
+		f.sink.refuse = func(rec identitybroker.Record) bool {
+			o, ok := rec.(*identitybroker.SessionOpenRecord)
+			if !ok || o.Outcome != identitybroker.OutcomeSuccess {
+				return false
+			}
+			_, found, _ = b.FindSession(ctx, testWorkload, identitybroker.FindSessionRequest{RootHostSessionID: openHost})
+			pending := identitybroker.Session{ID: o.SessionID, HostSessionID: openHost, Owner: testOwner, Incarnation: openIncarnation}
+			_, regErr = b.RegisterAgent(ctx, testWorkload, mainAgent(pending))
+			reportErr = b.ReportDelegation(ctx, testWorkload, identitybroker.ReportDelegationRequest{
+				SessionID: o.SessionID, DelegationID: "D41", DelegatingRun: "R41", DelegatingAgent: identitybroker.AgentRef{Subject: "spiffe://agents.example.com/agent/ag_x"},
+				ReceivingRun: "R42", ReceivingAgent: identitybroker.AgentRef{Subject: "spiffe://agents.example.com/agent/ag_y"}, Owner: testOwner,
+			})
+			closeErr = b.CloseSession(ctx, testWorkload, closeReq(pending))
+			// The sink then refuses the record, so the open is undone.
+			return true
+		}
+		b = f.b
+		_, err := f.open(openHost, testOwner, identitybroker.Token{})
+		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted)
+		if found {
+			t.Error("FindSession found a new session while its open was recorded")
+		}
+		for name, err := range map[string]error{"RegisterAgent": regErr, "ReportDelegation": reportErr, "CloseSession": closeErr} {
+			var e *identitybroker.Error
+			if !errors.As(err, &e) || e.Code != identitybroker.CodePermissionDenied {
+				t.Errorf("%s during the open's record = %v, want the unknown-session refusal", name, err)
+			}
+		}
+		// Nothing refers to the open the sink did not accept.
+		if regs, d := f.sink.Registrations(), f.sink.Delegations(); len(regs) != 1 || regs[0].SessionRecord != "" || len(d) != 1 || d[0].UserRecord != "" {
+			t.Fatalf("registration records %+v and delegation records %+v, want refusals naming no open record", regs, d)
 		}
 	})
 }
@@ -1080,6 +1175,7 @@ func TestNoCredentialValueInAnyRecord(t *testing.T) {
 	secrets := append(append([]identitybroker.Token{access, refused, grant.RefreshToken, f.cred, f.childCred},
 		f.issuer.tokens()...), f.as2.tokens()...)
 	var records []identitybroker.Record
+	identitybroker.WaitRecords(f.b)
 	for _, r := range f.rec.Opens() {
 		records = append(records, &r)
 	}
@@ -1213,5 +1309,141 @@ func TestSubjectKeysAreTheProfiles(t *testing.T) {
 		if got != profile {
 			t.Errorf("Subjects key %q, want the profile's %q", got, profile)
 		}
+	}
+}
+
+// TestADelegationReportedAgainRefersToItsEarlierRecord pins that a
+// delegation reported again into a reopened broker session, as the holder
+// does after a reopen, refers to the record of its earlier report.
+func TestADelegationReportedAgainRefersToItsEarlierRecord(t *testing.T) {
+	ctx := context.Background()
+	f := newDelegationFixture(t)
+	if err := f.report("D41", "R41", f.main.Agent, "R42", f.helper.Agent); err != nil {
+		t.Fatal(err)
+	}
+	first := f.sink.Delegations()[0]
+	if first.PreviousRecord != "" {
+		t.Fatalf("first report's record = %+v, want no previous record", first)
+	}
+	if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: f.s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := f.open(openHost, testOwner, userToken(t, testOwner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	main2 := f.registerMain(t, s2)
+	helper2, err := f.b.RegisterAgent(ctx, testWorkload, helperRequest(s2, main2.Agent, incHelper))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.b.ReportDelegation(ctx, testWorkload, identitybroker.ReportDelegationRequest{
+		SessionID: s2.ID, DelegationID: "D41", DelegatingRun: "R41", DelegatingAgent: main2.Agent,
+		ReceivingRun: "R42", ReceivingAgent: helper2.Agent, Owner: testOwner,
+	}); err != nil {
+		t.Fatalf("report again: %v", err)
+	}
+	d := f.sink.Delegations()
+	if len(d) != 2 || d[1].SessionID != s2.ID || d[1].PreviousRecord != first.AuditID || d[1].AuditID == first.AuditID {
+		t.Fatalf("delegation records = %+v, want the second to refer to %s", d, first.AuditID)
+	}
+}
+
+// TestAnInvalidRequestIsRecordedAsRefused pins that an open, registration,
+// or delegation report refused because it failed validation is recorded with
+// its reason and the calling workload, and with none of the request's
+// unvalidated fields.
+func TestAnInvalidRequestIsRecordedAsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newRecordFixture(t)
+	const junk = "not an id"
+	_, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{HostSessionID: junk, Incarnation: openIncarnation, Owner: testOwner})
+	wantError(t, err, identitybroker.CodeInvalidArgument, "")
+	_, err = f.b.RegisterAgent(ctx, testWorkload, identitybroker.RegisterAgentRequest{SessionID: junk})
+	wantError(t, err, identitybroker.CodeInvalidArgument, "")
+	err = f.b.ReportDelegation(ctx, testWorkload, identitybroker.ReportDelegationRequest{SessionID: junk})
+	wantError(t, err, identitybroker.CodeInvalidArgument, "")
+	opens, regs, d := f.sink.Opens(), f.sink.Registrations(), f.sink.Delegations()
+	if len(opens) != 1 || len(regs) != 1 || len(d) != 1 {
+		t.Fatalf("records: %d opens, %d registrations, %d delegations; want one refusal of each", len(opens), len(regs), len(d))
+	}
+	for _, rec := range []identitybroker.Record{&opens[0], &regs[0], &d[0]} {
+		h := rec.Header()
+		if h.Outcome != identitybroker.OutcomeDenied || h.Code != identitybroker.CodeInvalidArgument || !strings.HasPrefix(h.AuditID, "rec_") {
+			t.Errorf("%s record header = %+v, want an INVALID_ARGUMENT refusal", h.Type, h)
+		}
+		if text := fmt.Sprintf("%+v", rec); strings.Contains(text, junk) {
+			t.Errorf("%s record carries the request's unvalidated fields: %s", h.Type, text)
+		}
+		wantSubject(t, rec, identitybroker.SubjectWorkloadSubject, testWorkload.Name, identitybroker.ProvenanceReportedByMecak8s)
+	}
+}
+
+// TestAVerifiedWorkloadIsQualifiedByItsIssuer pins that a verified workload's
+// subjects carry the issuer its authenticator verified, and that an
+// unverified workload's claimed issuer is never recorded.
+func TestAVerifiedWorkloadIsQualifiedByItsIssuer(t *testing.T) {
+	const issuer = "https://kubernetes.default.svc"
+	verified := &identitybroker.SessionCloseRecord{Workload: identitybroker.Workload{Name: testWorkload.Name, Verified: true, Issuer: issuer}}
+	wantSubject(t, verified, identitybroker.SubjectWorkloadIssuer, issuer, identitybroker.ProvenanceVerified)
+	wantSubject(t, verified, identitybroker.SubjectWorkloadSubject, testWorkload.Name, identitybroker.ProvenanceVerified)
+	claimed := &identitybroker.SessionCloseRecord{Workload: identitybroker.Workload{Name: testWorkload.Name, Issuer: issuer}}
+	wantUnavailable(t, claimed, identitybroker.SubjectWorkloadIssuer)
+	wantSubject(t, claimed, identitybroker.SubjectWorkloadSubject, testWorkload.Name, identitybroker.ProvenanceReportedByMecak8s)
+}
+
+// TestLineageIsMarkedAsReportedByMecak8s pins that registration and
+// delegation records mark their lineage facts as reported by mecak8s, as
+// audit.md "Lineage" requires, whether accepted or refused.
+func TestLineageIsMarkedAsReportedByMecak8s(t *testing.T) {
+	f := newDelegationFixture(t)
+	if err := f.report("D41", "R41", f.main.Agent, "R42", f.helper.Agent); err != nil {
+		t.Fatal(err)
+	}
+	wantError(t, f.report("D45", "R41", f.main.Agent, "R42", f.helper.Agent), identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
+	for _, r := range f.sink.Registrations() {
+		if r.LineageProvenance != identitybroker.ProvenanceReportedByMecak8s {
+			t.Errorf("registration record %s lineage provenance = %q", r.AuditID, r.LineageProvenance)
+		}
+	}
+	for _, d := range f.sink.Delegations() {
+		if d.LineageProvenance != identitybroker.ProvenanceReportedByMecak8s {
+			t.Errorf("delegation record %s lineage provenance = %q", d.AuditID, d.LineageProvenance)
+		}
+	}
+}
+
+// TestACloseDoesNotWaitOnTheSink pins that a close takes effect and returns
+// while the sink is stalled on its record, which is sent apart from the call
+// and still reaches the sink.
+func TestACloseDoesNotWaitOnTheSink(t *testing.T) {
+	ctx := context.Background()
+	f := newRecordFixture(t)
+	s, err := f.open(openHost, testOwner, userToken(t, testOwner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	f.sink.mu.Lock()
+	f.sink.refuse = func(rec identitybroker.Record) bool {
+		if rec.Header().Type == identitybroker.TypeSessionClose {
+			<-release
+		}
+		return false
+	}
+	f.sink.mu.Unlock()
+	done := make(chan error, 1)
+	go func() {
+		done <- f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
+	}()
+	if err := receive(t, done); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	if _, found := findSession(t, f.b, openHost); found {
+		t.Fatal("the close did not take effect before its record was sent")
+	}
+	close(release)
+	if closes := f.sink.Closes(); len(closes) != 1 || closes[0].SessionID != s.ID {
+		t.Fatalf("close records = %+v, want the close once the sink recovers", closes)
 	}
 }

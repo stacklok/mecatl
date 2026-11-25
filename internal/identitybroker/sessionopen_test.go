@@ -1272,6 +1272,11 @@ func TestSessionOpenExchangeDoesNotBlockOtherCalls(t *testing.T) {
 	ctx := context.Background()
 	req := identitybroker.OpenSessionRequest{HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner}
 
+	// The session exists already: a new one is not reachable until its open
+	// is recorded.
+	if _, err := b.OpenSession(ctx, testWorkload, req); err != nil {
+		t.Fatal(err)
+	}
 	withToken := req
 	withToken.AccessToken = unsignedToken(t, testOwner)
 	done := make(chan openResult, 1)

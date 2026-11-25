@@ -296,7 +296,11 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 			llm := mockllm.New(mockllm.TextTurn("must not run"))
 			f := newSessionOpenFixture(t, llm)
 			var run func(context.Context) error
-			if tc.ownedByBob {
+			// A broker session can close during the exchange only if it
+			// exists already: a new one is not reachable until its open is
+			// recorded. So the close runs on a prompt whose root's broker
+			// session holds no refresh token.
+			if tc.ownedByBob || tc.closeDuring {
 				sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatal(err)
@@ -305,9 +309,12 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 				if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 					t.Fatal(err)
 				}
+				owner := identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject}
+				if tc.ownedByBob {
+					owner.Subject = "bob-117"
+				}
 				if _, err := f.broker.inner.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
-					HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()),
-					Owner: identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: "bob-117"},
+					HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()), Owner: owner,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -347,11 +354,12 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 				t.Fatal("the agent ran after a refused open")
 			}
 			if !tc.ownedByBob {
-				// The refused create paired a broker session before the
-				// conversion; it must not outlive the unsaved session.
+				// A refused open leaves no broker session open: neither the
+				// one a refused create would have created nor one closed
+				// during the exchange.
 				host := session.SessionID(f.broker.openRequests()[opensBefore].HostSessionID)
 				if open, ok := f.broker.find(t, host); ok {
-					t.Fatalf("the refused create left broker session %+v open", open)
+					t.Fatalf("the refused open left broker session %+v open", open)
 				}
 			}
 		})

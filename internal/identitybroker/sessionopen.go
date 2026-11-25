@@ -285,8 +285,9 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 
 	if errors.Is(err, ErrMalformedResponse) {
 		// AS-1 may have issued a refresh token the broker cannot read: treat
-		// it as a mismatched answer.
-		t.closeLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
+		// it as a mismatched answer. The close's record follows the
+		// refusal's (refuseOpen).
+		s.heldClose = t.closeHeldLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
 		return nil, NewError(CodeInternal, "", "the authorization server's answer could not be decoded")
 	}
 	if err != nil {
@@ -299,8 +300,9 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 	}
 	if !echoMatches(res, sent, t.now()) {
 		// Phase 1 has no revocation: discarding the refresh token and closing
-		// the session stops its use by the broker.
-		t.closeLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
+		// the session stops its use by the broker. The close's record
+		// follows the refusal's (refuseOpen).
+		s.heldClose = t.closeHeldLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
 		return nil, NewError(CodeInternal, "", "the authorization server's answer does not match the requested grant")
 	}
 	// AS-1 accepted the token, so the user it names is kept from now on.

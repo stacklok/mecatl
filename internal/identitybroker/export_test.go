@@ -93,5 +93,16 @@ func ConvertedTokens(b *Broker) int {
 	return len(t.converted)
 }
 
+// RecordsQueued reports whether b has close records queued or being sent.
+func RecordsQueued(b *Broker) bool {
+	q := b.sessions.closes
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.running
+}
+
+// WaitRecords returns once b has sent every queued close record.
+func WaitRecords(b *Broker) { b.sessions.closes.wait() }
+
 // SetRecorder replaces b's record sink. Call it while no call is running.
 func SetRecorder(b *Broker, r Recorder) { b.recorder = r }

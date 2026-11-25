@@ -1617,6 +1617,14 @@ type Built struct {
 	Close              func()
 }
 
+// IdentityBrokerRecords returns the records the real identity broker kept;
+// nil without one.
+//
+// Shortcut: the identity broker keeps its records in memory, where operators and tests read them; removed by #2566 (audit delivery).
+func (b *Built) IdentityBrokerRecords() *identitybroker.MemoryRecorder {
+	return b.identityBrokerRecorder
+}
+
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
 // process-owned HTTP mux. A build with no broker HTTP surface is a no-op.
 func (b *Built) MountMCPBrokerHandlers(mux *http.ServeMux) error {

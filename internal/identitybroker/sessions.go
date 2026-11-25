@@ -23,7 +23,7 @@ var _ Core = (*Broker)(nil)
 // is never held while AS-1 is called, so other calls do not wait on an
 // exchange.
 type sessionTable struct {
-	mu   tableMutex
+	mu   sync.Mutex
 	open map[string]string // root host session ID -> open broker session ID
 	byID map[string]*brokerSession
 	// agents holds registered agents by subject, apart from their sessions.
@@ -52,31 +52,12 @@ type sessionTable struct {
 	// store runs as one step for them: a record is sent between the check and
 	// the store, outside mu.
 	registering, reporting keyedLocks
-}
-
-// tableMutex is sessionTable's mutex. A close takes effect while it is held;
-// closeLocked queues the close's record, and Unlock sends the queued records
-// after releasing the lock, so the sink is never called under it and every
-// close path, including a lookup that finds a session past its hard expiry,
-// is recorded.
-type tableMutex struct {
-	sync.Mutex
-	pending []Record
-	// deliver sends a queued record; nil drops them.
-	deliver func(Record)
-}
-
-// Unlock releases m, then sends the records queued while it was held.
-func (m *tableMutex) Unlock() {
-	pending := m.pending
-	m.pending = nil
-	m.Mutex.Unlock()
-	if m.deliver == nil {
-		return
-	}
-	for _, rec := range pending {
-		m.deliver(rec)
-	}
+	// closes sends close records. A close takes effect under mu, and
+	// closeLocked queues its record there, so every close path, including a
+	// lookup that finds a session past its hard expiry, is recorded in the
+	// order closes happen, and no caller waits on the sink for it. nil drops
+	// them.
+	closes *recordQueue
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -106,6 +87,10 @@ type brokerSession struct {
 	// recorded it; nil until then. It is kept with verifiedOwner, whose
 	// owner it holds.
 	user *verifiedUser
+	// heldClose is the record of a close an open made while refusing,
+	// queued only after the open's refusal record, which it may refer to;
+	// nil otherwise. The open lock of the session's host session guards it.
+	heldClose *SessionCloseRecord
 }
 
 // verifiedUser is a session's verified user and the AuditID of the open
@@ -143,7 +128,7 @@ func newSessionTable(skew time.Duration) *sessionTable {
 // session it created open.
 func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error) {
 	if err := checkCall(workload, req); err != nil {
-		return Session{}, err
+		return Session{}, b.refuseInvalid(ctx, &SessionOpenRecord{RecordHeader: b.newHeader(TypeSessionOpen), Workload: workload}, err)
 	}
 	t := b.sessions
 	rec := SessionOpenRecord{
@@ -173,10 +158,11 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		return Session{}, b.refuseOpen(ctx, &refused, s, errOpenNotRecorded(rec.Kind == OpenConverted))
 	}
 	t.mu.Lock()
-	// Only a close can have changed s while the record was sent: opens of
-	// its host session wait for the open lock this call holds. The open is
-	// then recorded again as refused, so the records show it was not
-	// honoured and any refresh token it got was not stored.
+	// Only a close can have changed an existing s while the record was sent:
+	// opens of its host session wait for the open lock this call holds, and
+	// a new s is not in the table yet. The open is then recorded again as
+	// refused, so the records show it was not honoured and any refresh token
+	// it got was not stored.
 	if s.closed != "" {
 		err := ReasonError(s.closed, "the broker session closed during the open")
 		t.mu.Unlock()
@@ -185,6 +171,15 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		return Session{}, b.refuseOpen(ctx, &refused, s, err)
 	}
 	defer t.mu.Unlock()
+	if rec.NewSession {
+		// Only now, with its open record accepted, can a lookup, a
+		// registration, a report, a call, or a close reach the session, so
+		// no accepted record refers to an open the sink did not accept. The
+		// host session has no other open session: opens of it wait for the
+		// open lock this call holds.
+		t.byID[s.ID] = s
+		t.open[s.HostSessionID] = s.ID
+	}
 	if pending != nil {
 		// One live refresh token per session: a new one replaces, and
 		// discards, any held before.
@@ -242,23 +237,36 @@ func (b *Broker) refuseOpen(ctx context.Context, rec *SessionOpenRecord, s *brok
 	// refresh token.
 	rec.Kind, rec.User, rec.UserRecord, rec.HardExpiry, rec.Replaced = "", nil, "", time.Time{}, nil
 	recorded := b.record(context.WithoutCancel(ctx), rec) == nil
-	if rec.NewSession && s != nil {
-		t := b.sessions
-		t.mu.Lock()
+	if s == nil {
+		return err
+	}
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if held := s.heldClose; held != nil {
+		// convert closed s and held its record back, so it follows the
+		// refusal it may refer to.
+		s.heldClose = nil
+		if !recorded && rec.NewSession {
+			held.SessionRecord = ""
+		}
+		t.queueCloseLocked(held)
+	}
+	if rec.NewSession {
 		cause := CloseOpenNotRecorded
 		if recorded && s.closed == "" {
 			// The session's open record is the refusal now.
 			s.openRecord, cause = rec.AuditID, CloseOpenRefused
 		}
 		t.closeLocked(s, ReasonSessionClosed, cause)
-		t.mu.Unlock()
 	}
 	return err
 }
 
 // pairLocked returns the open broker session of req's host session after
-// the workload, owner, and incarnation checks, or opens a new one paired with
-// the reported owner, and notes which in rec. The caller holds t.mu.
+// the workload, owner, and incarnation checks, or a new one paired with the
+// reported owner, not yet in the table, and notes which in rec. The caller
+// holds t.mu.
 //
 // An open session past its hard expiry is closed first, so the host session
 // gets a new broker session as after any close.
@@ -288,8 +296,7 @@ func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest, rec
 		workload:   workload,
 		openRecord: rec.AuditID,
 	}
-	t.byID[s.ID] = s
-	t.open[s.HostSessionID] = s.ID
+	// OpenSession adds s to the table once its open record is accepted.
 	rec.SessionID, rec.NewSession = s.ID, true
 	return s, nil
 }
@@ -303,30 +310,47 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 
 // closeLocked closes s with reason for cause, unless it is already closed,
 // and discards its refresh token, issued attempts, and run records. The close
-// takes effect whether or not its record is accepted; the record is sent
-// when t.mu is released. The caller holds t.mu.
+// takes effect whether or not its record is accepted; the record is queued on
+// t.closes. The caller holds t.mu.
 func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseCause) {
+	t.queueCloseLocked(t.closeHeldLocked(s, reason, cause))
+}
+
+// queueCloseLocked queues rec, if not nil, on t.closes. The caller holds
+// t.mu.
+func (t *sessionTable) queueCloseLocked(rec *SessionCloseRecord) {
+	if rec != nil && t.closes != nil {
+		t.closes.push(rec)
+	}
+}
+
+// closeHeldLocked is closeLocked without queueing the record, which it
+// returns, nil when s was already closed. The caller holds t.mu.
+func (t *sessionTable) closeHeldLocked(s *brokerSession, reason Reason, cause CloseCause) *SessionCloseRecord {
 	if s.closed != "" {
-		return
+		return nil
 	}
 	s.closed = reason
 	s.closedAt = t.now()
 	s.grant = nil
 	t.attempts.dropLocked(s.ID)
 	t.runs.dropLocked(s.ID)
-	delete(t.open, s.HostSessionID)
+	// A new session an open is still recording is not in the table.
+	if t.open[s.HostSessionID] == s.ID {
+		delete(t.open, s.HostSessionID)
+	}
 	userRecord, user := sessionUser(s)
 	sessionRecord := s.openRecord
 	if cause == CloseOpenNotRecorded {
-		// The open's record never reached the sink, so the close does not
-		// refer to it. A registration made while the open was recorded may.
+		// No record of the open that created the session was accepted, so
+		// the close refers to none.
 		sessionRecord = ""
 	}
-	t.mu.pending = append(t.mu.pending, &SessionCloseRecord{
+	return &SessionCloseRecord{
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeSessionClose, At: s.closedAt, Outcome: OutcomeSuccess},
 		SessionID:    s.ID, HostSessionID: s.HostSessionID, Workload: s.workload, Owner: s.Owner,
 		ClosingReason: reason, Cause: cause, SessionRecord: sessionRecord, UserRecord: userRecord, User: user,
-	})
+	}
 }
 
 // pastHardExpiry reports whether g's expiry, the session's hard expiry, has

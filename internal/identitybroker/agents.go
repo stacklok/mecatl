@@ -98,14 +98,14 @@ const registerAttempts = 2
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
 func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
-		return Registration{}, err
+		return Registration{}, b.refuseInvalid(ctx, &RegistrationRecord{RecordHeader: b.newHeader(TypeInstanceRegistered), Workload: workload}, err)
 	}
 	t := b.sessions
 	rec := RegistrationRecord{
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeInstanceRegistered, At: t.now()},
 		Workload:     workload, SessionID: req.SessionID, HostSessionID: req.HostSessionID, Owner: req.Owner,
 		Incarnation: req.Incarnation, Definition: req.Definition, Parent: req.Parent,
-		ParentHostSessionID: req.ParentHostSessionID,
+		ParentHostSessionID: req.ParentHostSessionID, LineageProvenance: ProvenanceReportedByMecak8s,
 	}
 	for range registerAttempts {
 		identity, err := b.registrationIdentity(workload, req, &rec)

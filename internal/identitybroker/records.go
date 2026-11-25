@@ -154,14 +154,15 @@ func (s Subjects) addUser(known bool, u User, p SubjectProvenance, owner Owner) 
 	}
 }
 
-// addWorkload adds the workload keys. Workloads have no issuer the broker
-// knows; a workload no authenticator verified is marked as reported.
+// addWorkload adds the workload keys. A verified workload is qualified by
+// the issuer its authenticator verified; a workload no authenticator
+// verified is marked as reported, with no issuer.
 func (s Subjects) addWorkload(w Workload) {
-	p := ProvenanceReportedByMecak8s
+	p, issuer := ProvenanceReportedByMecak8s, ""
 	if w.Verified {
-		p = ProvenanceVerified
+		p, issuer = ProvenanceVerified, w.Issuer
 	}
-	s.set(SubjectWorkloadIssuer, "", p)
+	s.set(SubjectWorkloadIssuer, issuer, p)
 	s.set(SubjectWorkloadSubject, w.Name, p)
 }
 
@@ -365,6 +366,11 @@ type RegistrationRecord struct {
 	// user, and User that user; empty when none did.
 	UserRecord string
 	User       User
+	// LineageProvenance marks the instance's place in the tree, which only
+	// mecak8s observes: HostSessionID, Incarnation, Definition, Parent,
+	// ParentHostSessionID, and the records they lead to. It is always
+	// reported by mecak8s (audit.md, "Lineage").
+	LineageProvenance SubjectProvenance
 }
 
 // Header implements Record.
@@ -414,6 +420,11 @@ type DelegationRecord struct {
 	// ParentDelegationRecord is the AuditID of the delegation the delegating
 	// run itself acts under; empty for a root run.
 	ParentDelegationRecord string
+	// PreviousRecord is the AuditID of the latest accepted report of the
+	// same delegation in an earlier broker session of the root host
+	// session, as when mecak8s reports it again after a reopen; empty for a
+	// first report.
+	PreviousRecord string
 	// ReceivingRun, its RunOwner, and ReceivingAgent receive the work;
 	// ReceivingAgentID and ReceivingRecord as for the delegating agent.
 	ReceivingRun     string
@@ -428,6 +439,10 @@ type DelegationRecord struct {
 	// Owner is the broker session's owner, as mecak8s reported it, as in
 	// the other records.
 	Owner Owner
+	// LineageProvenance marks the delegation's facts, its runs, agents, and
+	// run owner, which only mecak8s observes. It is always reported by
+	// mecak8s (audit.md, "Lineage").
+	LineageProvenance SubjectProvenance
 }
 
 // Header implements Record.
@@ -508,6 +523,37 @@ func (b *Broker) record(ctx context.Context, rec Record) error {
 		b.deliveryFailures(DeliveryFailure{AuditID: h.AuditID, Type: h.Type, Err: err})
 	}
 	return err
+}
+
+// newHeader returns the header of a new record of type typ.
+func (b *Broker) newHeader(typ string) RecordHeader {
+	return RecordHeader{AuditID: newAuditID(), Type: typ, At: b.sessions.now()}
+}
+
+// invalidRecord is a record of a refused request that failed validation;
+// refused is RecordHeader's.
+type invalidRecord interface {
+	Record
+	refused(err error)
+}
+
+// refuseInvalid records err as the refusal of a request that failed
+// validation and returns err. rec names only the calling workload: the
+// request's fields were not validated, so none is recorded (design steps (3)
+// and (4) and "Delegation report", "Evidence": every refusal is recorded).
+func (b *Broker) refuseInvalid(ctx context.Context, rec invalidRecord, err error) error {
+	rec.refused(err)
+	b.recordAnyway(ctx, rec)
+	return err
+}
+
+// dropRecord reports rec, which the broker dropped unsent, as a delivery
+// failure.
+func (b *Broker) dropRecord(rec Record) {
+	if b.deliveryFailures != nil {
+		h := rec.Header()
+		b.deliveryFailures(DeliveryFailure{AuditID: h.AuditID, Type: h.Type, Err: errRecordQueueFull})
+	}
 }
 
 // recordAnyway records rec, a refusal or a close, which takes effect whether
