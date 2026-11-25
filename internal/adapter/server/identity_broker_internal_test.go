@@ -645,41 +645,41 @@ func TestRootedRunContextCarriesTheSessionRun(t *testing.T) {
 	}
 }
 
-// TestOpenRecordRefusalsRepeatPerCallerAndHost pins when an unrecorded
-// converted open counts as a repeat: only after the same caller's previous
-// open of the same host session failed the same way within a minute.
-func TestOpenRecordRefusalsRepeatPerCallerAndHost(t *testing.T) {
+// TestOpenRecordRefusalsRepeatPerCaller pins the window of the 503 rule: a
+// refusal repeats the caller's previous one within a minute, whatever host
+// session either opened; another caller's does not count, and a success
+// ends it.
+func TestOpenRecordRefusalsRepeatPerCaller(t *testing.T) {
 	alice := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
 	bob := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "bob-117"}
-	start := time.Date(2027, 1, 15, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 15, 10, 0, 0, 0, time.UTC)
 	var r openRecordRefusals
 	steps := []struct {
 		name    string
 		owner   identitybroker.Owner
-		host    string
-		refused bool
+		success bool
 		after   time.Duration
 		repeat  bool
 	}{
-		{"a first refusal", alice, "hostS42", true, 0, false},
-		{"another caller's refusal of the host", bob, "hostS42", true, time.Second, false},
-		{"the caller's refusal of another host", alice, "hostS43", true, time.Second, false},
-		{"the caller's second refusal of the host", alice, "hostS42", true, 10 * time.Second, true},
-		{"one more within a minute of the last", alice, "hostS42", true, 59 * time.Second, true},
-		{"one a minute after the last", alice, "hostS42", true, 60 * time.Second, false},
-		{"a success forgets it", alice, "hostS42", false, time.Second, false},
-		{"a refusal after a success", alice, "hostS42", true, time.Second, false},
+		{"a first refusal", alice, false, 0, false},
+		{"another caller's refusal", bob, false, time.Second, false},
+		{"the caller's second refusal", alice, false, 10 * time.Second, true},
+		{"one more within a minute of the last", alice, false, 59 * time.Second, true},
+		{"one a minute after the last", alice, false, 60 * time.Second, false},
+		{"a refusal after a success", alice, false, time.Second, false},
 	}
-	now := start
-	for _, step := range steps {
+	for i, step := range steps {
 		now = now.Add(step.after)
-		if got := r.note(step.owner, step.host, step.refused, now); got != step.repeat {
+		if i == len(steps)-1 {
+			r.succeeded(alice)
+		}
+		if got := r.refused(step.owner, now); got != step.repeat {
 			t.Fatalf("%s: repeat = %t, want %t", step.name, got, step.repeat)
 		}
 	}
 	// Entries older than the window are pruned as others are noted.
-	r.note(alice, "hostS44", false, now.Add(2*time.Minute))
-	if n := len(r.at); n != 0 {
-		t.Fatalf("%d entries kept past the window, want none", n)
+	r.refused(bob, now.Add(2*time.Minute))
+	if n := len(r.at); n != 1 {
+		t.Fatalf("%d entries kept, want only the last one", n)
 	}
 }

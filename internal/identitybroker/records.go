@@ -491,8 +491,11 @@ func newAuditID() string {
 	return "rec_" + strings.ToLower(rand.Text())
 }
 
-// DeliveryFailure is a record the sink refused: its AuditID and type, never
-// its content, and the sink's error.
+// DeliveryFailure is a record the sink refused or the broker dropped
+// unsent: its AuditID and type, never its content, and the error. A record
+// still being sent when Close gives up is reported as not confirmed, and its
+// send then finishes on its own: the sink may still accept it, or refuse it,
+// which reports it a second time with the sink's error.
 type DeliveryFailure struct {
 	AuditID string
 	Type    string

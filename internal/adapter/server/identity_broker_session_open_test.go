@@ -419,39 +419,81 @@ func TestIdentityBrokerDeleteClosesAnOpenInProgress(t *testing.T) {
 // TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable proves that a
 // converted open whose record the broker's audit sink did not accept fails as
 // for a refused token the first time, and as the broker being unavailable
-// when the same caller's previous open of that host session failed the same
-// way, so a sink outage does not have the client spend fresh tokens
-// (credentials-and-lifecycle.md step (3)).
+// when the same caller's previous such open, of any host session, failed the
+// same way within a minute, so a sink outage does not have the client spend
+// fresh tokens (credentials-and-lifecycle.md step (3)). Creates open a new
+// host session each time, so the rule keys on the caller alone; presenting
+// the token a 503 spent again (token_used) keeps the rule, and a success ends
+// it.
 func TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable(t *testing.T) {
 	f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
 	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The session's broker session holds no refresh token, so each prompt
+	// The session's broker session holds no refresh token, so a prompt
 	// presents its token.
 	alices := wantBrokerSession(t, f.broker, sess)
 	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 		t.Fatal(err)
 	}
-	f.records.refuseOpens.Store(true)
-	prompt := func() error {
+	prompt := func(bearer string) error {
 		var err error
-		withinRequest(t, "unary", f.auth, f.token(), func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
+		withinRequest(t, "unary", f.auth, bearer, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
 		return err
 	}
-	if err := prompt(); !errors.Is(err, server.ErrBearerRejected) {
+	create := func(bearer string) error {
+		var err error
+		withinRequest(t, "unary", f.auth, bearer, func(ctx context.Context) {
+			_, err = f.svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+		})
+		return err
+	}
+	f.records.refuseOpens.Store(true)
+	if err := prompt(f.token()); !errors.Is(err, server.ErrBearerRejected) {
 		t.Fatalf("first unrecorded open = %v, want %v", err, server.ErrBearerRejected)
 	}
-	for i := range 2 {
-		if err := prompt(); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
-			t.Fatalf("repeated unrecorded open %d = %v, want %v", i+1, err, server.ErrIdentityBrokerUnavailable)
-		}
+	// Each create opens a new host session, and repeats the refusal.
+	spent := f.token()
+	if err := create(spent); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("repeated unrecorded open by a create = %v, want %v", err, server.ErrIdentityBrokerUnavailable)
 	}
-	// Once the sink accepts the records again, the open succeeds.
+	// The 503 spent the token: presenting it again is token_used, which
+	// does not end the rule.
+	if err := create(spent); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("create with the token the 503 spent = %v, want %v", err, server.ErrBearerRejected)
+	}
+	if err := create(f.token()); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("unrecorded open after token_used = %v, want %v", err, server.ErrIdentityBrokerUnavailable)
+	}
+	// Once the sink accepts the records again, the open succeeds, and the
+	// next refusal is a first one.
 	f.records.refuseOpens.Store(false)
-	if err := prompt(); err != nil {
-		t.Fatalf("open with the sink back = %v", err)
+	if err := create(f.token()); err != nil {
+		t.Fatalf("create with the sink back = %v", err)
+	}
+	f.records.refuseOpens.Store(true)
+	if err := create(f.token()); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("unrecorded open after a success = %v, want %v", err, server.ErrBearerRejected)
+	}
+}
+
+// TestIdentityBrokerTokenlessOpenOfAClosedHostIsNotFound proves that an open
+// presenting no token, refused because its host session was closed, as by a
+// delete another replica served, fails as not found rather than as a server
+// fault.
+func TestIdentityBrokerTokenlessOpenOfAClosedHostIsNotFound(t *testing.T) {
+	f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBrokerSession(t, f.broker, sess)
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{RootHostSessionID: string(sess.ID), Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runToEnd(aliceContext(t), t, f.svc, sess.ID); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("tokenless open of a closed host session = %v, want %v", err, server.ErrNotFound)
 	}
 }
 
@@ -955,8 +997,12 @@ func TestIdentityBrokerReopenNeverRepresentsAConvertedToken(t *testing.T) {
 // reported with the bearer_rejected tag: the client could not replay it.
 func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
 	// session_closed tags an open that converted the token; a late open
-	// presented none, so it must not carry the tag either.
-	for _, reason := range []identitybroker.Reason{identitybroker.ReasonTokenUsed, identitybroker.ReasonSessionClosed} {
+	// presented none, so it must not carry the tag either: its host session
+	// was closed, so it is not found.
+	for reason, want := range map[identitybroker.Reason]error{
+		identitybroker.ReasonTokenUsed:     server.ErrInternal,
+		identitybroker.ReasonSessionClosed: server.ErrNotFound,
+	} {
 		t.Run(string(reason), func(t *testing.T) {
 			broker := newRecordingBroker()
 			svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
@@ -985,8 +1031,8 @@ func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !errors.Is(runErr, server.ErrInternal) || errors.Is(runErr, server.ErrBearerRejected) {
-				t.Fatalf("open refused with %s after the stream answered: %v; want ErrInternal without the bearer_rejected tag", reason, runErr)
+			if !errors.Is(runErr, want) || errors.Is(runErr, server.ErrBearerRejected) {
+				t.Fatalf("open refused with %s after the stream answered: %v; want %v without the bearer_rejected tag", reason, runErr, want)
 			}
 			// The create's open, then the run's, which came after the answer and so
 			// presented nothing.

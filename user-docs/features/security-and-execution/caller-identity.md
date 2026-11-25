@@ -217,18 +217,21 @@ the request once. If your sign-in was revoked, the server answers
 for another user's session gets `session_not_found` (HTTP 404), as for any
 session you do not own. If the session ID is already paired with another user's
 broker session, the server answers `identity_broker_session_refused` (HTTP 403);
-retrying does not help. If the broker is unreachable, or its audit sink, the
-destination of its audit records, does not accept the records the request
-needs, the server answers
+retrying does not help. If the broker is unreachable, the server answers
 `identity_broker_unavailable` (HTTP 503) and saves nothing, so you can retry.
+The server gives the same answer when the broker's audit sink, where the broker
+sends its audit records, does not accept a record the request needs.
 
-The broker records each session open before it keeps the session. When the
-audit sink does not accept that record after AS-1 has already used your access
-token, the server answers `bearer_rejected`, so the client refreshes and
-resends once. If your previous open of the same session failed the same way
-within the last minute, the server answers `identity_broker_unavailable`
-instead, so a client does not spend one fresh token after another while the
-sink is down.
+The broker records each session open before it keeps the session. If the audit
+sink does not accept that record after AS-1 has already used your access token,
+the server answers `bearer_rejected`, so the client refreshes and resends once.
+If another of your opens failed the same way in the last minute, for any
+session, the server answers `identity_broker_unavailable` instead, so a client
+does not spend one fresh token after another while the sink is down. That
+answer has also used your access token, so refresh it before you retry. Each
+server replica tracks these failures on its own and forgets them when it
+restarts, so a retry that another replica serves can get `bearer_rejected`
+again.
 
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.

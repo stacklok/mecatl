@@ -156,3 +156,55 @@ func TestRecordQueueCloseCountsARecordInFlight(t *testing.T) {
 		t.Fatalf("reported %v, want the record in flight", reported)
 	}
 }
+
+// TestRecordQueueKeepsRoomForCloses pins that refusals cannot push closes out
+// of a full queue: a refusal is dropped once only closeReserve slots remain,
+// and closes still fill those up to the bound.
+func TestRecordQueueKeepsRoomForCloses(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enter sync.Once
+	var mu sync.Mutex
+	dropped := map[string]int{}
+	q := newRecordQueue(func(context.Context, Record) {
+		enter.Do(func() { close(entered) })
+		<-release
+	}, func(rec Record, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if errors.Is(err, errRecordQueueFull) {
+			dropped[rec.Header().Type]++
+		}
+	})
+	t.Cleanup(func() {
+		close(release)
+		if err := q.wait(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	refusal := func() Record { return &DecisionRecord{RecordHeader: RecordHeader{Type: TypeToolDecision}} }
+	closeRec := func() Record { return &SessionCloseRecord{RecordHeader: RecordHeader{Type: TypeSessionClose}} }
+	// The first record stalls the drainer, so every later one waits queued.
+	q.push(refusal())
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drainer did not send the first record")
+	}
+	for range maxQueuedRecords {
+		q.push(refusal())
+	}
+	mu.Lock()
+	if got, want := dropped[TypeToolDecision], closeReserve; got != want {
+		mu.Unlock()
+		t.Fatalf("refusals dropped = %d, want %d: the ones past maxQueuedRecords-closeReserve", got, want)
+	}
+	mu.Unlock()
+	for range closeReserve + 1 {
+		q.push(closeRec())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := dropped[TypeSessionClose]; got != 1 {
+		t.Fatalf("closes dropped = %d, want 1: closes fill the reserve up to the bound", got)
+	}
+}

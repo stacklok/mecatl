@@ -183,6 +183,12 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
 	if err != nil {
 		err = s.openFailure(ctx, host, owner, err)
+		if token.IsZero() && errors.Is(err, errBrokerSessionClosedAfterToken) {
+			// A tokenless open fails with session_closed only when its host
+			// session was closed meanwhile or just before, by a delete or the
+			// end of a scheduled run: the session is gone.
+			return identitybroker.Session{}, false, fmt.Errorf("%w: session %q was closed while its identity broker session opened", ErrNotFound, host)
+		}
 		if token.IsZero() && errors.Is(err, ErrBearerRejected) {
 			// The tag says "this request's token was refused before anything
 			// happened"; an open that presented no token cannot mean that.
@@ -190,7 +196,7 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 		}
 		return identitybroker.Session{}, false, err
 	}
-	s.openRecordRefusals.note(owner, host, false, s.cfg.Now())
+	s.openRecordRefusals.succeeded(owner)
 	s.logIdentityBroker(ctx, "opened broker session", host, opened.ID)
 	return opened, !token.IsZero(), nil
 }
@@ -251,7 +257,7 @@ func (s *Service) preOpenIdentityBrokerSession(ctx context.Context, sess *sessio
 		}
 		return "", s.openFailure(ctx, host, owner, err)
 	}
-	s.openRecordRefusals.note(owner, host, false, s.cfg.Now())
+	s.openRecordRefusals.succeeded(owner)
 	s.logIdentityBroker(ctx, "opened broker session before saving", host, opened.ID)
 	if found {
 		// The session was already paired before this request: it is not this
@@ -623,7 +629,7 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 	case reason == identitybroker.ReasonSessionClosed:
 		// The broker session closed while the open converted the request's
 		// token, and a token converts once: fail as for a refused token. A
-		// tokenless open's caller turns the tag into ErrInternal.
+		// tokenless open's caller turns it into ErrNotFound.
 		return errBrokerSessionClosedAfterToken
 	}
 	if code == identitybroker.CodeUnavailable {
@@ -632,68 +638,70 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 	return fmt.Errorf("%w: identity broker call failed", ErrInternal)
 }
 
-// openRecordRefusalWindow is how recent a caller's previous open of a host
-// session must be for its repeated record_not_accepted to fail as
-// unavailable (credentials-and-lifecycle.md step (3)).
+// openRecordRefusalWindow is how recent a caller's previous refused open must
+// be for its repeated record_not_accepted to fail as unavailable
+// (credentials-and-lifecycle.md step (3)).
 const openRecordRefusalWindow = time.Minute
 
 // openFailure is identityBrokerFailure for owner's open of host. An open that
 // converted the request's token but whose record the broker's audit sink did
 // not accept fails as for a refused token, so the client refreshes it and
-// opens again. When the same caller's previous open of host failed the same
-// way within openRecordRefusalWindow, it fails as the broker being
+// opens again. When the same caller's previous such refusal, of any host
+// session, was within openRecordRefusalWindow, it fails as the broker being
 // unavailable instead: a sink outage then does not have the client spend one
-// fresh token after another.
+// fresh token after another. The rule keys on the caller alone because a
+// create, fork, or clear opens a new host session on every attempt.
 func (s *Service) openFailure(ctx context.Context, host string, owner identitybroker.Owner, err error) error {
 	mapped := s.identityBrokerFailure(ctx, "open", host, "", err)
 	var brokerErr *identitybroker.Error
-	refused := errors.As(err, &brokerErr) && brokerErr.Reason == identitybroker.ReasonRecordNotAccepted &&
-		brokerErr.Code == identitybroker.CodeUnauthenticated
-	if s.openRecordRefusals.note(owner, host, refused, s.cfg.Now()) {
+	if errors.As(err, &brokerErr) && brokerErr.Reason == identitybroker.ReasonRecordNotAccepted &&
+		brokerErr.Code == identitybroker.CodeUnauthenticated &&
+		s.openRecordRefusals.refused(owner, s.cfg.Now()) {
 		return fmt.Errorf("%w: the identity broker could not record the session open", ErrIdentityBrokerUnavailable)
 	}
 	return mapped
 }
 
-// openRecordRefusalKey is a caller's open of a root host session.
-type openRecordRefusalKey struct {
-	owner identitybroker.Owner
-	host  string
-}
-
-// openRecordRefusals holds, per caller and host session, when an open that
-// converted the caller's token last failed with record_not_accepted. Entries
-// older than openRecordRefusalWindow are pruned as others are noted, so it
-// holds at most the callers whose opens failed in the last minute. The zero
-// value is ready to use.
+// openRecordRefusals holds, per caller, when an open that converted the
+// caller's token last failed with record_not_accepted. An entry ends when it
+// is openRecordRefusalWindow old or the caller's open succeeds; any other
+// failure keeps it, token_used among them: after the 503 the token is spent,
+// and a client that presents it again must not reset the rule. Entries past
+// the window are pruned as others are noted, so it holds at most the callers
+// refused in the last minute. The zero value is ready to use.
+//
+// The state is per replica and best effort: a retry that another replica
+// serves, or one after a restart, counts as a first refusal and gets 401.
 type openRecordRefusals struct {
 	mu sync.Mutex
-	at map[openRecordRefusalKey]time.Time
+	at map[identitybroker.Owner]time.Time
 }
 
-// note records how owner's open of host ended at now: refused when its record
-// was not accepted after it converted the token. It reports whether that
-// repeats the previous open's refusal within openRecordRefusalWindow. Any
-// other outcome forgets the previous refusal.
-func (r *openRecordRefusals) note(owner identitybroker.Owner, host string, refused bool, now time.Time) bool {
+// refused notes that owner's converted open was refused with
+// record_not_accepted at now, and reports whether owner's previous such
+// refusal was within openRecordRefusalWindow.
+func (r *openRecordRefusals) refused(owner identitybroker.Owner, now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for k, at := range r.at {
+	for o, at := range r.at {
 		if now.Sub(at) >= openRecordRefusalWindow {
-			delete(r.at, k)
+			delete(r.at, o)
 		}
 	}
-	key := openRecordRefusalKey{owner: owner, host: host}
-	_, repeat := r.at[key]
-	if !refused {
-		delete(r.at, key)
-		return false
-	}
+	_, repeat := r.at[owner]
 	if r.at == nil {
-		r.at = map[openRecordRefusalKey]time.Time{}
+		r.at = map[identitybroker.Owner]time.Time{}
 	}
-	r.at[key] = now
+	r.at[owner] = now
 	return repeat
+}
+
+// succeeded forgets owner's refusal: an open of theirs succeeded, so the
+// sink accepts records again.
+func (r *openRecordRefusals) succeeded(owner identitybroker.Owner) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.at, owner)
 }
 
 func (s *Service) logIdentityBroker(ctx context.Context, msg, host, brokerSession string) {

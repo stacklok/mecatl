@@ -204,10 +204,12 @@ func runClosedSessions(t *testing.T, factory serviceFactory) {
 		if _, ok, err := svc.FindSession(ctx, findRequest("hostS42")); err != nil || ok {
 			t.Fatalf("FindSession after the host session's close = %v, %v; want false, nil", ok, err)
 		}
-		reopened := mustOpen(t, svc, openRequest("hostS42", alice))
-		if reopened.ID == s.ID {
-			t.Fatal("reopening the closed host session returned its closed broker session")
-		}
+		// A closed host session gets no new broker session, so an open that
+		// started before the close cannot give it one.
+		_, err := svc.OpenSession(ctx, openRequest("hostS42", alice))
+		wantError(t, "OpenSession of the closed host session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		_, err = svc.RegisterAgent(ctx, registerRequest(s))
+		wantError(t, "RegisterAgent in the closed host session's broker session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		// Closing it again, or a host session with none, succeeds.
 		for _, host := range []string{"hostS42", "hostS42", "hostS99"} {
 			if err := svc.CloseSession(ctx, closeHostRequest(host)); err != nil {

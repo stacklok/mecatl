@@ -30,7 +30,7 @@ configured to exchange access tokens at AS-1:
 |`401`|`bearer_rejected`|`Bearer error="invalid_token"`|The server rejected the bearer token, or the identity broker refused it before the request changed anything. Refresh the token and retry once.|
 |`401`|`sign_in_required`|`Bearer error="invalid_token"`|The user's sign-in was revoked. Sign in again; a refreshed token is refused too.|
 |`403`|`identity_broker_session_refused`|None|The token belongs to a different user than the session's owner. Retrying does not help.|
-|`503`|`identity_broker_unavailable`|None|The identity broker is unreachable, or its audit sink did not accept the records the request needs. Nothing was saved, so retry later.|
+|`503`|`identity_broker_unavailable`|None|The identity broker is unreachable, or its audit sink did not accept the records the request needs. Nothing was saved, so retry later. When the cause is the audit sink refusing your repeated session opens, the access token the request presented is already spent, so refresh it before retrying.|
 
 An unreachable identity provider returns `503` without a challenge, because the
 token's validity is unknown.

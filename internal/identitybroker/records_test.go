@@ -157,6 +157,24 @@ func (s *sink) options() []identitybroker.Option {
 	return []identitybroker.Option{identitybroker.WithRecorder(s), identitybroker.WithDeliveryFailures(s.report)}
 }
 
+// wantSentInOrder fails t unless the sink accepted the records ids in that
+// order.
+func wantSentInOrder(t *testing.T, s *sink, ids ...string) {
+	t.Helper()
+	at := map[string]int{}
+	for i, id := range s.sentOrder() {
+		at[id] = i
+	}
+	for i, id := range ids {
+		if _, ok := at[id]; !ok {
+			t.Fatalf("record %s was not accepted", id)
+		}
+		if i > 0 && at[ids[i-1]] > at[id] {
+			t.Fatalf("record %s was accepted before %s, want after", id, ids[i-1])
+		}
+	}
+}
+
 // recordFixture is a broker converting at a fake AS-1 on a controlled clock,
 // recording into sink.
 type recordFixture struct {
@@ -1267,9 +1285,124 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		if len(closes) != 1 || closes[0].SessionID != opens[0].SessionID || closes[0].Cause != identitybroker.CloseRequested || closes[0].SessionRecord != opens[0].AuditID {
 			t.Fatalf("close records = %+v, want the requested close of %s naming its open", closes, opens[0].SessionID)
 		}
-		// The host session opens again as usual.
-		if _, err := f.open(openHost, testOwner, userToken(t, testOwner)); err != nil {
-			t.Fatalf("open after the host session's close: %v", err)
+		// The close was held until the refusal was queued, so it follows it.
+		wantSentInOrder(t, f.sink, opens[0].AuditID, opens[1].AuditID, closes[0].AuditID)
+	})
+
+	t.Run("a close of the host session during a new session's exchange follows the open's refusal", func(t *testing.T) {
+		f := newRecordFixture(t)
+		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
+			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				t.Errorf("closing the host session during the exchange: %v", err)
+			}
+			return grantResult("rt-fake-" + rand.Text()), nil
+		}
+		_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		opens, closes := f.sink.Opens(), f.sink.Closes()
+		if len(opens) != 1 || opens[0].Outcome != identitybroker.OutcomeDenied || !opens[0].NewSession || opens[0].Supersedes != "" {
+			t.Fatalf("open records = %+v, want only the open's refusal, with no success before it", opens)
+		}
+		if len(closes) != 1 || closes[0].SessionID != opens[0].SessionID || closes[0].SessionRecord != opens[0].AuditID {
+			t.Fatalf("close records = %+v, want the close of %s naming the refusal", closes, opens[0].SessionID)
+		}
+		wantSentInOrder(t, f.sink, opens[0].AuditID, closes[0].AuditID)
+		if _, ok := identitybroker.SessionGrant(f.b, opens[0].SessionID); ok {
+			t.Fatal("the closed session kept the refresh token its open got")
+		}
+	})
+
+	t.Run("a close of the host session during an exchange with a malformed answer is recorded once", func(t *testing.T) {
+		// convert closes the session for the malformed answer too, but the
+		// close of the host session came first: its record is the one kept.
+		f := newRecordFixture(t)
+		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
+			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				t.Errorf("closing the host session during the exchange: %v", err)
+			}
+			return identitybroker.TokenExchangeResult{}, fmt.Errorf("%w %w", identitybroker.ErrMalformedResponse, identitybroker.ErrTransportConfiguration)
+		}
+		_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+		wantError(t, err, identitybroker.CodeInternal, "")
+		opens, closes := f.sink.Opens(), f.sink.Closes()
+		if len(opens) != 1 || len(closes) != 1 || closes[0].Cause != identitybroker.CloseRequested || closes[0].SessionRecord != opens[0].AuditID {
+			t.Fatalf("open records %+v and close records %+v, want the refusal then the requested close naming it", opens, closes)
+		}
+		wantSentInOrder(t, f.sink, opens[0].AuditID, closes[0].AuditID)
+	})
+
+	t.Run("a close of the host session whose open record the sink refuses names the refusal", func(t *testing.T) {
+		f := newRecordFixture(t)
+		var once sync.Once
+		f.sink.refuse = func(rec identitybroker.Record) bool {
+			o, ok := rec.(*identitybroker.SessionOpenRecord)
+			if !ok || o.Outcome != identitybroker.OutcomeSuccess {
+				return false
+			}
+			once.Do(func() {
+				if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+					t.Errorf("closing the host session during the open's record: %v", err)
+				}
+			})
+			return true
+		}
+		_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonRecordNotAccepted)
+		opens, closes := f.sink.Opens(), f.sink.Closes()
+		if len(opens) != 1 || opens[0].Outcome != identitybroker.OutcomeError || opens[0].Supersedes == "" {
+			t.Fatalf("open records = %+v, want only the refusal superseding the refused success", opens)
+		}
+		// No accepted record names the open the sink refused: the close
+		// names the refusal, which it follows.
+		if len(closes) != 1 || closes[0].SessionRecord != opens[0].AuditID || closes[0].SessionRecord == opens[0].Supersedes {
+			t.Fatalf("close records = %+v, want the close naming the refusal %s", closes, opens[0].AuditID)
+		}
+		wantSentInOrder(t, f.sink, opens[0].AuditID, closes[0].AuditID)
+	})
+
+	t.Run("a closed host session gets no new broker session for a while", func(t *testing.T) {
+		as1 := newBlockingAS1()
+		f := newRecordFixture(t, identitybroker.WithAuthServer(as1))
+		first := make(chan error, 1)
+		go func() {
+			_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+			first <- err
+		}()
+		receive(t, as1.entered)
+		// A second open queues behind the first on the host session's open
+		// lock, as when a request loaded the host session before its delete.
+		second := make(chan error, 1)
+		go func() {
+			_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+			second <- err
+		}()
+		waitForHostLockRefs(t, f.b, openHost, 2)
+		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			t.Fatalf("closing the host session: %v", err)
+		}
+		close(as1.release)
+		wantError(t, receive(t, first), identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		wantError(t, receive(t, second), identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		as1.mu.Lock()
+		calls := as1.calls
+		as1.mu.Unlock()
+		if calls != 1 {
+			t.Fatalf("AS-1 exchanges = %d, want 1: the queued open converts nothing", calls)
+		}
+		if _, found := findSession(t, f.b, openHost); found {
+			t.Fatal("an open queued behind the host session's close gave it a broker session")
+		}
+		opens := f.sink.Opens()
+		if len(opens) != 2 || opens[1].NewSession || opens[1].SessionID != "" || opens[1].Reason != identitybroker.ReasonSessionClosed {
+			t.Fatalf("open records = %+v, want the queued open refused before reaching a session", opens)
+		}
+		// The mark ends after hostClosedLifetime.
+		*f.clock = f.clock.Add(identitybroker.HostClosedLifetime - time.Second)
+		_, err := f.open(openHost, testOwner, identitybroker.Token{})
+		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		*f.clock = f.clock.Add(time.Second)
+		if _, err := f.open(openHost, testOwner, identitybroker.Token{}); err != nil {
+			t.Fatalf("open once the host session's mark ended: %v", err)
 		}
 	})
 

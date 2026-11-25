@@ -266,9 +266,12 @@ type CloseSessionRequest struct {
 	// RootHostSessionID closes a root host session instead, when the host
 	// session is deleted or its scheduled run ends: its open broker session,
 	// if any, and the one an open of it in progress is creating, which that
-	// open then fails and stores nothing for. The host session's delegation
-	// history is forgotten. Closing a host session with no broker session
-	// succeeds.
+	// open then fails and stores nothing for. For a while afterwards, any
+	// other open of the host session fails with ReasonSessionClosed before
+	// converting anything, so an open that started before the close gives
+	// the host session no new broker session; on another replica, or once
+	// that while has passed, it can. The host session's delegation history
+	// is forgotten. Closing a host session with no broker session succeeds.
 	RootHostSessionID string
 	// Reason is the closing reason later calls on the session fail with.
 	// ReasonSessionClosed is the only closing reason Mecatl supplies today.

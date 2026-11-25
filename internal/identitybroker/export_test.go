@@ -12,6 +12,9 @@ const ClockSkew = 30 * time.Second
 // records, a session keeps before forgetting the oldest.
 const MaxRunsPerSession = maxRunsPerSession
 
+// HostClosedLifetime is how long a close by host session refuses its opens.
+const HostClosedLifetime = hostClosedLifetime
+
 // SetClock replaces b's clock. Call it before b is used.
 func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
 

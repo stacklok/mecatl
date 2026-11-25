@@ -8,8 +8,18 @@ import (
 )
 
 // maxQueuedRecords bounds the records waiting in a recordQueue. A record
-// queued past it is dropped and reported as a delivery failure.
+// queued past it is dropped and reported as a delivery failure; so is a
+// refusal queued past maxQueuedRecords-closeReserve.
 const maxQueuedRecords = 1024
+
+// closeReserve is how many of maxQueuedRecords only closes may fill: a
+// refusal is dropped once fewer remain. A refusal ends nothing, and an agent
+// looping on denied calls while the sink is slow can queue them faster than
+// they are sent; a close records the end of a session's authority, which
+// matters for revocation. A quarter of the queue keeps room for a burst of
+// closes, such as a workspace's sessions deleted together, while refusals
+// fill the rest.
+const closeReserve = maxQueuedRecords / 4
 
 // errRecordQueueFull is the delivery failure of a record dropped because the
 // queue was full, errRecordQueueClosed of one queued after Close or left
@@ -61,7 +71,7 @@ func (q *recordQueue) push(rec Record) {
 		q.mu.Unlock()
 		q.dropped(rec, errRecordQueueClosed)
 		return
-	case len(q.items) >= maxQueuedRecords:
+	case len(q.items) >= maxQueuedRecords, !isClose(rec) && len(q.items) >= maxQueuedRecords-closeReserve:
 		q.mu.Unlock()
 		q.dropped(rec, errRecordQueueFull)
 		return
@@ -72,6 +82,13 @@ func (q *recordQueue) push(rec Record) {
 		go q.drain(q.idle)
 	}
 	q.mu.Unlock()
+}
+
+// isClose reports whether rec is a session close's record, which may use
+// closeReserve.
+func isClose(rec Record) bool {
+	_, ok := rec.(*SessionCloseRecord)
+	return ok
 }
 
 // drain sends the queued records until none is left, then exits and closes

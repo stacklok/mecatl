@@ -64,6 +64,76 @@ type sessionTable struct {
 	// accepted. FindSession of such a host session waits for that open, and
 	// a close of the host session closes it, so the open fails when it ends.
 	newOpens map[string]*brokerSession
+	// hostClosed holds when each host session was closed by host session,
+	// per workload, for hostClosedLifetime, oldest first; pairLocked gives a
+	// marked host session no new broker session.
+	hostClosed hostClosedMarks
+}
+
+// hostClosedLifetime is how long a close by host session keeps refusing new
+// broker sessions for that host session. It covers the opens that started
+// before the close: one queued behind the open the close ended, or one whose
+// caller loaded the host session before it was deleted. An open holds its
+// host session's open lock for at most two AS-1 requests (the exchange and its
+// one resend, each within MaxAS1RequestTimeout) and one record send
+// (recordTimeout), 70 seconds; five minutes covers a few opens queued in turn
+// and the caller's own steps before it calls the broker. A longer mark only
+// refuses opens of a host session that no longer exists, and costs one entry
+// per close.
+//
+// Shortcut: the mark is in memory, per replica, and time-limited, so an open on a replica that did not serve the close, after a restart, or more than hostClosedLifetime after the close still gets a broker session nothing closes before its hard expiry; removed by #2805 (more than one replica) and #2563 (durable state).
+const hostClosedLifetime = 5 * time.Minute
+
+// hostClosedKey is a workload's root host session.
+type hostClosedKey struct {
+	workload Workload
+	host     string
+}
+
+// hostClosedMarks holds the hosts closed in the last hostClosedLifetime.
+// order lists every mark in the order made, so expired ones are pruned from
+// the front; times come from one clock that does not run back, so that order
+// is also by time. The caller holds t.mu.
+type hostClosedMarks struct {
+	at    map[hostClosedKey]time.Time
+	order []hostClosedMark
+}
+
+// hostClosedMark is one close of a host session.
+type hostClosedMark struct {
+	key hostClosedKey
+	at  time.Time
+}
+
+// mark notes key closed at now, after pruning expired marks.
+func (m *hostClosedMarks) mark(key hostClosedKey, now time.Time) {
+	m.prune(now)
+	if m.at == nil {
+		m.at = map[hostClosedKey]time.Time{}
+	}
+	m.at[key] = now
+	m.order = append(m.order, hostClosedMark{key: key, at: now})
+}
+
+// marked reports whether key was closed less than hostClosedLifetime before
+// now.
+func (m *hostClosedMarks) marked(key hostClosedKey, now time.Time) bool {
+	m.prune(now)
+	_, ok := m.at[key]
+	return ok
+}
+
+// prune drops the marks hostClosedLifetime old at now. A host closed again
+// keeps its later mark.
+func (m *hostClosedMarks) prune(now time.Time) {
+	for len(m.order) > 0 && now.Sub(m.order[0].at) >= hostClosedLifetime {
+		first := m.order[0]
+		if m.at[first.key].Equal(first.at) {
+			delete(m.at, first.key)
+		}
+		m.order[0] = hostClosedMark{}
+		m.order = m.order[1:]
+	}
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -93,9 +163,10 @@ type brokerSession struct {
 	// recorded it; nil until then. It is kept with verifiedOwner, whose
 	// owner it holds.
 	user *verifiedUser
-	// heldClose is the record of a close an open made while refusing,
-	// queued only after the open's refusal record, which it may refer to;
-	// nil otherwise. The open lock of the session's host session guards it.
+	// heldClose is the record of a close made while the session's open was
+	// in progress, by that open or, for a new session, by a close of its host
+	// session. refuseOpen queues it after the open's refusal record, which it
+	// refers to; nil otherwise. t.mu guards it.
 	heldClose *SessionCloseRecord
 }
 
@@ -159,6 +230,15 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 	if err != nil {
 		return Session{}, b.refuseOpen(&rec, s, err)
 	}
+	// A close of the host session may have closed s since b.open released
+	// t.mu. Its record is held for a new s, so the open is refused, not
+	// recorded as a success its close would follow.
+	t.mu.Lock()
+	closed := s.closed
+	t.mu.Unlock()
+	if closed != "" {
+		return Session{}, b.refuseOpen(&rec, s, ReasonError(closed, "the broker session closed during the open"))
+	}
 	rec.Outcome = OutcomeSuccess
 	if err := b.record(ctx, &rec); err != nil {
 		// The open is undone: pending is dropped, and refuseOpen closes a
@@ -175,10 +255,10 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 	// Only a close can have changed s while the record was sent: opens of
 	// its host session wait for the open lock this call holds. A new s is
 	// not in the table yet, but a close of its host session closes it
-	// (newOpens), as when the host session is deleted. The open is then
-	// recorded again as refused, so the records show it was not honoured
-	// and any refresh token it got was not stored; the close already ended
-	// the session.
+	// (newOpens), as when the host session is deleted, and holds its record.
+	// The open is then recorded again as refused, so the records show it was
+	// not honoured and any refresh token it got was not stored, and the
+	// close follows that refusal.
 	if s.closed != "" {
 		err := ReasonError(s.closed, "the broker session closed during the open")
 		t.mu.Unlock()
@@ -196,6 +276,9 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		// wait for the open lock this call holds.
 		t.byID[s.ID] = s
 		t.open[s.HostSessionID] = s.ID
+		// From here a close of the host session finds s in the table, so
+		// queues its record rather than holding it.
+		delete(t.newOpens, s.HostSessionID)
 	}
 	if pending != nil {
 		// One live refresh token per session: a new one replaces, and
@@ -261,10 +344,19 @@ func (b *Broker) refuseOpen(rec *SessionOpenRecord, s *brokerSession, err error)
 	if s == nil {
 		return err
 	}
+	if rec.NewSession && t.newOpens[s.HostSessionID] == s {
+		// From here a close of the host session finds s closed.
+		delete(t.newOpens, s.HostSessionID)
+	}
 	if held := s.heldClose; held != nil {
-		// convert closed s and held its record back, so it follows the
-		// refusal it may refer to.
+		// convert, or a close of the host session, closed s during the open
+		// and held its record back, so it follows the refusal. A new
+		// session's open record is the refusal, which the close names; no
+		// record the sink was not given precedes it.
 		s.heldClose = nil
+		if rec.NewSession {
+			held.SessionRecord = rec.AuditID
+		}
 		t.queueRecordLocked(held)
 	}
 	if rec.NewSession {
@@ -285,6 +377,12 @@ func (b *Broker) refuseOpen(rec *SessionOpenRecord, s *brokerSession, err error)
 // An open session past its hard expiry is closed first, so the host session
 // gets a new broker session as after any close.
 func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest, rec *SessionOpenRecord) (*brokerSession, error) {
+	if t.hostClosed.marked(hostClosedKey{workload: workload, host: req.HostSessionID}, t.now()) {
+		// The host session was closed by host session, as when it is
+		// deleted: an open that started before then gets no new session,
+		// so converts nothing and stores nothing.
+		return nil, ReasonError(ReasonSessionClosed, "the host session was closed")
+	}
 	if id, ok := t.open[req.HostSessionID]; ok && !t.expireLocked(t.byID[id]) {
 		s := t.byID[id]
 		rec.SessionID, rec.SessionRecord = s.ID, s.openRecord
@@ -330,6 +428,16 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseCause) {
 	if rec := t.closeHeldLocked(s, reason, cause); rec != nil {
 		t.queueRecordLocked(rec)
+	}
+}
+
+// holdCloseLocked closes s as closeLocked does but keeps the record in
+// s.heldClose for refuseOpen to queue after the open's refusal. It keeps a
+// record already held: s closes once, so that one is s's close. The caller
+// holds t.mu.
+func (t *sessionTable) holdCloseLocked(s *brokerSession, reason Reason, cause CloseCause) {
+	if rec := t.closeHeldLocked(s, reason, cause); rec != nil {
+		s.heldClose = rec
 	}
 }
 
@@ -438,7 +546,8 @@ func (b *Broker) FindSession(ctx context.Context, workload Workload, req FindSes
 // meanwhile discards the new one. A new session is not in the table until
 // its open is recorded, so a close by session ID cannot reach it; a close of
 // its host session closes it, and the open then fails and stores nothing.
-// Neither waits for an open in progress.
+// Neither waits for an open in progress. A close of a host session also
+// refuses its opens for hostClosedLifetime (closeHostLocked).
 //
 // Shortcut: a discarded refresh token is not revoked; removed by #2568 (refresh-token revocation).
 func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSessionRequest) error {
@@ -470,14 +579,18 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 }
 
 // closeHostLocked closes host's open broker session and the new one an
-// open of host is creating, when workload's, and forgets host's delegation
-// history: mecak8s closes a host session this way when it is deleted or its
-// scheduled run ends, after which nothing reports its delegations again. It
-// does not wait for an open in progress, which fails once it ends. The
-// caller holds t.mu.
+// open of host is creating, when workload's, forgets host's delegation
+// history, and marks host closed for hostClosedLifetime so that no open
+// gives it a new broker session meanwhile: mecak8s closes a host session
+// this way when it is deleted or its scheduled run ends, after which nothing
+// opens it or reports its delegations again. It does not wait for an open in
+// progress, which fails once it ends; the close of the new session it is
+// creating is held until that open's refusal is queued. The caller holds
+// t.mu.
 func (t *sessionTable) closeHostLocked(workload Workload, host string, reason Reason) {
+	t.hostClosed.mark(hostClosedKey{workload: workload, host: host}, t.now())
 	if s := t.newOpens[host]; s != nil && s.workload == workload {
-		t.closeLocked(s, reason, CloseRequested)
+		t.holdCloseLocked(s, reason, CloseRequested)
 	}
 	if id, ok := t.open[host]; ok && t.byID[id].workload == workload {
 		t.closeLocked(t.byID[id], reason, CloseRequested)
