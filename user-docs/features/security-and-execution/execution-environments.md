@@ -328,8 +328,28 @@ authority, for example because the Kubernetes API is briefly unavailable or this
 replica hasn't loaded a newer security policy yet, and closes if the next
 recheck can't confirm it either. The caller receives the same status a new call
 would; a closed command ends with an unknown outcome and isn't retried, and
-files written before the close stay written. Operators set the interval with the
-[`provider.policyRecheckInterval` chart value](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
+files written before the close stay written.
+
+### Withdrawal timing
+
+Withdrawal has no fixed deadline. Three intervals bound how long a call in
+progress outlives its authority:
+
+|Interval|What it bounds|Default|
+|-|-|-|
+|Policy recheck|How long the provider takes to close calls after a policy or trust change, a lapsed run claim, or a revocation served by another replica|10 seconds|
+|Executor keepalive interval and timeout|How long an executor takes to stop the commands of a provider that stopped responding|10 seconds each, about 20 seconds in total|
+|Run claim lifetime|How long a run's claim stays current after `mecak8s` stops renewing it|1 minute, renewed every 20 seconds|
+
+A lapsed run claim closes calls at the next policy recheck, so when a `mecak8s`
+replica stops renewing, its calls can stay open for up to the claim lifetime
+plus one recheck interval.
+
+Shorter intervals withdraw access faster at the cost of more traffic between the
+provider, the Kubernetes API, and executor Pods. Operators set the policy
+recheck and keepalive intervals on the provider; the run claim lifetime is
+fixed. See
+[Set withdrawal intervals](/operating/mecak8s/native-execution.md#set-withdrawal-intervals).
 
 ### Network and resource limits
 

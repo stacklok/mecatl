@@ -312,18 +312,47 @@ throughput guarantee. A large declared quota cannot override either byte limit.
 Retain each ID's reservation ledger; missing or inconsistent capacity authority
 requires trusted-state recovery, never a reset or copied reservations.
 
+### Set withdrawal intervals
+
+Three intervals bound how quickly withdrawn
+[execution authority](/features/security-and-execution/execution-environments.md#withdrawal-timing)
+takes effect on calls already running. Shorter intervals withdraw access sooner
+at the cost of more traffic between the provider, the Kubernetes API, and
+executor Pods. Set the first two in `execution-values.yaml`; the defaults are:
+
+```yaml title="execution-values.yaml"
+provider:
+  policyRecheckInterval: 10s
+  executorKeepalive:
+    interval: 10s
+    timeout: 10s
+```
+
+`provider.policyRecheckInterval` is how often the provider reauthorizes each
+file and command call it is forwarding, and closes the call once revocation, a
+lapsed run claim, a revoked template, or a client policy or TLS trust change
+refuses it. It accepts `1s` to `60s` or `1m`. Each recheck reads every
+environment with calls in progress and the security authority once, so a
+shorter interval costs more Kubernetes API reads.
+
 When the connection between the provider and an executor Pod breaks, the
 executor stops every command that connection carried. To detect a connection
 that stays open but stops responding, the executor pings the provider after
 `provider.executorKeepalive.interval` without traffic and closes the connection
-when no reply arrives within `provider.executorKeepalive.timeout`. Both default
-to `10s`, so an unresponsive provider is detected in about 20 seconds; each
-accepts whole seconds from `1s` to `600s` or whole minutes from `1m` to `10m`.
-The provider pings executors with the same settings, but no more often than
-every 10 seconds, to fail calls to an unresponsive executor. Shorter values stop
+when no reply arrives within `provider.executorKeepalive.timeout`, so an
+unresponsive provider is detected in about 20 seconds by default. Each accepts
+whole seconds from `1s` to `600s` or whole minutes from `1m` to `10m`. The
+provider pings executors with the same settings, but no more often than every
+10 seconds, to fail calls to an unresponsive executor. Shorter values stop
 orphaned commands sooner at the cost of more ping traffic. A change applies to
 executor Pods created afterwards; existing Pods keep the timing they started
 with.
+
+The run claim lifetime has no setting. `mecak8s` requests a one-minute claim
+for each run and renews it every 20 seconds; if renewal fails, `mecak8s`
+cancels the run. When a `mecak8s` replica stops renewing, for example because
+it crashed, its claim lapses within a minute and the provider closes the run's
+calls at the next policy recheck.
 
 ## Prepare platform-managed TLS and client policy
 
