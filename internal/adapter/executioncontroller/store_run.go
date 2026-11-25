@@ -37,6 +37,10 @@ func (s *Store) validateRunClaim(
 	if err != nil {
 		return nil, err
 	}
+	grantedEpoch := intNested(o.Object, "status", "activeRun", "epoch")
+	if grantedEpoch != int64(rc.Epoch) { //nolint:gosec // currentRunClaim bounds rc.Epoch.
+		return nil, errRunClaimNotCurrent
+	}
 	refs, err := referenceRecords(o)
 	if err != nil {
 		return nil, err
