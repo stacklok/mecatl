@@ -296,7 +296,8 @@ type SessionCloseRecord struct {
 	// ClosingReason is the reason later calls on the session fail with.
 	ClosingReason Reason
 	Cause         CloseCause
-	// SessionRecord is the AuditID of the open that created the session.
+	// SessionRecord is the AuditID of the open that created the session;
+	// empty for CloseOpenNotRecorded, whose open was never recorded.
 	SessionRecord string
 	// UserRecord is the AuditID of the open that verified the session's
 	// user, and User that user; empty when none did.
@@ -397,8 +398,10 @@ type DelegationRecord struct {
 	DelegatingAgent   AgentRef
 	DelegatingAgentID string
 	DelegatingRecord  string
-	// DelegatingRunRecorded reports that this report recorded the delegating
-	// run, which the broker had not seen, as a root run of DelegatingAgent.
+	// DelegatingRunRecorded reports that, when the report was checked, the
+	// broker had not seen the delegating run, so the report records it as a
+	// root run of DelegatingAgent. A call of that run racing the report may
+	// record the same run first; the run is the same either way.
 	DelegatingRunRecorded bool
 	// ParentDelegationRecord is the AuditID of the delegation the delegating
 	// run itself acts under; empty for a root run.

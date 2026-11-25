@@ -749,6 +749,8 @@ func definitionRefs(records []identitybroker.DefinitionRecord) []identitybroker.
 // loggedRecorder is the identity broker's record sink: recorder keeps each
 // record, and diag gets a one-line debug summary of it, with its type,
 // AuditID, outcome, and refusal, never its subjects or credential references.
+//
+// Shortcut: a diagnostics line repeats each broker record, the only way to see records outside the process while they are held in memory; removed by #2566 (records delivered in the AuditEvent profile).
 type loggedRecorder struct {
 	recorder identitybroker.Recorder
 	diag     port.Diagnostics

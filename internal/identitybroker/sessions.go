@@ -168,12 +168,18 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		return Session{}, errNotRecorded("session open")
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	// Only a close can have changed s while the record was sent: opens of
-	// its host session wait for the open lock this call holds.
+	// its host session wait for the open lock this call holds. The open is
+	// then recorded again as refused, so the records show it was not
+	// honoured and any refresh token it got was not stored.
 	if s.closed != "" {
-		return Session{}, ReasonError(s.closed, "the broker session closed during the open")
+		err := ReasonError(s.closed, "the broker session closed during the open")
+		t.mu.Unlock()
+		refused := rec
+		refused.AuditID, refused.NewSession = newAuditID(), false
+		return Session{}, b.refuseOpen(ctx, &refused, s, err)
 	}
+	defer t.mu.Unlock()
 	if pending != nil {
 		// One live refresh token per session: a new one replaces, and
 		// discards, any held before.
@@ -227,7 +233,9 @@ func (r *SessionOpenRecord) setSessionUser(s *brokerSession) {
 // not stay open when the refusal's record is not accepted.
 func (b *Broker) refuseOpen(ctx context.Context, rec *SessionOpenRecord, s *brokerSession, err error) error {
 	rec.refused(err)
-	rec.Kind = ""
+	// A refusal stores nothing, so it names no user, expiry, or replaced
+	// refresh token.
+	rec.Kind, rec.User, rec.UserRecord, rec.HardExpiry, rec.Replaced = "", nil, "", time.Time{}, nil
 	if b.record(context.WithoutCancel(ctx), rec) != nil && rec.NewSession && s != nil {
 		t := b.sessions
 		t.mu.Lock()
@@ -297,10 +305,15 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseC
 	t.runs.dropLocked(s.ID)
 	delete(t.open, s.HostSessionID)
 	userRecord, user := sessionUser(s)
+	sessionRecord := s.openRecord
+	if cause == CloseOpenNotRecorded {
+		// The open's record never reached the sink, so nothing refers to it.
+		sessionRecord = ""
+	}
 	t.mu.pending = append(t.mu.pending, &SessionCloseRecord{
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeSessionClose, At: s.closedAt, Outcome: OutcomeSuccess},
 		SessionID:    s.ID, HostSessionID: s.HostSessionID, Workload: s.workload, Owner: s.Owner,
-		ClosingReason: reason, Cause: cause, SessionRecord: s.openRecord, UserRecord: userRecord, User: user,
+		ClosingReason: reason, Cause: cause, SessionRecord: sessionRecord, UserRecord: userRecord, User: user,
 	})
 }
 

@@ -108,7 +108,9 @@ type DecisionRecord struct {
 	// (audit.md, "verified" or "reported:<component>").
 	OwnerVerified bool
 	// UserRecord is the AuditID of the open that verified the session's
-	// user, and User that user; empty when none did.
+	// user, and User that user; empty when none did. The broker sets both
+	// with OwnerVerified, and Subjects marks the owner by UserRecord: taken
+	// from that open's record.
 	UserRecord string
 	User       User
 	// Agent and AgentID are zero when the credential did not verify.

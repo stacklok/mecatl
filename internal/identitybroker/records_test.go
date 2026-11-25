@@ -854,8 +854,15 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		b = f.b
 		_, err := f.open(openHost, testOwner, userToken(t, testOwner))
 		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
-		if _, ok := identitybroker.SessionGrant(f.b, f.sink.Opens()[0].SessionID); ok {
+		opens := f.sink.Opens()
+		if _, ok := identitybroker.SessionGrant(f.b, opens[0].SessionID); ok {
 			t.Fatal("a session closed during its open's record kept a refresh token")
+		}
+		// The success is followed by a refusal, so the records show the open
+		// was not honoured.
+		if len(opens) != 2 || opens[0].Outcome != identitybroker.OutcomeSuccess || opens[1].Reason != identitybroker.ReasonSessionClosed ||
+			opens[1].AuditID == opens[0].AuditID || opens[1].User != nil || opens[1].SessionID != opens[0].SessionID {
+			t.Fatalf("open records = %+v, want a success then a session_closed refusal", opens)
 		}
 	})
 }
