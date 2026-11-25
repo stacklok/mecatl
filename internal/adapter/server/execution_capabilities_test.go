@@ -17,6 +17,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/fstools"
+	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -186,6 +187,8 @@ func (f *capabilityFactory) engine(names []string, ok bool) *agent.Engine {
 		Catalog: cat,
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test",
+
+		AuthorityEvaluator: localauthority.New(),
 	})
 }
 
@@ -640,5 +643,229 @@ func TestScheduleFiresRequestSourceCapabilities(t *testing.T) {
 	if err != nil || !slices.Equal(binding.AdmittedCapabilities, capFiles) ||
 		!slices.Equal(p.successors[0], capFiles) {
 		t.Fatalf("fire = %+v, %v; reservations %v", binding, err, p.successors)
+	}
+}
+
+func TestScheduleFiresKeepSourceAgentDefinition(t *testing.T) {
+	p := newCapabilityProvider()
+	var shell atomic.Bool
+	observe := mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		shell.Store(slices.ContainsFunc(req.Tools, func(spec tool.ToolSpec) bool {
+			return spec.Name == tool.ShellToolName
+		}))
+	})
+	probe := session.ToolCall{ID: "probe", Name: "Probe", Args: json.RawMessage(`{}`)}
+	f := &capabilityFactory{llm: mockllm.NewWith(
+		[]mockllm.Option{observe},
+		mockllm.ToolCallTurn(probe),
+		mockllm.TextTurn("done"),
+	)}
+	f.runner.Store(true)
+	var built atomic.Pointer[agent.Engine]
+	owner := templateOwner("alice")
+	store := memstore.New()
+	svc := capabilityService(t, p, f, store, func(cfg *server.Config) {
+		cfg.AgentDefSessionEngine = admittedCeilingAgent(f, &built)
+	})
+	source, err := svc.CreateSessionWithProfile(
+		owner,
+		"",
+		session.Limits{},
+		server.ProviderSelector{},
+		server.ProfileDefault,
+		server.WithAgentDefinitionName("reviewer"),
+	)
+	if err != nil || !source.ExecutionCapabilities.Shell {
+		t.Fatalf("source = %+v, %v", source, err)
+	}
+	plain, err := svc.CreateSession(owner, "", session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fire := func(
+		svc *server.Service,
+		origin *session.Session,
+		id session.SessionID,
+	) (*session.Session, error) {
+		spec := port.ScheduleSpec{
+			EnvironmentRef:  origin.EnvironmentRef,
+			PlacementScope:  "test",
+			OriginSessionID: origin.ID,
+			Owner:           session.PrincipalFromContext(owner),
+		}
+		binding, err := svc.ScheduleFirePlacement(owner, spec, id)
+		if err != nil {
+			return nil, err
+		}
+		return svc.CreateSessionWithProfile(
+			owner,
+			session.ModeDefault,
+			session.Limits{},
+			server.ProviderSelector{},
+			server.ProfileDefault,
+			server.WithSessionID(id),
+			server.WithOwner(spec.Owner),
+			server.WithPlacementBinding(binding),
+			server.WithScheduledRelationship("nightly", origin.ID),
+		)
+	}
+
+	bound, err := fire(svc, source, "sched--bound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.AgentDefinitionName != "reviewer" {
+		t.Fatalf("fire definition = %q", bound.AgentDefinitionName)
+	}
+	run, err := svc.StartScheduledRunContent(owner, bound.ID, "probe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
+		}
+	}
+	svc.FinishRun(bound.ID, run)
+	reported := func(id session.SessionID) []string {
+		got, err := server.NewHarnessServer(svc).GetSession(
+			owner,
+			&mecatlv1.GetSessionRequest{SessionId: string(id)},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.GetSession().GetSessionCapabilities().GetExecution()
+	}
+	shellTool := shell.Load() || built.Load().HasTool(tool.ShellToolName)
+	if shellTool || f.runner.Load() || !slices.Equal(reported(bound.ID), reported(source.ID)) {
+		t.Fatalf("Shell = %v, runner = %v, fire reports %v, source %v",
+			shellTool, f.runner.Load(), reported(bound.ID), reported(source.ID))
+	}
+
+	unbound, err := fire(svc, plain, "sched--plain")
+	if err != nil || unbound.AgentDefinitionName != "" {
+		t.Fatalf("fire of plain source = %v", err)
+	}
+
+	_, err = svc.CreateSessionWithProfile(
+		owner,
+		"",
+		session.Limits{},
+		server.ProviderSelector{},
+		server.ProfileDefault,
+		server.WithScheduledRelationship("nightly", "deleted"),
+	)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("fire of a deleted source = %v", err)
+	}
+
+	removed := capabilityService(t, p, f, store, func(cfg *server.Config) {
+		cfg.AgentDefSessionEngine = unknownAgent
+	})
+	_, err = fire(removed, source, "sched--removed")
+	_, loadErr := store.Load(owner, "sched--removed")
+	if !errors.Is(err, server.ErrInvalidArgument) || loadErr == nil {
+		t.Fatalf("fire after the definition was removed = %v, saved = %v", err, loadErr == nil)
+	}
+}
+
+// admittedCeilingAgent denies Shell by authority over f's engine for the admitted set.
+func admittedCeilingAgent(
+	f *capabilityFactory,
+	built *atomic.Pointer[agent.Engine],
+) server.AgentDefSessionEngineFactory {
+	return func(
+		ctx context.Context,
+		_ server.ProviderSelector,
+		_ server.SessionProfile,
+		mode session.PermissionMode,
+		_ session.Limits,
+		name string,
+		_ []tool.Tool,
+	) (server.SessionEngineResult, error) {
+		eng := f.engine(server.ExecutionCapabilitiesFromContext(ctx))
+		built.Store(eng)
+		set := governance.CapabilitySet{FileSystem: true, Tools: []string{"Read", "Probe"}}
+		return server.SessionEngineResult{
+			AgentDefinitionName: name,
+			Engine:              eng,
+			BuiltForMode:        mode,
+			Authority: session.Authority{
+				Provenance:    "agent-def:test",
+				CapabilitySet: set,
+				Ceiling:       &set,
+			},
+		}, nil
+	}
+}
+
+func unknownAgent(
+	context.Context,
+	server.ProviderSelector,
+	server.SessionProfile,
+	session.PermissionMode,
+	session.Limits,
+	string,
+	[]tool.Tool,
+) (server.SessionEngineResult, error) {
+	return server.SessionEngineResult{}, server.ErrInvalidArgument
+}
+
+// staleOriginStore loads origin with a new incarnation once armed and loaded.
+type staleOriginStore struct {
+	*memstore.Store
+	origin session.SessionID
+	armed  atomic.Bool
+	loaded atomic.Bool
+}
+
+func (s *staleOriginStore) Load(
+	ctx context.Context,
+	id session.SessionID,
+) (*session.Session, error) {
+	sess, err := s.Store.Load(ctx, id)
+	if err != nil || id != s.origin || !s.armed.Load() || !s.loaded.Swap(true) {
+		return sess, err
+	}
+	return sess, sess.RestoreIncarnation(session.NewIncarnationID())
+}
+
+func TestScheduleFireRefusedWhenOriginIncarnationChanges(t *testing.T) {
+	owner := templateOwner("alice")
+	store := &staleOriginStore{Store: memstore.New()}
+	svc := capabilityService(t, newCapabilityProvider(), &capabilityFactory{}, store, nil)
+	source, err := svc.CreateSession(owner, "", session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := port.ScheduleSpec{
+		EnvironmentRef:  source.EnvironmentRef,
+		PlacementScope:  "test",
+		OriginSessionID: source.ID,
+		Owner:           session.PrincipalFromContext(owner),
+	}
+	binding, err := svc.ScheduleFirePlacement(owner, spec, "sched--stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.origin = source.ID
+	store.armed.Store(true)
+	_, err = svc.CreateSessionWithProfile(
+		owner,
+		session.ModeDefault,
+		session.Limits{},
+		server.ProviderSelector{},
+		server.ProfileDefault,
+		server.WithSessionID("sched--stale"),
+		server.WithOwner(spec.Owner),
+		server.WithPlacementBinding(binding),
+		server.WithScheduledRelationship("nightly", source.ID),
+	)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("fire after the origin's incarnation changed = %v", err)
+	}
+	if _, err := store.Store.Load(owner, "sched--stale"); err == nil {
+		t.Fatal("refused fire was saved")
 	}
 }

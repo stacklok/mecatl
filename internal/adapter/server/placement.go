@@ -609,11 +609,11 @@ func (s *Service) ScheduleFirePlacement(ctx context.Context, spec port.ScheduleS
 	if err != nil || source.EnvironmentRef != spec.EnvironmentRef || source.Owner == nil || !source.Owner.SameIdentity(spec.Owner) {
 		return PlacementBinding{}, ErrPlacementNotFound
 	}
-	requested := s.enforcedCapabilities(source)
+	requested := s.fireCapabilities(source)
 	if err := s.refuseDisabledCapabilities(requested); err != nil {
 		return PlacementBinding{}, err
 	}
-	binding, err := s.successorPlacement(ctx, source, SuccessorPlacement{}, fireID)
+	binding, err := s.successorPlacement(ctx, source, SuccessorPlacement{}, fireID, requested)
 	if err != nil {
 		s.logPlacementProviderError(ctx, "reserve schedule fire", err)
 		return PlacementBinding{}, sanitizePlacementProviderError(err)

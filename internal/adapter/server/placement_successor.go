@@ -63,7 +63,7 @@ func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.Sess
 	// non-destructive gate. Exact inherited placement stays on the lease-protected
 	// path below because reattachment may itself wait for lease loss/cancellation.
 	if placement.Selector != "" {
-		preflight, placementErr := s.successorPlacement(ctx, lockedSource, placement, "")
+		preflight, placementErr := s.successorPlacement(ctx, lockedSource, placement, "", nil)
 		if placementErr != nil {
 			return "", placementErr
 		}
@@ -254,7 +254,13 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err := s.refuseDisabledCapabilities(requested); err != nil {
 		return "", saved, err
 	}
-	binding, err := s.successorPlacement(mutationCtx, source, req.Placement, destinationID)
+	binding, err := s.successorPlacement(
+		mutationCtx,
+		source,
+		req.Placement,
+		destinationID,
+		requested,
+	)
 	if err != nil {
 		return "", saved, err
 	}
@@ -527,7 +533,13 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 	return selector, nil
 }
 
-func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement, destination session.SessionID) (PlacementBinding, error) {
+func (s *Service) successorPlacement(
+	ctx context.Context,
+	source *session.Session,
+	requested SuccessorPlacement,
+	destination session.SessionID,
+	capabilities []string,
+) (PlacementBinding, error) {
 	if requested.Selector == "" {
 		if destination != "" && s.cfg.ExecutionAccess != nil && s.cfg.ExecutionAccess.Applies(source.EnvironmentRef) {
 			reservoir, ok := s.cfg.PlacementProvider.(PlacementSuccessorReservoir)
@@ -539,7 +551,7 @@ func (s *Service) successorPlacement(ctx context.Context, source *session.Sessio
 				Principal:            source.Owner,
 				SourceBindingID:      source.ID,
 				DestinationBindingID: destination,
-				Capabilities:         s.enforcedCapabilities(source),
+				Capabilities:         capabilities,
 			})
 		}
 		binding, release, err := s.borrowSessionPlacement(ctx, source)
