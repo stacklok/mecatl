@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -258,4 +259,52 @@ func TestAHelperThatFailsToMoveReportsItsDelegationWhenItMoves(t *testing.T) {
 	if err := f.broker.inner.ReportDelegation(t.Context(), repeat); !errors.Is(err, identitybroker.NewError(identitybroker.CodeAlreadyExists, "", "")) {
 		t.Fatalf("a changed repeat = %v, want ALREADY_EXISTS", err)
 	}
+}
+
+// TestTeamMemberDelegationsMarkTheStandInParent pins that a member of a team
+// created over the API, whose session records no parent, is reported with the
+// root's main agent as a stand-in, both when it registers and in its
+// delegation, and that a delegation reported again into a reopened broker
+// session keeps the mark. A subagent's report carries none.
+func TestTeamMemberDelegationsMarkTheStandInParent(t *testing.T) {
+	f := newHelperFixture(t)
+	ctx := f.runContext(t, "run_team")
+	member, err := session.NewTeamMember("member-1", session.ModeDefault, helperRef(), session.Limits{}, time.Unix(1, 0), "team-1", "lead", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	labelAlice(t, member)
+	if err := f.svc.RegisterHelper(ctx, member, port.ChildSessionInfo{}); err != nil {
+		t.Fatalf("RegisterHelper(member): %v", err)
+	}
+	if reg := lastRegistration(t, f.broker); !reg.ParentStandIn {
+		t.Fatalf("member registration = %+v, want the main agent as a stand-in", reg)
+	}
+	if d := lastDelegation(t, f.broker); !d.StandIn || d.DelegatingRun != "run_team" {
+		t.Fatalf("member delegation = %+v, want the team run with a stand-in", d)
+	}
+	if err := f.svc.RegisterHelper(ctx, newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{}); err != nil {
+		t.Fatalf("RegisterHelper(child): %v", err)
+	}
+	if reg, d := lastRegistration(t, f.broker), lastDelegation(t, f.broker); reg.ParentStandIn || d.StandIn {
+		t.Fatalf("subagent registration %+v and delegation %+v, want no stand-in", reg, d)
+	}
+
+	first := f.broker.delegationRequests()
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: f.main.SessionID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runToEnd(aliceContext(t), t, f.svc, f.root.ID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reopened := wantBrokerSession(t, f.broker, f.root)
+	for _, r := range f.broker.delegationRequests()[len(first):] {
+		if r.SessionID == reopened.ID && r.ReceivingRun == first[0].ReceivingRun {
+			if !r.StandIn {
+				t.Fatalf("member delegation reported again = %+v, want the stand-in kept", r)
+			}
+			return
+		}
+	}
+	t.Fatal("the member's delegation was not reported into the reopened session")
 }

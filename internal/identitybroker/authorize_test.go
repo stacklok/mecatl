@@ -867,9 +867,9 @@ type closingRecorder struct {
 	close func()
 }
 
-func (r *closingRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
-	err := r.MemoryRecorder.RecordDecision(ctx, rec)
-	if rec.Outcome == identitybroker.OutcomeSuccess && r.close != nil {
+func (r *closingRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
+	err := r.MemoryRecorder.Record(ctx, rec)
+	if d, ok := rec.(*identitybroker.DecisionRecord); ok && d.Outcome == identitybroker.OutcomeSuccess && r.close != nil {
 		r.close()
 	}
 	return err
@@ -882,18 +882,18 @@ type faultyRecorder struct {
 	failIDJAG, failSuccess bool
 }
 
-func (r faultyRecorder) RecordIDJAG(ctx context.Context, rec identitybroker.IDJAGRecord) error {
-	if r.failIDJAG {
-		return errors.New("recorder unavailable")
+func (r faultyRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
+	switch rec := rec.(type) {
+	case *identitybroker.IDJAGRecord:
+		if r.failIDJAG {
+			return errors.New("recorder unavailable")
+		}
+	case *identitybroker.DecisionRecord:
+		if r.failSuccess && rec.Outcome == identitybroker.OutcomeSuccess {
+			return errors.New("recorder unavailable")
+		}
 	}
-	return r.MemoryRecorder.RecordIDJAG(ctx, rec)
-}
-
-func (r faultyRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
-	if r.failSuccess && rec.Outcome == identitybroker.OutcomeSuccess {
-		return errors.New("recorder unavailable")
-	}
-	return r.MemoryRecorder.RecordDecision(ctx, rec)
+	return r.MemoryRecorder.Record(ctx, rec)
 }
 
 func TestAuthorizeCallWriteOrder(t *testing.T) {
@@ -977,11 +977,11 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 // context, as a record sink honouring cancellation does.
 type ctxRecorder struct{ *identitybroker.MemoryRecorder }
 
-func (r ctxRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
+func (r ctxRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return r.MemoryRecorder.RecordDecision(ctx, rec)
+	return r.MemoryRecorder.Record(ctx, rec)
 }
 
 func TestAuthorizeCallRecordsARefusalOfACancelledCall(t *testing.T) {

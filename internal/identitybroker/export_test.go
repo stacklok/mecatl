@@ -19,10 +19,10 @@ func AS2Bound(b *Broker) bool { return b.as2.Load() != nil }
 // HostLockRefs returns how many opens hold or wait for host's open lock, and
 // whether the lock has an entry at all.
 func HostLockRefs(b *Broker, host string) (int, bool) {
-	t := b.sessions
-	t.hostMu.Lock()
-	defer t.hostMu.Unlock()
-	l, ok := t.hostLocks[host]
+	k := &b.sessions.opening
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	l, ok := k.locks[host]
 	if !ok {
 		return 0, false
 	}
@@ -80,7 +80,7 @@ func CloseSessionWithReason(b *Broker, id string, reason Reason) {
 	t := b.sessions
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.closeLocked(t.byID[id], reason)
+	t.closeLocked(t.byID[id], reason, CloseRequested)
 }
 
 // ConvertedTokens returns how many converted access tokens b remembers,
@@ -92,3 +92,6 @@ func ConvertedTokens(b *Broker) int {
 	t.pruneConvertedLocked()
 	return len(t.converted)
 }
+
+// SetRecorder replaces b's record sink. Call it while no call is running.
+func SetRecorder(b *Broker, r Recorder) { b.recorder = r }

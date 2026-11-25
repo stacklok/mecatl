@@ -938,23 +938,38 @@ func promptApprovingAsks(t *testing.T, api, token, id, text string, beforeApprov
 	return asks
 }
 
-// gatewayCallDiagnostics keeps the MCP broker's gateway call diagnostics.
+// gatewayCallDiagnostics keeps the MCP broker's gateway call diagnostics,
+// and the identity broker's record summaries and refused records.
 type gatewayCallDiagnostics struct {
-	mu    sync.Mutex
-	calls []map[string]string
+	mu      sync.Mutex
+	calls   []map[string]string
+	records []map[string]string
+	refused []map[string]string
 }
 
 func (d *gatewayCallDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
-	if msg != "mcp broker gateway call" {
-		return
-	}
 	fields := make(map[string]string, len(args)/2)
 	for i := 0; i+1 < len(args); i += 2 {
 		fields[fmt.Sprint(args[i])] = fmt.Sprint(args[i+1])
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.calls = append(d.calls, fields)
+	switch msg {
+	case "mcp broker gateway call":
+		d.calls = append(d.calls, fields)
+	case "identity broker record":
+		d.records = append(d.records, fields)
+	case "identity broker record not accepted":
+		d.refused = append(d.refused, fields)
+	}
+}
+
+// brokerRecords returns the identity broker's record summaries, in the order
+// the sink accepted them, and the records it refused.
+func (d *gatewayCallDiagnostics) brokerRecords() (accepted, refused []map[string]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.records), slices.Clone(d.refused)
 }
 
 func (d *gatewayCallDiagnostics) With(...any) port.Diagnostics { return d }

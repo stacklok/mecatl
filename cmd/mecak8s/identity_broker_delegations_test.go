@@ -178,3 +178,44 @@ func TestIdentityBrokerResumedHelperGatewayCallAfterReopen(t *testing.T) {
 		t.Fatalf("the resumed subagent called as %v, before the reopen as %v; want the same agent", resumed, child)
 	}
 }
+
+// TestIdentityBrokerRecordsWhoActed pins that a real run records who acted:
+// the broker session's open, the registrations of the main agent and a
+// subagent, the subagent's delegation, and each gateway call's ID-JAG and
+// decision, all accepted by the broker's record sink.
+func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
+	d := serveDelegations(t)
+	d.writeScript(t, gatewayTurn("main-call"),
+		`{"tool_calls":[{"id":"delegate","name":"Subagent","args":{"prompt":"call the calendar"}}]}`,
+		gatewayTurn("child-call"), scriptText, scriptText)
+	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
+	d.wantHelperGatewayCalls(t, 1)
+
+	accepted, refused := d.diag.brokerRecords()
+	if len(refused) != 0 {
+		t.Fatalf("the record sink refused %v", refused)
+	}
+	successes := map[string]int{}
+	ids := map[string]bool{}
+	for _, r := range accepted {
+		t.Logf("record %s %s %s", r["type"], r["audit_id"], r["outcome"])
+		if ids[r["audit_id"]] || !strings.HasPrefix(r["audit_id"], "rec_") {
+			t.Fatalf("record %v repeats or lacks an AuditID", r)
+		}
+		ids[r["audit_id"]] = true
+		if r["outcome"] == "success" {
+			successes[r["type"]]++
+		}
+	}
+	for typ, want := range map[string]int{
+		identitybroker.TypeSessionOpen:        1,
+		identitybroker.TypeInstanceRegistered: 2,
+		identitybroker.TypeDelegation:         1,
+		identitybroker.TypeIDJAG:              2,
+		identitybroker.TypeToolDecision:       2,
+	} {
+		if successes[typ] < want {
+			t.Errorf("%d successful %s records, want at least %d", successes[typ], typ, want)
+		}
+	}
+}

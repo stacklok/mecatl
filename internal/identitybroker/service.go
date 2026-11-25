@@ -309,6 +309,10 @@ type RegisterAgentRequest struct {
 	// is not its parent's recorded host session, so each child is tied to its
 	// parent and, through it, to the session's tree.
 	ParentHostSessionID string
+	// ParentStandIn reports that Parent is the root's main agent standing in
+	// for the API request that created a team member, not the agent that
+	// created it. The broker only records it; it requires a Parent.
+	ParentStandIn bool
 }
 
 // Validate reports whether r is well formed. The error is an *Error with
@@ -327,8 +331,8 @@ func (r RegisterAgentRequest) Validate() error {
 		return err
 	}
 	if r.Parent.IsZero() {
-		if r.ParentHostSessionID != "" {
-			return invalid("parent host session must be empty without a parent")
+		if r.ParentHostSessionID != "" || r.ParentStandIn {
+			return invalid("parent host session and stand-in must be empty without a parent")
 		}
 		return nil
 	}
@@ -504,6 +508,11 @@ type ReportDelegationRequest struct {
 	ReceivingAgent AgentRef
 	// Owner is the receiving run's owner. It must equal the delegating run's.
 	Owner Owner
+	// StandIn reports that DelegatingRun is a run of the root's main agent
+	// standing in for the API request that started a team, so the receiving
+	// agent is a team member whose stand-in parent is DelegatingAgent. It is
+	// part of the delegation's content: a repeat must carry the same value.
+	StandIn bool
 }
 
 // Validate reports whether r is well formed. The error is an *Error with

@@ -34,6 +34,9 @@ type agentRecord struct {
 	// together the two were issued. Expired entries are dropped when the
 	// instance registers again.
 	credentials map[[sha256.Size]byte]time.Time
+	// registrationRecord is the AuditID of the instance's latest accepted
+	// registration, which later records refer to.
+	registrationRecord string
 }
 
 // agentIdentity is an instance's ag_ identifier and the SPIFFE ID built from
@@ -74,24 +77,39 @@ func credentialHash(credential Token) [sha256.Size]byte {
 const registerAttempts = 2
 
 // RegisterAgent implements Core. It checks the session, the owner, the root
-// host session or the parent and its host session, and the definition or an earlier registration of
-// the instance, issues the credential, and only then records the instance in
-// the session, so a failure changes nothing. A new instance's definition must
-// be one the broker loaded; an instance registered before keeps the
-// definition it registered with, whatever the broker loaded since.
+// host session or the parent and its host session, and the definition or an
+// earlier registration of the instance, issues the credential, records the
+// registration, and only then admits the instance to the session, so a
+// failure changes nothing. A new instance's definition must be one the broker
+// loaded; an instance registered before keeps the definition it registered
+// with, whatever the broker loaded since.
+//
+// The credential is signed outside any lock. Then, with registrations of the
+// incarnation serialized, the checks run again, the registration is
+// recorded, and the instance is admitted, so the record and the admission act
+// on the same instance. A registration whose record is not accepted fails
+// with CodeUnavailable and admits nothing. A refused registration is
+// recorded and returned whether or not its record is accepted; one refused
+// after its record was accepted, because the session closed meanwhile, is
+// recorded again as refused, so the records show the instance was not
+// admitted.
 //
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
-//
-// Shortcut: a registration, and a refused one, records no lineage event; removed by #2541.
-func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
+func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Registration{}, err
 	}
 	t := b.sessions
+	rec := RegistrationRecord{
+		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeInstanceRegistered, At: t.now()},
+		Workload:     workload, SessionID: req.SessionID, HostSessionID: req.HostSessionID, Owner: req.Owner,
+		Incarnation: req.Incarnation, Definition: req.Definition, Parent: req.Parent,
+		ParentHostSessionID: req.ParentHostSessionID, ParentStandIn: req.ParentStandIn,
+	}
 	for range registerAttempts {
-		identity, err := b.registrationIdentity(workload, req)
+		identity, err := b.registrationIdentity(workload, req, &rec)
 		if err != nil {
-			return Registration{}, err
+			return Registration{}, b.refuseRegistration(ctx, rec, err)
 		}
 
 		// Sign outside the lock: a remote signer may be slow.
@@ -99,52 +117,58 @@ func (b *Broker) RegisterAgent(_ context.Context, workload Workload, req Registe
 		if err != nil {
 			// The signer's error is not passed on: from a key service it can
 			// name keys or endpoints, and the broker has no log of its own.
-			return Registration{}, NewError(CodeInternal, "", "the agent credential could not be issued")
+			return Registration{}, b.refuseRegistration(ctx, rec, NewError(CodeInternal, "", "the agent credential could not be issued"))
 		}
 
-		reg, retry, err := b.recordRegistration(workload, req, identity, credential, expiresAt)
-		if err != nil || !retry {
-			return reg, err
+		reg, retry, err := b.admitRegistration(ctx, workload, req, identity, credential, expiresAt, &rec)
+		if err != nil {
+			return Registration{}, err
+		}
+		if !retry {
+			return reg, nil
 		}
 	}
-	return Registration{}, NewError(CodeAborted, "", "the agent registration raced another registration of the same agent")
+	return Registration{}, b.refuseRegistration(ctx, rec, NewError(CodeAborted, "", "the agent registration raced another registration of the same agent"))
 }
 
-// registrationIdentity checks req under t.mu and returns the identity to sign
-// for: the instance's own if it registered before, otherwise a new one.
-func (b *Broker) registrationIdentity(workload Workload, req RegisterAgentRequest) (agentIdentity, error) {
+// admitRegistration records the registration of identity and admits the
+// instance, with registrations of req's incarnation serialized. It reports
+// retry, recording nothing, when identity is no longer the one to admit:
+// another registration gave the incarnation an identity first, or a new
+// identity is already taken. It records a refusal it returns.
+func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req RegisterAgentRequest, identity agentIdentity, credential Token, expiresAt time.Time, rec *RegistrationRecord) (reg Registration, retry bool, err error) {
 	t := b.sessions
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	_, identity, err := b.checkRegistrationLocked(workload, req)
-	if err != nil || identity != (agentIdentity{}) {
-		return identity, err
-	}
-	id := newAgentID()
-	return agentIdentity{id: id, subject: b.issuer.subject(id)}, nil
-}
-
-// recordRegistration checks req again under t.mu, since the session or the
-// instance may have changed while signing, and records the registration with
-// identity. It reports retry, recording nothing, when identity is no longer
-// the one to record: another registration gave the incarnation an identity
-// first, or a new identity is already taken.
-func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest, identity agentIdentity, credential Token, expiresAt time.Time) (reg Registration, retry bool, err error) {
-	t := b.sessions
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	s, recorded, err := b.checkRegistrationLocked(workload, req)
+	unlock, err := t.registering.lock(ctx, req.Incarnation, "the agent registration was cancelled")
 	if err != nil {
-		return Registration{}, false, err
+		return Registration{}, false, b.refuseRegistration(ctx, *rec, err)
 	}
-	if recorded != identity {
-		if recorded != (agentIdentity{}) {
-			return Registration{}, true, nil
-		}
-		if _, taken := t.agents[identity.subject]; taken {
-			return Registration{}, true, nil
-		}
+	defer unlock()
+	t.mu.Lock()
+	retry, err = b.checkIdentityLocked(workload, req, identity, rec)
+	t.mu.Unlock()
+	if err != nil {
+		return Registration{}, false, b.refuseRegistration(ctx, *rec, err)
 	}
+	if retry {
+		return Registration{}, true, nil
+	}
+	accepted := *rec
+	accepted.Outcome, accepted.CredentialExpiresAt = OutcomeSuccess, expiresAt
+	if err := b.record(ctx, &accepted); err != nil {
+		return Registration{}, false, errNotRecorded("agent registration")
+	}
+	t.mu.Lock()
+	// The session may have closed while the record was sent; nothing else
+	// the checks read can change while registrations of the incarnation
+	// wait.
+	s, _, err := b.checkRegistrationLocked(workload, req)
+	if err != nil {
+		t.mu.Unlock()
+		refused := *rec
+		refused.AuditID = newAuditID()
+		return Registration{}, false, b.refuseRegistration(ctx, refused, err)
+	}
+	defer t.mu.Unlock()
 	// A new instance's effective ceiling is computed once, here; one
 	// registered before keeps its own.
 	var ceiling Ceiling
@@ -152,7 +176,81 @@ func (b *Broker) recordRegistration(workload Workload, req RegisterAgentRequest,
 		ceiling = b.effectiveCeilingLocked(req)
 	}
 	t.recordLocked(identity, s.ID, req, ceiling, credential, expiresAt)
+	t.agents[identity.subject].registrationRecord = accepted.AuditID
 	return Registration{Agent: AgentRef{Subject: identity.subject}, Credential: credential, ExpiresAt: expiresAt}, false, nil
+}
+
+// refuseRegistration records err as the refusal of rec's registration and
+// returns err.
+func (b *Broker) refuseRegistration(ctx context.Context, rec RegistrationRecord, err error) error {
+	rec.refused(err)
+	rec.CredentialExpiresAt = time.Time{}
+	b.recordAnyway(ctx, &rec)
+	return err
+}
+
+// registrationIdentity checks req under t.mu and returns the identity to sign
+// for: the instance's own if it registered before, otherwise a new one. It
+// fills rec with what the broker knows of the session and the parent.
+func (b *Broker) registrationIdentity(workload Workload, req RegisterAgentRequest, rec *RegistrationRecord) (agentIdentity, error) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.byID[req.SessionID]; ok && s.workload == workload {
+		rec.SessionRecord = s.openRecord
+		rec.UserRecord, rec.User = sessionUser(s)
+	}
+	if parent, ok := t.agents[req.Parent.Subject]; ok && !req.Parent.IsZero() {
+		rec.ParentRecord = parent.registrationRecord
+	}
+	_, identity, err := b.checkRegistrationLocked(workload, req)
+	if err != nil || identity != (agentIdentity{}) {
+		rec.describeInstanceLocked(t, req, identity, false)
+		return identity, err
+	}
+	id := newAgentID()
+	return agentIdentity{id: id, subject: b.issuer.subject(id)}, nil
+}
+
+// checkIdentityLocked checks req again, since the session or the instance may
+// have changed while signing, and reports retry when identity is no longer
+// the one to admit. It fills rec with the instance's identity and history.
+// The caller holds t.mu.
+func (b *Broker) checkIdentityLocked(workload Workload, req RegisterAgentRequest, identity agentIdentity, rec *RegistrationRecord) (retry bool, err error) {
+	t := b.sessions
+	_, recorded, err := b.checkRegistrationLocked(workload, req)
+	if err != nil {
+		rec.describeInstanceLocked(t, req, recorded, false)
+		return false, err
+	}
+	if recorded != identity {
+		if recorded != (agentIdentity{}) {
+			return true, nil
+		}
+		if _, taken := t.agents[identity.subject]; taken {
+			return true, nil
+		}
+	}
+	rec.describeInstanceLocked(t, req, identity, recorded == (agentIdentity{}))
+	return false, nil
+}
+
+// describeInstanceLocked fills rec with identity, the instance's, and, for one
+// registered before, its previous registration and whether it moves session.
+// isNew reports an identity no registration recorded yet. The caller holds
+// t.mu.
+func (rec *RegistrationRecord) describeInstanceLocked(t *sessionTable, req RegisterAgentRequest, identity agentIdentity, isNew bool) {
+	if identity == (agentIdentity{}) {
+		// A refusal names the instance its incarnation registered as, if any.
+		if subject, ok := t.incarnations[req.Incarnation]; ok {
+			identity = agentIdentity{id: t.agents[subject].agentID, subject: subject}
+		}
+	}
+	rec.Agent, rec.AgentID, rec.New = AgentRef{Subject: identity.subject}, identity.id, isNew
+	rec.PreviousRecord, rec.Moved = "", false
+	if prev, ok := t.agents[identity.subject]; ok && !isNew {
+		rec.PreviousRecord, rec.Moved = prev.registrationRecord, prev.sessionID != req.SessionID
+	}
 }
 
 // effectiveCeilingLocked returns the effective ceiling of a new instance

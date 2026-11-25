@@ -19,11 +19,11 @@ var _ Core = (*Broker)(nil)
 // session's ID, owner, and closing time, as the design requires.
 //
 // Opens of one root host session run one at a time, under that host
-// session's lock in hostLocks, taken before mu. mu guards everything else and
+// session's lock in opening, taken before mu. mu guards everything else and
 // is never held while AS-1 is called, so other calls do not wait on an
 // exchange.
 type sessionTable struct {
-	mu   sync.Mutex
+	mu   tableMutex
 	open map[string]string // root host session ID -> open broker session ID
 	byID map[string]*brokerSession
 	// agents holds registered agents by subject, apart from their sessions.
@@ -45,8 +45,38 @@ type sessionTable struct {
 	runs *runLedger
 	now  func() time.Time
 
-	hostMu    sync.Mutex
-	hostLocks map[string]*hostLock // root host session ID -> its open lock
+	// opening serializes opens of one root host session.
+	opening keyedLocks
+	// registering serializes registrations of one incarnation, and reporting
+	// delegation reports to one broker session, so each check, record, and
+	// store runs as one step for them: a record is sent between the check and
+	// the store, outside mu.
+	registering, reporting keyedLocks
+}
+
+// tableMutex is sessionTable's mutex. A close takes effect while it is held;
+// closeLocked queues the close's record, and Unlock sends the queued records
+// after releasing the lock, so the sink is never called under it and every
+// close path, including a lookup that finds a session past its hard expiry,
+// is recorded.
+type tableMutex struct {
+	sync.Mutex
+	pending []Record
+	// deliver sends a queued record; nil drops them.
+	deliver func(Record)
+}
+
+// Unlock releases m, then sends the records queued while it was held.
+func (m *tableMutex) Unlock() {
+	pending := m.pending
+	m.pending = nil
+	m.Mutex.Unlock()
+	if m.deliver == nil {
+		return
+	}
+	for _, rec := range pending {
+		m.deliver(rec)
+	}
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -70,13 +100,27 @@ type brokerSession struct {
 	// grant is the refresh token the session holds; nil when it holds none.
 	// It is kept past its expiry, which stays the session's hard expiry.
 	grant *heldGrant
+	// openRecord is the AuditID of the open that created the session.
+	openRecord string
+	// user is the user AS-1 accepted for the session, with the open that
+	// recorded it; nil until then. It is kept with verifiedOwner, whose
+	// owner it holds.
+	user *verifiedUser
+}
+
+// verifiedUser is a session's verified user and the AuditID of the open
+// record that verified them.
+type verifiedUser struct {
+	User
+	openRecord string
 }
 
 func newSessionTable(skew time.Duration) *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
 		incarnations: map[string]string{}, skew: skew,
-		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), hostLocks: map[string]*hostLock{}, now: time.Now,
+		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), now: time.Now,
+		opening: keyedLocks{locks: map[string]*hostLock{}}, registering: keyedLocks{locks: map[string]*hostLock{}}, reporting: keyedLocks{locks: map[string]*hostLock{}},
 	}
 }
 
@@ -87,43 +131,122 @@ func newSessionTable(skew time.Duration) *sessionTable {
 // token converts it into the session's refresh token, as
 // convert describes. An open without one, or without an AuthServer, only
 // pairs the session with the reported owner.
+//
+// Every open is recorded (credentials-and-lifecycle.md step (3),
+// "Evidence"). A successful open returns only once its record is accepted;
+// otherwise it fails with CodeUnavailable and changes nothing: a session it
+// created does not stay open, and a refresh token it got is discarded, not
+// stored. A refused open is returned whether or not its record is accepted,
+// and a session it created does not stay open without one.
 func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Session{}, err
 	}
 	t := b.sessions
+	rec := SessionOpenRecord{
+		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeSessionOpen, At: t.now()},
+		Workload:     workload, HostSessionID: req.HostSessionID, Incarnation: req.Incarnation,
+		ReportedOwner: req.Owner, TokenPresented: !req.AccessToken.IsZero(),
+	}
 	unlock, err := t.lockHost(ctx, req.HostSessionID)
 	if err != nil {
-		return Session{}, err
+		return Session{}, b.refuseOpen(ctx, &rec, nil, err)
 	}
 	defer unlock()
+	s, pending, err := b.open(ctx, workload, req, &rec)
+	if err != nil {
+		return Session{}, b.refuseOpen(ctx, &rec, s, err)
+	}
+	rec.Outcome = OutcomeSuccess
+	if err := b.record(ctx, &rec); err != nil {
+		// Shortcut: a refresh token the open got is discarded, not revoked; removed by #2568 (refresh-token revocation).
+		t.mu.Lock()
+		if rec.NewSession {
+			t.closeLocked(s, ReasonSessionClosed, CloseOpenNotRecorded)
+		}
+		t.mu.Unlock()
+		return Session{}, errNotRecorded("session open")
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Only a close can have changed s while the record was sent: opens of
+	// its host session wait for the open lock this call holds.
+	if s.closed != "" {
+		return Session{}, ReasonError(s.closed, "the broker session closed during the open")
+	}
+	if pending != nil {
+		// One live refresh token per session: a new one replaces, and
+		// discards, any held before.
+		owner := pending.owner
+		s.verifiedOwner = &owner
+		s.user = &verifiedUser{User: pending.user, openRecord: rec.AuditID}
+		s.grant = pending
+	}
+	return t.viewLocked(s), nil
+}
+
+// open pairs the session and, when req carries an access token the broker
+// converts, runs the conversion. It fills rec with what it learns and
+// returns the session and the refresh token to store once rec is accepted;
+// nil when the open stores none. A refusal returns the session when the open
+// reached one. It takes t.mu and releases it before returning.
+func (b *Broker) open(ctx context.Context, workload Workload, req OpenSessionRequest, rec *SessionOpenRecord) (*brokerSession, *heldGrant, error) {
+	t := b.sessions
 	t.mu.Lock()
 	// convert releases t.mu around the AS-1 call and takes it again in a
 	// defer, so a panic there still unwinds through this Unlock with t.mu
 	// held.
 	defer t.mu.Unlock()
-	s, err := t.pairLocked(workload, req)
+	s, err := t.pairLocked(workload, req, rec)
 	if err != nil {
-		return Session{}, err
+		return nil, nil, err
 	}
 	if b.as1 == nil || req.AccessToken.IsZero() {
-		return t.viewLocked(s), nil
+		rec.Kind = OpenTokenless
+		rec.setSessionUser(s)
+		return s, nil, nil
 	}
 	// A new session stays paired whatever the conversion's outcome, even when
 	// check 1 refuses the token: the session is the reported owner's, and a
 	// retry with a fresh token finds it.
-	return b.convert(ctx, s, req)
+	pending, err := b.convert(ctx, s, req, rec)
+	return s, pending, err
+}
+
+// setSessionUser records s's verified user, from the open that verified it,
+// when an earlier open did.
+func (r *SessionOpenRecord) setSessionUser(s *brokerSession) {
+	if s.user != nil {
+		u := s.user.User
+		r.User, r.UserRecord = &u, s.user.openRecord
+	}
+}
+
+// refuseOpen records err as the refusal of rec's open of s, nil when the
+// open reached no session, and returns err. A session the open created does
+// not stay open when the refusal's record is not accepted.
+func (b *Broker) refuseOpen(ctx context.Context, rec *SessionOpenRecord, s *brokerSession, err error) error {
+	rec.refused(err)
+	rec.Kind = ""
+	if b.record(context.WithoutCancel(ctx), rec) != nil && rec.NewSession && s != nil {
+		t := b.sessions
+		t.mu.Lock()
+		t.closeLocked(s, ReasonSessionClosed, CloseOpenNotRecorded)
+		t.mu.Unlock()
+	}
+	return err
 }
 
 // pairLocked returns the open broker session of req's host session after
 // the workload, owner, and incarnation checks, or opens a new one paired with
-// the reported owner. The caller holds t.mu.
+// the reported owner, and notes which in rec. The caller holds t.mu.
 //
 // An open session past its hard expiry is closed first, so the host session
 // gets a new broker session as after any close.
-func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest) (*brokerSession, error) {
+func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest, rec *SessionOpenRecord) (*brokerSession, error) {
 	if id, ok := t.open[req.HostSessionID]; ok && !t.expireLocked(t.byID[id]) {
 		s := t.byID[id]
+		rec.SessionID, rec.SessionRecord = s.ID, s.openRecord
 		switch {
 		case s.workload != workload:
 			// Refusing necessarily reveals that the host session has a broker
@@ -143,10 +266,12 @@ func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest) (*b
 			Incarnation:   req.Incarnation,
 			Owner:         req.Owner,
 		},
-		workload: workload,
+		workload:   workload,
+		openRecord: rec.AuditID,
 	}
 	t.byID[s.ID] = s
 	t.open[s.HostSessionID] = s.ID
+	rec.SessionID, rec.NewSession = s.ID, true
 	return s, nil
 }
 
@@ -157,10 +282,11 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 	return view
 }
 
-// closeLocked closes s with reason, unless it is already closed, and
-// discards its refresh token, issued attempts, and run records. The caller
-// holds t.mu.
-func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
+// closeLocked closes s with reason for cause, unless it is already closed,
+// and discards its refresh token, issued attempts, and run records. The close
+// takes effect whether or not its record is accepted; the record is sent
+// when t.mu is released. The caller holds t.mu.
+func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseCause) {
 	if s.closed != "" {
 		return
 	}
@@ -170,6 +296,12 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason) {
 	t.attempts.dropLocked(s.ID)
 	t.runs.dropLocked(s.ID)
 	delete(t.open, s.HostSessionID)
+	userRecord, user := sessionUser(s)
+	t.mu.pending = append(t.mu.pending, &SessionCloseRecord{
+		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeSessionClose, At: s.closedAt, Outcome: OutcomeSuccess},
+		SessionID:    s.ID, HostSessionID: s.HostSessionID, Workload: s.workload, Owner: s.Owner,
+		ClosingReason: reason, Cause: cause, SessionRecord: s.openRecord, UserRecord: userRecord, User: user,
+	})
 }
 
 // pastHardExpiry reports whether g's expiry, the session's hard expiry, has
@@ -187,7 +319,7 @@ func (t *sessionTable) pastHardExpiry(g *heldGrant) bool {
 // stops working at its hard expiry. The caller holds t.mu.
 func (t *sessionTable) expireLocked(s *brokerSession) bool {
 	if s.closed == "" && s.grant != nil && t.pastHardExpiry(s.grant) {
-		t.closeLocked(s, ReasonSessionClosed)
+		t.closeLocked(s, ReasonSessionClosed, CloseHardExpiry)
 	}
 	return s.closed != ""
 }
@@ -232,7 +364,7 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 	if !ok || s.workload != workload {
 		return unknownSession()
 	}
-	t.closeLocked(s, req.Reason)
+	t.closeLocked(s, req.Reason, CloseRequested)
 	return nil
 }
 

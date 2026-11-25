@@ -32,6 +32,7 @@
 package identitybroker
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -76,9 +77,11 @@ type Broker struct {
 	as2 atomic.Pointer[as2Binding]
 	// idjag obtains each call's ID-JAG at AS-1; set whenever gateway is.
 	idjag IDJAGIssuer
-	// recorder records AuthorizeCall's ID-JAGs and decisions; nil records
-	// nothing, and is set whenever gateway is.
+	// recorder is the sink of every record; nil records nothing, and is set
+	// whenever gateway is.
 	recorder Recorder
+	// deliveryFailures reports records the sink refused; nil reports none.
+	deliveryFailures func(DeliveryFailure)
 
 	sessions *sessionTable
 }
@@ -122,6 +125,9 @@ func New(config Config, definitions []DefinitionRecord, signer crypto.Signer, op
 	for _, opt := range opts {
 		opt(b)
 	}
+	// A close takes effect under the table's lock; its record is sent once
+	// the lock is released.
+	b.sessions.mu.deliver = func(rec Record) { b.recordAnyway(context.Background(), rec) }
 	if err := b.issuer.addFallbacks(b.issuerFallbacks); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSigner, err)
 	}

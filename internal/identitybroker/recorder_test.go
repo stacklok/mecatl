@@ -11,10 +11,10 @@ func TestMemoryRecorderBoundsAndCopies(t *testing.T) {
 	r := NewMemoryRecorder()
 	for i := range maxMemoryRecords + 1 {
 		id := fmt.Sprintf("op-%d", i)
-		if err := r.RecordDecision(ctx, DecisionRecord{OperationID: id}); err != nil {
+		if err := r.Record(ctx, &DecisionRecord{OperationID: id}); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.RecordIDJAG(ctx, IDJAGRecord{OperationID: id}); err != nil {
+		if err := r.Record(ctx, &IDJAGRecord{OperationID: id}); err != nil {
 			t.Fatal(err)
 		}
 	}

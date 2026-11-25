@@ -207,15 +207,15 @@ func TestAuthorizeCallUnroutedServerIsDenied(t *testing.T) {
 	}
 }
 
-// failingRecorder refuses every record.
+// failingRecorder refuses every call's record: decisions and ID-JAGs.
 type failingRecorder struct{}
 
-func (failingRecorder) RecordIDJAG(context.Context, identitybroker.IDJAGRecord) error {
-	return errors.New("recorder unavailable")
-}
-
-func (failingRecorder) RecordDecision(context.Context, identitybroker.DecisionRecord) error {
-	return errors.New("recorder unavailable")
+func (failingRecorder) Record(_ context.Context, rec identitybroker.Record) error {
+	switch rec.(type) {
+	case *identitybroker.DecisionRecord, *identitybroker.IDJAGRecord:
+		return errors.New("recorder unavailable")
+	}
+	return nil
 }
 
 func TestAuthorizeCallRecordsRefusals(t *testing.T) {

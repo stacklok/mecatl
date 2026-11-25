@@ -48,7 +48,13 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	// Checks 4 and 5: the run belongs to this session and is bound to the
 	// agent, and its reported owner is the run's and the grant's.
 	t.mu.Lock()
+	if a, ok := t.agents[agent.Agent.Subject]; ok {
+		rec.AgentInstance, rec.RegistrationRecord = a.incarnation, a.registrationRecord
+	}
 	err = t.checkRunLocked(s, agent.Agent.Subject, req)
+	if err == nil && req.DelegationID != "" {
+		rec.DelegationRecord = t.runs.forLocked(s.ID).delegations[req.DelegationID].record
+	}
 	t.mu.Unlock()
 	if err != nil {
 		return Authorization{}, b.refuse(ctx, rec, err)
@@ -166,9 +172,12 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			return Authorization{}, NewError(CodeInternal, "", "the authorization server's answer is not an ID-JAG")
 		}
 		rec.IDJAG = claims.ref
-		if err := b.recorder.RecordIDJAG(ctx, IDJAGRecord{
-			At: t.now(), SessionID: s.ID, Agent: rec.Agent, AgentID: rec.AgentID,
+		if err := b.record(ctx, &IDJAGRecord{
+			RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeIDJAG, At: t.now(), Outcome: OutcomeSuccess},
+			SessionID:    s.ID, Workload: rec.Workload, Agent: rec.Agent, AgentID: rec.AgentID,
 			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, User: g.owner,
+			UserRecord: g.openRecord, UserSubjects: g.user, AgentInstance: rec.AgentInstance,
+			RegistrationRecord: rec.RegistrationRecord, DelegationRecord: rec.DelegationRecord,
 			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
 		}); err != nil {
@@ -282,7 +291,7 @@ func (t *sessionTable) afterRevocation(s *brokerSession, g *heldGrant) error {
 	if next, err := grantForCallLocked(s); err == nil && next != g {
 		return nil
 	}
-	t.closeLocked(s, ReasonSessionClosed)
+	t.closeLocked(s, ReasonSessionClosed, CloseGrantLost)
 	return ReasonError(ReasonSessionClosed, "the broker session's grant was revoked")
 }
 
@@ -316,15 +325,15 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	if ref, ok := readJWTRef(v.AccessToken); ok {
 		rec.GatewayToken = ref.ref
 	} else {
-		// Shortcut: a gateway token that is not a JWT has no reference; removed by #2541 (the record sink references AS-2's redemption event).
+		// Shortcut: a gateway token that is not a JWT has no reference; removed by #2848 (references to AS-2's redemption events).
 		rec.GatewayTokenUnreferenced = true
 	}
 	if err := t.stillOpen(s); err != nil {
 		return Authorization{}, err
 	}
 	success := *rec
-	success.Outcome = OutcomeSuccess
-	if err := b.recorder.RecordDecision(ctx, success); err != nil {
+	success.AuditID, success.Outcome = newAuditID(), OutcomeSuccess
+	if err := b.record(ctx, &success); err != nil {
 		return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")
 	}
 	t.mu.Lock()
@@ -513,8 +522,11 @@ func decisionRecord(now time.Time, workload Workload, s *brokerSession, req Auth
 	if s.verifiedOwner != nil {
 		owner = *s.verifiedOwner
 	}
+	userRecord, user := sessionUser(s)
 	return DecisionRecord{
-		At: now, SessionID: s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
+		RecordHeader: RecordHeader{Type: TypeToolDecision, At: now},
+		SessionID:    s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
+		UserRecord: userRecord, User: user,
 		RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner,
 		OperationID: req.OperationID, RejectedAttemptID: req.RejectedAttemptID,
 		Method: req.Method, Server: req.Server, Tool: req.Tool, ArgumentsSHA256: req.ArgumentsSHA256,
