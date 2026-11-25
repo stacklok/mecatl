@@ -455167,6 +455167,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795601262949,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d9079ffb88f3d9ba3348157ad9a5af14dcf98df",
+          "message": "chore(deps): bump toolhive to v0.69.0 (#2982)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-25T09:55:55Z",
+          "tree_id": "a28be67d329d2c1e3a0ea31c7585f87a469c543c",
+          "url": "https://github.com/stacklok/mecatl/commit/9d9079ffb88f3d9ba3348157ad9a5af14dcf98df"
+        },
+        "date": 1795602108370,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13418,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12912,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -592461,6 +592500,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795602104010,
+  "lastUpdate": 1795602109444,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
