@@ -411378,6 +411378,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795615039677,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4665d4e864bb4a30d9668e0b21cee6f6c4fc191f",
+          "message": "fix(executioncontroller): check the claim's epoch in `ExecutorRoute` (#2989)\n\n`activeRunFrom` takes a claim's epoch from `status.epoch` and its\nrevision from `spec.revision`, so `currentRunClaim` already refuses a\nrequest whose epoch or revision differs from the environment. The epoch\npersisted with the claim in `status.activeRun.epoch` was never read: if\na replacement bumped the status epoch while a claim survived, a request\ncarrying the new epoch and the old claim's IDs would be routed.\n\n`validateRunClaim` now also requires the claim's own epoch to equal the\nrequest's, refusing with `errRunClaimNotCurrent` like any stale claim.\nThe check reads the environment already fetched, so the call path adds\nno Kubernetes writes.\n\n`TestProxyRefusesBeforeForwarding` gains cases for an advanced status\nepoch, a claim from an earlier epoch, and a revised environment, each\nrefused as `Unauthenticated` before any executor connection.\n\nCloses: #2929",
+          "timestamp": "2026-11-25T17:53:43+01:00",
+          "tree_id": "01ce94a8053ecf1ffb4a8b5e22d42509448ead13",
+          "url": "https://github.com/stacklok/mecatl/commit/4665d4e864bb4a30d9668e0b21cee6f6c4fc191f"
+        },
+        "date": 1795626460532,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -593449,6 +593483,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795626456051,
+  "lastUpdate": 1795626461625,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
