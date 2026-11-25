@@ -296,6 +296,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
 - With a lossless sink configured, an unavailable sink blocks dispatch, and no record is dropped under back-pressure or when the sink restarts.
 - The broker refuses to dispatch when its decision record cannot be delivered, and dispatches only after the sink accepts it.
+- A session open, instance registration, or accepted delegation report whose record the sink does not accept fails as `UNAVAILABLE` and leaves no session, instance, or delegation behind. A close or a refusal whose record is not accepted still takes effect.
 - Removing a record or ending a stream without its stop event shows as a sequence gap.
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
 - The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
