@@ -126,8 +126,8 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	rec := DelegationRecord{
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeDelegation, At: t.now()},
 		Workload:     workload, SessionID: req.SessionID, DelegationID: req.DelegationID,
-		DelegatingRun: req.DelegatingRun, DelegatingAgent: req.DelegatingAgent, StandIn: req.StandIn,
-		ReceivingRun: req.ReceivingRun, ReceivingAgent: req.ReceivingAgent, Owner: req.Owner,
+		DelegatingRun: req.DelegatingRun, DelegatingAgent: req.DelegatingAgent, DelegatingStandIn: req.DelegatingStandIn,
+		ReceivingRun: req.ReceivingRun, ReceivingAgent: req.ReceivingAgent, RunOwner: req.Owner,
 	}
 	unlock, err := t.reporting.lock(ctx, req.SessionID, "the delegation report was cancelled")
 	if err != nil {
@@ -154,7 +154,7 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	}
 	t.mu.Unlock()
 	if err != nil && !errors.Is(err, errRepeatedDelegation) {
-		rec.AuditID = newAuditID()
+		rec.RecordHeader = rec.supersede()
 		return b.refuseDelegation(ctx, rec, err)
 	}
 	return nil
@@ -230,7 +230,7 @@ func (t *sessionTable) checkDelegationLocked(workload Workload, req ReportDelega
 	// Check 6: a delegation is reported once; a repeat must match.
 	d := delegationRecord{
 		delegatingRun: req.DelegatingRun, delegatingAgent: req.DelegatingAgent.Subject,
-		receivingRun: req.ReceivingRun, receivingAgent: req.ReceivingAgent.Subject, owner: req.Owner, standIn: req.StandIn,
+		receivingRun: req.ReceivingRun, receivingAgent: req.ReceivingAgent.Subject, owner: req.Owner, standIn: req.DelegatingStandIn,
 	}
 	if prev, ok := runs.delegations[req.DelegationID]; ok {
 		if !prev.sameContent(d) {
@@ -252,10 +252,10 @@ func (t *sessionTable) describeDelegationLocked(workload Workload, req ReportDel
 	if !ok || s.workload != workload {
 		return
 	}
-	rec.SessionOwner = s.Owner
+	rec.Owner = s.Owner
 	rec.UserRecord, rec.User = sessionUser(s)
 	if a, ok := t.agents[req.DelegatingAgent.Subject]; ok && a.sessionID == s.ID {
-		rec.DelegatingAgentID, rec.DelegatingRecord = a.agentID, a.registrationRecord
+		rec.DelegatingAgentID, rec.DelegatingInstance, rec.DelegatingRecord = a.agentID, a.incarnation, a.registrationRecord
 	}
 	if a, ok := t.agents[req.ReceivingAgent.Subject]; ok && a.sessionID == s.ID {
 		rec.ReceivingAgentID, rec.ReceivingRecord = a.agentID, a.registrationRecord

@@ -343,6 +343,8 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	}
 	t.mu.Unlock()
 	if closed != nil {
+		// The caller records the refusal, after the success.
+		rec.Supersedes = success.AuditID
 		return Authorization{}, closed
 	}
 	return Authorization{GatewayToken: v.AccessToken, ExpiresAt: expiresAt, AttemptID: rec.AttemptID}, nil

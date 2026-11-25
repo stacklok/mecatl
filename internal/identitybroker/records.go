@@ -54,6 +54,11 @@ type RecordHeader struct {
 	// Code and Reason are a refusal's; empty on success.
 	Code   Code
 	Reason Reason
+	// Supersedes is the AuditID of this event's accepted success record, for
+	// a refusal recorded after it because the event could not take effect:
+	// its session closed while the success was recorded. Records are never
+	// edited; this one follows the earlier one.
+	Supersedes string
 }
 
 // The Subjects keys of audit.md's AuditEvent profile.
@@ -91,8 +96,8 @@ const (
 	ProvenanceReportedByMecak8s SubjectProvenance = "reported:" + mecak8sComponent
 )
 
-// ProvenanceRecord marks a subject taken from the retained record auditID.
-func ProvenanceRecord(auditID string) SubjectProvenance {
+// ProvenanceFromRecord marks a subject taken from the retained record auditID.
+func ProvenanceFromRecord(auditID string) SubjectProvenance {
 	return SubjectProvenance("record:" + auditID)
 }
 
@@ -254,7 +259,7 @@ func (r *SessionOpenRecord) Subjects() Subjects {
 	case r.User != nil && r.UserRecord == "":
 		s.addUser(true, *r.User, ProvenanceVerified, Owner{})
 	case r.User != nil:
-		s.addUser(true, *r.User, ProvenanceRecord(r.UserRecord), Owner{})
+		s.addUser(true, *r.User, ProvenanceFromRecord(r.UserRecord), Owner{})
 	default:
 		s.addUser(false, User{}, "", r.ReportedOwner)
 	}
@@ -311,7 +316,7 @@ func (r *SessionCloseRecord) Header() RecordHeader { return r.header(TypeSession
 // Subjects implements Record.
 func (r *SessionCloseRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.User, ProvenanceRecord(r.UserRecord), r.Owner)
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
 	s.addWorkload(r.Workload)
 	return s
 }
@@ -367,13 +372,13 @@ func (r *RegistrationRecord) Header() RecordHeader { return r.header(TypeInstanc
 // Subjects implements Record.
 func (r *RegistrationRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.User, ProvenanceRecord(r.UserRecord), r.Owner)
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
 	s.addWorkload(r.Workload)
 	// The broker gives the instance its identity; mecak8s reports which
 	// instance (incarnation) it is.
 	p := ProvenanceVerified
 	if r.PreviousRecord != "" && r.Outcome != OutcomeSuccess {
-		p = ProvenanceRecord(r.PreviousRecord)
+		p = ProvenanceFromRecord(r.PreviousRecord)
 	}
 	s.addAgent(r.Agent, r.AgentID, p, r.Incarnation, ProvenanceReportedByMecak8s)
 	return s
@@ -391,13 +396,15 @@ type DelegationRecord struct {
 	Workload     Workload
 	SessionID    string
 	DelegationID string
-	// DelegatingRun and DelegatingAgent delegate; DelegatingAgentID and
-	// DelegatingRecord are the agent's ag_ identifier and latest accepted
-	// registration, when it is registered to the session.
-	DelegatingRun     string
-	DelegatingAgent   AgentRef
-	DelegatingAgentID string
-	DelegatingRecord  string
+	// DelegatingRun and DelegatingAgent delegate; DelegatingAgentID,
+	// DelegatingInstance, and DelegatingRecord are the agent's ag_
+	// identifier, incarnation, and latest accepted registration, when it is
+	// registered to the session.
+	DelegatingRun      string
+	DelegatingAgent    AgentRef
+	DelegatingAgentID  string
+	DelegatingInstance string
+	DelegatingRecord   string
 	// DelegatingRunRecorded reports that, when the report was checked, the
 	// broker had not seen the delegating run, so the report records it as a
 	// root run of DelegatingAgent. A call of that run racing the report may
@@ -406,23 +413,24 @@ type DelegationRecord struct {
 	// ParentDelegationRecord is the AuditID of the delegation the delegating
 	// run itself acts under; empty for a root run.
 	ParentDelegationRecord string
-	// StandIn reports, as mecak8s did, that DelegatingRun is a run of the
+	// DelegatingStandIn reports, as mecak8s did, that DelegatingRun is a run of the
 	// root's main agent standing in for the API request that started a
 	// team, not a delegation the agent made.
-	StandIn bool
-	// ReceivingRun, its Owner, and ReceivingAgent receive the work;
+	DelegatingStandIn bool
+	// ReceivingRun, its RunOwner, and ReceivingAgent receive the work;
 	// ReceivingAgentID and ReceivingRecord as for the delegating agent.
 	ReceivingRun     string
 	ReceivingAgent   AgentRef
 	ReceivingAgentID string
 	ReceivingRecord  string
-	Owner            Owner
+	RunOwner         Owner
 	// UserRecord is the AuditID of the open that verified the session's
 	// user, and User that user; empty when none did.
 	UserRecord string
 	User       User
-	// SessionOwner is the broker session's owner, as mecak8s reported it.
-	SessionOwner Owner
+	// Owner is the broker session's owner, as mecak8s reported it, as in
+	// the other records.
+	Owner Owner
 }
 
 // Header implements Record.
@@ -432,10 +440,10 @@ func (r *DelegationRecord) Header() RecordHeader { return r.header(TypeDelegatio
 // mecak8s reported it.
 func (r *DelegationRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.User, ProvenanceRecord(r.UserRecord), r.SessionOwner)
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
 	s.addWorkload(r.Workload)
-	s.addAgent(r.DelegatingAgent, r.DelegatingAgentID, ProvenanceReportedByMecak8s, "", ProvenanceUnavailable)
-	s.addRunOwner(r.Owner)
+	s.addAgent(r.DelegatingAgent, r.DelegatingAgentID, ProvenanceReportedByMecak8s, r.DelegatingInstance, ProvenanceReportedByMecak8s)
+	s.addRunOwner(r.RunOwner)
 	return s
 }
 
@@ -458,6 +466,13 @@ func (r *RecordHeader) refused(err error) {
 	r.Outcome = outcomeFor(r.Code)
 }
 
+// supersede returns h as the header of a refusal that follows h's accepted
+// success record: a new AuditID, referring to the success.
+func (r RecordHeader) supersede() RecordHeader {
+	r.Supersedes, r.AuditID = r.AuditID, newAuditID()
+	return r
+}
+
 // newAuditID returns a new record ID, in the lowercase base32 form of the
 // broker's other identifiers.
 func newAuditID() string {
@@ -477,6 +492,8 @@ type DeliveryFailure struct {
 // failure (audit.md, "Write order and failure"). Without it, or with nil,
 // refused records are reported nowhere but in the failing operation's
 // error, and a refusal or close whose record is refused in none.
+//
+// Shortcut: delivery failures are reported to a callback, which mecak8s logs, not on a separate delivery-failure channel; removed by #2848.
 func WithDeliveryFailures(report func(DeliveryFailure)) Option {
 	return func(b *Broker) { b.deliveryFailures = report }
 }

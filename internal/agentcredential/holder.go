@@ -388,7 +388,7 @@ func (h *Holder) reportCurrent(ctx context.Context, key Key, r *root, agent iden
 		err := h.broker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
 			SessionID:    target,
 			DelegationID: l.d.ID, DelegatingRun: l.d.DelegatingRun, DelegatingAgent: l.delegating,
-			ReceivingRun: l.d.Run.ID, ReceivingAgent: l.receiving, Owner: l.d.Run.Owner, StandIn: l.d.StandIn,
+			ReceivingRun: l.d.Run.ID, ReceivingAgent: l.receiving, Owner: l.d.Run.Owner, DelegatingStandIn: l.d.DelegatingStandIn,
 		})
 		if err != nil {
 			return d, fmt.Errorf("report delegation %s again: %w", l.d.ID, err)

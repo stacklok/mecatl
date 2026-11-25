@@ -186,12 +186,12 @@ func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parent
 		Run:                    agentcredential.Run{ID: newRunID(), Owner: delegating.Owner},
 		DelegatingRun:          delegating.ID,
 		DelegatingAgentSession: parentHost,
-		StandIn:                standIn,
+		DelegatingStandIn:      standIn,
 	}
 	err := s.cfg.IdentityBroker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
 		SessionID:    helper.BrokerSessionID,
 		DelegationID: d.ID, DelegatingRun: d.DelegatingRun, DelegatingAgent: parent.Agent,
-		ReceivingRun: d.Run.ID, ReceivingAgent: helper.Agent, Owner: d.Run.Owner, StandIn: d.StandIn,
+		ReceivingRun: d.Run.ID, ReceivingAgent: helper.Agent, Owner: d.Run.Owner, DelegatingStandIn: d.DelegatingStandIn,
 	})
 	switch {
 	case err == nil:

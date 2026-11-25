@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -30,15 +31,10 @@ const (
 // carries AS-1's iss, sub, and client_id.
 func userToken(t *testing.T, owner identitybroker.Owner) identitybroker.Token {
 	t.Helper()
-	payload, err := json.Marshal(map[string]any{
+	return jwtShaped(map[string]any{"alg": "none"}, map[string]any{
 		"jti": rand.Text(), "exp": fixedNow().Add(time.Hour).Unix(), "iss": userTokenIssuer, "sub": as1Subject, "client_id": as1Client,
 		"sub_id": map[string]string{"format": "iss_sub", "iss": owner.Issuer, "sub": owner.Subject},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	enc := base64.RawURLEncoding
-	return identitybroker.NewToken(enc.EncodeToString([]byte(`{"alg":"none"}`)) + "." + enc.EncodeToString(payload) + ".sig")
 }
 
 // sink is a MemoryRecorder that refuses the records refuse picks, and
@@ -189,7 +185,7 @@ func TestSessionOpenRecordsEachKindOfOpen(t *testing.T) {
 	if again.Kind != identitybroker.OpenAlreadyConverted || again.UserRecord != converted.AuditID || again.SourceJTI != jti(t, first) {
 		t.Fatalf("repeated open record = %+v", again)
 	}
-	wantSubject(t, &again, identitybroker.SubjectUserID, as1Subject, identitybroker.ProvenanceRecord(converted.AuditID))
+	wantSubject(t, &again, identitybroker.SubjectUserID, as1Subject, identitybroker.ProvenanceFromRecord(converted.AuditID))
 
 	// A fresh token replaces the refresh token the first open stored, which
 	// the record names by that open and its source jti.
@@ -515,7 +511,7 @@ func TestRegistrationRecordsAreLineageEvents(t *testing.T) {
 	}
 	wantSubject(t, &h, identitybroker.SubjectAgentSPIFFEID, helper.Agent.Subject, identitybroker.ProvenanceVerified)
 	wantSubject(t, &h, identitybroker.SubjectAgentInstanceRef, incHelper, identitybroker.ProvenanceReportedByMecak8s)
-	wantSubject(t, &h, identitybroker.SubjectUserID, as1Subject, identitybroker.ProvenanceRecord(openRec.AuditID))
+	wantSubject(t, &h, identitybroker.SubjectUserID, as1Subject, identitybroker.ProvenanceFromRecord(openRec.AuditID))
 
 	// Registering again re-admits the helper; after a reopen it moves.
 	if _, err := f.b.RegisterAgent(ctx, testWorkload, helperRequest(s, main.Agent, incHelper, false)); err != nil {
@@ -554,7 +550,7 @@ func TestRegistrationRecordsAreLineageEvents(t *testing.T) {
 		refused.Agent != helper.Agent || refused.PreviousRecord != moved.AuditID || !refused.CredentialExpiresAt.IsZero() {
 		t.Fatalf("refused registration record = %+v", refused)
 	}
-	wantSubject(t, &refused, identitybroker.SubjectAgentSPIFFEID, helper.Agent.Subject, identitybroker.ProvenanceRecord(moved.AuditID))
+	wantSubject(t, &refused, identitybroker.SubjectAgentSPIFFEID, helper.Agent.Subject, identitybroker.ProvenanceFromRecord(moved.AuditID))
 }
 
 // delegationFixture is a recordFixture with a granted session whose main
@@ -583,7 +579,7 @@ func newDelegationFixture(t *testing.T) delegationFixture {
 func (f delegationFixture) report(id, from string, delegating identitybroker.AgentRef, to string, receiving identitybroker.AgentRef, standIn bool) error {
 	return f.b.ReportDelegation(context.Background(), testWorkload, identitybroker.ReportDelegationRequest{
 		SessionID: f.s.ID, DelegationID: id, DelegatingRun: from, DelegatingAgent: delegating,
-		ReceivingRun: to, ReceivingAgent: receiving, Owner: testOwner, StandIn: standIn,
+		ReceivingRun: to, ReceivingAgent: receiving, Owner: testOwner, DelegatingStandIn: standIn,
 	})
 }
 
@@ -604,11 +600,12 @@ func TestDelegationReportsAreLineageEvents(t *testing.T) {
 	if first.Type != identitybroker.TypeDelegation || first.Outcome != identitybroker.OutcomeSuccess || first.DelegationID != "D41" ||
 		first.DelegatingRun != "R41" || first.DelegatingAgent != f.main.Agent || first.DelegatingRecord != mainRec.AuditID ||
 		first.ReceivingRun != "R42" || first.ReceivingAgent != f.helper.Agent || first.ReceivingRecord != helperRec.AuditID ||
-		first.Owner != testOwner || !first.DelegatingRunRecorded || first.ParentDelegationRecord != "" || first.StandIn {
+		first.RunOwner != testOwner || first.Owner != testOwner || !first.DelegatingRunRecorded || first.ParentDelegationRecord != "" || first.DelegatingStandIn {
 		t.Fatalf("delegation record = %+v", first)
 	}
 	wantSubject(t, &first, identitybroker.SubjectRunOwnerID, testOwner.Subject, identitybroker.ProvenanceReportedByMecak8s)
 	wantSubject(t, &first, identitybroker.SubjectAgentSPIFFEID, f.main.Agent.Subject, identitybroker.ProvenanceReportedByMecak8s)
+	wantSubject(t, &first, identitybroker.SubjectAgentInstanceRef, openIncarnation, identitybroker.ProvenanceReportedByMecak8s)
 
 	// An identical repeat succeeds with no second record.
 	if err := f.report("D41", "R41", f.main.Agent, "R42", f.helper.Agent, false); err != nil {
@@ -637,7 +634,7 @@ func TestDelegationReportsAreLineageEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	team := f.sink.Delegations()[2]
-	if !team.StandIn || !team.DelegatingRunRecorded || team.DelegatingRun != "RT1" {
+	if !team.DelegatingStandIn || !team.DelegatingRunRecorded || team.DelegatingRun != "RT1" {
 		t.Fatalf("team delegation record = %+v, want main as a stand-in and its run recorded", team)
 	}
 
@@ -701,7 +698,7 @@ func TestCallRecordsReferenceTheTrail(t *testing.T) {
 		t.Fatalf("decision record = %+v, want the same references as %+v", d, jag)
 	}
 	for _, rec := range []identitybroker.Record{&jag, &d} {
-		wantSubject(t, rec, identitybroker.SubjectOwnerID, testOwner.Subject, identitybroker.ProvenanceRecord(opens[0].AuditID))
+		wantSubject(t, rec, identitybroker.SubjectOwnerID, testOwner.Subject, identitybroker.ProvenanceFromRecord(opens[0].AuditID))
 		wantSubject(t, rec, identitybroker.SubjectAgentSPIFFEID, f.child.Subject, identitybroker.ProvenanceVerified)
 		wantSubject(t, rec, identitybroker.SubjectAgentInstanceRef, "inc_bbcdefghijklmnopqrstuvwxya", identitybroker.ProvenanceCredentialVerified)
 		wantSubject(t, rec, identitybroker.SubjectRunOwnerID, testOwner.Subject, identitybroker.ProvenanceReportedByMecak8s)
@@ -767,6 +764,55 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		f.sink.refusing(identitybroker.TypeSessionOpen)
 		_, err := f.open(openHost, testOwner, userToken(t, identitybroker.Owner{Issuer: testOwner.Issuer, Subject: "bob-117"}))
 		wantError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonOwnerMismatch)
+		// The refused open created the session; without its record, the
+		// session does not stay open.
+		if _, found := findSession(t, f.b, openHost); found {
+			t.Fatal("a refused open whose record was refused left its new session open")
+		}
+		closes := f.sink.Closes()
+		if len(closes) != 1 || closes[0].Cause != identitybroker.CloseOpenNotRecorded || closes[0].SessionRecord != "" {
+			t.Fatalf("close records = %+v, want the unrecorded open's, naming no open record", closes)
+		}
+		if failures := f.sink.reported(); len(failures) != 1 || failures[0].Type != identitybroker.TypeSessionOpen {
+			t.Fatalf("delivery failures = %+v, want the refused open's", failures)
+		}
+	})
+
+	t.Run("an open cancelled while waiting for its host session is recorded", func(t *testing.T) {
+		f := newRecordFixture(t)
+		entered, release := make(chan struct{}), make(chan struct{})
+		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
+			close(entered)
+			<-release
+			return grantResult("rt-blocked"), nil
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.open(openHost, testOwner, userToken(t, testOwner))
+			done <- err
+		}()
+		receive(t, entered)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// Taking an uncontended lock ignores ctx, so this open waits on the
+		// first one's and gives up at once.
+		_, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
+			HostSessionID: openHost, Incarnation: openIncarnation, Owner: testOwner,
+		})
+		wantError(t, err, identitybroker.CodeUnavailable, "")
+		close(release)
+		if err := receive(t, done); err != nil {
+			t.Fatalf("first open: %v", err)
+		}
+		var cancelled []identitybroker.SessionOpenRecord
+		for _, o := range f.sink.Opens() {
+			if o.Code == identitybroker.CodeUnavailable {
+				cancelled = append(cancelled, o)
+			}
+		}
+		if len(cancelled) != 1 || cancelled[0].SessionID != "" || cancelled[0].Outcome != identitybroker.OutcomeError || cancelled[0].HostSessionID != openHost {
+			t.Fatalf("records of the cancelled open = %+v, want one error naming the host session and no broker session", cancelled)
+		}
 	})
 
 	t.Run("an unrecorded registration admits nothing", func(t *testing.T) {
@@ -842,6 +888,50 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		}
 	})
 
+	// closeOnSuccess has f's sink close session id once it accepts a success
+	// record of type typ, as a close racing the record would.
+	closeOnSuccess := func(f *recordFixture, typ string, id func() string) {
+		f.sink.mu.Lock()
+		defer f.sink.mu.Unlock()
+		f.sink.refuse = func(rec identitybroker.Record) bool {
+			if h := rec.Header(); h.Type == typ && h.Outcome == identitybroker.OutcomeSuccess {
+				identitybroker.CloseSessionWithReason(f.b, id(), identitybroker.ReasonSessionClosed)
+			}
+			return false
+		}
+	}
+
+	t.Run("a registration whose session closes while it is recorded is recorded refused", func(t *testing.T) {
+		f := newRecordFixture(t)
+		s, err := f.open(openHost, testOwner, userToken(t, testOwner))
+		if err != nil {
+			t.Fatal(err)
+		}
+		closeOnSuccess(f, identitybroker.TypeInstanceRegistered, func() string { return s.ID })
+		reg, err := f.b.RegisterAgent(ctx, testWorkload, mainAgent(s))
+		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		if !reg.Credential.IsZero() {
+			t.Fatal("a registration whose session closed returned a credential")
+		}
+		regs := f.sink.Registrations()
+		if len(regs) != 2 || regs[0].Outcome != identitybroker.OutcomeSuccess || regs[1].Reason != identitybroker.ReasonSessionClosed ||
+			regs[1].Supersedes != regs[0].AuditID || regs[1].AuditID == regs[0].AuditID {
+			t.Fatalf("registration records = %+v, want a success then a refusal superseding it", regs)
+		}
+	})
+
+	t.Run("a delegation whose session closes while it is recorded is recorded refused", func(t *testing.T) {
+		f := newDelegationFixture(t)
+		closeOnSuccess(f.recordFixture, identitybroker.TypeDelegation, func() string { return f.s.ID })
+		err := f.report("D41", "R41", f.main.Agent, "R42", f.helper.Agent, false)
+		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		d := f.sink.Delegations()
+		if len(d) != 2 || d[0].Outcome != identitybroker.OutcomeSuccess || d[1].Reason != identitybroker.ReasonSessionClosed ||
+			d[1].Supersedes != d[0].AuditID || d[1].DelegatingRunRecorded {
+			t.Fatalf("delegation records = %+v, want a success then a refusal superseding it", d)
+		}
+	})
+
 	t.Run("a session closed while its open is recorded is not returned", func(t *testing.T) {
 		f := newRecordFixture(t)
 		var b *identitybroker.Broker
@@ -861,7 +951,8 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		// The success is followed by a refusal, so the records show the open
 		// was not honoured.
 		if len(opens) != 2 || opens[0].Outcome != identitybroker.OutcomeSuccess || opens[1].Reason != identitybroker.ReasonSessionClosed ||
-			opens[1].AuditID == opens[0].AuditID || opens[1].User != nil || opens[1].SessionID != opens[0].SessionID {
+			opens[1].AuditID == opens[0].AuditID || opens[1].Supersedes != opens[0].AuditID || opens[1].User != nil ||
+			opens[1].SessionID != opens[0].SessionID {
 			t.Fatalf("open records = %+v, want a success then a session_closed refusal", opens)
 		}
 	})
@@ -913,8 +1004,16 @@ func TestNoCredentialValueInAnyRecord(t *testing.T) {
 	for _, r := range f.rec.Decisions() {
 		records = append(records, &r)
 	}
+	// Token's formatting redacts its value, so a Token held in a record
+	// would not show in the text: no record holds one at all.
+	if got := tokenFields(reflect.ValueOf(struct{ Leaked identitybroker.Token }{access}), "planted"); len(got) != 1 {
+		t.Fatalf("tokenFields found %v in a planted Token, want it", got)
+	}
 	kinds := map[string]bool{}
 	for _, rec := range records {
+		if got := tokenFields(reflect.ValueOf(rec), rec.Header().Type); len(got) != 0 {
+			t.Errorf("records hold Token fields: %v", got)
+		}
 		kinds[rec.Header().Type] = true
 		text := fmt.Sprintf("%+v %+v", rec, rec.Subjects())
 		for _, secret := range secrets {
@@ -934,6 +1033,36 @@ func TestNoCredentialValueInAnyRecord(t *testing.T) {
 			t.Errorf("no %s record was checked", typ)
 		}
 	}
+}
+
+// tokenFields returns the path of every non-zero Token v holds.
+func tokenFields(v reflect.Value, path string) []string {
+	if v.Type() == reflect.TypeFor[identitybroker.Token]() {
+		if !v.Interface().(identitybroker.Token).IsZero() {
+			return []string{path}
+		}
+		return nil
+	}
+	var found []string
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			found = tokenFields(v.Elem(), path)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			found = append(found, tokenFields(v.Field(i), path+"."+v.Type().Field(i).Name)...)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := range v.Len() {
+			found = append(found, tokenFields(v.Index(i), fmt.Sprintf("%s[%d]", path, i))...)
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			found = append(found, tokenFields(v.MapIndex(k), fmt.Sprintf("%s[%v]", path, k))...)
+		}
+	}
+	return found
 }
 
 // TestSessionOpenRecordsTheUserAS1Accepted opens with a real AS-1 token:

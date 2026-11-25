@@ -508,11 +508,11 @@ type ReportDelegationRequest struct {
 	ReceivingAgent AgentRef
 	// Owner is the receiving run's owner. It must equal the delegating run's.
 	Owner Owner
-	// StandIn reports that DelegatingRun is a run of the root's main agent
+	// DelegatingStandIn reports that DelegatingRun is a run of the root's main agent
 	// standing in for the API request that started a team, so the receiving
 	// agent is a team member whose stand-in parent is DelegatingAgent. It is
 	// part of the delegation's content: a repeat must carry the same value.
-	StandIn bool
+	DelegatingStandIn bool
 }
 
 // Validate reports whether r is well formed. The error is an *Error with

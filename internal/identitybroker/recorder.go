@@ -9,12 +9,16 @@ import (
 
 // Recorder is the sink the broker's records go through: every open, close,
 // registration, delegation report, ID-JAG, and call decision. Record returns
-// nil once it accepts rec, and an error when it refuses it; each event handles
-// a refusal as audit.md, "Write order and failure", says. Records are
+// nil once it accepts rec, and an error when it refuses it. A refusal is
+// handled per event: a successful open, registration, or delegation report
+// fails with CodeUnavailable and changes nothing; an ID-JAG is not redeemed
+// and a success decision returns no gateway token, both failing with
+// CodeUnavailable; refusals and closes take effect anyway. Every refused
+// record is reported through WithDeliveryFailures. Records are
 // *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
-// *DelegationRecord, *IDJAGRecord, or *DecisionRecord, and the sink must not
-// keep rec itself past the call: the broker does not change a record after
-// sending it, but it owns it. An implementation is safe for concurrent use.
+// *DelegationRecord, *IDJAGRecord, or *DecisionRecord. The broker owns rec
+// and may reuse it after the call, so the sink copies what it keeps. An
+// implementation is safe for concurrent use.
 type Recorder interface {
 	Record(ctx context.Context, rec Record) error
 }
@@ -59,9 +63,12 @@ type IDJAGRecord struct {
 	DelegationID string
 	// RunOwner is the owner the run acts for, as reported.
 	RunOwner Owner
-	// User is the user of the grant the ID-JAG was exchanged from, and
-	// UserRecord the AuditID of the open that stored the grant, which
-	// verified the user: AS-1's subject and client, as UserSubjects holds.
+	// User is the company identity (owner) of the grant the ID-JAG was
+	// exchanged from, and UserRecord the AuditID of the open that stored the
+	// grant, which verified the user: AS-1's subject and client, as
+	// UserSubjects holds. User keeps its earlier name and type until the
+	// per-call records change with #2727; in the other records, User is the
+	// verified user and Owner the company identity.
 	User         Owner
 	UserRecord   string
 	UserSubjects User
@@ -86,7 +93,7 @@ func (r *IDJAGRecord) Header() RecordHeader { return r.header(TypeIDJAG) }
 // stored it.
 func (r *IDJAGRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.UserSubjects, ProvenanceRecord(r.UserRecord), r.User)
+	s.addUser(r.UserRecord != "", r.UserSubjects, ProvenanceFromRecord(r.UserRecord), r.User)
 	s.addWorkload(r.Workload)
 	s.addAgent(r.Agent, r.AgentID, ProvenanceVerified, r.AgentInstance, ProvenanceCredentialVerified)
 	s.addRunOwner(r.RunOwner)
@@ -154,7 +161,7 @@ func (r *DecisionRecord) Header() RecordHeader { return r.header(TypeToolDecisio
 // credential verified; which instance it is, mecak8s reported.
 func (r *DecisionRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.User, ProvenanceRecord(r.UserRecord), r.Owner)
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
 	s.addWorkload(r.Workload)
 	instance := ProvenanceCredentialVerified
 	if r.AgentInstance == "" {
@@ -207,16 +214,7 @@ func (r *MemoryRecorder) Record(_ context.Context, rec Record) error {
 	defer r.mu.Unlock()
 	switch rec := rec.(type) {
 	case *SessionOpenRecord:
-		c := *rec
-		if c.User != nil {
-			u := *c.User
-			c.User = &u
-		}
-		if c.Replaced != nil {
-			g := *c.Replaced
-			c.Replaced = &g
-		}
-		r.opens = appendBounded(r.opens, c)
+		r.opens = appendBounded(r.opens, rec.clone())
 	case *SessionCloseRecord:
 		r.closes = appendBounded(r.closes, *rec)
 	case *RegistrationRecord:
@@ -235,18 +233,25 @@ func (r *MemoryRecorder) Record(_ context.Context, rec Record) error {
 func (r *MemoryRecorder) Opens() []SessionOpenRecord {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := slices.Clone(r.opens)
-	for i := range out {
-		if out[i].User != nil {
-			u := *out[i].User
-			out[i].User = &u
-		}
-		if out[i].Replaced != nil {
-			g := *out[i].Replaced
-			out[i].Replaced = &g
-		}
+	out := make([]SessionOpenRecord, len(r.opens))
+	for i := range r.opens {
+		out[i] = r.opens[i].clone()
 	}
 	return out
+}
+
+// clone returns a copy of r that shares no memory with it.
+func (r *SessionOpenRecord) clone() SessionOpenRecord {
+	c := *r
+	if c.User != nil {
+		u := *c.User
+		c.User = &u
+	}
+	if c.Replaced != nil {
+		g := *c.Replaced
+		c.Replaced = &g
+	}
+	return c
 }
 
 // Closes returns a copy of the session close records, oldest first.

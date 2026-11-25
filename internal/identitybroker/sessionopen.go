@@ -425,9 +425,9 @@ func echoMatches(res TokenExchangeResult, sent ExchangeGrant, now time.Time) boo
 	return true
 }
 
-// hostLock is one key's lock in keyedLocks. refs counts the callers holding
+// keyedLock is one key's lock in keyedLocks. refs counts the callers holding
 // or waiting for it, so the entry is dropped when none do.
-type hostLock struct {
+type keyedLock struct {
 	sem  chan struct{}
 	refs int
 }
@@ -437,22 +437,17 @@ type hostLock struct {
 // session.
 type keyedLocks struct {
 	mu    sync.Mutex
-	locks map[string]*hostLock
-}
-
-// lockHost waits for the open lock of host, or for ctx to end, and returns
-// its release. It never holds t.mu.
-func (t *sessionTable) lockHost(ctx context.Context, host string) (func(), error) {
-	return t.opening.lock(ctx, host, "the session open was cancelled")
+	locks map[string]*keyedLock
 }
 
 // lock waits for key's lock, or for ctx to end, and returns its release; a
-// wait that ctx ends fails with CodeUnavailable and cancelled.
+// wait that ctx ends fails with CodeUnavailable and cancelled. It never
+// takes sessionTable.mu.
 func (k *keyedLocks) lock(ctx context.Context, key, cancelled string) (func(), error) {
 	k.mu.Lock()
 	l := k.locks[key]
 	if l == nil {
-		l = &hostLock{sem: make(chan struct{}, 1)}
+		l = &keyedLock{sem: make(chan struct{}, 1)}
 		k.locks[key] = l
 	}
 	l.refs++

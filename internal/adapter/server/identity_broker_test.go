@@ -763,7 +763,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			}
 			d := delegations[0]
 			if !strings.HasPrefix(d.DelegatingRun, "run_") || d.DelegatingAgent != mainAgent || d.ReceivingAgent != memberAgent ||
-				d.Owner != main.Owner || d.SessionID != brokerSession.ID || !d.StandIn {
+				d.Owner != main.Owner || d.SessionID != brokerSession.ID || !d.DelegatingStandIn {
 				t.Fatalf("member delegation = %+v, want a run_ run of the main agent %+v delegating to the member %+v", d, mainAgent, memberAgent)
 			}
 		})

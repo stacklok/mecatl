@@ -120,7 +120,7 @@ func newSessionTable(skew time.Duration) *sessionTable {
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
 		incarnations: map[string]string{}, skew: skew,
 		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), now: time.Now,
-		opening: keyedLocks{locks: map[string]*hostLock{}}, registering: keyedLocks{locks: map[string]*hostLock{}}, reporting: keyedLocks{locks: map[string]*hostLock{}},
+		opening: keyedLocks{locks: map[string]*keyedLock{}}, registering: keyedLocks{locks: map[string]*keyedLock{}}, reporting: keyedLocks{locks: map[string]*keyedLock{}},
 	}
 }
 
@@ -148,7 +148,7 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		Workload:     workload, HostSessionID: req.HostSessionID, Incarnation: req.Incarnation,
 		ReportedOwner: req.Owner, TokenPresented: !req.AccessToken.IsZero(),
 	}
-	unlock, err := t.lockHost(ctx, req.HostSessionID)
+	unlock, err := t.opening.lock(ctx, req.HostSessionID, "the session open was cancelled")
 	if err != nil {
 		return Session{}, b.refuseOpen(ctx, &rec, nil, err)
 	}
@@ -176,7 +176,7 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		err := ReasonError(s.closed, "the broker session closed during the open")
 		t.mu.Unlock()
 		refused := rec
-		refused.AuditID, refused.NewSession = newAuditID(), false
+		refused.RecordHeader, refused.NewSession = rec.supersede(), false
 		return Session{}, b.refuseOpen(ctx, &refused, s, err)
 	}
 	defer t.mu.Unlock()
@@ -307,7 +307,8 @@ func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseC
 	userRecord, user := sessionUser(s)
 	sessionRecord := s.openRecord
 	if cause == CloseOpenNotRecorded {
-		// The open's record never reached the sink, so nothing refers to it.
+		// The open's record never reached the sink, so the close does not
+		// refer to it. A registration made while the open was recorded may.
 		sessionRecord = ""
 	}
 	t.mu.pending = append(t.mu.pending, &SessionCloseRecord{

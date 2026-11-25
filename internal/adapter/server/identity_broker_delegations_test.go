@@ -280,13 +280,13 @@ func TestTeamMemberDelegationsMarkTheStandInParent(t *testing.T) {
 	if reg := lastRegistration(t, f.broker); !reg.ParentStandIn {
 		t.Fatalf("member registration = %+v, want the main agent as a stand-in", reg)
 	}
-	if d := lastDelegation(t, f.broker); !d.StandIn || d.DelegatingRun != "run_team" {
+	if d := lastDelegation(t, f.broker); !d.DelegatingStandIn || d.DelegatingRun != "run_team" {
 		t.Fatalf("member delegation = %+v, want the team run with a stand-in", d)
 	}
 	if err := f.svc.RegisterHelper(ctx, newSubagentSession(t, "child-1", f.root.ID), port.ChildSessionInfo{}); err != nil {
 		t.Fatalf("RegisterHelper(child): %v", err)
 	}
-	if reg, d := lastRegistration(t, f.broker), lastDelegation(t, f.broker); reg.ParentStandIn || d.StandIn {
+	if reg, d := lastRegistration(t, f.broker), lastDelegation(t, f.broker); reg.ParentStandIn || d.DelegatingStandIn {
 		t.Fatalf("subagent registration %+v and delegation %+v, want no stand-in", reg, d)
 	}
 
@@ -300,7 +300,7 @@ func TestTeamMemberDelegationsMarkTheStandInParent(t *testing.T) {
 	reopened := wantBrokerSession(t, f.broker, f.root)
 	for _, r := range f.broker.delegationRequests()[len(first):] {
 		if r.SessionID == reopened.ID && r.ReceivingRun == first[0].ReceivingRun {
-			if !r.StandIn {
+			if !r.DelegatingStandIn {
 				t.Fatalf("member delegation reported again = %+v, want the stand-in kept", r)
 			}
 			return

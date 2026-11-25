@@ -164,8 +164,8 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 	s, _, err := b.checkRegistrationLocked(workload, req)
 	if err != nil {
 		t.mu.Unlock()
-		refused := *rec
-		refused.AuditID = newAuditID()
+		refused := accepted
+		refused.RecordHeader = accepted.supersede()
 		return Registration{}, false, b.refuseRegistration(ctx, refused, err)
 	}
 	defer t.mu.Unlock()
