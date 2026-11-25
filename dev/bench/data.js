@@ -411736,6 +411736,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795626460532,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "244c963211d2699abf1c53a4794f985da6374e9b",
+          "message": "feat(executioncontroller): fence on lost volume and unknown outcome (#2991)\n\nThe reconciler fences an environment whose workspace PVC reports phase\n`Lost` and never provisions a replacement. A fenced environment is no\nlonger reconciled, and `Ready=True` is never written over a fence. Once\n`RecoverEnvironment` proves the current executor terminal, a lost PVC\nstops fencing so the environment can be retired.\n\n`RunCommand` treats a `CommandResult` with a known state as the\nterminal signal that replaces `terminal_receipt`. An unknown or empty\nresult, or a stream that ends after any executor event without a\nresult, fences the environment before the caller sees the outcome. A\nstream that ends before the first event does not fence, and no receipt\nis synthesized.\n\nOn withdrawal or caller disconnect, the proxy sends `CancelCommand` and\nwaits up to 30 seconds for the outcome instead of closing the stream,\nso a confirmed cancellation does not fence.\n\nCloses: #2709",
+          "timestamp": "2026-11-25T20:43:38+01:00",
+          "tree_id": "dc16fb7236b37bfc1c873fc30c5c05e656859581",
+          "url": "https://github.com/stacklok/mecatl/commit/244c963211d2699abf1c53a4794f985da6374e9b"
+        },
+        "date": 1795636539501,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -593960,6 +593994,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795636536013,
+  "lastUpdate": 1795636540410,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
