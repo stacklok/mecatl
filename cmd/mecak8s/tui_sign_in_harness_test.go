@@ -145,14 +145,15 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 	a := as1servertest.Start(t, h, func(c *as1server.Config, _ *as1server.DelegateClient) {
 		c.PublicClients = append(c.PublicClients, as1server.PublicClient{ID: identityharness.DefaultClientID, RedirectURIs: []string{oauthlogin.ExactRedirectURL}})
 	})
+	listeners := boundListeners{}
 	cfg, err := parseFlags([]string{
 		"--mock",
 		"--enable-identity-broker", "--no-shell",
 		"--identity-broker-config", brokerconfigtest.Write(t, brokerconfigtest.Options{}).Path,
 		"--permission-mode=yolo", "--guardrails=off",
-		"--grpc-addr", freeLoopbackPort(t),
-		"--http-addr", freeLoopbackPort(t),
-		"--drain-addr", freeLoopbackPort(t),
+		"--grpc-addr", listeners.bind(t),
+		"--http-addr", listeners.bind(t),
+		"--drain-addr", listeners.bind(t),
 		"--session-lease-k8s-namespace", "",
 		"--oidc-issuer", a.Issuer(),
 		"--oidc-audience", as1servertest.Audience,
@@ -167,6 +168,7 @@ func TestTUISignsInAtAS1AndOpensEachSessionWithAFreshToken(t *testing.T) {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	cfg.diagnostics = port.NopDiagnostics{}
+	cfg.listen = listeners.listen
 	built, err := buildIsolated(t, context.Background(), appConfig(cfg, port.NopDiagnostics{}, observability{}))
 	if err != nil {
 		t.Fatalf("app.Build: %v", err)

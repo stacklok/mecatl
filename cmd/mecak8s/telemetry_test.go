@@ -123,21 +123,6 @@ func requestsHaveResourceAttrs(reqs []*otlpmetrics.ExportMetricsServiceRequest, 
 	return false
 }
 
-// freeLoopbackPort asks the OS for a free loopback TCP port and returns its
-// "127.0.0.1:port" address, closing the probe listener so serve can rebind. A
-// tiny TOCTOU window remains (the port could be reclaimed), but it is narrow
-// enough for a test that binds within milliseconds.
-func freeLoopbackPort(t *testing.T) string {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("probe listener: %v", err)
-	}
-	addr := lis.Addr().String()
-	_ = lis.Close()
-	return addr
-}
-
 func TestTelemetryInstallationIDFlagAndEnvironment(t *testing.T) {
 	const envID = "123e4567-e89b-12d3-a456-426614174000"
 	const flagID = "018f5e20-8c5a-7d89-b456-426614174001"
