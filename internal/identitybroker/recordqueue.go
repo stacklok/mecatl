@@ -12,11 +12,13 @@ import (
 const maxQueuedRecords = 1024
 
 // errRecordQueueFull is the delivery failure of a record dropped because the
-// queue was full, and errRecordQueueClosed of one queued after Close or left
-// unsent when Close gave up.
+// queue was full, errRecordQueueClosed of one queued after Close or left
+// unsent when Close gave up, and errRecordInFlightAtClose of one still being
+// sent then, which the sink may yet accept or refuse.
 var (
-	errRecordQueueFull   = errors.New("the broker's record queue is full")
-	errRecordQueueClosed = errors.New("the broker closed before sending the record")
+	errRecordQueueFull       = errors.New("the broker's record queue is full")
+	errRecordQueueClosed     = errors.New("the broker closed before sending the record")
+	errRecordInFlightAtClose = errors.New("the broker closed while sending the record")
 )
 
 // recordQueue sends the records of events that take effect whether or not
@@ -35,9 +37,11 @@ type recordQueue struct {
 	// not call the broker.
 	dropped func(Record, error)
 
-	mu     sync.Mutex
-	items  []Record
-	closed bool
+	mu    sync.Mutex
+	items []Record
+	// sending is the record the drainer is sending; nil when none.
+	sending Record
+	closed  bool
 	// idle is closed when the running drainer exits; nil while none runs.
 	idle chan struct{}
 }
@@ -84,10 +88,14 @@ func (q *recordQueue) drain(idle chan struct{}) {
 		rec := q.items[0]
 		q.items[0] = nil
 		q.items = q.items[1:]
+		q.sending = rec
 		q.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
 		q.send(ctx, rec)
 		cancel()
+		q.mu.Lock()
+		q.sending = nil
+		q.mu.Unlock()
 	}
 }
 
@@ -109,9 +117,10 @@ func (q *recordQueue) wait(ctx context.Context) error {
 }
 
 // close stops q accepting records and sends those queued until ctx ends.
-// Each record still queued then is reported dropped, and close returns an
-// error counting them. A record being sent when ctx ends finishes within its
-// own deadline.
+// Each record still queued then is reported dropped, and the record being
+// sent, if any, is reported as unconfirmed: it finishes within its own
+// deadline, after close returns, so the sink may still accept it. close
+// returns an error counting both.
 func (q *recordQueue) close(ctx context.Context) error {
 	q.mu.Lock()
 	q.closed = true
@@ -120,11 +129,20 @@ func (q *recordQueue) close(ctx context.Context) error {
 		return nil
 	}
 	q.mu.Lock()
-	left := q.items
+	left, sending := q.items, q.sending
 	q.items = nil
 	q.mu.Unlock()
 	for _, rec := range left {
 		q.dropped(rec, errRecordQueueClosed)
 	}
-	return fmt.Errorf("identity broker: %d records not sent before close", len(left))
+	unconfirmed := 0
+	if sending != nil {
+		unconfirmed = 1
+		q.dropped(sending, errRecordInFlightAtClose)
+	}
+	if len(left) == 0 && unconfirmed == 0 {
+		// The drainer finished between the wait and the lock.
+		return nil
+	}
+	return fmt.Errorf("identity broker: %d records not sent and %d not confirmed before close", len(left), unconfirmed)
 }

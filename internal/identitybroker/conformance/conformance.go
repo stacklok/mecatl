@@ -139,6 +139,11 @@ func findRequest(host string) identitybroker.FindSessionRequest {
 	return identitybroker.FindSessionRequest{RootHostSessionID: host}
 }
 
+// closeHostRequest closes host's broker session, as on its deletion.
+func closeHostRequest(host string) identitybroker.CloseSessionRequest {
+	return identitybroker.CloseSessionRequest{RootHostSessionID: host, Reason: identitybroker.ReasonSessionClosed}
+}
+
 // incarnation returns a well-formed minted incarnation derived from label, so
 // cases can name agents readably and the same label gives the same agent.
 func incarnation(label string) string {

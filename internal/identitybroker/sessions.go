@@ -59,10 +59,11 @@ type sessionTable struct {
 	// recorded in the order closes happen, and no caller waits on the sink
 	// for it. nil drops them.
 	queue *recordQueue
-	// newOpens holds the root host sessions whose open is creating a new
-	// broker session, which is not in the table until its open record is
-	// accepted. FindSession of such a host session waits for that open.
-	newOpens map[string]bool
+	// newOpens holds, by root host session, the new broker session an open
+	// is creating, which is not in the table until its open record is
+	// accepted. FindSession of such a host session waits for that open, and
+	// a close of the host session closes it, so the open fails when it ends.
+	newOpens map[string]*brokerSession
 }
 
 // brokerSession is a broker session's record. Agents registered to the
@@ -111,7 +112,7 @@ func newSessionTable(skew time.Duration) *sessionTable {
 		incarnations: map[string]string{}, skew: skew,
 		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), now: time.Now,
 		opening: keyedLocks{locks: map[string]*keyedLock{}}, registering: keyedLocks{locks: map[string]*keyedLock{}}, reporting: keyedLocks{locks: map[string]*keyedLock{}},
-		newOpens: map[string]bool{},
+		newOpens: map[string]*brokerSession{},
 	}
 }
 
@@ -171,11 +172,13 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 		return Session{}, b.refuseOpen(&refused, s, errOpenNotRecorded(rec.Kind == OpenConverted))
 	}
 	t.mu.Lock()
-	// Only a close can have changed an existing s while the record was sent:
-	// opens of its host session wait for the open lock this call holds, and
-	// a new s is not in the table yet. The open is then recorded again as
-	// refused, so the records show it was not honoured and any refresh token
-	// it got was not stored.
+	// Only a close can have changed s while the record was sent: opens of
+	// its host session wait for the open lock this call holds. A new s is
+	// not in the table yet, but a close of its host session closes it
+	// (newOpens), as when the host session is deleted. The open is then
+	// recorded again as refused, so the records show it was not honoured
+	// and any refresh token it got was not stored; the close already ended
+	// the session.
 	if s.closed != "" {
 		err := ReasonError(s.closed, "the broker session closed during the open")
 		t.mu.Unlock()
@@ -186,11 +189,10 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 	defer t.mu.Unlock()
 	if rec.NewSession {
 		// Only now, with its open record accepted, can a registration, a
-		// report, a call, or a close reach the session, so no accepted record
-		// refers to an open the sink did not accept. A lookup of the host
-		// session waits for this open (newOpens), so a find-then-close, as
-		// when its host session is deleted, closes the session once it is
-		// here. The host session has no other open session: opens of it
+		// report, a call, or a close by session ID reach the session, so no
+		// accepted record refers to an open the sink did not accept. A close
+		// of its host session meanwhile closed s, which the check above
+		// caught. The host session has no other open session: opens of it
 		// wait for the open lock this call holds.
 		t.byID[s.ID] = s
 		t.open[s.HostSessionID] = s.ID
@@ -309,7 +311,7 @@ func (t *sessionTable) pairLocked(workload Workload, req OpenSessionRequest, rec
 		openRecord: rec.AuditID,
 	}
 	// OpenSession adds s to the table once its open record is accepted.
-	t.newOpens[req.HostSessionID] = true
+	t.newOpens[req.HostSessionID] = s
 	rec.SessionID, rec.NewSession = s.ID, true
 	return s, nil
 }
@@ -397,12 +399,13 @@ func (b *Broker) FindSession(ctx context.Context, workload Workload, req FindSes
 	}
 	t := b.sessions
 	t.mu.Lock()
-	if t.newOpens[req.RootHostSessionID] {
-		// An open is creating a new broker session for the host session,
-		// which enters the table only once its record is accepted: wait for
-		// that open, so a find-then-close, as when the host session is
-		// deleted, closes the session it opens rather than miss it. A lookup
-		// of an existing session does not wait.
+	// While an open is creating a new broker session for the host session,
+	// which enters the table only once its record is accepted, wait for that
+	// open, so a find-then-close closes the session it opens rather than
+	// miss it. Another open may start a new session between the wait and the
+	// lock, so the check repeats. A lookup of an existing session does not
+	// wait.
+	for t.newOpens[req.RootHostSessionID] != nil {
 		t.mu.Unlock()
 		unlock, err := t.opening.lock(ctx, req.RootHostSessionID, "the session lookup was cancelled")
 		if err != nil {
@@ -433,9 +436,9 @@ func (b *Broker) FindSession(ctx context.Context, workload Workload, req FindSes
 // even if AS-2 has already issued one. CloseSession discards the session's
 // refresh token; an open converting a token for an existing session
 // meanwhile discards the new one. A new session is not in the table until
-// its open is recorded, so nothing can close it before then: FindSession
-// waits for that open, and a close found after it discards the refresh token
-// the open stored.
+// its open is recorded, so a close by session ID cannot reach it; a close of
+// its host session closes it, and the open then fails and stores nothing.
+// Neither waits for an open in progress.
 //
 // Shortcut: a discarded refresh token is not revoked; removed by #2568 (refresh-token revocation).
 func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSessionRequest) error {
@@ -445,16 +448,41 @@ func (b *Broker) CloseSession(_ context.Context, workload Workload, req CloseSes
 	t := b.sessions
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if req.RootHostSessionID != "" {
+		t.closeHostLocked(workload, req.RootHostSessionID, req.Reason)
+		return nil
+	}
 	s, ok := t.byID[req.SessionID]
 	if !ok || s.workload != workload {
 		return unknownSession()
 	}
+	current := s.closed == "" && t.open[s.HostSessionID] == s.ID
 	t.closeLocked(s, req.Reason, CloseRequested)
-	// mecak8s closes a root's broker session itself only when nothing will
-	// report its delegations again: the host session was deleted, or it
-	// belongs to an earlier incarnation or an unsaved create.
-	t.runs.forgetPreviousLocked(s.HostSessionID)
+	if current {
+		// mecak8s closes a root's current broker session itself only when
+		// nothing will report its delegations again: it belongs to an earlier
+		// incarnation or an unsaved create. A close of an earlier or already
+		// closed session, as of a create that lost a race, leaves the
+		// current session's history alone.
+		t.runs.forgetPreviousLocked(workload, s.HostSessionID)
+	}
 	return nil
+}
+
+// closeHostLocked closes host's open broker session and the new one an
+// open of host is creating, when workload's, and forgets host's delegation
+// history: mecak8s closes a host session this way when it is deleted or its
+// scheduled run ends, after which nothing reports its delegations again. It
+// does not wait for an open in progress, which fails once it ends. The
+// caller holds t.mu.
+func (t *sessionTable) closeHostLocked(workload Workload, host string, reason Reason) {
+	if s := t.newOpens[host]; s != nil && s.workload == workload {
+		t.closeLocked(s, reason, CloseRequested)
+	}
+	if id, ok := t.open[host]; ok && t.byID[id].workload == workload {
+		t.closeLocked(t.byID[id], reason, CloseRequested)
+	}
+	t.runs.forgetPreviousLocked(workload, host)
 }
 
 // usableLocked returns the open session for id, or the error for a session

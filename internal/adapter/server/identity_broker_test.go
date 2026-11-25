@@ -519,11 +519,12 @@ func TestIdentityBrokerClosesOnDeleteOnly(t *testing.T) {
 	}
 }
 
-// hangingFindBroker blocks FindSession until its context ends, as an
-// unresponsive remote broker would.
+// hangingFindBroker blocks FindSession, and CloseSession while hangClose is
+// set, until its context ends, as an unresponsive remote broker would.
 type hangingFindBroker struct {
 	*recordingBroker
-	hang bool
+	hang      bool
+	hangClose bool
 	// waiting, when set, receives a value each time a hanging FindSession
 	// starts waiting, so a test can act while the call is in flight.
 	waiting chan struct{}
@@ -541,6 +542,14 @@ func (b *hangingFindBroker) FindSession(ctx context.Context, req identitybroker.
 	return b.recordingBroker.FindSession(ctx, req)
 }
 
+func (b *hangingFindBroker) CloseSession(ctx context.Context, req identitybroker.CloseSessionRequest) error {
+	if b.hangClose {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return b.recordingBroker.CloseSession(ctx, req)
+}
+
 func TestIdentityBrokerCloseOnDeleteIsBounded(t *testing.T) {
 	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
 	defer restore()
@@ -551,7 +560,7 @@ func TestIdentityBrokerCloseOnDeleteIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker.hang = true
+	broker.hang, broker.hangClose = true, true
 	done := make(chan error, 1)
 	go func() { done <- svc.DeleteSession(ctx, sess.ID) }()
 	select {

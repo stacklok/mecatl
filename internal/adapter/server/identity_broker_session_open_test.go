@@ -366,6 +366,95 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 	}
 }
 
+// TestIdentityBrokerDeleteClosesAnOpenInProgress proves that deleting a
+// session while another replica's open of its broker session is still in
+// progress, longer than the delete's broker timeout, leaves no broker session
+// open: the delete closes the host session without waiting, and the open,
+// once it ends, fails and stores no refresh token.
+func TestIdentityBrokerDeleteClosesAnOpenInProgress(t *testing.T) {
+	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+	f := newSessionOpenFixture(t, mockllm.New())
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alices := wantBrokerSession(t, f.broker, sess)
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.as1.mu.Lock()
+	f.as1.during = func() {
+		close(entered)
+		<-release
+	}
+	f.as1.mu.Unlock()
+	opened := make(chan error, 1)
+	go func() {
+		// Another replica opens the host session again, creating a new
+		// broker session; its exchange stalls past the delete's timeout.
+		_, err := f.broker.inner.OpenSession(context.Background(), identitybroker.OpenSessionRequest{
+			HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()),
+			Owner:       identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject},
+			AccessToken: identitybroker.NewToken(f.token()),
+		})
+		opened <- err
+	}()
+	<-entered
+	if err := f.svc.DeleteSession(aliceContext(t), sess.ID); err != nil {
+		t.Fatalf("DeleteSession during an open: %v", err)
+	}
+	close(release)
+	err = <-opened
+	var brokerErr *identitybroker.Error
+	if !errors.As(err, &brokerErr) || brokerErr.Reason != identitybroker.ReasonSessionClosed {
+		t.Fatalf("the open in progress at the delete = %v, want it refused as session_closed", err)
+	}
+	if open, ok := f.broker.find(t, sess.ID); ok {
+		t.Fatalf("the delete left broker session %+v open", open)
+	}
+}
+
+// TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable proves that a
+// converted open whose record the broker's audit sink did not accept fails as
+// for a refused token the first time, and as the broker being unavailable
+// when the same caller's previous open of that host session failed the same
+// way, so a sink outage does not have the client spend fresh tokens
+// (credentials-and-lifecycle.md step (3)).
+func TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable(t *testing.T) {
+	f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The session's broker session holds no refresh token, so each prompt
+	// presents its token.
+	alices := wantBrokerSession(t, f.broker, sess)
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	f.records.refuseOpens.Store(true)
+	prompt := func() error {
+		var err error
+		withinRequest(t, "unary", f.auth, f.token(), func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
+		return err
+	}
+	if err := prompt(); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("first unrecorded open = %v, want %v", err, server.ErrBearerRejected)
+	}
+	for i := range 2 {
+		if err := prompt(); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+			t.Fatalf("repeated unrecorded open %d = %v, want %v", i+1, err, server.ErrIdentityBrokerUnavailable)
+		}
+	}
+	// Once the sink accepts the records again, the open succeeds.
+	f.records.refuseOpens.Store(false)
+	if err := prompt(); err != nil {
+		t.Fatalf("open with the sink back = %v", err)
+	}
+}
+
 // TestIdentityBrokerRefusedTokenChangesNothing proves that on every path that
 // opens a broker session with the request's token, a refused token is
 // answered with the tagged 401 before the request changed anything: no

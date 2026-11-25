@@ -16,6 +16,25 @@ import (
 
 // grantedFixture is a broker on a settable clock whose session holds a
 // grant, with its main agent registered.
+// decisionRecorder is a MemoryRecorder whose Decisions first waits for the
+// records b queued, refusals among them, so a test reads a call's refusal as
+// soon as the call returns.
+type decisionRecorder struct {
+	*identitybroker.MemoryRecorder
+	b *identitybroker.Broker
+}
+
+func newDecisionRecorder() *decisionRecorder {
+	return &decisionRecorder{MemoryRecorder: identitybroker.NewMemoryRecorder()}
+}
+
+func (r *decisionRecorder) Decisions() []identitybroker.DecisionRecord {
+	if r.b != nil {
+		identitybroker.WaitRecords(r.b)
+	}
+	return r.MemoryRecorder.Decisions()
+}
+
 type grantedFixture struct {
 	b     *identitybroker.Broker
 	s     identitybroker.Session
@@ -160,8 +179,9 @@ func TestAuthorizeCallRefusesAnInvalidCredential(t *testing.T) {
 	t.Run("an expired credential for an unrouted server", func(t *testing.T) {
 		// Check 3 comes before check 6: the caller learns its credential
 		// expired, not that no gateway routes the server.
-		rec := identitybroker.NewMemoryRecorder()
+		rec := newDecisionRecorder()
 		f := openGranted(t, gateway, identitybroker.WithRecorder(rec))
+		rec.b = f.b
 		*f.clock = f.clock.Add(6 * time.Minute)
 		req := callRequest(f.s.ID, f.cred)
 		req.Server, req.Tool = "calendar", "calendar.pull_request_read"
@@ -219,8 +239,9 @@ func (failingRecorder) Record(_ context.Context, rec identitybroker.Record) erro
 }
 
 func TestAuthorizeCallRecordsRefusals(t *testing.T) {
-	rec := identitybroker.NewMemoryRecorder()
+	rec := newDecisionRecorder()
 	f := openGranted(t, withGateway(identitybroker.Gateway{Servers: []string{"calendar"}}), identitybroker.WithRecorder(rec))
+	rec.b = f.b
 	ctx := context.Background()
 
 	// Neither an invalid request nor an unknown session is recorded.

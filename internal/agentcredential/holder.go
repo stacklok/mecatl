@@ -325,7 +325,11 @@ func (h *Holder) renew(ctx context.Context, key Key, r *root, e *entry, target s
 	n := newEntry(req, reg, now)
 	r.entries[key.AgentSessionID] = n
 	// A delegation set while the move was in flight was reported to the old
-	// broker session: report it to the new one too.
+	// broker session: report it to the new one too. Until that report
+	// returns, a lookup that does not renew gets n's credential, though the
+	// old entry may yet be put back. The window is short, and it fails
+	// closed: a call made with n's credential before the new session has the
+	// delegation is refused there.
 	again := target != "" && r.current[key.AgentSessionID] != reported
 	h.mu.Unlock()
 	if again {

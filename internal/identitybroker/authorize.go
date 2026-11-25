@@ -34,14 +34,14 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	}
 	t.mu.Unlock()
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// Check 3: the credential identifies an agent registered to this open
 	// session.
 	agent, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: s.ID, Credential: req.Credential})
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 	rec.Agent, rec.AgentID = agent.Agent, agent.AgentID
 
@@ -57,12 +57,12 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	}
 	t.mu.Unlock()
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// Check 6: a configured gateway routes the server.
 	if !b.gateway.routes(req.Server) {
-		return Authorization{}, b.refuse(ctx, rec, ReasonError(ReasonDenied, "no gateway routes the server"))
+		return Authorization{}, b.refuse(rec, ReasonError(ReasonDenied, "no gateway routes the server"))
 	}
 
 	// Check 7: the agent's stored effective ceiling allows the exact server
@@ -74,18 +74,18 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	rec.Ceiling = ceiling.String()
 	// Validate checked that a call's tool is named for its server.
 	if err := checkCeiling(ceiling, req.Method, req.Server, strings.TrimPrefix(req.Tool, req.Server+".")); err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// AS-2 may not be bound yet (the #2559 shortcut on BindGatewayAS2).
 	as2, release, ok := b.acquireAS2()
 	if !ok {
-		return Authorization{}, b.refuse(ctx, rec, NewError(CodeUnavailable, "", "the gateway's authorization server is not bound yet"))
+		return Authorization{}, b.refuse(rec, NewError(CodeUnavailable, "", "the gateway's authorization server is not bound yet"))
 	}
 	defer release()
 	auth, err := b.authorizeAtGateway(ctx, as2, s, req, &rec)
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 	return auth, nil
 }
@@ -539,16 +539,11 @@ func decisionRecord(now time.Time, workload Workload, s *brokerSession, req Auth
 	}
 }
 
-// refuse records err as the refusal of rec's call and returns err. The
-// refusal is recorded even when ctx is cancelled, as a cancelled call is
-// still a decision.
-func (b *Broker) refuse(ctx context.Context, rec DecisionRecord, err error) error {
-	rec.Code = CodeInternal
-	var e *Error
-	if errors.As(err, &e) {
-		rec.Code, rec.Reason = e.Code, e.Reason
-	}
-	rec.Outcome = outcomeFor(rec.Code)
-	b.recordDecision(context.WithoutCancel(ctx), rec)
+// refuse queues err as the refusal of rec's call and returns err without
+// waiting on the sink. The refusal is recorded even when the call was
+// cancelled, as a cancelled call is still a decision.
+func (b *Broker) refuse(rec DecisionRecord, err error) error {
+	rec.refused(err)
+	b.recordDecision(rec)
 	return err
 }

@@ -306,7 +306,9 @@ type SessionCloseRecord struct {
 	ClosingReason Reason
 	Cause         CloseCause
 	// SessionRecord is the AuditID of the open that created the session: for
-	// CloseOpenRefused, its refusal.
+	// CloseOpenRefused, its refusal. That refusal is queued, so the sink may
+	// refuse it, or the queue drop it, and the close then names a record the
+	// trail does not hold (the #2848 shortcut on recordQueue).
 	SessionRecord string
 	// UserRecord is the AuditID of the open that verified the session's
 	// user, and User that user; empty when none did.
@@ -473,7 +475,7 @@ func (r *RecordHeader) refused(err error) {
 	if errors.As(err, &e) {
 		r.Code, r.Reason = e.Code, e.Reason
 	}
-	r.Outcome = outcomeFor(r.Code)
+	r.Outcome = outcomeFor(r.Code, r.Reason)
 }
 
 // supersede returns h as the header of a refusal that follows h's accepted

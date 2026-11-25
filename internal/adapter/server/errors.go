@@ -137,7 +137,8 @@ var (
 	// default); Service.Drain arms it.
 	ErrUnavailable = errors.New("server: draining, not accepting new runs")
 	// ErrIdentityBrokerUnavailable is returned when the agent identity broker
-	// cannot be reached to open a session's broker session. The session's agent
+	// cannot be reached to open a session's broker session, or its audit sink
+	// does not accept the records an operation waits for. The session's agent
 	// does not run without one. Adapters map it to Unavailable / HTTP 503; a
 	// later retry can succeed.
 	ErrIdentityBrokerUnavailable = errors.New("server: identity broker unavailable")

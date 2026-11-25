@@ -170,19 +170,20 @@ type perCallFixture struct {
 	grantedFixture
 	issuer *fakeIssuer
 	as2    *fakeAS2
-	rec    *identitybroker.MemoryRecorder
+	rec    *decisionRecorder
 	unbind func()
 }
 
 func newPerCall(t *testing.T, opts ...identitybroker.Option) perCallFixture {
 	t.Helper()
-	issuer, as2, rec := &fakeIssuer{}, &fakeAS2{}, identitybroker.NewMemoryRecorder()
+	issuer, as2, rec := &fakeIssuer{}, &fakeAS2{}, newDecisionRecorder()
 	opts = append([]identitybroker.Option{
 		identitybroker.WithRecorder(rec),
 		identitybroker.WithIDJAGIssuer(issuer),
 		identitybroker.WithGateway(identitybroker.Gateway{Issuer: as2Issuer, Resource: as2Resource, Servers: []string{"github", "calendar"}}),
 	}, opts...)
 	f := openGranted(t, opts...)
+	rec.b = f.b
 	unbind, err := f.b.BindGatewayAS2(boundAS2(as2))
 	if err != nil {
 		t.Fatalf("BindGatewayAS2: %v", err)
@@ -903,6 +904,7 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		_, err := f.authorize(callRequest(f.s.ID, f.cred))
 		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, f.cred)
 		f.wantCounts(t, 1, 0)
+		identitybroker.WaitRecords(f.b)
 		d := rec.Decisions()
 		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Code != identitybroker.CodeUnavailable ||
 			!strings.HasPrefix(d[0].AttemptID, "att_") || d[0].IDJAG.ID == "" {
@@ -920,6 +922,7 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		}
 		// The sink may have kept the success without confirming it, so the
 		// refusal supersedes it.
+		identitybroker.WaitRecords(f.b)
 		d := rec.Decisions()
 		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Reason != identitybroker.ReasonRecordNotAccepted ||
 			!strings.HasPrefix(d[0].Supersedes, "rec_") || d[0].Supersedes == d[0].AuditID {
@@ -963,6 +966,7 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 			if !got.GatewayToken.IsZero() {
 				t.Fatal("a call whose session closed returned a gateway token")
 			}
+			identitybroker.WaitRecords(f.b)
 			d := rec.Decisions()
 			if len(d) < 2 {
 				t.Fatalf("decisions = %+v, want a success followed by a refusal", d)
@@ -997,6 +1001,7 @@ func TestAuthorizeCallRecordsARefusalOfACancelledCall(t *testing.T) {
 	}
 	_, err := f.b.AuthorizeCall(ctx, testWorkload, callRequest(f.s.ID, f.cred))
 	wantError(t, err, identitybroker.CodeUnavailable, "", f.cred)
+	identitybroker.WaitRecords(f.b)
 	if d := rec.Decisions(); len(d) != 1 || d[0].Code != identitybroker.CodeUnavailable {
 		t.Fatalf("decisions = %+v, want the cancelled call's refusal", d)
 	}

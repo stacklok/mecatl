@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,8 +81,9 @@ func TestRecordQueueNeverWaitsOnTheSink(t *testing.T) {
 }
 
 // TestRecordQueueCloseReportsWhatItCouldNotSend pins that close sends what is
-// queued until its context ends, then reports each record still queued, and
-// that a record pushed after close is reported rather than queued.
+// queued until its context ends, then reports each record still queued and
+// the one being sent, and that a record pushed after close is reported
+// rather than queued.
 func TestRecordQueueCloseReportsWhatItCouldNotSend(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var enter sync.Once
@@ -105,8 +107,8 @@ func TestRecordQueueCloseReportsWhatItCouldNotSend(t *testing.T) {
 	q.push(record("rec_second"))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := q.close(ctx); err == nil {
-		t.Fatal("close with a record unsent returned nil")
+	if err := q.close(ctx); err == nil || !strings.Contains(err.Error(), "1 records not sent and 1 not confirmed") {
+		t.Fatalf("close with a record unsent and one in flight = %v, want both counted", err)
 	}
 	q.push(record("rec_after"))
 	close(release)
@@ -118,7 +120,39 @@ func TestRecordQueueCloseReportsWhatItCouldNotSend(t *testing.T) {
 	if len(sent) != 1 || sent[0] != "rec_first" {
 		t.Fatalf("sent %v, want only the record in flight at close", sent)
 	}
-	if !errors.Is(reported["rec_second"], errRecordQueueClosed) || !errors.Is(reported["rec_after"], errRecordQueueClosed) || len(reported) != 2 {
-		t.Fatalf("reported %v, want the unsent record and the one pushed after close", reported)
+	if !errors.Is(reported["rec_second"], errRecordQueueClosed) || !errors.Is(reported["rec_after"], errRecordQueueClosed) ||
+		!errors.Is(reported["rec_first"], errRecordInFlightAtClose) || len(reported) != 3 {
+		t.Fatalf("reported %v, want the unsent record, the one in flight, and the one pushed after close", reported)
+	}
+}
+
+// TestRecordQueueCloseCountsARecordInFlight pins that close, when its
+// context ends with one record being sent and none queued, counts and
+// reports that record rather than return as if every record was sent.
+func TestRecordQueueCloseCountsARecordInFlight(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var reported []error
+	q := newRecordQueue(func(context.Context, Record) {
+		close(entered)
+		<-release
+	}, func(_ Record, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, err)
+	})
+	q.push(&SessionCloseRecord{RecordHeader: RecordHeader{AuditID: "rec_only"}})
+	<-entered
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := q.close(ctx)
+	close(release)
+	if err == nil || !strings.Contains(err.Error(), "0 records not sent and 1 not confirmed") {
+		t.Fatalf("close with one record in flight = %v, want it counted", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reported) != 1 || !errors.Is(reported[0], errRecordInFlightAtClose) {
+		t.Fatalf("reported %v, want the record in flight", reported)
 	}
 }

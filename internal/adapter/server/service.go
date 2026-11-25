@@ -1198,6 +1198,11 @@ type Service struct {
 	placementAttachMu  sync.Mutex
 	attachedPlacements map[session.EnvironmentRef]*servicePlacementAttachment
 
+	// openRecordRefusals remembers converted identity broker opens whose
+	// record the broker's audit sink did not accept, so a repeat fails as
+	// unavailable rather than as a refused token.
+	openRecordRefusals openRecordRefusals
+
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
 	// background live-catalog refresh completes (multi-provider live listing). It is

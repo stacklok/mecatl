@@ -217,8 +217,18 @@ the request once. If your sign-in was revoked, the server answers
 for another user's session gets `session_not_found` (HTTP 404), as for any
 session you do not own. If the session ID is already paired with another user's
 broker session, the server answers `identity_broker_session_refused` (HTTP 403);
-retrying does not help. If the broker is unreachable, the server answers
+retrying does not help. If the broker is unreachable, or its audit sink, the
+destination of its audit records, does not accept the records the request
+needs, the server answers
 `identity_broker_unavailable` (HTTP 503) and saves nothing, so you can retry.
+
+The broker records each session open before it keeps the session. When the
+audit sink does not accept that record after AS-1 has already used your access
+token, the server answers `bearer_rejected`, so the client refreshes and
+resends once. If your previous open of the same session failed the same way
+within the last minute, the server answers `identity_broker_unavailable`
+instead, so a client does not spend one fresh token after another while the
+sink is down.
 
 Discovery rejects a `--scopes` override. Configure advertised scopes through
 `oidc.scopes`; explicit `mecatui login --issuer ...` still accepts `--scopes`.

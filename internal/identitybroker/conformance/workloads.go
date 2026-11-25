@@ -43,6 +43,12 @@ func runWorkloads(t *testing.T, factory coreFactory) {
 			wantError(t, "ReportDelegation by another workload", err, identitybroker.CodePermissionDenied, "")
 			err = core.CloseSession(ctx, other, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
 			wantError(t, "CloseSession by another workload", err, identitybroker.CodePermissionDenied, "")
+			// Closing the host session succeeds as for one with no broker
+			// session, and closes nothing.
+			err = core.CloseSession(ctx, other, closeHostRequest("hostS42"))
+			if err != nil {
+				t.Fatalf("CloseSession of the host session by another workload = %v, want nil", err)
+			}
 			if got, ok, err := core.FindSession(ctx, workloadA, findRequest("hostS42")); err != nil || !ok || got != s {
 				t.Fatalf("after refusals, FindSession by its workload = %+v, %v, %v; want %+v, true, nil", got, ok, err, s)
 			}

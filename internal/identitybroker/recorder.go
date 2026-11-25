@@ -36,17 +36,22 @@ type CredentialRef struct {
 // DecisionOutcome is how an AuthorizeCall ended.
 type DecisionOutcome string
 
-// Decision outcomes: success when the call is allowed, error for a
-// CodeInternal or CodeUnavailable failure, and denied for any other refusal.
+// Outcomes: success when the event took effect, error for a CodeInternal
+// or CodeUnavailable failure or a record not accepted, and denied for any
+// other refusal (audit.md, "AuditEvent profile"). A refusal that supersedes
+// an earlier record therefore has error when that record was not accepted,
+// and denied when a close undid its event.
 const (
 	OutcomeSuccess DecisionOutcome = "success"
 	OutcomeDenied  DecisionOutcome = "denied"
 	OutcomeError   DecisionOutcome = "error"
 )
 
-// outcomeFor returns the outcome of a refusal with code.
-func outcomeFor(code Code) DecisionOutcome {
-	if code == CodeInternal || code == CodeUnavailable {
+// outcomeFor returns the outcome of a refusal with code and reason. A record
+// not accepted is an error even when a converted open reports it with
+// CodeUnauthenticated.
+func outcomeFor(code Code, reason Reason) DecisionOutcome {
+	if code == CodeInternal || code == CodeUnavailable || reason == ReasonRecordNotAccepted {
 		return OutcomeError
 	}
 	return OutcomeDenied
@@ -183,13 +188,12 @@ func WithRecorder(r Recorder) Option {
 	return func(b *Broker) { b.recorder = r }
 }
 
-// recordDecision records rec, a refusal, which is returned whether or not
-// its record is accepted.
-func (b *Broker) recordDecision(ctx context.Context, rec DecisionRecord) {
+// recordDecision queues rec, a refusal, which is returned whether or not its
+// record is accepted, so no call waits on the sink to be denied (audit.md,
+// "Write order and failure").
+func (b *Broker) recordDecision(rec DecisionRecord) {
 	rec.AuditID = newAuditID()
-	// A call holds no per-key lock, so its refusal is sent here, within
-	// recordTimeout, and never cancelled with the call.
-	_ = b.record(context.WithoutCancel(ctx), &rec)
+	b.recordAnyway(&rec)
 }
 
 // maxMemoryRecords bounds each kind of MemoryRecorder's records.
@@ -260,27 +264,28 @@ func (r *SessionOpenRecord) clone() SessionOpenRecord {
 }
 
 // Closes returns a copy of the session close records, oldest first.
-func (r *MemoryRecorder) Closes() []SessionCloseRecord { return cloneLocked(&r.mu, r.closes) }
+func (r *MemoryRecorder) Closes() []SessionCloseRecord { return cloneLocked(&r.mu, &r.closes) }
 
 // Registrations returns a copy of the registration records, oldest first.
 func (r *MemoryRecorder) Registrations() []RegistrationRecord {
-	return cloneLocked(&r.mu, r.registrations)
+	return cloneLocked(&r.mu, &r.registrations)
 }
 
 // Delegations returns a copy of the delegation records, oldest first.
-func (r *MemoryRecorder) Delegations() []DelegationRecord { return cloneLocked(&r.mu, r.delegations) }
+func (r *MemoryRecorder) Delegations() []DelegationRecord { return cloneLocked(&r.mu, &r.delegations) }
 
 // IDJAGs returns a copy of the ID-JAG records, oldest first.
-func (r *MemoryRecorder) IDJAGs() []IDJAGRecord { return cloneLocked(&r.mu, r.idjags) }
+func (r *MemoryRecorder) IDJAGs() []IDJAGRecord { return cloneLocked(&r.mu, &r.idjags) }
 
 // Decisions returns a copy of the decision records, oldest first.
-func (r *MemoryRecorder) Decisions() []DecisionRecord { return cloneLocked(&r.mu, r.decisions) }
+func (r *MemoryRecorder) Decisions() []DecisionRecord { return cloneLocked(&r.mu, &r.decisions) }
 
-// cloneLocked returns a copy of list, taken under mu.
-func cloneLocked[T any](mu *sync.Mutex, list []T) []T {
+// cloneLocked returns a copy of *list, read under mu. It takes a pointer so
+// that the slice header too is read with mu held.
+func cloneLocked[T any](mu *sync.Mutex, list *[]T) []T {
 	mu.Lock()
 	defer mu.Unlock()
-	return slices.Clone(list)
+	return slices.Clone(*list)
 }
 
 // appendBounded appends rec to list, dropping the oldest records past

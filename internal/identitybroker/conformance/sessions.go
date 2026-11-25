@@ -195,6 +195,27 @@ func runClosedSessions(t *testing.T, factory serviceFactory) {
 		}
 	})
 
+	t.Run("closing a host session closes its broker session", func(t *testing.T) {
+		svc := factory(t)
+		s := mustOpen(t, svc, openRequest("hostS42", alice))
+		if err := svc.CloseSession(ctx, closeHostRequest("hostS42")); err != nil {
+			t.Fatalf("CloseSession(host): %v", err)
+		}
+		if _, ok, err := svc.FindSession(ctx, findRequest("hostS42")); err != nil || ok {
+			t.Fatalf("FindSession after the host session's close = %v, %v; want false, nil", ok, err)
+		}
+		reopened := mustOpen(t, svc, openRequest("hostS42", alice))
+		if reopened.ID == s.ID {
+			t.Fatal("reopening the closed host session returned its closed broker session")
+		}
+		// Closing it again, or a host session with none, succeeds.
+		for _, host := range []string{"hostS42", "hostS42", "hostS99"} {
+			if err := svc.CloseSession(ctx, closeHostRequest(host)); err != nil {
+				t.Fatalf("CloseSession(%s): %v", host, err)
+			}
+		}
+	})
+
 	t.Run("reopening opens a new session and the closed one stays closed", func(t *testing.T) {
 		svc := factory(t)
 		old := mustOpen(t, svc, openRequest("hostS42", alice))
@@ -235,9 +256,12 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 	}
 
 	closes := map[string]identitybroker.CloseSessionRequest{
-		"no session":     {Reason: identitybroker.ReasonSessionClosed},
-		"no reason":      {SessionID: s.ID},
-		"unknown reason": {SessionID: s.ID, Reason: identitybroker.ReasonDenied},
+		"no session":                        {Reason: identitybroker.ReasonSessionClosed},
+		"no reason":                         {SessionID: s.ID},
+		"unknown reason":                    {SessionID: s.ID, Reason: identitybroker.ReasonDenied},
+		"both a session and a host session": {SessionID: s.ID, RootHostSessionID: "hostS42", Reason: identitybroker.ReasonSessionClosed},
+		"spaced host session":               {RootHostSessionID: "host S42", Reason: identitybroker.ReasonSessionClosed},
+		"host session with no reason":       {RootHostSessionID: "hostS42"},
 	}
 	for name, req := range closes {
 		wantError(t, "CloseSession with "+name, svc.CloseSession(ctx, req), identitybroker.CodeInvalidArgument, "")
