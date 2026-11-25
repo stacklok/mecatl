@@ -740,9 +740,8 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			}
 			member := regs[1]
 			if member.Definition != conformance.MemberDefinition || member.ParentHostSessionID != string(source.ID) ||
-				member.Parent.IsZero() || member.SessionID != brokerSession.ID || member.HostSessionID == string(source.ID) ||
-				!member.ParentStandIn {
-				t.Fatalf("member registration = %+v, want a system/member helper of the root's main agent as a stand-in", member)
+				member.Parent.IsZero() || member.SessionID != brokerSession.ID || member.HostSessionID == string(source.ID) {
+				t.Fatalf("member registration = %+v, want a system/member helper of the root's main agent", member)
 			}
 			// The RunTeam call is a run of the root's main agent, which
 			// delegates the member's run.
@@ -763,7 +762,7 @@ func TestIdentityBrokerTeamRunOpensTheRootSession(t *testing.T) {
 			}
 			d := delegations[0]
 			if !strings.HasPrefix(d.DelegatingRun, "run_") || d.DelegatingAgent != mainAgent || d.ReceivingAgent != memberAgent ||
-				d.Owner != main.Owner || d.SessionID != brokerSession.ID || !d.DelegatingStandIn {
+				d.Owner != main.Owner || d.SessionID != brokerSession.ID {
 				t.Fatalf("member delegation = %+v, want a run_ run of the main agent %+v delegating to the member %+v", d, mainAgent, memberAgent)
 			}
 		})

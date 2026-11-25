@@ -43,7 +43,10 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 		return nil
 	}
 	host := string(sess.ID)
-	parentHost, standIn := helperParentHost(sess, root)
+	parentHost := string(sess.Relationship.ParentSessionID)
+	if parentHost == "" {
+		parentHost = root
+	}
 	// The lookup moves the parent into the root's current broker session first,
 	// if the root moved since the parent registered.
 	parent, err := s.cfg.IdentityAgents.Credential(ctx, agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}, false)
@@ -71,14 +74,13 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 		Definition:          definition,
 		Parent:              parent.Agent,
 		ParentHostSessionID: parentHost,
-		ParentStandIn:       standIn,
 	}, admit)
 	switch {
 	case err == nil:
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelInfo, "registered helper agent",
 			"session", host, "parent_session", parentHost, "broker_session", parent.BrokerSessionID,
 			"definition", definition.Source+"/"+definition.Name)
-		return s.reportHelperDelegation(ctx, root, host, parentHost, parent, standIn)
+		return s.reportHelperDelegation(ctx, root, host, parentHost, parent)
 	case admitErr != nil:
 		return admitErr
 	case errors.Is(err, agentcredential.ErrDropped),
@@ -131,23 +133,15 @@ func (s *Service) RegisterResumedHelper(ctx context.Context, sess *session.Sessi
 	}
 	// A resumed helper runs again in a new run, delegated from the run that
 	// resumed it.
-	parentHost, standIn := helperParentHost(sess, root)
+	parentHost := string(sess.Relationship.ParentSessionID)
+	if parentHost == "" {
+		parentHost = root
+	}
 	parent, err := s.cfg.IdentityAgents.Credential(ctx, agentcredential.Key{RootSessionID: root, AgentSessionID: parentHost}, false)
 	if err != nil {
 		return s.helperParentFailure(ctx, string(sess.ID), parentHost, err)
 	}
-	return s.reportHelperDelegation(ctx, root, string(sess.ID), parentHost, parent, standIn)
-}
-
-// helperParentHost returns the host session of the agent that created sess,
-// a helper in root's tree, and whether that agent is a stand-in: the root's
-// main agent standing in for the API request that created a team member,
-// whose session records no parent.
-func helperParentHost(sess *session.Session, root string) (string, bool) {
-	if parent := string(sess.Relationship.ParentSessionID); parent != "" {
-		return parent, false
-	}
-	return root, true
+	return s.reportHelperDelegation(ctx, root, string(sess.ID), parentHost, parent)
 }
 
 // reportHelperDelegation reports the delegation that starts the run of host's
@@ -158,9 +152,8 @@ func helperParentHost(sess *session.Session, root string) (string, bool) {
 // new run. A parent with no run (a run entry that carries none, or a parent
 // helper whose delegation failed) is logged and the helper starts with none,
 // so its gateway calls fail closed. A failed report stops the helper as a
-// failed registration does. standIn reports a team member, whose delegating
-// run is the team run of its stand-in parent, the root's main agent.
-func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parentHost string, parent agentcredential.Credential, standIn bool) error {
+// failed registration does.
+func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parentHost string, parent agentcredential.Credential) error {
 	var delegating agentcredential.Run
 	if parentHost == root {
 		delegating, _ = agentcredential.RunFromContext(ctx)
@@ -186,12 +179,11 @@ func (s *Service) reportHelperDelegation(ctx context.Context, root, host, parent
 		Run:                    agentcredential.Run{ID: newRunID(), Owner: delegating.Owner},
 		DelegatingRun:          delegating.ID,
 		DelegatingAgentSession: parentHost,
-		DelegatingStandIn:      standIn,
 	}
 	err := s.cfg.IdentityBroker.ReportDelegation(ctx, identitybroker.ReportDelegationRequest{
 		SessionID:    helper.BrokerSessionID,
 		DelegationID: d.ID, DelegatingRun: d.DelegatingRun, DelegatingAgent: parent.Agent,
-		ReceivingRun: d.Run.ID, ReceivingAgent: helper.Agent, Owner: d.Run.Owner, DelegatingStandIn: d.DelegatingStandIn,
+		ReceivingRun: d.Run.ID, ReceivingAgent: helper.Agent, Owner: d.Run.Owner,
 	})
 	switch {
 	case err == nil:

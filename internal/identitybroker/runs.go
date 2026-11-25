@@ -30,7 +30,6 @@ type delegationRecord struct {
 	delegatingRun, delegatingAgent string
 	receivingRun, receivingAgent   string
 	owner                          Owner
-	standIn                        bool
 	// record is the AuditID of the report's record; not part of the
 	// delegation's content.
 	record string
@@ -114,10 +113,12 @@ func (s *sessionRuns) delegationTo(run, agent string) (string, delegationRecord,
 // delegation lineage event (audit.md, "Lineage"). Reports to one broker
 // session run one at a time, so the check, the record, and the store act on
 // the same state. An accepted report is stored only once its record is
-// accepted; otherwise it fails with CodeUnavailable and stores nothing, and
-// mecak8s reports it again. A refused report is returned whether or not its
-// record is accepted; one refused after its record was accepted, because the
-// session closed meanwhile, is recorded again as refused.
+// accepted; otherwise it fails with ReasonRecordNotAccepted and stores
+// nothing, and mecak8s does not report it again, so the helper does not run.
+// A refused report is returned whether or not its record is accepted. A
+// report undone after its success record was sent, because the record was
+// not accepted or the session closed meanwhile, is recorded again as
+// refused, superseding that record.
 func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req ReportDelegationRequest) error {
 	if err := checkCall(workload, req); err != nil {
 		return err
@@ -126,7 +127,7 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	rec := DelegationRecord{
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeDelegation, At: t.now()},
 		Workload:     workload, SessionID: req.SessionID, DelegationID: req.DelegationID,
-		DelegatingRun: req.DelegatingRun, DelegatingAgent: req.DelegatingAgent, DelegatingStandIn: req.DelegatingStandIn,
+		DelegatingRun: req.DelegatingRun, DelegatingAgent: req.DelegatingAgent,
 		ReceivingRun: req.ReceivingRun, ReceivingAgent: req.ReceivingAgent, RunOwner: req.Owner,
 	}
 	unlock, err := t.reporting.lock(ctx, req.SessionID, "the delegation report was cancelled")
@@ -145,7 +146,10 @@ func (b *Broker) ReportDelegation(ctx context.Context, workload Workload, req Re
 	}
 	rec.Outcome = OutcomeSuccess
 	if err := b.record(ctx, &rec); err != nil {
-		return errNotRecorded("delegation report")
+		// The sink may have kept the record without confirming it, so the
+		// refusal names it.
+		rec.RecordHeader = rec.supersede()
+		return b.refuseDelegation(ctx, rec, errNotRecorded("delegation report"))
 	}
 	t.mu.Lock()
 	plan, err := t.checkDelegationLocked(workload, req, nil)
@@ -230,7 +234,7 @@ func (t *sessionTable) checkDelegationLocked(workload Workload, req ReportDelega
 	// Check 6: a delegation is reported once; a repeat must match.
 	d := delegationRecord{
 		delegatingRun: req.DelegatingRun, delegatingAgent: req.DelegatingAgent.Subject,
-		receivingRun: req.ReceivingRun, receivingAgent: req.ReceivingAgent.Subject, owner: req.Owner, standIn: req.DelegatingStandIn,
+		receivingRun: req.ReceivingRun, receivingAgent: req.ReceivingAgent.Subject, owner: req.Owner,
 	}
 	if prev, ok := runs.delegations[req.DelegationID]; ok {
 		if !prev.sameContent(d) {

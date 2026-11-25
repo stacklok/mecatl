@@ -229,10 +229,10 @@ func (t *sessionTable) pruneConvertedLocked() {
 // and t.mu, which convert releases while AS-1 is called and holds again on
 // return.
 //
-// A refused or failed conversion leaves s paired under the reported owner,
-// with whatever refresh token it held, so a retry with a fresh access token
-// finds it; only an answer that does not match the request or cannot be
-// decoded closes it. s is open and, if it holds a refresh token, not past
+// A refused or failed conversion leaves s as it was, with whatever refresh
+// token it held, so a retry with a fresh access token finds it; only an
+// answer that does not match the request or cannot be decoded closes it. A
+// session the open created is closed by the caller (refuseOpen). s is open and, if it holds a refresh token, not past
 // its hard expiry (pairLocked closes such a session first).
 //
 // It fills rec with what it learns and returns the refresh token to store

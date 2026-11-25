@@ -568,7 +568,9 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 // session open (call "open"):
 //   - the caller's cancellation when the caller went away;
 //   - ErrBearerRejected for a refused access token (token_used,
-//     subject_invalid), so the client refreshes it and retries once;
+//     subject_invalid) or a converted one whose open the broker could not
+//     record (record_not_accepted with CodeUnauthenticated), so the client
+//     refreshes it and retries once;
 //   - ErrSignInRequired when the user's authority was revoked (signed_out,
 //     upstream_revoked, owner_action_required), so the client signs in again;
 //   - ErrIdentityBrokerSessionRefused for a pairing refusal (owner_mismatch,
@@ -608,7 +610,11 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 	// broker's reason and code are in the diagnostics record above.
 	switch {
 	case call != "open":
-	case reason == identitybroker.ReasonTokenUsed, reason == identitybroker.ReasonSubjectInvalid:
+	case reason == identitybroker.ReasonTokenUsed, reason == identitybroker.ReasonSubjectInvalid,
+		reason == identitybroker.ReasonRecordNotAccepted && code == identitybroker.CodeUnauthenticated:
+		// The last is an open that converted the token but whose record the
+		// broker's audit sink did not accept: the token is spent, so the
+		// client refreshes it, as for token_used.
 		return fmt.Errorf("%w: identity broker refused the access token", ErrBearerRejected)
 	case reason.RequiresSignIn():
 		return fmt.Errorf("%w: sign in again", ErrSignInRequired)

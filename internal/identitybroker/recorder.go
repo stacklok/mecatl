@@ -11,9 +11,12 @@ import (
 // registration, delegation report, ID-JAG, and call decision. Record returns
 // nil once it accepts rec, and an error when it refuses it. A refusal is
 // handled per event: a successful open, registration, or delegation report
-// fails with CodeUnavailable and changes nothing; an ID-JAG is not redeemed
-// and a success decision returns no gateway token, both failing with
-// CodeUnavailable; refusals and closes take effect anyway. Every refused
+// fails with ReasonRecordNotAccepted and changes nothing; an ID-JAG is not
+// redeemed and a success decision returns no gateway token, both failing
+// with ReasonRecordNotAccepted; refusals and closes take effect anyway. An
+// event undone after its record was sent is recorded again as refused,
+// superseding that record, since the sink may have kept it without
+// confirming it. Every refused
 // record is reported through WithDeliveryFailures. Records are
 // *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
 // *DelegationRecord, *IDJAGRecord, or *DecisionRecord. The broker owns rec

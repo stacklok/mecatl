@@ -65,6 +65,12 @@ const (
 	// ReasonConsentRequired: the gateway's authorization server needs the
 	// user's consent before it issues a token for the call.
 	ReasonConsentRequired Reason = "consent_required"
+	// ReasonRecordNotAccepted: the broker's audit sink did not accept a
+	// record the operation waits for, so the operation changed nothing; retry
+	// it. An open that converted the request's token fails with
+	// CodeUnauthenticated instead, since the token is spent: refresh it and
+	// open again.
+	ReasonRecordNotAccepted Reason = "record_not_accepted"
 )
 
 // Code returns the code the design assigns to r.
@@ -76,6 +82,8 @@ func (r Reason) Code() Code {
 		return CodePermissionDenied
 	case ReasonSVIDExpired, ReasonSubjectInvalid, ReasonTokenUsed:
 		return CodeUnauthenticated
+	case ReasonRecordNotAccepted:
+		return CodeUnavailable
 	default:
 		return CodeInternal
 	}

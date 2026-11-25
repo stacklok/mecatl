@@ -181,7 +181,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
 		}); err != nil {
-			return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")
+			return Authorization{}, errNotRecorded("call")
 		}
 		if err := t.stillOpen(s); err != nil {
 			return Authorization{}, err
@@ -318,8 +318,9 @@ func (t *sessionTable) stillOpen(s *brokerSession) error {
 // the success, and issues the attempt unless the call is itself a retry, so a
 // retry's token cannot be reported rejected again. A success that cannot be
 // recorded returns no token, as does one whose session closed while it was
-// recorded. In that case the success record is followed by a refusal for the
-// same attempt, so the records show that the token was withheld.
+// recorded. Either way the success is followed by a refusal for the same
+// attempt that supersedes it, so the records show that the token was
+// withheld.
 func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallRequest, rec *DecisionRecord, key callKey, v GatewayTokenResult, expiresAt time.Time) (Authorization, error) {
 	t := b.sessions
 	if ref, ok := readJWTRef(v.AccessToken); ok {
@@ -334,7 +335,10 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	success := *rec
 	success.AuditID, success.Outcome = newAuditID(), OutcomeSuccess
 	if err := b.record(ctx, &success); err != nil {
-		return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")
+		// The caller records the refusal, which names the success the sink
+		// may have kept without confirming it.
+		rec.Supersedes = success.AuditID
+		return Authorization{}, errNotRecorded("call")
 	}
 	t.mu.Lock()
 	closed := t.closedLocked(s)

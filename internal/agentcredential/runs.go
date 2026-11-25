@@ -46,9 +46,6 @@ type Delegation struct {
 	// main agent, or a helper's own session.
 	DelegatingRun          string
 	DelegatingAgentSession string
-	// DelegatingStandIn reports that DelegatingRun is a team run of the root's main
-	// agent, which stands in for the API request that started the team.
-	DelegatingStandIn bool
 }
 
 // HelperDelegation is a delegation and the helper session it delegates to.

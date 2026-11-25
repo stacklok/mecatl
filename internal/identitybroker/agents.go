@@ -88,11 +88,12 @@ const registerAttempts = 2
 // incarnation serialized, the checks run again, the registration is
 // recorded, and the instance is admitted, so the record and the admission act
 // on the same instance. A registration whose record is not accepted fails
-// with CodeUnavailable and admits nothing. A refused registration is
-// recorded and returned whether or not its record is accepted; one refused
-// after its record was accepted, because the session closed meanwhile, is
-// recorded again as refused, so the records show the instance was not
-// admitted.
+// with ReasonRecordNotAccepted and admits nothing; mecak8s does not retry
+// it, so the helper does not run. A refused registration is recorded and
+// returned whether or not its record is accepted. A registration undone
+// after its success record was sent, because the record was not accepted or
+// the session closed meanwhile, is recorded again as refused, superseding
+// that record, so the records show the instance was not admitted.
 //
 // Shortcut: a definition the broker did not load is refused, not accepted as reported by mecak8s, and there is no root eligibility or nesting check; removed by #2551.
 func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error) {
@@ -104,7 +105,7 @@ func (b *Broker) RegisterAgent(ctx context.Context, workload Workload, req Regis
 		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeInstanceRegistered, At: t.now()},
 		Workload:     workload, SessionID: req.SessionID, HostSessionID: req.HostSessionID, Owner: req.Owner,
 		Incarnation: req.Incarnation, Definition: req.Definition, Parent: req.Parent,
-		ParentHostSessionID: req.ParentHostSessionID, ParentStandIn: req.ParentStandIn,
+		ParentHostSessionID: req.ParentHostSessionID,
 	}
 	for range registerAttempts {
 		identity, err := b.registrationIdentity(workload, req, &rec)
@@ -155,7 +156,11 @@ func (b *Broker) admitRegistration(ctx context.Context, workload Workload, req R
 	accepted := *rec
 	accepted.Outcome, accepted.CredentialExpiresAt = OutcomeSuccess, expiresAt
 	if err := b.record(ctx, &accepted); err != nil {
-		return Registration{}, false, errNotRecorded("agent registration")
+		// The sink may have kept the record without confirming it, so the
+		// refusal names it.
+		refused := accepted
+		refused.RecordHeader = accepted.supersede()
+		return Registration{}, false, b.refuseRegistration(ctx, refused, errNotRecorded("agent registration"))
 	}
 	t.mu.Lock()
 	// The session may have closed while the record was sent; nothing else

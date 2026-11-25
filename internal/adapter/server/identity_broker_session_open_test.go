@@ -135,21 +135,34 @@ type sessionOpenFixture struct {
 	events *memstore.EventLog
 	as1    *fakeAS1
 	broker *recordingBroker
-	auth   *server.Authenticator
-	tokens map[string]session.Principal
-	next   int
+	// records is the broker's audit sink.
+	records *openRecorder
+	auth    *server.Authenticator
+	tokens  map[string]session.Principal
+	next    int
 }
 
 func newSessionOpenFixture(t *testing.T, llm *mockllm.Provider, configure ...func(*server.Config)) *sessionOpenFixture {
 	t.Helper()
-	f := &sessionOpenFixture{as1: &fakeAS1{}, events: memstore.NewEventLog(), tokens: map[string]session.Principal{}}
-	f.broker = newRecordingBroker(identitybroker.WithAuthServer(f.as1))
+	f := &sessionOpenFixture{as1: &fakeAS1{}, events: memstore.NewEventLog(), tokens: map[string]session.Principal{}, records: &openRecorder{}}
+	f.broker = newRecordingBroker(identitybroker.WithAuthServer(f.as1), identitybroker.WithRecorder(f.records))
 	f.svc = newIdentityBrokerService(t, f.broker, llm, append([]func(*server.Config){func(cfg *server.Config) {
 		f.store = cfg.Store.(*memstore.Store)
 		cfg.EventLog = f.events
 	}}, configure...)...)
 	f.auth = server.NewAuthenticator(server.SecurityConfig{Validator: fakeValidator{ok: f.tokens}})
 	return f
+}
+
+// openRecorder is an audit sink that keeps nothing and refuses session-open
+// records while refuseOpens is set.
+type openRecorder struct{ refuseOpens atomic.Bool }
+
+func (r *openRecorder) Record(_ context.Context, rec identitybroker.Record) error {
+	if r.refuseOpens.Load() && rec.Header().Type == identitybroker.TypeSessionOpen {
+		return errors.New("sink unavailable")
+	}
+	return nil
 }
 
 // token mints a fresh access token for Alice, admitted by f.auth.
@@ -248,7 +261,9 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		ownedByBob bool
 		// closeDuring closes the broker session while AS-1 converts the token.
 		closeDuring bool
-		want        error
+		// unrecorded has the broker's audit sink refuse the open's records.
+		unrecorded bool
+		want       error
 		// as1Called is whether AS-1 sees the token; the broker's own checks
 		// refuse without calling it.
 		as1Called bool
@@ -272,6 +287,10 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		// The design fails a request whose broker session closed after its
 		// token was converted as for a refused token.
 		{name: "session_closed during exchange", refuse: func(*fakeAS1) {}, closeDuring: true, want: server.ErrBearerRejected, as1Called: true},
+		// An open that converted the token but whose record the broker's
+		// audit sink did not accept is undone; the token is spent, so it
+		// fails as for a refused token (record_not_accepted).
+		{name: "record_not_accepted after the conversion", refuse: func(*fakeAS1) {}, unrecorded: true, want: server.ErrBearerRejected, as1Called: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := mockllm.New(mockllm.TextTurn("must not run"))
@@ -303,6 +322,7 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 			if tc.closeDuring {
 				f.closeDuringExchange(t)
 			}
+			f.records.refuseOpens.Store(tc.unrecorded)
 			bearer := f.token()
 			if tc.otherSubID {
 				bearer = accessTokenFor(&session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117"}, "jti-mismatch")

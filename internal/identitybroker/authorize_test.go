@@ -901,7 +901,7 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		rec := faultyRecorder{MemoryRecorder: identitybroker.NewMemoryRecorder(), failIDJAG: true}
 		f := newPerCall(t, identitybroker.WithRecorder(rec))
 		_, err := f.authorize(callRequest(f.s.ID, f.cred))
-		wantError(t, err, identitybroker.CodeUnavailable, "", f.cred)
+		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, f.cred)
 		f.wantCounts(t, 1, 0)
 		d := rec.Decisions()
 		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Code != identitybroker.CodeUnavailable ||
@@ -914,13 +914,16 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		rec := faultyRecorder{MemoryRecorder: identitybroker.NewMemoryRecorder(), failSuccess: true}
 		f := newPerCall(t, identitybroker.WithRecorder(rec))
 		got, err := f.authorize(callRequest(f.s.ID, f.cred))
-		wantError(t, err, identitybroker.CodeUnavailable, "", f.cred, f.as2.tokens()[0])
+		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, f.cred, f.as2.tokens()[0])
 		if !got.GatewayToken.IsZero() {
 			t.Fatal("an unrecorded success returned a gateway token")
 		}
+		// The sink may have kept the success without confirming it, so the
+		// refusal supersedes it.
 		d := rec.Decisions()
-		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError {
-			t.Fatalf("decisions = %+v, want one error", d)
+		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Reason != identitybroker.ReasonRecordNotAccepted ||
+			!strings.HasPrefix(d[0].Supersedes, "rec_") || d[0].Supersedes == d[0].AuditID {
+			t.Fatalf("decisions = %+v, want one error superseding the unaccepted success", d)
 		}
 		// The withheld token's attempt was never issued, so it cannot be
 		// reported rejected.

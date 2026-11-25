@@ -171,6 +171,14 @@ func waitPastMaximum(expiresAt time.Time) {
 	time.Sleep(time.Until(expiresAt.Add(time.Second - as1servertest.IDJAGMaxLifetime)))
 }
 
+// wantNoSession fails t if host has an open broker session.
+func wantNoSession(t *testing.T, f *openFixture, host string) {
+	t.Helper()
+	if s, ok := f.find(t, host); ok {
+		t.Fatalf("FindSession = %+v; want no session", s)
+	}
+}
+
 // wantNoVerifiedOwner fails t if session id has a verified owner.
 func wantNoVerifiedOwner(t *testing.T, b *identitybroker.Broker, id string) {
 	t.Helper()
@@ -413,13 +421,8 @@ func TestSessionOpenBrokerCheck1RefusesWithoutCallingAS1(t *testing.T) {
 			if got := f.called(); got != (asCalled{}) {
 				t.Fatalf("AS-1 was called: %+v", got)
 			}
-			// The new session is paired with the reported owner, with no
-			// refresh token and no verified owner.
-			s, ok := f.find(t, openHost)
-			if !ok || s.HoldsRefreshToken || s.Owner != f.owner(identityharness.Alice) {
-				t.Fatalf("FindSession = %+v, %v; want Alice's paired session", s, ok)
-			}
-			wantNoVerifiedOwner(t, f.b, s.ID)
+			// A refused open never leaves the session it created.
+			wantNoSession(t, f, openHost)
 		})
 	}
 }
@@ -855,12 +858,14 @@ func TestSessionOpenResendsOnceAfterALostResponse(t *testing.T) {
 			if len(reqs) == 2 && reqs[0].ClientAssertion == reqs[1].ClientAssertion {
 				t.Fatal("the resend reused the first client assertion")
 			}
-			found, ok := f.find(t, openHost)
-			if !ok || found.HoldsRefreshToken != tt.holds {
-				t.Fatalf("FindSession = %+v, %v; want the session paired, holding a refresh token %v", found, ok, tt.holds)
+			if tt.code != "" {
+				// A refused open never leaves the session it created.
+				wantNoSession(t, f, openHost)
+				return
 			}
-			if tt.code == "" && s != found {
-				t.Fatalf("OpenSession = %+v, FindSession = %+v", s, found)
+			found, ok := f.find(t, openHost)
+			if !ok || found.HoldsRefreshToken != tt.holds || s != found {
+				t.Fatalf("FindSession = %+v, %v; want %+v, holding a refresh token %v", found, ok, s, tt.holds)
 			}
 			if !tt.holds {
 				wantNoVerifiedOwner(t, f.b, found.ID)
@@ -910,11 +915,8 @@ func TestSessionOpenMapsAS1Refusals(t *testing.T) {
 			if reqs := f.as1.Faults.Requests(); len(reqs) != 1 || reqs[0].Fault != as1servertest.FaultAnswered || reqs[0].Reached {
 				t.Fatalf("requests %+v, want one, answered in AS-1's place", reqs)
 			}
-			s, ok := f.find(t, openHost)
-			if !ok || s.HoldsRefreshToken {
-				t.Fatalf("FindSession = %+v, %v; want the session paired without a refresh token", s, ok)
-			}
-			wantNoVerifiedOwner(t, f.b, s.ID)
+			// A refused open never leaves the session it created.
+			wantNoSession(t, f, openHost)
 		})
 	}
 }
@@ -997,11 +999,8 @@ func TestSessionOpenReportsAS1sOwnRefusals(t *testing.T) {
 			if n := identitybroker.ConvertedTokens(f.b); n != 0 {
 				t.Fatalf("%d converted tokens remembered, want 0", n)
 			}
-			s, ok := f.find(t, openHost)
-			if !ok || s.HoldsRefreshToken {
-				t.Fatalf("FindSession = %+v, %v; want the session paired without a refresh token", s, ok)
-			}
-			wantNoVerifiedOwner(t, f.b, s.ID)
+			// A refused open never leaves the session it created.
+			wantNoSession(t, f, openHost)
 		})
 	}
 	t.Run("a token converted for another session: token_used without asking AS-1", func(t *testing.T) {
@@ -1165,7 +1164,9 @@ func TestSessionOpenClosesOnAnAnswerItCannotUse(t *testing.T) {
 	})
 }
 
-func TestSessionOpenTransportFailuresLeaveTheSessionOpen(t *testing.T) {
+// TestSessionOpenTransportFailuresLeaveNoSession pins that an open failing on
+// AS-1's transport does not leave the session it created.
+func TestSessionOpenTransportFailuresLeaveNoSession(t *testing.T) {
 	tests := []struct {
 		name   string
 		answer func(ctx context.Context, cancel context.CancelFunc) error
@@ -1204,11 +1205,9 @@ func TestSessionOpenTransportFailuresLeaveTheSessionOpen(t *testing.T) {
 			if as1.count() != 1 {
 				t.Fatalf("%d exchanges, want 1 and no resend", as1.count())
 			}
-			s, ok := findSession(t, b, openHost)
-			if !ok || s.HoldsRefreshToken {
-				t.Fatalf("FindSession = %+v, %v; want the session open without a refresh token", s, ok)
+			if s, ok := findSession(t, b, openHost); ok {
+				t.Fatalf("FindSession = %+v; want no session", s)
 			}
-			wantNoVerifiedOwner(t, b, s.ID)
 		})
 	}
 }
@@ -1536,9 +1535,8 @@ func TestSessionOpenNeverRepresentsATokenConvertedBefore(t *testing.T) {
 		if f.attempts() != 1 {
 			t.Fatalf("%d requests reached AS-1, want 1", f.attempts())
 		}
-		if s, ok := f.find(t, openHost); !ok || s.HoldsRefreshToken {
-			t.Fatalf("FindSession = %+v, %v; want the new session paired without a refresh token", s, ok)
-		}
+		// The token_used refusal does not leave the new session it created.
+		wantNoSession(t, f, openHost)
 	})
 	t.Run("A is forgotten after its exp plus the skew", func(t *testing.T) {
 		f := newOpenFixture(t)

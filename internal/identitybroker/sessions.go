@@ -133,11 +133,14 @@ func newSessionTable(skew time.Duration) *sessionTable {
 // pairs the session with the reported owner.
 //
 // Every open is recorded (credentials-and-lifecycle.md step (3),
-// "Evidence"). A successful open returns only once its record is accepted;
-// otherwise it fails with CodeUnavailable and changes nothing: a session it
-// created does not stay open, and a refresh token it got is discarded, not
-// stored. A refused open is returned whether or not its record is accepted,
-// and a session it created does not stay open without one.
+// "Evidence"). A successful open returns only once its record is accepted.
+// Otherwise it changes nothing: a session it created is closed, a refresh
+// token the session held stays, a refresh token it got is discarded, and the
+// broker still remembers the source jti it converted. It then fails with
+// ReasonRecordNotAccepted: with CodeUnauthenticated when it converted the
+// request's token, which is spent, and CodeUnavailable otherwise. A refused
+// open is returned whether or not its record is accepted, and never leaves a
+// session it created open.
 func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSessionRequest) (Session, error) {
 	if err := checkCall(workload, req); err != nil {
 		return Session{}, err
@@ -159,13 +162,15 @@ func (b *Broker) OpenSession(ctx context.Context, workload Workload, req OpenSes
 	}
 	rec.Outcome = OutcomeSuccess
 	if err := b.record(ctx, &rec); err != nil {
+		// The open is undone: pending is dropped, and refuseOpen closes a
+		// session it created. convert already noted a converted jti, so the
+		// spent token is never presented to AS-1 again. The sink may have
+		// kept the record without confirming it, so the refusal names it.
+		//
 		// Shortcut: a refresh token the open got is discarded, not revoked; removed by #2568 (refresh-token revocation).
-		t.mu.Lock()
-		if rec.NewSession {
-			t.closeLocked(s, ReasonSessionClosed, CloseOpenNotRecorded)
-		}
-		t.mu.Unlock()
-		return Session{}, errNotRecorded("session open")
+		refused := rec
+		refused.RecordHeader = rec.supersede()
+		return Session{}, b.refuseOpen(ctx, &refused, s, errOpenNotRecorded(rec.Kind == OpenConverted))
 	}
 	t.mu.Lock()
 	// Only a close can have changed s while the record was sent: opens of
@@ -212,9 +217,8 @@ func (b *Broker) open(ctx context.Context, workload Workload, req OpenSessionReq
 		rec.setSessionUser(s)
 		return s, nil, nil
 	}
-	// A new session stays paired whatever the conversion's outcome, even when
-	// check 1 refuses the token: the session is the reported owner's, and a
-	// retry with a fresh token finds it.
+	// A refused conversion returns the session, so that refuseOpen closes it
+	// if this open created it.
 	pending, err := b.convert(ctx, s, req, rec)
 	return s, pending, err
 }
@@ -229,17 +233,24 @@ func (r *SessionOpenRecord) setSessionUser(s *brokerSession) {
 }
 
 // refuseOpen records err as the refusal of rec's open of s, nil when the
-// open reached no session, and returns err. A session the open created does
-// not stay open when the refusal's record is not accepted.
+// open reached no session, and returns err. A refused open never leaves a
+// session: one it created is closed, whether or not the refusal's record is
+// accepted (audit.md, "Write order and failure").
 func (b *Broker) refuseOpen(ctx context.Context, rec *SessionOpenRecord, s *brokerSession, err error) error {
 	rec.refused(err)
 	// A refusal stores nothing, so it names no user, expiry, or replaced
 	// refresh token.
 	rec.Kind, rec.User, rec.UserRecord, rec.HardExpiry, rec.Replaced = "", nil, "", time.Time{}, nil
-	if b.record(context.WithoutCancel(ctx), rec) != nil && rec.NewSession && s != nil {
+	recorded := b.record(context.WithoutCancel(ctx), rec) == nil
+	if rec.NewSession && s != nil {
 		t := b.sessions
 		t.mu.Lock()
-		t.closeLocked(s, ReasonSessionClosed, CloseOpenNotRecorded)
+		cause := CloseOpenNotRecorded
+		if recorded && s.closed == "" {
+			// The session's open record is the refusal now.
+			s.openRecord, cause = rec.AuditID, CloseOpenRefused
+		}
+		t.closeLocked(s, ReasonSessionClosed, cause)
 		t.mu.Unlock()
 	}
 	return err

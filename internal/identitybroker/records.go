@@ -67,8 +67,8 @@ const (
 	SubjectUserID           = "user_id"
 	SubjectOwnerIssuer      = "owner_iss"
 	SubjectOwnerID          = "owner_id"
-	SubjectClientID         = "client_id"
-	SubjectClientIssuer     = "client_iss"
+	SubjectUserClientID     = "user_client_id"
+	SubjectUserClientIssuer = "user_client_iss"
 	SubjectWorkloadIssuer   = "workload_iss"
 	SubjectWorkloadSubject  = "workload_sub"
 	SubjectAgentSPIFFEID    = "agent_spiffe_id"
@@ -144,12 +144,13 @@ func (s Subjects) addUser(known bool, u User, p SubjectProvenance, owner Owner) 
 	s.set(SubjectOwnerID, u.Owner.Subject, p)
 	s.set(SubjectUserIssuer, u.Issuer, p)
 	s.set(SubjectUserID, u.Subject, p)
-	s.set(SubjectClientID, u.ClientID, p)
+	// The client the user's token was issued to, and the authorization
+	// server that issued it.
+	s.set(SubjectUserClientID, u.ClientID, p)
 	if u.ClientID == "" {
-		// client_id is qualified by its authorization server.
-		s.set(SubjectClientIssuer, "", p)
+		s.set(SubjectUserClientIssuer, "", p)
 	} else {
-		s.set(SubjectClientIssuer, u.Issuer, p)
+		s.set(SubjectUserClientIssuer, u.Issuer, p)
 	}
 }
 
@@ -283,8 +284,12 @@ const (
 	// CloseGrantLost means AS-1 reported the session's refresh token revoked and
 	// the session held no newer one.
 	CloseGrantLost CloseCause = "grant_lost"
-	// CloseOpenNotRecorded means the open that created the session could not be
-	// recorded, so the session does not stay open.
+	// CloseOpenRefused means the open that created the session was refused,
+	// or undone because its record was not accepted, so the session does not
+	// stay open. The close refers to the refusal's record.
+	CloseOpenRefused CloseCause = "open_refused"
+	// CloseOpenNotRecorded is CloseOpenRefused when the refusal's record was
+	// not accepted either, so the close refers to no open record.
 	CloseOpenNotRecorded CloseCause = "open_not_recorded"
 )
 
@@ -354,10 +359,6 @@ type RegistrationRecord struct {
 	// ParentRecord is the AuditID of the parent's latest accepted
 	// registration.
 	ParentRecord string
-	// ParentStandIn reports, as mecak8s did, that Parent is the root's main
-	// agent standing in for the API request that created a team member, not
-	// the instance that created it.
-	ParentStandIn bool
 	// CredentialExpiresAt is when the issued credential expires.
 	CredentialExpiresAt time.Time
 	// UserRecord is the AuditID of the open that verified the session's
@@ -413,10 +414,6 @@ type DelegationRecord struct {
 	// ParentDelegationRecord is the AuditID of the delegation the delegating
 	// run itself acts under; empty for a root run.
 	ParentDelegationRecord string
-	// DelegatingStandIn reports, as mecak8s did, that DelegatingRun is a run of the
-	// root's main agent standing in for the API request that started a
-	// team, not a delegation the agent made.
-	DelegatingStandIn bool
 	// ReceivingRun, its RunOwner, and ReceivingAgent receive the work;
 	// ReceivingAgentID and ReceivingRecord as for the delegating agent.
 	ReceivingRun     string
@@ -523,5 +520,16 @@ func (b *Broker) recordAnyway(ctx context.Context, rec Record) {
 
 // errNotRecorded is the error of an operation whose record the sink refused.
 func errNotRecorded(what string) error {
-	return NewError(CodeUnavailable, "", "the "+what+" could not be recorded")
+	return ReasonError(ReasonRecordNotAccepted, "the "+what+" could not be recorded")
+}
+
+// errOpenNotRecorded is the error of an open whose record the sink refused.
+// An open that converted the request's token spent it, so it fails as AS-1's
+// token_used does and the client refreshes the token before opening again
+// (credentials-and-lifecycle.md, "Error reasons").
+func errOpenNotRecorded(converted bool) error {
+	if converted {
+		return NewError(CodeUnauthenticated, ReasonRecordNotAccepted, "the session open could not be recorded; refresh the access token and open again")
+	}
+	return errNotRecorded("session open")
 }

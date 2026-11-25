@@ -78,8 +78,15 @@ import (
 //     ReasonOwnerActionRequired and the reason's code, after which the user
 //     signs in again; an unavailable AS-1 fails with
 //     CodeUnavailable, and any other failure with CodeInternal. A failed
-//     exchange leaves the session paired, with any refresh token it held; an
-//     answer that does not match the request or cannot be decoded closes it.
+//     exchange leaves an existing session paired, with any refresh token it
+//     held, and closes one the open created: a refused open never leaves a
+//     session. An answer that does not match the request or cannot be
+//     decoded closes the session.
+//   - Returns only once the open's record is accepted. Otherwise the open
+//     changes nothing and fails with ReasonRecordNotAccepted: with
+//     CodeUnauthenticated when it converted the request's token, which is
+//     spent, so the client refreshes it before opening again, and
+//     CodeUnavailable otherwise.
 //     When the session closes while AS-1 converts the token, the open fails
 //     with CodeFailedPrecondition and ReasonSessionClosed and the session
 //     keeps no refresh token; the token has been spent, so the client
@@ -309,10 +316,6 @@ type RegisterAgentRequest struct {
 	// is not its parent's recorded host session, so each child is tied to its
 	// parent and, through it, to the session's tree.
 	ParentHostSessionID string
-	// ParentStandIn reports that Parent is the root's main agent standing in
-	// for the API request that created a team member, not the agent that
-	// created it. The broker only records it; it requires a Parent.
-	ParentStandIn bool
 }
 
 // Validate reports whether r is well formed. The error is an *Error with
@@ -331,8 +334,8 @@ func (r RegisterAgentRequest) Validate() error {
 		return err
 	}
 	if r.Parent.IsZero() {
-		if r.ParentHostSessionID != "" || r.ParentStandIn {
-			return invalid("parent host session and stand-in must be empty without a parent")
+		if r.ParentHostSessionID != "" {
+			return invalid("parent host session must be empty without a parent")
 		}
 		return nil
 	}
@@ -508,11 +511,6 @@ type ReportDelegationRequest struct {
 	ReceivingAgent AgentRef
 	// Owner is the receiving run's owner. It must equal the delegating run's.
 	Owner Owner
-	// DelegatingStandIn reports that DelegatingRun is a run of the root's main agent
-	// standing in for the API request that started a team, so the receiving
-	// agent is a team member whose stand-in parent is DelegatingAgent. It is
-	// part of the delegation's content: a repeat must carry the same value.
-	DelegatingStandIn bool
 }
 
 // Validate reports whether r is well formed. The error is an *Error with

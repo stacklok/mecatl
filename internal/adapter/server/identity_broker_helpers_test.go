@@ -132,9 +132,6 @@ func TestRegisterHelperRegistersEachKindUnderItsParent(t *testing.T) {
 				Definition:          tc.want,
 				Parent:              f.mainAgent,
 				ParentHostSessionID: string(f.root.ID),
-				// Only a session recording no parent, a member of a team
-				// created over the API, has the main agent as a stand-in.
-				ParentStandIn: !tc.parent,
 			}
 			if got != want {
 				t.Fatalf("registration = %+v, want %+v", got, want)
