@@ -245,7 +245,8 @@ func cancelOnDone(
 
 // relayCommandOutput relays events until the result, which it returns unsent.
 // Once ctx ends it stops relaying but still waits for the outcome. started
-// reports that the executor sent any event.
+// reports that the executor sent any event. An ambiguous start ends with no
+// event and does not fence: the executor kills the helper and reaps survivors.
 func relayCommandOutput(
 	ctx context.Context,
 	stream commandStream,

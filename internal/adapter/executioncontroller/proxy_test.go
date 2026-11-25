@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"io"
 	"net"
 	"path/filepath"
 	"sync"
@@ -405,7 +406,7 @@ func startCommand(
 			Start: &executorv1.StartCommand{Command: command},
 		},
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatal(err)
 	}
 	return stream
