@@ -45,6 +45,7 @@ func (s *Service) RegisterHelper(ctx context.Context, sess *session.Session, chi
 	host := string(sess.ID)
 	parentHost := string(sess.Relationship.ParentSessionID)
 	if parentHost == "" {
+		// Shortcut: a team member created over the API registers with the root's main agent as its parent, and its delegation from the team run, with no mark that the main agent only stands in for the API request; removed by #2986 (stand-in marks).
 		parentHost = root
 	}
 	// The lookup moves the parent into the root's current broker session first,
