@@ -32,6 +32,7 @@ const (
 	environmentFinalizer = "execution.mecatl.dev/retain-workspace"
 	executorFinalizer    = "execution.mecatl.dev/verify-termination"
 	fenceHealthy         = "Healthy"
+	fenceUnknown         = "FenceUnknown"
 	statusField          = "status"
 )
 
@@ -301,12 +302,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	if textNested(env.Object, "spec", "desired") == "Retiring" {
 		return r.setCondition(ctx, env, "Ready", false, "UnsupportedRetirementRequest", "retirement requires the exact administrator lifecycle operation")
 	}
+	if textNested(env.Object, statusField, "fenceState") == fenceUnknown {
+		return nil
+	}
 	p, _ := r.profiles.forEnvironment(env)
 	pvcName := resourceName("workspace", name)
 	podName := resourceName("executor", name)
 	pvc, err := r.ensurePVC(ctx, env, p, pvcName)
 	if err != nil {
 		return errors.Join(err, r.setCondition(ctx, env, "Ready", false, "PVCUnavailable", "workspace PVC unavailable"))
+	}
+	if pvc.Status.Phase == corev1.ClaimLost && !volumeLossRecovered(env) {
+		return r.setFenceUnknown(ctx, env, "workspace volume is lost")
 	}
 	pod, err := r.ensurePod(ctx, env, p, podName, pvcName)
 	if err != nil {
@@ -662,6 +669,9 @@ func (r *Reconciler) updateRuntimeStatus(ctx context.Context, env *unstructured.
 		if !runtimeObservationMatches(o, env) {
 			return lifecycleConflict()
 		}
+		if textNested(o.Object, statusField, "fenceState") == fenceUnknown {
+			return nil
+		}
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pvc.Name, "uid": string(pvc.UID)}, "status", "pvc")
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pod.Name, "uid": string(pod.UID)}, "status", "pod")
 		_ = unstructured.SetNestedField(o.Object, o.GetGeneration(), "status", "observedGeneration")
@@ -669,13 +679,26 @@ func (r *Reconciler) updateRuntimeStatus(ctx context.Context, env *unstructured.
 		return nil
 	})
 }
+
+// volumeLossRecovered reports whether recovery proved the current executor terminal,
+// so a lost volume no longer fences and the environment can be retired.
+func volumeLossRecovered(env *unstructured.Unstructured) bool {
+	podUID := textNested(env.Object, statusField, "pod", "uid")
+	return podUID != "" &&
+		textNested(env.Object, statusField, "terminationProof", "podUID") == podUID &&
+		textNested(env.Object, statusField, "terminationProof", "pvcUID") ==
+			textNested(env.Object, statusField, "pvc", "uid") &&
+		intNested(env.Object, statusField, "terminationProof", "epoch") ==
+			intNested(env.Object, statusField, "epoch")
+}
+
 func (r *Reconciler) setFenceUnknown(ctx context.Context, env *unstructured.Unstructured, msg string) error {
 	return r.updateStatus(ctx, env, func(o *unstructured.Unstructured) error {
 		if !runtimeObservationMatches(o, env) {
 			return lifecycleConflict()
 		}
-		_ = unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
-		setConditionObject(o, "Ready", false, "FenceUnknown", msg)
+		_ = unstructured.SetNestedField(o.Object, fenceUnknown, "status", "fenceState")
+		setConditionObject(o, "Ready", false, fenceUnknown, msg)
 		return nil
 	})
 }

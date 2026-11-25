@@ -135,10 +135,11 @@ func TestProvisioningRetriesNeverReplaceAuthoritativeResources(t *testing.T) {
 			k := kubefake.NewSimpleClientset()
 			r := NewReconciler(d, k, "ns", testProfiles())
 			t.Cleanup(r.queue.ShutDown)
-			for range 3 {
-				if err := r.Reconcile(t.Context(), env.GetName()); err == nil {
-					t.Fatal("missing authoritative resource was not rejected")
-				}
+			if err := r.Reconcile(t.Context(), env.GetName()); err == nil {
+				t.Fatal("missing authoritative resource was not rejected")
+			}
+			for range 2 {
+				_ = r.Reconcile(t.Context(), env.GetName())
 			}
 			for _, action := range k.Actions() {
 				if action.GetVerb() == "create" && (resource == "pvc" || action.GetResource().Resource == "pods") {

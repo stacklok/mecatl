@@ -395,3 +395,22 @@ func (s *Store) ReleaseRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		return nil
 	})
 }
+
+// FenceOutcomeUnknown fences env while pin's Pod is still its executor: a
+// replaced or deleted executor was proven terminated first.
+func (s *Store) FenceOutcomeUnknown(ctx context.Context, env string, pin ExecutorPin) error {
+	err := s.retryUpdateStatusRaw(ctx, env, func(o *unstructured.Unstructured) error {
+		if textNested(o.Object, statusField, "pod", "uid") != pin.PodUID {
+			return errExecutorPodReplaced
+		}
+		_ = unstructured.SetNestedField(o.Object, fenceUnknown, statusField, "fenceState")
+		setConditionObject(o, "Ready", false, fenceUnknown, "a command's outcome is unknown")
+		return nil
+	})
+	var controlled *executionenv.Error
+	if errors.Is(err, errExecutorPodReplaced) ||
+		errors.As(err, &controlled) && controlled.Code == executionenv.CodeNotFound {
+		return nil
+	}
+	return err
+}
