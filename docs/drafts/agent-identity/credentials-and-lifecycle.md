@@ -342,7 +342,7 @@ Broker checks 1 and 2 exist because only mecak8s checks that Alice owns `hostS42
 
 ### (4) Agent-instance JWT-SVID
 
-**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, the registered main-instance reference, not the main's token, and the main's host session, `hostS42`, as the parent host session. Both calls also report the instance's host session and owner, and carry the workload credential.
+**Input.** For the diagram's main registration, mecak8s supplies session `A42`, the persisted main agent-instance incarnation, and the selected definition reference, with no parent. For the reviewer, it supplies `A42`, the child's persisted incarnation, the definition reference `global/code-reviewer`, the registered main-instance reference, not the main's token, and the main's host session, `hostS42`, as the parent host session. For a team member created over the API, mecak8s reports the root's main agent as the parent and says that it is a stand-in. Both calls also report the instance's host session and owner, and carry the workload credential.
 
 **Registration checks, at the agent-instance issuer:**
 
@@ -449,7 +449,7 @@ This makes `RT-A42`, the schedule grant, and the ID-JAG usable only with the bro
 
 ### Delegation report
 
-**Input.** When main delegates the review, mecak8s calls `ReportDelegation` with the workload credential, session `A42`, delegation `D42`, the delegating run `R41` and instance `mainRef`, the receiving run `R42` and instance `reviewerRef`, and the receiving run's owner.
+**Input.** When main delegates the review, mecak8s calls `ReportDelegation` with the workload credential, session `A42`, delegation `D42`, the delegating run `R41` and instance `mainRef`, the receiving run `R42` and instance `reviewerRef`, the receiving run's owner, and whether `R41` is a run of the root's main agent standing in for a `RunTeam` request. That mark is part of the report's content for check 6.
 
 **Checks, at the broker:**
 
