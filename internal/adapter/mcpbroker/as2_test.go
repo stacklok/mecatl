@@ -850,19 +850,14 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 		t.Errorf("gateway token aud without a resource = %v, want [%s]", aud, as2.Resource)
 	}
 
-	// AS-2 accepts the broker's assertions for its issuer or its token
-	// endpoint, and refuses every other one with 401 invalid_client. Accepting
-	// the token endpoint as aud is ToolHive v0.61.0 behaviour that the design's
-	// step (5) does not want (stacklok/toolhive#7039); the broker signs
-	// assertions for the issuer only, so this documents current behaviour, not
-	// policy.
+	// AS-2 accepts the broker's assertions only when aud is its issuer alone
+	// (design step (5), draft-ietf-oauth-rfc7523bis), and refuses every other one with
+	// 401 invalid_client, the token endpoint and an array that adds another
+	// value included.
 	now := time.Now()
-	claimsAt := func(aud string, iat, exp time.Time) jwt.MapClaims {
+	claimsAt := func(aud any, iat, exp time.Time) jwt.MapClaims {
 		return jwt.MapClaims{"iss": identitybroker.BrokerClientID, "sub": identitybroker.BrokerClientID, "aud": aud,
 			"iat": iat.Unix(), "exp": exp.Unix(), "jti": rand.Text()}
-	}
-	if status, body := redeem(idJAG(), broker.signAssertion(t, broker.key, claimsAt(as2.TokenEndpoint, now, now.Add(time.Minute)))); status != http.StatusOK {
-		t.Fatalf("assertion for the token endpoint: status %d, body %v", status, body)
 	}
 	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -873,8 +868,11 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 		t.Fatalf("first use of an assertion: status %d, body %v", status, body)
 	}
 	for name, assertion := range map[string]string{
-		"another audience": broker.assertion(t, "https://other.example/v1/mcp/broker"),
-		"expired":          broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now.Add(-3*time.Minute), now.Add(-2*time.Minute))),
+		"another audience":   broker.assertion(t, "https://other.example/v1/mcp/broker"),
+		"the token endpoint": broker.signAssertion(t, broker.key, claimsAt(as2.TokenEndpoint, now, now.Add(time.Minute))),
+		"the issuer and another audience": broker.signAssertion(t, broker.key,
+			claimsAt([]string{as2.Issuer, "https://other.example/v1/mcp/broker"}, now, now.Add(time.Minute))),
+		"expired": broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now.Add(-3*time.Minute), now.Add(-2*time.Minute))),
 		// ToolHive's bound is 5 minutes ahead plus a 60-second skew.
 		"exp too far":      broker.signAssertion(t, broker.key, claimsAt(as2.Issuer, now, now.Add(10*time.Minute))),
 		"reused jti":       reused,
@@ -904,7 +902,7 @@ func as2Redemption(t *testing.T, as2 *AS2, broker as2BrokerClient, assertion str
 
 // TestAS2RefusesRedemptionsOutsideItsConfiguration shows that AS-2 refuses
 // what its configuration leaves out, not only that it redeems what it allows:
-// a resource, requested or taken from the ID-JAG's claim, other than the
+// a resource, requested or named by the ID-JAG's claim, other than the
 // vMCP's, an ID-JAG addressed to anything but AS-2's
 // issuer, and an AS-1 access token presented as an assertion. These are the
 // checks that keep an AS-1 access token from being redeemed once #2533 trusts
@@ -920,6 +918,9 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	}
 	accessToken := as1.jwt(t, as2, as2.Issuer, "at+jwt", nil)
 	otherClaim := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": "https://other.example/mcp", "act": as1.act()})
+	twoAudiences := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{
+		"aud": []string{as2.Issuer, "https://other.example/v1/mcp/broker"}, "resource": as2.Resource, "act": as1.act(),
+	})
 	for _, test := range []struct {
 		name       string
 		assertion  string
@@ -929,9 +930,13 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	}{
 		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target"},
 		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target"},
-		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_target"},
+		// An ID-JAG whose resource claim names a resource AS-2 does not
+		// govern is refused, whether or not the request names the vMCP's.
+		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant"},
+		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant"},
 		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant"},
 		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant"},
+		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant"},
 		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant"},
 		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant"},
 	} {
@@ -942,25 +947,22 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 			}
 		})
 	}
+
+	// A valid ID-JAG redeemed without client authentication is refused.
+	status, body := as2Redemption(t, as2, broker, idJAG(as2.Issuer), resource(as2.Resource), false)
+	if _, issued := body["access_token"]; issued || status != http.StatusUnauthorized || body["error"] != "invalid_client" {
+		t.Fatalf("ID-JAG without client authentication: status %d, body %v; want 401 invalid_client and no token", status, body)
+	}
 }
 
-// TestAS2RedeemsWhatTrackedShortcutsAllow records two redemptions AS-2
-// accepts today through the test-only trust that the design refuses, so the
-// tickets that close them flip these cases to refusals rather than finding the
+// TestAS2RedeemsWhatTrackedShortcutsAllow records a redemption AS-2 accepts
+// today through the test-only trust that the design refuses, so the ticket
+// that closes it flips these cases to refusals rather than finding the
 // behaviour by accident.
 func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
 	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
 	vmcp := as2.Resource
-
-	// ToolHive checks the request's resource, not the ID-JAG's resource claim
-	// (stacklok/toolhive#6892, stacklok/toolhive#6983; #2533). The broker
-	// client's audiences allow only the vMCP resource, so the request's
-	// resource still limits the token.
-	otherClaim := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": "https://other.example/mcp", "act": as1.act()})
-	if status, body := as2Redemption(t, as2, broker, otherClaim, &vmcp, true); status != http.StatusOK {
-		t.Errorf("ID-JAG whose resource claim names another server: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", status, body)
-	}
 
 	// Trusting an issuer for the JWT-bearer grant also accepts plain RFC 7523
 	// assertions from it, without client authentication. #2533 trusts AS-1 for

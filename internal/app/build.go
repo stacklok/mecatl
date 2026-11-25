@@ -1008,7 +1008,7 @@ type Config struct {
 	// test-only: production leaves it zero, and cannot build another, so
 	// AS-2 trusts no issuer and Build refuses a gateway entry that routes
 	// servers.
-	// Shortcut: AS-2 trusts AS-1 only in tests, and sends no reason codes until stacklok/toolhive#7030, so every invalid_grant at AS-2 takes the reasonless retry; removed by #2533 (AS-2 trusts AS-1 in production, with reason codes).
+	// Shortcut: AS-2 trusts AS-1 only in tests; removed by #2533 (AS-2 trusts AS-1 in production).
 	IdentityBrokerAS2Trust as2Trust
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
 	// AS-1, where it converts users' access tokens. No flag sets it; with a

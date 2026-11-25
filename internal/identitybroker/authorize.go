@@ -240,8 +240,6 @@ func (t *sessionTable) redeemFailure(ctx context.Context, s *brokerSession, err 
 	case isRefusal && !r.transient() && r.Code == "access_denied" && r.Reason == "actor_denied":
 		return 0, nil, ReasonError(ReasonDenied, "the gateway's authorization server refused the acting agent")
 	case isRefusal && !r.transient() && r.Code == "invalid_grant" && (r.Reason == "" || r.Reason == unknownCode):
-		// AS-2 sends no reason codes until stacklok/toolhive#7030, so every
-		// invalid_grant takes this path (the #2533 AS-2 shortcut).
 		return retryReasonlessInvalidGrant, NewError(CodeInternal, "", "the gateway's authorization server refused the ID-JAG: gateway or configuration error"), nil
 	}
 	return 0, nil, redeemError(err)

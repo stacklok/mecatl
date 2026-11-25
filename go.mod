@@ -47,7 +47,7 @@ require (
 	github.com/stacklok/mecatl/provider/anthropic v0.4.0
 	github.com/stacklok/mecatl/provider/openai v0.3.1
 	github.com/stacklok/mecatl/provider/openaichat v0.3.1
-	github.com/stacklok/toolhive v0.66.0
+	github.com/stacklok/toolhive v0.69.0
 	github.com/stacklok/toolhive-core v0.0.60
 	github.com/stacklok/typesafe-go v0.1.0
 	github.com/tiktoken-go/tokenizer v0.10.0
@@ -314,8 +314,8 @@ require (
 	golang.ngrok.com/ngrok/v2 v2.5.0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
-	golang.org/x/exp/event v0.0.0-20261009195045-ca0d7ba23607 // indirect
-	golang.org/x/exp/jsonrpc2 v0.0.0-20261113113407-e3970619a1a4 // indirect
+	golang.org/x/exp/event v0.0.0-20261113113407-e3970619a1a4 // indirect
+	golang.org/x/exp/jsonrpc2 v0.0.0-20261121134650-e1094eeca1b5 // indirect
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/text v0.44.0 // indirect

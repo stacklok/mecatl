@@ -555,19 +555,20 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	g := hb.signIn(t)
 	s, cred, _ := g.open(t)
 	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-	// An AS-2 trusting another issuer answers invalid_grant without a reason
-	// (the #2533 shortcut on Config.IdentityBrokerAS2Trust), which the broker
-	// retries once with a new ID-JAG before failing the call.
+	// An AS-2 trusting another issuer (the #2533 shortcut on
+	// Config.IdentityBrokerAS2Trust) answers invalid_grant with
+	// invalid_assertion, which the broker does not retry with a new ID-JAG.
 	wantBrokerError(t, err, identitybroker.CodeInternal, "")
 	jags := g.built.identityBrokerRecorder.IDJAGs()
 	redeemed := hb.as2.Requests()
-	if len(jags) != 2 || len(redeemed) != 2 {
-		t.Fatalf("%d ID-JAG records and %d redemptions, want two of each: the call and its one retry", len(jags), len(redeemed))
+	if len(jags) != 1 || len(redeemed) != 1 {
+		t.Fatalf("%d ID-JAG records and %d redemptions, want one of each", len(jags), len(redeemed))
 	}
 	issuer := hb.issuer
 	for i, r := range redeemed {
-		if r.Kind != identityharness.KindRedemption || r.Code != "invalid_grant" || r.IssuedToken != "" {
-			t.Fatalf("redemption %d = %s answered %q, want an invalid_grant refusal", i, r.Kind, r.Code)
+		reason := identitybroker.NewServerRefusal(r.Status, r.Code, r.Reason).Reason
+		if r.Kind != identityharness.KindRedemption || r.Code != "invalid_grant" || reason != "invalid_assertion" || r.IssuedToken != "" {
+			t.Fatalf("redemption %d = %s answered %q reason %q, want invalid_grant with invalid_assertion", i, r.Kind, r.Code, reason)
 		}
 		var header struct{ Typ string }
 		if err := json.Unmarshal([]byte(jwtSegmentText(t, r.Assertion, 0)), &header); err != nil || header.Typ != "oauth-id-jag+jwt" {

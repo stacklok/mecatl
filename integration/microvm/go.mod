@@ -224,7 +224,7 @@ require (
 	github.com/stacklok/mecatl/provider/openai v0.3.1 // indirect
 	github.com/stacklok/mecatl/provider/openaichat v0.3.1 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
-	github.com/stacklok/toolhive v0.66.0 // indirect
+	github.com/stacklok/toolhive v0.69.0 // indirect
 	github.com/stacklok/toolhive-core v0.0.60 // indirect
 	github.com/stacklok/toolhive-core/redisconn v0.0.60 // indirect
 	github.com/stacklok/typesafe-go v0.1.0 // indirect
@@ -252,6 +252,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
+	github.com/yuin/goldmark v1.8.7 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -288,8 +289,8 @@ require (
 	golang.ngrok.com/ngrok/v2 v2.5.0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
-	golang.org/x/exp/event v0.0.0-20261009195045-ca0d7ba23607 // indirect
-	golang.org/x/exp/jsonrpc2 v0.0.0-20261113113407-e3970619a1a4 // indirect
+	golang.org/x/exp/event v0.0.0-20261113113407-e3970619a1a4 // indirect
+	golang.org/x/exp/jsonrpc2 v0.0.0-20261121134650-e1094eeca1b5 // indirect
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
