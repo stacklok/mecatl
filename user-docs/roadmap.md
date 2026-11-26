@@ -53,7 +53,7 @@ A multi-user Kubernetes deployment where each user's work stays theirs, agents
 act within limits the operator sets, tools use each user's own accounts, and
 developers can build on Mecatl.
 
-### Identity and accountability
+### Identity and accountability: each user's work stays theirs
 
 - **Signed-in users whose work stays theirs.** When the operator connects an
   OIDC identity provider, users sign in through it and the server validates
@@ -61,7 +61,7 @@ developers can build on Mecatl.
   belongs to the user who created it, and another user's session or schedule
   reads as if it doesn't exist.
 
-### Bounded autonomy
+### Bounded autonomy: agents can't widen their own access
 
 - **Delegating work never widens access.** A subagent's tools and permissions
   are the intersection of what the agent that started it has, what its own
@@ -77,7 +77,7 @@ developers can build on Mecatl.
 - **Isolation to match the task.** Sessions can run with no file access or
   shell at all, and locally they can run in an opt-in microVM.
 
-### Dependable, long-running work
+### Dependable, long-running work: runs like any production service
 
 - **Run it like any other service.** `mecak8s` ships as a Helm chart, and each
   release's image and chart are signed. It runs across several replicas, and
@@ -90,7 +90,7 @@ developers can build on Mecatl.
   restarts, and each scheduled run fires at most once, however many replicas
   are running.
 
-### Where you work
+### Where you work: memory and tools tied to each user
 
 - **Agents remember, and learn only with approval.** Each user has a personal
   memory that agents read and add to, and each project workspace has one too.
@@ -102,7 +102,7 @@ developers can build on Mecatl.
   browser trip, and the gateway keeps the tokens away from the agent and the
   model.
 
-### An open foundation
+### An open foundation: build with the SDK or embed the engine
 
 - **Build apps on Mecatl.** A TypeScript SDK on npm lets apps start sessions,
   stream runs and answer approvals. Clients check what a server supports before
@@ -118,7 +118,7 @@ developers can build on Mecatl.
 In progress: agents with their own identities and derived authority, isolated execution, and
 session history that supports inspection and safe recovery.
 
-### Identity and accountability
+### Identity and accountability: every agent gets its own identity
 
 - **Delegated access, with authority derived from user and agent.** An agent
   acts on the user's behalf, not as the user. Its authority is what the user
@@ -139,7 +139,7 @@ session history that supports inspection and safe recovery.
   user identifiers, so they can be matched to the session transcript, and go to
   storage the agent host can't change.
 
-### Bounded autonomy
+### Bounded autonomy: isolated execution and single-call tokens
 
 - **Isolated execution on Kubernetes.** Shell commands and file edits run in a
   separate executor that holds only the access it's granted, not cluster-wide
@@ -151,7 +151,7 @@ session history that supports inspection and safe recovery.
   seconds, so a token taken from the agent host can't be used for any other
   call.
 
-### Dependable, long-running work
+### Dependable, long-running work: recovery and history you can inspect
 
 - **Recovering without blindly repeating actions.** Reconstruct accepted
   session state after an interruption and distinguish known outcomes from
@@ -166,7 +166,7 @@ session history that supports inspection and safe recovery.
   nightly review, runs unattended on a time-limited grant from the user who
   scheduled it. The user's provider credentials stay at the gateway.
 
-### Where you work
+### Where you work: a terminal that keeps up with long sessions
 
 - **A terminal that keeps up with long sessions.** The terminal UI keeps memory
   and CPU flat in long sessions, and large lists such as MCP tools and
@@ -177,7 +177,7 @@ session history that supports inspection and safe recovery.
 Production hardening for identity, stronger isolation on Kubernetes, and agents
 in Slack.
 
-### Identity and accountability
+### Identity and accountability: identity ready for production
 
 - **Identity that survives restarts and scales out.** The new identity flow
   currently keeps its state in memory and runs on one replica. Its state
@@ -193,7 +193,7 @@ in Slack.
   its own administrators, and the user consents once to Mecatl acting through
   it.
 
-### Bounded autonomy
+### Bounded autonomy: microVMs, revocation, and versioned policy
 
 - **MicroVM isolation on Kubernetes.** Sessions on the shared executor can run
   in lightweight virtual machines with their own kernel when containers aren't
@@ -209,18 +209,18 @@ in Slack.
   policy language security teams can review, tied to the exact definition
   version.
 
-### Dependable, long-running work
+### Dependable, long-running work: pod replacement without downtime
 
 - **Pod replacement without downtime.** Pods can be drained and replaced with
   no user-facing interruption. After a crash, users and agents are told which
   work finished, which didn't, and which is unknown.
 
-### Where you work
+### Where you work: agents in Slack
 
 - **Agents in Slack.** Mention an agent and it works in the thread, within a
   spend budget, and picks up where it left off after restarts.
 
-### An open foundation
+### An open foundation: a testkit and cleaner extension points
 
 - **SDK testkit.** A fake server lets apps built on the SDK be tested offline.
 - **Specialized agents on a shared runtime.** Cleaner explicit extension points
@@ -233,13 +233,13 @@ in Slack.
 Controlling where data flows between agents and tools, and working on agents
 together.
 
-### Identity and accountability
+### Identity and accountability: an audit ledger anyone can verify
 
 - **An audit ledger you can verify, not just trust.** Audit records form an
   append-only, hash-chained ledger with signed checkpoints kept outside Mecatl.
   Anyone can check offline that the record set is complete and unaltered.
 
-### Bounded autonomy
+### Bounded autonomy: control over where data flows
 
 - **Confidentiality across delegation.** A sensitivity label follows data into
   every delegated agent, and sharing work becomes an explicit act.
@@ -247,7 +247,7 @@ together.
   narrowly scoped grants instead of routing it through the model's context.
   This saves tokens and limits data exposure.
 
-### Where you work
+### Where you work: multiplayer sessions
 
 - **Multiplayer sessions.** Several people work with the same agents in one
   session, with shared controls and a clear record of who asked for what.
