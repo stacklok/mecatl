@@ -458740,6 +458740,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795709613947,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dd54fdb0515bf759702dc09bd5880dac0c2420f7",
+          "message": "chore(deps): update playwright to v1.65.1 (#2788)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-26T17:47:43+01:00",
+          "tree_id": "5331bcfa2d8ce3ce1b6ab84d769b2728598db268",
+          "url": "https://github.com/stacklok/mecatl/commit/dd54fdb0515bf759702dc09bd5880dac0c2420f7"
+        },
+        "date": 1795712399471,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13415,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -597060,6 +597099,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795712394816,
+  "lastUpdate": 1795712400406,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
