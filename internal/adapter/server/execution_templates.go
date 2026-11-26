@@ -138,6 +138,17 @@ func (s *Service) enforcedCapabilities(sess *session.Session) []string {
 	return recordedExecutionCapabilities(sess)
 }
 
+// fireCapabilities is what a scheduled fire of source requests. The fire
+// mints its definition's authority afresh, so an agent-bound source passes on
+// only what that ceiling left it.
+func (s *Service) fireCapabilities(source *session.Session) []string {
+	requested := s.enforcedCapabilities(source)
+	if requested == nil || source.AgentDefinitionName == "" {
+		return requested
+	}
+	return executionSessionCapabilities(source)
+}
+
 func withExecutionCapabilities(ctx context.Context, names []string) context.Context {
 	if names == nil {
 		return ctx

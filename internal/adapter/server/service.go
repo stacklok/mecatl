@@ -2371,6 +2371,9 @@ func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.Per
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if err := s.bindScheduledOrigin(ctx, &o); err != nil {
+		return nil, err
+	}
 	// A model-only selector is valid for agent-bound sessions: their dedicated
 	// factory resolves the provider from the definition.
 	if sel.ProviderID == "" && sel.ModelID != "" && o.agentDefinitionName == "" {
@@ -2799,13 +2802,33 @@ func (s *Service) validateDebugCreate(ctx context.Context, profile SessionProfil
 	return s.authorizeDebugTarget(ctx, opts.debugTargetID)
 }
 
+// bindScheduledOrigin binds a fire to its origin's incarnation and agent
+// definition; the definition's factory refuses a name that no longer resolves.
+func (s *Service) bindScheduledOrigin(ctx context.Context, opts *createSessionOpts) error {
+	if opts.scheduled == nil || opts.scheduled.OriginSessionID == "" {
+		return nil
+	}
+	origin, err := s.cfg.Store.Load(ctx, opts.scheduled.OriginSessionID)
+	if err != nil || origin == nil {
+		return errScheduledOriginUnavailable
+	}
+	name := origin.AgentDefinitionName
+	if opts.agentDefinitionName != "" && opts.agentDefinitionName != name {
+		return fmt.Errorf("%w: a fire uses its origin's agent definition", ErrInvalidArgument)
+	}
+	opts.agentDefinitionName = name
+	opts.scheduled.OriginIncarnation = origin.Incarnation()
+	return nil
+}
+
+var errScheduledOriginUnavailable = fmt.Errorf("%w: scheduled origin is unavailable", ErrNotFound)
+
 func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessionOpts) error {
 	if opts.scheduled != nil && opts.scheduled.OriginSessionID != "" {
 		origin, err := s.cfg.Store.Load(ctx, opts.scheduled.OriginSessionID)
-		if err != nil {
-			return fmt.Errorf("%w: scheduled origin is unavailable", ErrNotFound)
+		if err != nil || origin == nil || origin.Incarnation() != opts.scheduled.OriginIncarnation {
+			return errScheduledOriginUnavailable
 		}
-		opts.scheduled.OriginIncarnation = origin.Incarnation()
 	}
 	if opts.debugTargetID != "" {
 		target, err := s.cfg.Store.Load(ctx, opts.debugTargetID)
