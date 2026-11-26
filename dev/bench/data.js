@@ -597931,9 +597931,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795721994881,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "029c818e434f0cba2cc47f0a515fc7189ff44fe7",
+          "message": "feat(executor): bound file calls and gate readiness on `/workspace` (#2995)\n\nEvery FileService call from `executorclient.Workspace` now runs under a\none-minute deadline (`WithFileCallTimeout`), covering whole streams.\nWhen it expires the call fails with `ErrStorageTimeout`: \"workspace\nstorage did not respond in time; a write may still have completed\". A\nsyscall blocked on storage cannot be interrupted, so the executor may\nstill finish the operation; the deadline only stops the agent waiting.\nThe caller's own cancellation or deadline is still reported as such,\nand `callContextError` waits for the deadline when gRPC reports it\nbefore the context's timer fires. `mecaexec` gains `-file-timeout`.\n\nWorkspace errors named by `fileserver.WithStorageFullErrors` (`ENOSPC`\nand `EDQUOT` on the executor) map to `RESOURCE_EXHAUSTED` with\n\"workspace storage is full\" instead of a generic `INTERNAL`.\n\n`mecatl-executor serve -health-listen` serves plaintext gRPC health,\nreporting the server and its enabled services `SERVING` only while\n`/workspace` accepts a new file within 30 seconds, checked every 2\nseconds. On Linux the check creates an unnamed `O_TMPFILE` so no\nreader sees it, falling back to a named temporary file. A check\nblocked past its timeout is abandoned and no new one starts until it\nreturns. A full volume (`ENOSPC`, `EDQUOT`) and a root the agent made\nread-only (`EACCES`, `EPERM`) stay ready, so the agent can fix them.\n\nNew executor Pods get `-health-listen=:7444`, a `health` container\nport, and a kubelet gRPC readiness probe on that port in place of the\nTCP probe, since the kubelet's gRPC probe cannot present the client\ncertificate the main server requires. The drift check still accepts\nPods created with the previous args, ports, and TCP probe, so\nexisting environments survive the upgrade.\n\nCloses: #2698",
+          "timestamp": "2026-11-26T20:04:51Z",
+          "tree_id": "f67c90ef6369b8311376caa4b2ea42bddbacfd28",
+          "url": "https://github.com/stacklok/mecatl/commit/029c818e434f0cba2cc47f0a515fc7189ff44fe7"
+        },
+        "date": 1795724216892,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 780,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32185,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795724212176,
+  "lastUpdate": 1795724217841,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
