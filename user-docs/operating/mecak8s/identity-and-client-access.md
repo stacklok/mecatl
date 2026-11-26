@@ -597,6 +597,15 @@ Driver's Secret sync. The broker reads its keys only at startup, so restart
 the Deployment after a sync changes a key. `mecak8s` cannot read keys from a
 secret manager or use a signing service directly.
 
+`mecak8s` refuses to start when the broker client's key set does not hold the
+broker client key's public key. If the two sync at different times, a
+restart between the syncs, such as one caused by a node drain, leaves the pod
+failing to start until both arrive. Keep the broker client key and its key
+set in one Secret that syncs both together, pointing
+`identityBroker.keys.brokerClient` and `identityBroker.keys.brokerClient.keySet`
+at it. During a rotation, sync the key set that holds both public keys before
+the new private key.
+
 ### Choose the issuer
 
 AS-1 serves its sign-in endpoints and discovery documents under the issuer

@@ -7,8 +7,8 @@
 //
 // The release is also the deployable identity broker of #2815: the chart
 // delivers its operator keys, settings, and embedded gateway entry, and the
-// spec restarts it, rotates the broker client key, and has it refuse missing
-// and shared keys.
+// spec restarts it, rotates the broker client key and AS-1's signing key, and
+// has it refuse missing and shared keys and a rotation in the wrong order.
 
 package k8s_e2e_test
 
@@ -99,19 +99,30 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		aliceSession    string
 	)
 
-	// signInAndOpenSession signs alice in at AS-1 through Dex and opens a
-	// session, which converts her sign-in at AS-1 with the broker client's
-	// assertion, so the open fails if AS-1 refuses the broker client's key.
-	signInAndOpenSession := func(step string) {
+	// signIn signs alice in at AS-1 through Dex and returns her access token.
+	signIn := func(step string) string {
 		ginkgo.GinkgoHelper()
 		ctx, cancel := shortCtx(90 * time.Second)
 		defer cancel()
 		browser := newAS1Browser(client, aliceEmail, dexPass)
 		tok, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: identity, Presenter: browser.presenter(), HTTPClient: client, IdentityBrokerSignIn: true})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "%s: sign in at AS-1", step)
-		status, sessionID := as1CreateSession(ctx, client, tok.AccessToken)
+		return tok.AccessToken
+	}
+
+	// signInAndOpenSession signs alice in and opens a session, which converts
+	// her sign-in at AS-1 with the broker client's assertion, so the open
+	// fails if AS-1 refuses the broker client's key. It returns the access
+	// token, which the open consumed.
+	signInAndOpenSession := func(step string) string {
+		ginkgo.GinkgoHelper()
+		accessToken := signIn(step)
+		ctx, cancel := shortCtx(30 * time.Second)
+		defer cancel()
+		status, sessionID := as1CreateSession(ctx, client, accessToken)
 		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "%s: session open, which authenticates the broker client at AS-1", step)
-		expectAS1Owner(ctx, client, tok.AccessToken, sessionID, subID)
+		expectAS1Owner(ctx, client, accessToken, sessionID, subID)
+		return accessToken
 	}
 
 	// upgradeAndRestart upgrades the release with overrides, waits for the
@@ -510,7 +521,7 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		signInAndOpenSession("restored release")
 	})
 
-	ginkgo.It("rotates the broker client key through an overlapping key set with helm upgrade, refusing no session open", func() {
+	ginkgo.It("rotates the broker client key with helm upgrade: each step of the operator guide starts and serves sign-in, and the wrong order is refused at startup", func() {
 		ctx := ginkgoSuiteCtx()
 		next, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -522,7 +533,12 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 			"jwks-both.json": mergeKeySets(brokerClientKeySet(brokerClientKey), brokerClientKeySet(next)),
 			"key-next.pem":   ecKeyPEM(next), "jwks-next.json": brokerClientKeySet(next),
 		})
-		for _, step := range []struct {
+
+		ginkgo.By("signing with the next key before the key set holds it, the wrong order")
+		upgradeAS1ReleaseNoWait(ctx, "identityBroker.keys.brokerClient.key=key-next.pem")
+		expectAS1StartupRefused("does not hold the broker client key's public key")
+
+		for i, step := range []struct {
 			name      string
 			overrides []string
 		}{
@@ -537,11 +553,72 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 			}},
 		} {
 			ginkgo.By("rotation step " + step.name)
-			upgradeAndRestart(ctx, step.overrides...)
+			if i == 0 {
+				// The refused release left no Ready pod to replace.
+				installAS1Release(ctx, step.overrides...)
+				as1AgentPod()
+				stops = append(stops, tunnels.forwardAS1())
+			} else {
+				upgradeAndRestart(ctx, step.overrides...)
+			}
 			signInAndOpenSession("rotation step " + step.name)
 		}
 	})
+
+	// Last, so no later spec expects the baseline AS-1 signing key. The next
+	// key joins the release's own Secret, which the namespace deletion removes.
+	ginkgo.It("rotates AS-1's signing key with a fallback: tokens signed by the old key open sessions while it is a fallback and are refused once it is removed", func() {
+		ctx := ginkgoSuiteCtx()
+		next, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		applySecretIn(ctx, as1Namespace, as1Release+"-signing", map[string][]byte{
+			"signing-key.pem": ecKeyPEM(signingKey), "signing-key-next.pem": ecKeyPEM(next),
+		})
+		reqCtx, cancel := shortCtx(30 * time.Second)
+		oldKid := jwksKeyID(as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json"), &signingKey.PublicKey, "AS-1")
+		cancel()
+		beforeRotation := signIn("before the rotation")
+		gomega.Expect(as1TokenKeyID(beforeRotation)).To(gomega.Equal(oldKid))
+
+		ginkgo.By("signing with the next key, the old key a fallback")
+		upgradeAndRestart(ctx, "identityBroker.keys.as1Signing.key=signing-key-next.pem",
+			"identityBroker.keys.as1Signing.fallbacks[0].secretName="+as1Release+"-signing",
+			"identityBroker.keys.as1Signing.fallbacks[0].key=signing-key.pem")
+		reqCtx, cancel = shortCtx(30 * time.Second)
+		keys := as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")
+		gomega.Expect(keys).To(gomega.HaveLen(2), "AS-1 publishes %v", keys)
+		gomega.Expect(jwksKeyID(keys, &signingKey.PublicKey, "AS-1")).To(gomega.Equal(oldKid))
+		newKid := jwksKeyID(keys, &next.PublicKey, "AS-1")
+		status, sessionID := as1CreateSession(reqCtx, client, beforeRotation)
+		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "session open with a token the fallback key signed")
+		expectAS1Owner(reqCtx, client, beforeRotation, sessionID, subID)
+		cancel()
+		gomega.Expect(as1TokenKeyID(signInAndOpenSession("signing with the next key"))).To(gomega.Equal(newKid))
+
+		ginkgo.By("removing the fallback")
+		upgradeAndRestart(ctx, "identityBroker.keys.as1Signing.key=signing-key-next.pem")
+		reqCtx, cancel = shortCtx(30 * time.Second)
+		defer cancel()
+		keys = as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")
+		gomega.Expect(keys).To(gomega.HaveLen(1), "AS-1 publishes %v", keys)
+		gomega.Expect(jwksKeyID(keys, &next.PublicKey, "AS-1")).To(gomega.Equal(newKid))
+		// Listing converts nothing at AS-1, so its refusal is mecak8s's
+		// validation against AS-1's key set.
+		status, raw := as1Do(reqCtx, client, http.MethodGet, as1Resource+"/v1/sessions", beforeRotation, nil)
+		gomega.Expect(status).To(gomega.Equal(http.StatusUnauthorized), "list sessions with a token the removed key signed: %s", formatBody(raw))
+		expectAS1SessionOpenRefused(reqCtx, client, beforeRotation, "bearer_rejected")
+		gomega.Expect(as1TokenKeyID(signInAndOpenSession("after removing the fallback"))).To(gomega.Equal(newKid))
+	})
 })
+
+// as1TokenKeyID returns the kid in an AS-1 token's header.
+func as1TokenKeyID(raw string) string {
+	ginkgo.GinkgoHelper()
+	tok, _, err := jwt.NewParser().ParseUnverified(raw, jwt.MapClaims{})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "AS-1 token is not a JWT")
+	kid, _ := tok.Header["kid"].(string)
+	return kid
+}
 
 // installAS1Release installs or upgrades the second, single-replica mecak8s
 // release with TLS, the identity broker, hosted AS-1 upstream of the HTTPS
