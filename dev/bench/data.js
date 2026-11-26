@@ -413168,6 +413168,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795704566184,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b11ef2c2432d8d3c2d240b9cad0f74f164ac7ebb",
+          "message": "chore(deps): update tooling dependencies (#2941)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-26T16:22:44+01:00",
+          "tree_id": "62cd447e9ee6ddbb59f79a788f100898f3b83c59",
+          "url": "https://github.com/stacklok/mecatl/commit/b11ef2c2432d8d3c2d240b9cad0f74f164ac7ebb"
+        },
+        "date": 1795707338465,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -596004,6 +596038,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795707334124,
+  "lastUpdate": 1795707339410,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
