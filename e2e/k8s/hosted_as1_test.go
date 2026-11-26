@@ -4,6 +4,11 @@
 // second mecak8s release hosts, in front of an HTTPS Dex at a private
 // in-cluster address, and drives every request from the test process through
 // port-forwards. Its assertions are facts observed in a live cluster.
+//
+// The release is also the deployable identity broker of #2815: the chart
+// delivers its operator keys, settings, and embedded gateway entry, and the
+// spec restarts it, rotates the broker client key and AS-1's signing key, and
+// has it refuse missing and shared keys and a rotation in the wrong order.
 
 package k8s_e2e_test
 
@@ -27,6 +32,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -65,6 +71,11 @@ const (
 	as1DexAddr     = as1DexHost + ":5554"
 	as1DexIssuer   = "https://" + as1DexAddr
 	as1DexClientID = "mecak8s-as1"
+
+	// The embedded gateway derives AS-2's issuer from the callback URL's
+	// scheme and host.
+	as1CallbackURL = as1Resource + "/v1/mcp/authorization/callback"
+	as2Issuer      = as1Resource + "/v1/mcp/broker"
 )
 
 var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Serial, ginkgo.Ordered, func() {
@@ -79,10 +90,51 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		registry *clientauth.Registry
 		source   *clientauth.RefreshSource
 		subID    as1SubjectID
-		// signingKey is AS-1's signing key; the test generates it.
-		signingKey   *ecdsa.PrivateKey
-		aliceSession string
+		// signingKey is AS-1's signing key; the test generates it, as it does
+		// the agent issuer, broker client, and AS-2 signing keys.
+		signingKey      *ecdsa.PrivateKey
+		agentIssuerKey  *ecdsa.PrivateKey
+		brokerClientKey *ecdsa.PrivateKey
+		as2SigningKey   *ecdsa.PrivateKey
+		aliceSession    string
 	)
+
+	// signIn signs alice in at AS-1 through Dex and returns her access token.
+	signIn := func(step string) string {
+		ginkgo.GinkgoHelper()
+		ctx, cancel := shortCtx(90 * time.Second)
+		defer cancel()
+		browser := newAS1Browser(client, aliceEmail, dexPass)
+		tok, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: identity, Presenter: browser.presenter(), HTTPClient: client, IdentityBrokerSignIn: true})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "%s: sign in at AS-1", step)
+		return tok.AccessToken
+	}
+
+	// signInAndOpenSession signs alice in and opens a session, which converts
+	// her sign-in at AS-1 with the broker client's assertion, so the open
+	// fails if AS-1 refuses the broker client's key. It returns the access
+	// token, which the open consumed.
+	signInAndOpenSession := func(step string) string {
+		ginkgo.GinkgoHelper()
+		accessToken := signIn(step)
+		ctx, cancel := shortCtx(30 * time.Second)
+		defer cancel()
+		status, sessionID := as1CreateSession(ctx, client, accessToken)
+		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "%s: session open, which authenticates the broker client at AS-1", step)
+		expectAS1Owner(ctx, client, accessToken, sessionID, subID)
+		return accessToken
+	}
+
+	// upgradeAndRestart upgrades the release with overrides, waits for the
+	// pod that replaces the running one, and forwards to it.
+	upgradeAndRestart := func(ctx context.Context, overrides ...string) {
+		ginkgo.GinkgoHelper()
+		old := as1AgentPod()
+		installAS1Release(ctx, overrides...)
+		replacement := as1AgentPod()
+		gomega.Expect(replacement).NotTo(gomega.Equal(old), "helm upgrade with %v did not restart %s", overrides, old)
+		stops = append(stops, tunnels.forwardAS1())
+	}
 
 	ginkgo.BeforeAll(func() {
 		ctx := ginkgoSuiteCtx()
@@ -99,15 +151,11 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		var err error
 		signingKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		agentIssuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		agentIssuerKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		brokerClientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		brokerClientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		// The broker client's key set names its key by RFC 7638 thumbprint, as
-		// the broker's own signer does.
-		brokerClient, err := identitybroker.NewClientAssertionSigner(brokerClientKey, 0)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		brokerClientKeySet, err := json.Marshal(brokerClient.JWKS())
+		as2SigningKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		clientSecret := rand.Text()
 
@@ -117,15 +165,19 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		applySecretIn(ctx, as1Namespace, as1Release+"-tls", map[string][]byte{"tls.crt": as1Cert, "tls.key": as1Key})
 		applySecretIn(ctx, as1Namespace, as1Release+"-signing", map[string][]byte{"signing-key.pem": ecKeyPEM(signingKey)})
 		applySecretIn(ctx, as1Namespace, as1Release+"-agent-issuer", map[string][]byte{"key.pem": ecKeyPEM(agentIssuerKey)})
-		applySecretIn(ctx, as1Namespace, as1Release+"-broker-client", map[string][]byte{"key.pem": ecKeyPEM(brokerClientKey), "jwks.json": brokerClientKeySet})
+		applySecretIn(ctx, as1Namespace, as1Release+"-broker-client", map[string][]byte{"key.pem": ecKeyPEM(brokerClientKey), "jwks.json": brokerClientKeySet(brokerClientKey)})
 		applySecretIn(ctx, as1Namespace, as1Release+"-upstream", map[string][]byte{"client-secret": []byte(clientSecret)})
 		applySecretIn(ctx, as1Namespace, as1Release+"-upstream-ca", map[string][]byte{"ca.crt": pki.caPEM})
+		applySecretIn(ctx, as1Namespace, as1Release+"-mcp-signing", map[string][]byte{"key.pem": ecKeyPEM(as2SigningKey)})
+		// The embedded gateway's OAuth MCP server is never called, so its
+		// client secret only has to exist.
+		applySecretIn(ctx, as1Namespace, as1Release+"-mcp-oauth", map[string][]byte{"client-secret": []byte(rand.Text())})
 
 		ginkgo.By("deploying Dex over HTTPS at " + as1DexIssuer)
 		kubectlApplyStdin(ctx, []byte(as1DexManifests))
 		runCmd(ctx, "kubectl", "rollout", "status", "deployment/"+as1DexName, "-n", as1Namespace, "--timeout=180s")
 
-		ginkgo.By("installing the " + as1Release + " release with hosted AS-1 upstream of that Dex")
+		ginkgo.By("installing the " + as1Release + " release with hosted AS-1 upstream of that Dex, the identity broker's settings, and an embedded gateway entry")
 		installAS1Release(ctx)
 
 		ginkgo.By("forwarding Dex and the AS-1 release to the test process")
@@ -183,6 +235,32 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		gomega.Expect(doc.Audience).To(gomega.Equal(as1Audience))
 		gomega.Expect(doc.Resource).To(gomega.Equal(as1Resource))
 		gomega.Expect(doc.IdentityBrokerSignIn).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("starts from the identity broker settings and embedded gateway entry the chart delivers, and AS-2 signs with the operator's key", func() {
+		ctx, cancel := shortCtx(30 * time.Second)
+		defer cancel()
+		raw := runCmd(ctx, "kubectl", "get", "configmap", as1Release+"-identity-broker", "-n", as1Namespace,
+			"-o", `jsonpath={.data.identity-broker\.json}`)
+		var file struct {
+			IDJAGMaxLifetime        string           `json:"id_jag_max_lifetime"`
+			IDJAGLifetime           string           `json:"id_jag_lifetime"`
+			CredentialLifetime      string           `json:"credential_lifetime"`
+			ClientAssertionLifetime string           `json:"client_assertion_lifetime"`
+			ClockSkew               string           `json:"clock_skew"`
+			Gateways                []map[string]any `json:"gateways"`
+		}
+		gomega.Expect(json.Unmarshal([]byte(raw), &file)).To(gomega.Succeed(), "decode the identity broker configuration file: %s", raw)
+		gomega.Expect([]string{file.IDJAGMaxLifetime, file.IDJAGLifetime, file.CredentialLifetime, file.ClientAssertionLifetime, file.ClockSkew}).
+			To(gomega.Equal([]string{"8h", "2m", "30m", "45s", "10s"}))
+		gomega.Expect(file.Gateways).To(gomega.Equal([]map[string]any{{
+			"kind": "embedded", "as2_issuer": as2Issuer, "token_endpoint": as2Issuer + "/oauth/token",
+			"resource": as2Issuer + "/mcp", "servers": []any{},
+		}}))
+		// The refusal spec below shows mecak8s loads the 10s clock skew the
+		// chart delivered. AS-2 publishing the operator's key shows it took
+		// the signing key, which it accepts only with the gateway entry.
+		jwksKeyID(as1JWKS(ctx, client, as2Issuer+"/.well-known/jwks.json"), &as2SigningKey.PublicKey, "AS-2")
 	})
 
 	ginkgo.It("signs the TUI in at AS-1 through Dex's login and issues an at+jwt access token naming the Dex identity", func() {
@@ -325,10 +403,12 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		expectAS1Owner(ctx, client, refreshed, sessionID, subID)
 	})
 
-	ginkgo.It("accepts a pre-restart access token after the pod restarts and refuses the pre-restart refresh token (in-memory AS-1 state until #2563)", func() {
+	ginkgo.It("keeps AS-1's and AS-2's keys across a pod restart, accepts a pre-restart access token after it, and refuses the pre-restart refresh token (in-memory AS-1 state until #2563)", func() {
 		ctx := ginkgoSuiteCtx()
 		reqCtx, cancel := shortCtx(30 * time.Second)
 		beforeRestart, err := source.Refresh(reqCtx)
+		as1Keys := as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")
+		as2Keys := as1JWKS(reqCtx, client, as2Issuer+"/.well-known/jwks.json")
 		cancel()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "refresh before the restart")
 		rec, err := creds.Load(ctx, identity)
@@ -349,6 +429,8 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 
 		reqCtx, cancel = shortCtx(60 * time.Second)
 		defer cancel()
+		gomega.Expect(as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")).To(gomega.ConsistOf(as1Keys), "AS-1's key set changed across the restart")
+		gomega.Expect(as1JWKS(reqCtx, client, as2Issuer+"/.well-known/jwks.json")).To(gomega.ConsistOf(as2Keys), "AS-2's key set changed across the restart")
 		status, sessionID := as1CreateSession(reqCtx, client, beforeRestart)
 		gomega.Expect(status).To(gomega.Equal(http.StatusCreated),
 			"an access token AS-1 issued before the restart was refused after it; the signing key comes from the Secret")
@@ -371,16 +453,222 @@ var _ = ginkgo.Describe("hosted AS-1 signs mecatui in through Dex", ginkgo.Seria
 		gomega.Expect(json.Unmarshal(raw, &refusal)).To(gomega.Succeed(), "decode %s", formatBody(raw))
 		gomega.Expect(refusal.Error).To(gomega.Equal("invalid_grant"))
 	})
+
+	ginkgo.It("refuses a release without a required key, refuses to start with one key for two roles, a key set without the broker client key, or a setting out of bounds, and starts again once fixed", func() {
+		ctx := ginkgoSuiteCtx()
+		ginkgo.By("rendering the chart without AS-1's signing key or the embedded gateway's signing key")
+		for want, overrides := range map[string][]string{
+			"identityBroker.keys.as1Signing is required when identityBroker.as1.issuer is set": {
+				"identityBroker.keys.as1Signing.secretName=", "identityBroker.keys.as1Signing.key=",
+			},
+			"identityBroker.gateways requires mcp.broker.signingKey": {
+				"mcp.broker.signingKey.secretName=", "mcp.broker.signingKey.key=",
+			},
+		} {
+			out, err := boundedCommandOutput(ctx, 1<<20, "helm", append([]string{"template"}, as1ReleaseArgs(overrides...)...)...)
+			gomega.Expect(err).To(gomega.HaveOccurred(), "helm template without a required key rendered:\n%.2000s", out)
+			gomega.Expect(string(out)).To(gomega.ContainSubstring(want))
+		}
+
+		// The chart refuses one Secret key for two roles; the same key in
+		// two Secrets reaches mecak8s, which compares the keys themselves.
+		other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		applySecretIn(ctx, as1Namespace, as1Release+"-agent-issuer-copy", map[string][]byte{"key.pem": ecKeyPEM(agentIssuerKey)})
+		applySecretIn(ctx, as1Namespace, as1Release+"-other-key-set", map[string][]byte{"jwks.json": brokerClientKeySet(other)})
+		for _, c := range []struct {
+			name, want string
+			overrides  []string
+		}{
+			{
+				name: "the agent issuer key, copied to another Secret, as AS-1's signing key",
+				want: "the agent issuer key is also the AS-1 signing key; each role needs its own key",
+				overrides: []string{
+					"identityBroker.keys.as1Signing.secretName=" + as1Release + "-agent-issuer-copy", "identityBroker.keys.as1Signing.key=key.pem",
+				},
+			},
+			{
+				name: "the agent issuer key, copied to another Secret, as the embedded gateway's signing key",
+				want: "is also one of the identity broker's keys; each role needs its own key",
+				overrides: []string{
+					"mcp.broker.signingKey.secretName=" + as1Release + "-agent-issuer-copy", "mcp.broker.signingKey.key=key.pem",
+				},
+			},
+			{
+				name: "a broker client key set holding another key",
+				want: "does not hold the broker client key's public key",
+				overrides: []string{
+					"identityBroker.keys.brokerClient.keySet.secretName=" + as1Release + "-other-key-set", "identityBroker.keys.brokerClient.keySet.key=jwks.json",
+				},
+			},
+			{
+				// The message names the 10s skew the chart delivered, not
+				// mecak8s's 30s default.
+				name:      "an ID-JAG maximum lifetime under ten clock skews",
+				want:      "the clock skew 10s must be at most a tenth of the ID-JAG grant maximum lifetime 1m30s",
+				overrides: []string{"identityBroker.settings.idJAGMaxLifetime=90s"},
+			},
+		} {
+			ginkgo.By("upgrading to " + c.name)
+			upgradeAS1ReleaseNoWait(ctx, c.overrides...)
+			expectAS1StartupRefused(c.want)
+		}
+
+		ginkgo.By("restoring the release")
+		installAS1Release(ctx)
+		as1AgentPod()
+		stops = append(stops, tunnels.forwardAS1())
+		signInAndOpenSession("restored release")
+	})
+
+	ginkgo.It("rotates the broker client key with helm upgrade: each step of the operator guide starts and serves sign-in, and the wrong order is refused at startup", func() {
+		ctx := ginkgoSuiteCtx()
+		next, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		// The operator guide's steps, each pointing the chart at a new Secret
+		// key, which rolls the pod. The Secret holds every step's key up front;
+		// the chart projects only the keys it names.
+		applySecretIn(ctx, as1Namespace, as1Release+"-broker-client", map[string][]byte{
+			"key.pem": ecKeyPEM(brokerClientKey), "jwks.json": brokerClientKeySet(brokerClientKey),
+			"jwks-both.json": mergeKeySets(brokerClientKeySet(brokerClientKey), brokerClientKeySet(next)),
+			"key-next.pem":   ecKeyPEM(next), "jwks-next.json": brokerClientKeySet(next),
+		})
+
+		ginkgo.By("signing with the next key before the key set holds it, the wrong order")
+		upgradeAS1ReleaseNoWait(ctx, "identityBroker.keys.brokerClient.key=key-next.pem")
+		expectAS1StartupRefused("does not hold the broker client key's public key")
+
+		for i, step := range []struct {
+			name      string
+			overrides []string
+		}{
+			{"1: the old and next keys in the key set, signing with the old key", []string{
+				"identityBroker.keys.brokerClient.keySet.key=jwks-both.json",
+			}},
+			{"2: signing with the next key", []string{
+				"identityBroker.keys.brokerClient.keySet.key=jwks-both.json", "identityBroker.keys.brokerClient.key=key-next.pem",
+			}},
+			{"3: only the next key in the key set", []string{
+				"identityBroker.keys.brokerClient.keySet.key=jwks-next.json", "identityBroker.keys.brokerClient.key=key-next.pem",
+			}},
+		} {
+			ginkgo.By("rotation step " + step.name)
+			if i == 0 {
+				// The refused release left no Ready pod to replace.
+				installAS1Release(ctx, step.overrides...)
+				as1AgentPod()
+				stops = append(stops, tunnels.forwardAS1())
+			} else {
+				upgradeAndRestart(ctx, step.overrides...)
+			}
+			signInAndOpenSession("rotation step " + step.name)
+		}
+	})
+
+	// Last, so no later spec expects the baseline AS-1 signing key. The next
+	// key joins the release's own Secret, which the namespace deletion removes.
+	ginkgo.It("rotates AS-1's signing key with a fallback: tokens signed by the old key open sessions while it is a fallback and are refused once it is removed", func() {
+		ctx := ginkgoSuiteCtx()
+		next, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		applySecretIn(ctx, as1Namespace, as1Release+"-signing", map[string][]byte{
+			"signing-key.pem": ecKeyPEM(signingKey), "signing-key-next.pem": ecKeyPEM(next),
+		})
+		reqCtx, cancel := shortCtx(30 * time.Second)
+		oldKid := jwksKeyID(as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json"), &signingKey.PublicKey, "AS-1")
+		cancel()
+		beforeRotation := signIn("before the rotation")
+		gomega.Expect(as1TokenKeyID(beforeRotation)).To(gomega.Equal(oldKid))
+
+		ginkgo.By("signing with the next key, the old key a fallback")
+		upgradeAndRestart(ctx, "identityBroker.keys.as1Signing.key=signing-key-next.pem",
+			"identityBroker.keys.as1Signing.fallbacks[0].secretName="+as1Release+"-signing",
+			"identityBroker.keys.as1Signing.fallbacks[0].key=signing-key.pem")
+		reqCtx, cancel = shortCtx(30 * time.Second)
+		keys := as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")
+		gomega.Expect(keys).To(gomega.HaveLen(2), "AS-1 publishes %v", keys)
+		gomega.Expect(jwksKeyID(keys, &signingKey.PublicKey, "AS-1")).To(gomega.Equal(oldKid))
+		newKid := jwksKeyID(keys, &next.PublicKey, "AS-1")
+		status, sessionID := as1CreateSession(reqCtx, client, beforeRotation)
+		gomega.Expect(status).To(gomega.Equal(http.StatusCreated), "session open with a token the fallback key signed")
+		expectAS1Owner(reqCtx, client, beforeRotation, sessionID, subID)
+		cancel()
+		gomega.Expect(as1TokenKeyID(signInAndOpenSession("signing with the next key"))).To(gomega.Equal(newKid))
+
+		ginkgo.By("removing the fallback")
+		upgradeAndRestart(ctx, "identityBroker.keys.as1Signing.key=signing-key-next.pem")
+		reqCtx, cancel = shortCtx(30 * time.Second)
+		defer cancel()
+		keys = as1JWKS(reqCtx, client, as1Issuer+"/.well-known/jwks.json")
+		gomega.Expect(keys).To(gomega.HaveLen(1), "AS-1 publishes %v", keys)
+		gomega.Expect(jwksKeyID(keys, &next.PublicKey, "AS-1")).To(gomega.Equal(newKid))
+		// Listing converts nothing at AS-1, so its refusal is mecak8s's
+		// validation against AS-1's key set.
+		status, raw := as1Do(reqCtx, client, http.MethodGet, as1Resource+"/v1/sessions", beforeRotation, nil)
+		gomega.Expect(status).To(gomega.Equal(http.StatusUnauthorized), "list sessions with a token the removed key signed: %s", formatBody(raw))
+		expectAS1SessionOpenRefused(reqCtx, client, beforeRotation, "bearer_rejected")
+		gomega.Expect(as1TokenKeyID(signInAndOpenSession("after removing the fallback"))).To(gomega.Equal(newKid))
+	})
 })
 
-// installAS1Release installs the second, single-replica mecak8s release with
-// TLS, the identity broker, and hosted AS-1 upstream of the HTTPS Dex.
-func installAS1Release(ctx context.Context) {
+// as1TokenKeyID returns the kid in an AS-1 token's header.
+func as1TokenKeyID(raw string) string {
+	ginkgo.GinkgoHelper()
+	tok, _, err := jwt.NewParser().ParseUnverified(raw, jwt.MapClaims{})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "AS-1 token is not a JWT")
+	kid, _ := tok.Header["kid"].(string)
+	return kid
+}
+
+// installAS1Release installs or upgrades the second, single-replica mecak8s
+// release with TLS, the identity broker, hosted AS-1 upstream of the HTTPS
+// Dex, and an embedded gateway entry, then the --set-string overrides, and
+// waits for it.
+func installAS1Release(ctx context.Context, overrides ...string) {
+	ginkgo.GinkgoHelper()
+	args := append(append([]string{"upgrade", "--install"}, as1ReleaseArgs(overrides...)...), "--wait", "--timeout=4m")
+	out, err := boundedCommandOutput(ctx, 1<<20, "helm", args...)
+	if err != nil {
+		ginkgo.GinkgoWriter.Printf("--- %s logs ---\n%s\n", as1Release,
+			runCmdQuiet("kubectl", "logs", "-n", as1Namespace, "deployment/"+as1Release, "--tail=100"))
+	}
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "helm install %s\n%s", as1Release, out)
+}
+
+// upgradeAS1ReleaseNoWait upgrades the release with overrides without waiting
+// for its pod, which the Recreate strategy replaces.
+func upgradeAS1ReleaseNoWait(ctx context.Context, overrides ...string) {
+	ginkgo.GinkgoHelper()
+	runCmd(ctx, "helm", append([]string{"upgrade"}, as1ReleaseArgs(overrides...)...)...)
+}
+
+// expectAS1StartupRefused waits until a release pod's mecak8s logs want, its
+// startup refusal, and asserts that no release pod is Ready.
+func expectAS1StartupRefused(want string) {
+	ginkgo.GinkgoHelper()
+	selector := "app.kubernetes.io/instance=" + as1Release + ",app.kubernetes.io/component=" + agentComponent
+	gomega.Eventually(func(g gomega.Gomega) {
+		// A crash-looping container's refusal is in the current or the
+		// previous container's log.
+		logs := runCmdQuiet("kubectl", "logs", "-n", as1Namespace, "-l", selector, "--tail=50") +
+			runCmdQuiet("kubectl", "logs", "-n", as1Namespace, "-l", selector, "--tail=50", "--previous")
+		g.Expect(logs).To(gomega.ContainSubstring(want))
+	}, 3*time.Minute, 2*time.Second).Should(gomega.Succeed(), "mecak8s did not refuse to start with %q", want)
+	ready := runCmdQuiet("kubectl", "get", "pods", "-n", as1Namespace, "-l", selector,
+		"-o", "jsonpath={.items[?(@.status.containerStatuses[0].ready==true)].metadata.name}")
+	gomega.Expect(strings.Fields(ready)).To(gomega.BeEmpty(), "a pod is Ready although mecak8s refused to start")
+}
+
+// as1ReleaseArgs are the release's helm arguments after the subcommand, with
+// overrides as the last --set-string values.
+func as1ReleaseArgs(overrides ...string) []string {
 	ginkgo.GinkgoHelper()
 	chartDir := filepath.Join(repoRoot(), "deploy", "helm", "mecak8s")
-	args := []string{"upgrade", "--install", as1Release, chartDir, "--namespace", as1Namespace,
-		"--values", filepath.Join(chartDir, "values-kind.yaml"), "--wait", "--timeout=4m"}
-	for _, value := range []string{
+	values := filepath.Join(ginkgo.GinkgoT().TempDir(), "as1-values.yaml")
+	gomega.Expect(os.WriteFile(values, []byte(as1ReleaseValues()), 0o600)).To(gomega.Succeed())
+	args := []string{as1Release, chartDir, "--namespace", as1Namespace,
+		"--values", filepath.Join(chartDir, "values-kind.yaml"), "--values", values}
+	for _, value := range append([]string{
 		"image.repository=ko.local/mecak8s", "image.tag=e2e", "fullnameOverride=" + as1Release,
 		"extraArgs[0]=--no-shell",
 		"tls.secretName=" + as1Release + "-tls",
@@ -398,16 +686,82 @@ func installAS1Release(ctx context.Context) {
 		"identityBroker.as1.upstream.issuer=" + as1DexIssuer, "identityBroker.as1.upstream.clientID=" + as1DexClientID,
 		"identityBroker.as1.upstream.clientSecret.secretName=" + as1Release + "-upstream", "identityBroker.as1.upstream.clientSecret.key=client-secret",
 		"identityBroker.as1.upstream.caSecret.secretName=" + as1Release + "-upstream-ca", "identityBroker.as1.upstream.caSecret.key=ca.crt",
-	} {
+	}, overrides...) {
 		args = append(args, "--set-string", value)
 	}
-	args = append(args, "--set", "replicaCount=1,tls.enabled=true,oidc.enabled=true,identityBroker.enabled=true,identityBroker.as1.upstream.allowPrivateAddresses=true")
-	out, err := boundedCommandOutput(ctx, 1<<20, "helm", args...)
-	if err != nil {
-		ginkgo.GinkgoWriter.Printf("--- %s logs ---\n%s\n", as1Release,
-			runCmdQuiet("kubectl", "logs", "-n", as1Namespace, "deployment/"+as1Release, "--tail=100"))
+	return append(args, "--set", "replicaCount=1,tls.enabled=true,oidc.enabled=true,identityBroker.enabled=true,identityBroker.as1.upstream.allowPrivateAddresses=true")
+}
+
+// as1ReleaseValues are the identity broker's settings and its embedded
+// gateway entry, with the callback URL, signing key, and OAuth MCP server the
+// embedded gateway needs. mecak8s starts that server's OAuth2 upstream
+// without contacting it, and no session enrolls, so its host need not exist.
+func as1ReleaseValues() string {
+	return fmt.Sprintf(`identityBroker:
+  settings:
+    idJAGMaxLifetime: 8h
+    idJAGLifetime: 2m
+    credentialLifetime: 30m
+    clientAssertionLifetime: 45s
+    clockSkew: 10s
+  gateways:
+    - kind: embedded
+      as2Issuer: %[1]s
+      tokenEndpoint: %[1]s/oauth/token
+      resource: %[1]s/mcp
+      servers: []
+mcp:
+  broker:
+    callbackURL: %[2]s
+    signingKey:
+      secretName: %[3]s-mcp-signing
+      key: key.pem
+  servers:
+    - name: calendar
+      url: https://calendar.mecatl-e2e.test/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://calendar.mecatl-e2e.test/authorize
+              tokenEndpoint: https://calendar.mecatl-e2e.test/token
+          client:
+            mode: preregistered
+            preregistered:
+              id: mecatl-e2e
+              secretKeyRef: {name: %[3]s-mcp-oauth, key: client-secret}
+          scopes: [calendar.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`, as2Issuer, as1CallbackURL, as1Release)
+}
+
+// brokerClientKeySet is key's public JWK Set, named by its RFC 7638
+// thumbprint as the broker's own signer names it.
+func brokerClientKeySet(key *ecdsa.PrivateKey) []byte {
+	ginkgo.GinkgoHelper()
+	signer, err := identitybroker.NewClientAssertionSigner(key, 0)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	set, err := json.Marshal(signer.JWKS())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return set
+}
+
+// mergeKeySets is one JWK Set holding every key of sets.
+func mergeKeySets(sets ...[]byte) []byte {
+	ginkgo.GinkgoHelper()
+	var keys []json.RawMessage
+	for _, raw := range sets {
+		var set struct {
+			Keys []json.RawMessage `json:"keys"`
+		}
+		gomega.Expect(json.Unmarshal(raw, &set)).To(gomega.Succeed())
+		keys = append(keys, set.Keys...)
 	}
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "helm install %s\n%s", as1Release, out)
+	merged, err := json.Marshal(map[string]any{"keys": keys})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return merged
 }
 
 // as1AgentPod returns the release's one Ready agent pod.
@@ -540,27 +894,36 @@ func as1JWKSKeyID(ctx context.Context, client *http.Client, pub *ecdsa.PublicKey
 		JWKSURI string `json:"jwks_uri"`
 	}
 	gomega.Expect(json.Unmarshal(raw, &discovery)).To(gomega.Succeed(), "decode %s", formatBody(raw))
-	status, raw = as1Do(ctx, client, http.MethodGet, discovery.JWKSURI, "", nil)
-	gomega.Expect(status).To(gomega.Equal(http.StatusOK), "AS-1 JWKS: %s", formatBody(raw))
+	return jwksKeyID(as1JWKS(ctx, client, discovery.JWKSURI), pub, "AS-1")
+}
+
+// as1JWKS returns the keys of the non-empty JWK Set at jwksURL.
+func as1JWKS(ctx context.Context, client *http.Client, jwksURL string) []map[string]any {
+	ginkgo.GinkgoHelper()
+	status, raw := as1Do(ctx, client, http.MethodGet, jwksURL, "", nil)
+	gomega.Expect(status).To(gomega.Equal(http.StatusOK), "GET %s: %s", jwksURL, formatBody(raw))
 	var jwks struct {
-		Keys []struct {
-			Kid string `json:"kid"`
-			Crv string `json:"crv"`
-			X   string `json:"x"`
-			Y   string `json:"y"`
-		} `json:"keys"`
+		Keys []map[string]any `json:"keys"`
 	}
 	gomega.Expect(json.Unmarshal(raw, &jwks)).To(gomega.Succeed(), "decode %s", formatBody(raw))
+	gomega.Expect(jwks.Keys).NotTo(gomega.BeEmpty(), "%s publishes no keys", jwksURL)
+	return jwks.Keys
+}
+
+// jwksKeyID returns the kid of pub among the keys server publishes.
+func jwksKeyID(keys []map[string]any, pub *ecdsa.PublicKey, server string) string {
+	ginkgo.GinkgoHelper()
 	point, err := pub.Bytes()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	x, y := base64.RawURLEncoding.EncodeToString(point[1:33]), base64.RawURLEncoding.EncodeToString(point[33:])
-	for _, k := range jwks.Keys {
-		if k.Crv == "P-256" && k.X == x && k.Y == y {
-			gomega.Expect(k.Kid).NotTo(gomega.BeEmpty())
-			return k.Kid
+	for _, k := range keys {
+		if k["crv"] == "P-256" && k["x"] == x && k["y"] == y {
+			kid, _ := k["kid"].(string)
+			gomega.Expect(kid).NotTo(gomega.BeEmpty())
+			return kid
 		}
 	}
-	ginkgo.Fail("AS-1's JWKS does not publish the test's signing key: " + formatBody(raw))
+	ginkgo.Fail(fmt.Sprintf("%s's JWKS does not publish the test's signing key: %v", server, keys))
 	return ""
 }
 
