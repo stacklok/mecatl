@@ -414242,6 +414242,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795712393823,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84990f47cddf3cf4fece4f6d79118c27a8b3d374",
+          "message": "fix(scheduler): bind scheduled fires to the source's agent definition (#2996)\n\nA fire was created without its origin's agent definition, so a fire\nfrom an agent-bound session would run with default tools and authority.\nAgent-bound sessions don't get the `Schedule` tool today, so this is\ndefensive.\n\n`bindScheduledOrigin` loads the origin once in `CreateSessionWithProfile`\nand binds the fire to its incarnation and `AgentDefinitionName`; the\nagent-definition factory refuses a definition that no longer exists, and\n`bindRelatedIncarnations` refuses an origin whose incarnation changed.\n`fireCapabilities` narrows an agent-bound source's request to its\neffective set. Fires from unbound sources are unchanged.\n\nCloses: #2824",
+          "timestamp": "2026-11-26T20:27:33+01:00",
+          "tree_id": "2198685bf11be0a0b0350eb40f33b82953420a63",
+          "url": "https://github.com/stacklok/mecatl/commit/84990f47cddf3cf4fece4f6d79118c27a8b3d374"
+        },
+        "date": 1795721998961,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -597537,6 +597571,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795721995596,
+  "lastUpdate": 1795721999669,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
