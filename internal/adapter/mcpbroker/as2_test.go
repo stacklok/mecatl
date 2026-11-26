@@ -929,7 +929,7 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	}
 	// The vMCP accepts these, which the design refuses: see the shortcut on
 	// the vMCP's incoming authentication in newToolHiveProcess. Flip them to
-	// 401 when it is removed.
+	// 401 with stacklok/toolhive#7345.
 	for name, edit := range map[string]func(jwt.MapClaims, map[string]any){
 		"typ JWT":    func(_ jwt.MapClaims, h map[string]any) { h["typ"] = "JWT" },
 		"typ absent": func(_ jwt.MapClaims, h map[string]any) { delete(h, "typ") },
