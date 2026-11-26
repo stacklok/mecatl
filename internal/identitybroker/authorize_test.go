@@ -876,7 +876,7 @@ func (r *closingRecorder) Record(ctx context.Context, rec identitybroker.Record)
 	return err
 }
 
-// faultyRecorder is a MemoryRecorder that refuses ID-JAG records, or
+// faultyRecorder is a MemoryRecorder that refuses successful ID-JAG records, or
 // success decisions, when told to.
 type faultyRecorder struct {
 	*identitybroker.MemoryRecorder
@@ -886,7 +886,7 @@ type faultyRecorder struct {
 func (r faultyRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
 	switch rec := rec.(type) {
 	case *identitybroker.IDJAGRecord:
-		if r.failIDJAG {
+		if r.failIDJAG && rec.Outcome == identitybroker.OutcomeSuccess {
 			return errors.New("recorder unavailable")
 		}
 	case *identitybroker.DecisionRecord:
@@ -909,6 +909,14 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Code != identitybroker.CodeUnavailable ||
 			!strings.HasPrefix(d[0].AttemptID, "att_") || d[0].IDJAG.ID == "" {
 			t.Fatalf("decisions = %+v, want one error naming the attempt and ID-JAG", d)
+		}
+		// The sink may have kept the ID-JAG record without confirming it, so
+		// a refusal of the ID-JAG supersedes it.
+		jags := rec.IDJAGs()
+		if len(jags) != 1 || jags[0].Type != identitybroker.TypeIDJAG || jags[0].Outcome != identitybroker.OutcomeError ||
+			jags[0].Reason != identitybroker.ReasonRecordNotAccepted || !strings.HasPrefix(jags[0].Supersedes, "rec_") ||
+			jags[0].Supersedes == jags[0].AuditID || jags[0].IDJAG != d[0].IDJAG || jags[0].AttemptID != d[0].AttemptID {
+			t.Fatalf("ID-JAG records = %+v, want one refusal superseding the unaccepted ID-JAG record", jags)
 		}
 	})
 

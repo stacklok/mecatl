@@ -267,12 +267,17 @@ type CloseSessionRequest struct {
 	// session is deleted or its scheduled run ends: its open broker session,
 	// if any, and the one an open of it in progress is creating, which that
 	// open then fails and stores nothing for. For a while afterwards, any
-	// other open of the host session fails with ReasonSessionClosed before
-	// converting anything, so an open that started before the close gives
-	// the host session no new broker session; on another replica, or once
-	// that while has passed, it can. The host session's delegation history
-	// is forgotten. Closing a host session with no broker session succeeds.
+	// other open of the host session's RootHostIncarnation fails with
+	// ReasonSessionClosed before converting anything, so an open that
+	// started before the close gives the host session no new broker session;
+	// on another replica, or once that while has passed, it can. An open of
+	// another incarnation, as when the host session is created again, is
+	// unaffected. The host session's delegation history is forgotten.
+	// Closing a host session with no broker session succeeds.
 	RootHostSessionID string
+	// RootHostIncarnation is the closed host session's incarnation, required
+	// with RootHostSessionID and empty otherwise.
+	RootHostIncarnation string
 	// Reason is the closing reason later calls on the session fail with.
 	// ReasonSessionClosed is the only closing reason Mecatl supplies today.
 	Reason Reason
@@ -288,9 +293,15 @@ func (r CloseSessionRequest) Validate() error {
 		if err := requireIDs("root host session", r.RootHostSessionID); err != nil {
 			return err
 		}
+		if !isIncarnation(r.RootHostIncarnation) {
+			return invalidIncarnation(r.RootHostIncarnation)
+		}
 	default:
 		if err := requireIDs("broker session", r.SessionID); err != nil {
 			return err
+		}
+		if r.RootHostIncarnation != "" {
+			return invalid("a close of a broker session names no root host incarnation")
 		}
 	}
 	if r.Reason != ReasonSessionClosed {

@@ -54,9 +54,10 @@ type RecordHeader struct {
 	// Code and Reason are a refusal's; empty on success.
 	Code   Code
 	Reason Reason
-	// Supersedes is the AuditID of this event's accepted success record, for
-	// a refusal recorded after it because the event could not take effect:
-	// its session closed while the success was recorded. Records are never
+	// Supersedes is the AuditID of this event's success record, for a
+	// refusal recorded after it because the event could not take effect:
+	// the sink did not confirm the success, which it may still have kept, or
+	// the session closed while the success was recorded. Records are never
 	// edited; this one follows the earlier one.
 	Supersedes string
 }

@@ -140,6 +140,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 	if err != nil {
 		return Authorization{}, err
 	}
+	rec.useGrant(g)
 	attemptID := "att_" + strings.ToLower(rand.Text())
 	rec.AttemptID = attemptID
 
@@ -151,6 +152,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			if g, err = t.retryGrant(s); err != nil {
 				return Authorization{}, err
 			}
+			rec.useGrant(g)
 		}
 		res, err := b.idjag.IssueIDJAG(ctx, IDJAGRequest{
 			SubjectToken: g.refreshToken, ActorToken: req.Credential,
@@ -172,7 +174,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			return Authorization{}, NewError(CodeInternal, "", "the authorization server's answer is not an ID-JAG")
 		}
 		rec.IDJAG = claims.ref
-		if err := b.record(ctx, &IDJAGRecord{
+		jag := &IDJAGRecord{
 			RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeIDJAG, At: t.now(), Outcome: OutcomeSuccess},
 			SessionID:    s.ID, Workload: rec.Workload, Agent: rec.Agent, AgentID: rec.AgentID,
 			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, User: g.owner,
@@ -180,8 +182,9 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			RegistrationRecord: rec.RegistrationRecord, DelegationRecord: rec.DelegationRecord,
 			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
-		}); err != nil {
-			return Authorization{}, errNotRecorded("call")
+		}
+		if err := b.record(ctx, jag); err != nil {
+			return Authorization{}, b.refuseIDJAG(*jag, errNotRecorded("call"))
 		}
 		if err := t.stillOpen(s); err != nil {
 			return Authorization{}, err
@@ -522,7 +525,8 @@ func grantForCallLocked(s *brokerSession) (*heldGrant, error) {
 
 // decisionRecord returns the record of a decision on req in s, before any
 // outcome. Its owner is the session's verified owner, or the reported one
-// when the session has none. The caller holds t.mu.
+// when the session has none, and its user the session's verified user, until
+// the call selects a grant (useGrant). The caller holds t.mu.
 func decisionRecord(now time.Time, workload Workload, s *brokerSession, req AuthorizeCallRequest) DecisionRecord {
 	owner := s.Owner
 	if s.verifiedOwner != nil {
@@ -537,6 +541,24 @@ func decisionRecord(now time.Time, workload Workload, s *brokerSession, req Auth
 		OperationID: req.OperationID, RejectedAttemptID: req.RejectedAttemptID,
 		Method: req.Method, Server: req.Server, Tool: req.Tool, ArgumentsSHA256: req.ArgumentsSHA256,
 	}
+}
+
+// useGrant names g's user and the open that stored g in r, so a decision
+// names the grant its ID-JAG was exchanged from, a retry's newer grant
+// included, rather than the session's user when the call began.
+func (r *DecisionRecord) useGrant(g *heldGrant) {
+	r.UserRecord, r.User = g.openRecord, g.user
+}
+
+// refuseIDJAG queues err as the refusal of the ID-JAG jag records, whose
+// record the sink did not accept, and returns err. The sink may have kept
+// that record without confirming it, so the refusal supersedes it (audit.md,
+// "Write order and failure"); the ID-JAG is never redeemed.
+func (b *Broker) refuseIDJAG(jag IDJAGRecord, err error) error {
+	jag.RecordHeader = jag.supersede()
+	jag.refused(err)
+	b.recordAnyway(&jag)
+	return err
 }
 
 // refuse queues err as the refusal of rec's call and returns err without

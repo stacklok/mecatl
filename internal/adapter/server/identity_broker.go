@@ -183,11 +183,8 @@ func (s *Service) openIdentityBrokerSessionOnce(ctx context.Context, sess *sessi
 	opened, err := broker.OpenSession(ctx, identitybroker.OpenSessionRequest{HostSessionID: host, Incarnation: incarnation, Owner: owner, AccessToken: token})
 	if err != nil {
 		err = s.openFailure(ctx, host, owner, err)
-		if token.IsZero() && errors.Is(err, errBrokerSessionClosedAfterToken) {
-			// A tokenless open fails with session_closed only when its host
-			// session was closed meanwhile or just before, by a delete or the
-			// end of a scheduled run: the session is gone.
-			return identitybroker.Session{}, false, fmt.Errorf("%w: session %q was closed while its identity broker session opened", ErrNotFound, host)
+		if errors.Is(err, errBrokerSessionClosedAfterToken) {
+			return identitybroker.Session{}, false, s.closedOpenFailure(ctx, sess)
 		}
 		if token.IsZero() && errors.Is(err, ErrBearerRejected) {
 			// The tag says "this request's token was refused before anything
@@ -297,6 +294,29 @@ func (s *Service) closeUnsavedPairing(ctx context.Context, host, incarnation str
 	if found && open.Incarnation == incarnation && open.Owner == owner {
 		s.closePreOpenedBrokerSession(ctx, host, open.ID)
 	}
+}
+
+// closedOpenFailure answers an open of sess, a saved session, that the broker
+// refused with session_closed, with or without the request's token. The
+// broker refuses so when a close lands while the open converts or records,
+// or for a while after a close of the host session, as on a delete or when
+// a scheduled run ends, which keeps the session for result delivery. Only the
+// store tells these apart. A session that is gone, or was created again
+// under its ID, is ErrNotFound. One that remains gets
+// ErrIdentityBrokerUnavailable, which the client retries: the open may have
+// spent the request's token, or, refused for a closed host session, converted
+// nothing, so it is not answered bearer_rejected, and after a 503 on a
+// request that presented a token the client refreshes it anyway.
+func (s *Service) closedOpenFailure(ctx context.Context, sess *session.Session) error {
+	saved, err := s.cfg.Store.Load(ctx, sess.ID)
+	if errors.Is(err, port.ErrSessionNotFound) || err == nil && saved.Incarnation() != sess.Incarnation() {
+		return fmt.Errorf("%w: session %q was closed while its identity broker session opened", ErrNotFound, sess.ID)
+	}
+	if err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "identity broker open refused for a closed session, and the session could not be loaded",
+			"session", string(sess.ID), "err", err.Error())
+	}
+	return fmt.Errorf("%w: the identity broker session was closed while it opened", ErrIdentityBrokerUnavailable)
 }
 
 // errBrokerSessionClosedAfterToken is an open's error when the broker session
@@ -535,23 +555,26 @@ func (s *Service) EndScheduledRun(ctx context.Context, sess *session.Session) {
 	if sess == nil || sess.Kind != session.SessionKindScheduled {
 		return
 	}
-	s.closeIdentityBrokerSession(ctx, sess.ID)
+	s.closeIdentityBrokerSession(ctx, sess)
 }
 
-// closeIdentityBrokerSession closes the broker session of a host session that
-// was deleted or whose scheduled run ended, and drops the credential held for
-// its agent, which verified only there. It closes by host session, so the
-// broker also closes a session an open in progress is creating, which that
-// open then fails, without waiting for it. A failure is logged, not returned:
-// the session's state has already moved on. Every deletion path calls it once
+// closeIdentityBrokerSession closes the broker session of sess, a host
+// session that was deleted or whose scheduled run ended, and drops the
+// credential held for its agent, which verified only there. It closes by host
+// session and sess's incarnation, so the broker also closes a session an open
+// in progress is creating, which that open then fails, without waiting for
+// it, and refuses later opens of that incarnation for a while, never those
+// of a host session created again under the same ID. A failure is logged,
+// not returned: the session's state has already moved on. Every deletion path calls it once
 // the durable record is gone, before anything that can still fail and return;
 // no local release does. Delete paths hold the session's locks, so the call
 // is bounded by the same timeout as the MCP broker cleanup.
-func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.SessionID) {
+func (s *Service) closeIdentityBrokerSession(ctx context.Context, sess *session.Session) {
 	broker := s.cfg.IdentityBroker
 	if broker == nil {
 		return
 	}
+	id := sess.ID
 	// Dropped once the close returns, failed or not, so a registration that
 	// finished before it, which EndScheduledRun does not exclude, is dropped too.
 	defer func() {
@@ -562,7 +585,8 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	defer cancel()
 	host := string(id)
-	if err := broker.CloseSession(ctx, identitybroker.CloseSessionRequest{RootHostSessionID: host, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+	req := identitybroker.CloseSessionRequest{RootHostSessionID: host, RootHostIncarnation: string(sess.Incarnation()), Reason: identitybroker.ReasonSessionClosed}
+	if err := broker.CloseSession(ctx, req); err != nil {
 		_ = s.identityBrokerFailure(ctx, "close", host, "", err)
 		return
 	}
@@ -577,6 +601,9 @@ func (s *Service) closeIdentityBrokerSession(ctx context.Context, id session.Ses
 //     subject_invalid) or a converted one whose open the broker could not
 //     record (record_not_accepted with CodeUnauthenticated), so the client
 //     refreshes it and retries once;
+//   - ErrBearerRejected for session_closed, a broker session closed while
+//     the open converted the token; an open of a saved session answers it by
+//     what the store holds instead (closedOpenFailure);
 //   - ErrSignInRequired when the user's authority was revoked (signed_out,
 //     upstream_revoked, owner_action_required), so the client signs in again;
 //   - ErrIdentityBrokerSessionRefused for a pairing refusal (owner_mismatch,
@@ -628,8 +655,9 @@ func (s *Service) identityBrokerFailure(ctx context.Context, call, host, brokerS
 		return fmt.Errorf("%w: identity broker refused the session", ErrIdentityBrokerSessionRefused)
 	case reason == identitybroker.ReasonSessionClosed:
 		// The broker session closed while the open converted the request's
-		// token, and a token converts once: fail as for a refused token. A
-		// tokenless open's caller turns it into ErrNotFound.
+		// token, and a token converts once: fail as for a refused token. An
+		// open of a saved session, with or without a token, is answered by
+		// what the store holds instead (closedOpenFailure).
 		return errBrokerSessionClosedAfterToken
 	}
 	if code == identitybroker.CodeUnavailable {

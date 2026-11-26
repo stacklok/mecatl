@@ -159,7 +159,8 @@ func TestRecordQueueCloseCountsARecordInFlight(t *testing.T) {
 
 // TestRecordQueueKeepsRoomForCloses pins that refusals cannot push closes out
 // of a full queue: a refusal is dropped once only closeReserve slots remain,
-// and closes still fill those up to the bound.
+// and closes, with a refusal queued alongside one, still fill those up to the
+// bound, each group whole or not at all.
 func TestRecordQueueKeepsRoomForCloses(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var enter sync.Once
@@ -199,12 +200,25 @@ func TestRecordQueueKeepsRoomForCloses(t *testing.T) {
 		t.Fatalf("refusals dropped = %d, want %d: the ones past maxQueuedRecords-closeReserve", got, want)
 	}
 	mu.Unlock()
-	for range closeReserve + 1 {
+	// A refusal queued with its close may use the reserve.
+	q.push(refusal(), closeRec())
+	for range closeReserve - 3 {
 		q.push(closeRec())
 	}
 	mu.Lock()
+	if dropped[TypeToolDecision] != closeReserve || dropped[TypeSessionClose] != 0 {
+		mu.Unlock()
+		t.Fatalf("dropped %v, want only the earlier refusals: a refusal with its close and closes fill the reserve", dropped)
+	}
+	mu.Unlock()
+	// One slot is left: a refusal and its close do not both fit, so neither
+	// is queued, while a close alone still is, and then nothing.
+	q.push(refusal(), closeRec())
+	q.push(closeRec())
+	q.push(closeRec())
+	mu.Lock()
 	defer mu.Unlock()
-	if got := dropped[TypeSessionClose]; got != 1 {
-		t.Fatalf("closes dropped = %d, want 1: closes fill the reserve up to the bound", got)
+	if dropped[TypeToolDecision] != closeReserve+1 || dropped[TypeSessionClose] != 2 {
+		t.Fatalf("dropped %v, want the refusal and close that did not fit together and the close past the bound", dropped)
 	}
 }

@@ -1259,7 +1259,7 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		f.sink.refuse = func(rec identitybroker.Record) bool {
 			if o, ok := rec.(*identitybroker.SessionOpenRecord); ok && o.Outcome == identitybroker.OutcomeSuccess {
 				once.Do(func() {
-					closeErr = b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed})
+					closeErr = b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed})
 				})
 			}
 			return false
@@ -1292,7 +1292,7 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 	t.Run("a close of the host session during a new session's exchange follows the open's refusal", func(t *testing.T) {
 		f := newRecordFixture(t)
 		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
-			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 				t.Errorf("closing the host session during the exchange: %v", err)
 			}
 			return grantResult("rt-fake-" + rand.Text()), nil
@@ -1317,7 +1317,7 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		// close of the host session came first: its record is the one kept.
 		f := newRecordFixture(t)
 		f.as1.answer = func(context.Context, int) (identitybroker.TokenExchangeResult, error) {
-			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 				t.Errorf("closing the host session during the exchange: %v", err)
 			}
 			return identitybroker.TokenExchangeResult{}, fmt.Errorf("%w %w", identitybroker.ErrMalformedResponse, identitybroker.ErrTransportConfiguration)
@@ -1340,7 +1340,7 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 				return false
 			}
 			once.Do(func() {
-				if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+				if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 					t.Errorf("closing the host session during the open's record: %v", err)
 				}
 			})
@@ -1377,11 +1377,12 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 			second <- err
 		}()
 		waitForHostLockRefs(t, f.b, openHost, 2)
-		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 			t.Fatalf("closing the host session: %v", err)
 		}
 		close(as1.release)
 		wantError(t, receive(t, first), identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		// The queued open of the same incarnation is refused too.
 		wantError(t, receive(t, second), identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		as1.mu.Lock()
 		calls := as1.calls
@@ -1400,6 +1401,17 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 		*f.clock = f.clock.Add(identitybroker.HostClosedLifetime - time.Second)
 		_, err := f.open(openHost, testOwner, identitybroker.Token{})
 		wantError(t, err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		// The mark holds only the closed incarnation: a host session created
+		// again under the same ID opens meanwhile.
+		recreated, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
+			HostSessionID: openHost, Incarnation: "inc_zbcdefghijklmnopqrstuvwxya", Owner: testOwner,
+		})
+		if err != nil {
+			t.Fatalf("open of the host session created again during the mark: %v", err)
+		}
+		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{SessionID: recreated.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+			t.Fatalf("closing the recreated host session's broker session: %v", err)
+		}
 		*f.clock = f.clock.Add(time.Second)
 		if _, err := f.open(openHost, testOwner, identitybroker.Token{}); err != nil {
 			t.Fatalf("open once the host session's mark ended: %v", err)
@@ -1408,13 +1420,74 @@ func TestARefusedRecordIsHandledPerEvent(t *testing.T) {
 
 	t.Run("a close of a host session with no broker session succeeds", func(t *testing.T) {
 		f := newRecordFixture(t)
-		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: "hostS99", Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: "hostS99", RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 			t.Fatalf("CloseSession(host with none): %v", err)
 		}
 		if closes := f.sink.Closes(); len(closes) != 0 {
 			t.Fatalf("close records = %+v, want none", closes)
 		}
 	})
+}
+
+// TestAnOpenRefusalAndItsCloseAreQueuedTogether floods the record queue with
+// denied calls' refusals until a refusal queued alone is dropped, then has
+// the sink refuse a new session's open record: the open's refusal still
+// reaches the sink, before the close that names it.
+func TestAnOpenRefusalAndItsCloseAreQueuedTogether(t *testing.T) {
+	f := newRecordFixture(t)
+	stalled, release := make(chan struct{}), make(chan struct{})
+	var stall sync.Once
+	f.sink.mu.Lock()
+	f.sink.refuse = func(rec identitybroker.Record) bool {
+		h := rec.Header()
+		if h.Type == identitybroker.TypeToolDecision {
+			// The first denied call's refusal holds the drainer, so the
+			// others wait queued.
+			stall.Do(func() { close(stalled); <-release })
+			return false
+		}
+		return h.Type == identitybroker.TypeSessionOpen && h.Outcome == identitybroker.OutcomeSuccess
+	}
+	f.sink.mu.Unlock()
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+	})
+	denied := func(i int) identitybroker.Record {
+		return &identitybroker.DecisionRecord{RecordHeader: identitybroker.RecordHeader{
+			AuditID: fmt.Sprintf("rec_denied_%04d", i), Type: identitybroker.TypeToolDecision, Outcome: identitybroker.OutcomeDenied,
+		}}
+	}
+	identitybroker.QueueRecords(f.b, denied(0))
+	receive(t, stalled)
+	refusals := identitybroker.MaxQueuedRecords - identitybroker.CloseReserve
+	for i := range refusals + 1 {
+		identitybroker.QueueRecords(f.b, denied(i+1))
+	}
+	f.sink.mu.Lock()
+	failures := append([]identitybroker.DeliveryFailure(nil), f.sink.failures...)
+	f.sink.mu.Unlock()
+	if len(failures) != 1 || failures[0].AuditID != denied(refusals+1).Header().AuditID {
+		t.Fatalf("delivery failures = %+v, want only the refusal queued past the non-close slots", failures)
+	}
+
+	_, err := f.open(openHost, testOwner, identitybroker.Token{})
+	wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted)
+	close(release)
+	released = true
+	refusal := f.lastOpen(t)
+	closes := f.sink.Closes()
+	if refusal.Outcome != identitybroker.OutcomeError || !refusal.NewSession || len(closes) != 1 || closes[0].SessionRecord != refusal.AuditID {
+		t.Fatalf("open refusal %+v and closes %+v, want the refusal and one close naming it", refusal, closes)
+	}
+	wantSentInOrder(t, f.sink, refusal.AuditID, closes[0].AuditID)
+	for _, failure := range f.sink.reported() {
+		if failure.AuditID == refusal.AuditID || failure.AuditID == closes[0].AuditID {
+			t.Fatalf("delivery failure %+v, want the open's refusal and its close both sent", failure)
+		}
+	}
 }
 
 // TestNoCredentialValueInAnyRecord runs every event and checks that no
@@ -1666,13 +1739,13 @@ func TestADelegationReportedAgainRefersToItsEarlierRecord(t *testing.T) {
 	}
 	// Another workload's close of the host session forgets nothing.
 	other := identitybroker.Workload{Name: "system:serviceaccount:other:other"}
-	if err := f.b.CloseSession(ctx, other, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+	if err := f.b.CloseSession(ctx, other, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 		t.Fatal(err)
 	}
 	if n := identitybroker.PreviousReports(f.b, openHost); n != 1 {
 		t.Fatalf("%d reports kept after another workload closed the host session, want 1", n)
 	}
-	if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+	if err := f.b.CloseSession(ctx, testWorkload, identitybroker.CloseSessionRequest{RootHostSessionID: openHost, RootHostIncarnation: openIncarnation, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 		t.Fatal(err)
 	}
 	if n := identitybroker.PreviousReports(f.b, openHost); n != 0 {

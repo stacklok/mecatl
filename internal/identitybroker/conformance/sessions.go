@@ -196,24 +196,32 @@ func runClosedSessions(t *testing.T, factory serviceFactory) {
 	})
 
 	t.Run("closing a host session closes its broker session", func(t *testing.T) {
+		const host = "hostS42"
 		svc := factory(t)
-		s := mustOpen(t, svc, openRequest("hostS42", alice))
-		if err := svc.CloseSession(ctx, closeHostRequest("hostS42")); err != nil {
+		s := mustOpen(t, svc, openRequest(host, alice))
+		if err := svc.CloseSession(ctx, closeHostRequest(host)); err != nil {
 			t.Fatalf("CloseSession(host): %v", err)
 		}
-		if _, ok, err := svc.FindSession(ctx, findRequest("hostS42")); err != nil || ok {
+		if _, ok, err := svc.FindSession(ctx, findRequest(host)); err != nil || ok {
 			t.Fatalf("FindSession after the host session's close = %v, %v; want false, nil", ok, err)
 		}
-		// A closed host session gets no new broker session, so an open that
+		// The closed incarnation gets no new broker session, so an open that
 		// started before the close cannot give it one.
-		_, err := svc.OpenSession(ctx, openRequest("hostS42", alice))
+		_, err := svc.OpenSession(ctx, openRequest(host, alice))
 		wantError(t, "OpenSession of the closed host session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
 		_, err = svc.RegisterAgent(ctx, registerRequest(s))
 		wantError(t, "RegisterAgent in the closed host session's broker session", err, identitybroker.CodeFailedPrecondition, identitybroker.ReasonSessionClosed)
+		// A host session created again under the same ID is a new
+		// incarnation, which opens.
+		recreated := openRequest(host, alice)
+		recreated.Incarnation = incarnation(host + " created again")
+		if again := mustOpen(t, svc, recreated); again.ID == s.ID {
+			t.Fatalf("the recreated host session reuses closed broker session %q", s.ID)
+		}
 		// Closing it again, or a host session with none, succeeds.
-		for _, host := range []string{"hostS42", "hostS42", "hostS99"} {
-			if err := svc.CloseSession(ctx, closeHostRequest(host)); err != nil {
-				t.Fatalf("CloseSession(%s): %v", host, err)
+		for _, other := range []string{host, host, "hostS99"} {
+			if err := svc.CloseSession(ctx, closeHostRequest(other)); err != nil {
+				t.Fatalf("CloseSession(%s): %v", other, err)
 			}
 		}
 	})
@@ -262,8 +270,11 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 		"no reason":                         {SessionID: s.ID},
 		"unknown reason":                    {SessionID: s.ID, Reason: identitybroker.ReasonDenied},
 		"both a session and a host session": {SessionID: s.ID, RootHostSessionID: "hostS42", Reason: identitybroker.ReasonSessionClosed},
-		"spaced host session":               {RootHostSessionID: "host S42", Reason: identitybroker.ReasonSessionClosed},
-		"host session with no reason":       {RootHostSessionID: "hostS42"},
+		"spaced host session":               {RootHostSessionID: "host S42", RootHostIncarnation: incarnation("hostS42"), Reason: identitybroker.ReasonSessionClosed},
+		"host session with no reason":       {RootHostSessionID: "hostS42", RootHostIncarnation: incarnation("hostS42")},
+		"host session with no incarnation":  {RootHostSessionID: "hostS42", Reason: identitybroker.ReasonSessionClosed},
+		"malformed host incarnation":        {RootHostSessionID: "hostS42", RootHostIncarnation: "inc_hostS42", Reason: identitybroker.ReasonSessionClosed},
+		"session with a host incarnation":   {SessionID: s.ID, RootHostIncarnation: incarnation("hostS42"), Reason: identitybroker.ReasonSessionClosed},
 	}
 	for name, req := range closes {
 		wantError(t, "CloseSession with "+name, svc.CloseSession(ctx, req), identitybroker.CodeInvalidArgument, "")

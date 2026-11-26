@@ -7,18 +7,18 @@ import (
 	"sync"
 )
 
-// maxQueuedRecords bounds the records waiting in a recordQueue. A record
-// queued past it is dropped and reported as a delivery failure; so is a
-// refusal queued past maxQueuedRecords-closeReserve.
+// maxQueuedRecords bounds the records waiting in a recordQueue. Records
+// queued past it are dropped and reported as delivery failures; so are
+// refusals queued past maxQueuedRecords-closeReserve.
 const maxQueuedRecords = 1024
 
-// closeReserve is how many of maxQueuedRecords only closes may fill: a
-// refusal is dropped once fewer remain. A refusal ends nothing, and an agent
-// looping on denied calls while the sink is slow can queue them faster than
-// they are sent; a close records the end of a session's authority, which
-// matters for revocation. A quarter of the queue keeps room for a burst of
-// closes, such as a workspace's sessions deleted together, while refusals
-// fill the rest.
+// closeReserve is how many of maxQueuedRecords only closes, and the records
+// queued with one, may fill: a refusal pushed alone is dropped once fewer
+// remain. A refusal ends nothing, and an agent looping on denied calls while
+// the sink is slow can queue them faster than they are sent; a close records
+// the end of a session's authority, which matters for revocation. A quarter
+// of the queue keeps room for a burst of closes, such as a workspace's
+// sessions deleted together, while refusals fill the rest.
 const closeReserve = maxQueuedRecords / 4
 
 // errRecordQueueFull is the delivery failure of a record dropped because the
@@ -60,23 +60,30 @@ func newRecordQueue(send func(context.Context, Record), dropped func(Record, err
 	return &recordQueue{send: send, dropped: dropped}
 }
 
-// push queues rec and starts a drainer if none runs, or reports rec dropped
-// when the queue is full or closed. It never waits on the sink, so it may be
-// called with the session table's lock held, which keeps records in the
-// order their events took effect.
-func (q *recordQueue) push(rec Record) {
+// push queues recs, in order, and starts a drainer if none runs, or reports
+// every one of them dropped when they do not all fit or the queue is closed:
+// a group is queued whole or not at all, so a close that names the refusal
+// queued with it never reaches the sink without it. A group with a close may
+// use closeReserve. push never waits on the sink, so it may be called with
+// the session table's lock held, which keeps records in the order their
+// events took effect.
+func (q *recordQueue) push(recs ...Record) {
 	q.mu.Lock()
+	var err error
 	switch {
 	case q.closed:
+		err = errRecordQueueClosed
+	case len(q.items)+len(recs) > queueLimit(recs):
+		err = errRecordQueueFull
+	}
+	if err != nil {
 		q.mu.Unlock()
-		q.dropped(rec, errRecordQueueClosed)
-		return
-	case len(q.items) >= maxQueuedRecords, !isClose(rec) && len(q.items) >= maxQueuedRecords-closeReserve:
-		q.mu.Unlock()
-		q.dropped(rec, errRecordQueueFull)
+		for _, rec := range recs {
+			q.dropped(rec, err)
+		}
 		return
 	}
-	q.items = append(q.items, rec)
+	q.items = append(q.items, recs...)
 	if q.idle == nil {
 		q.idle = make(chan struct{})
 		go q.drain(q.idle)
@@ -84,11 +91,16 @@ func (q *recordQueue) push(rec Record) {
 	q.mu.Unlock()
 }
 
-// isClose reports whether rec is a session close's record, which may use
-// closeReserve.
-func isClose(rec Record) bool {
-	_, ok := rec.(*SessionCloseRecord)
-	return ok
+// queueLimit returns how many records the queue may hold once recs are
+// queued: all of maxQueuedRecords when recs hold a session close, which may
+// use closeReserve, and the rest otherwise.
+func queueLimit(recs []Record) int {
+	for _, rec := range recs {
+		if _, ok := rec.(*SessionCloseRecord); ok {
+			return maxQueuedRecords
+		}
+	}
+	return maxQueuedRecords - closeReserve
 }
 
 // drain sends the queued records until none is left, then exits and closes
