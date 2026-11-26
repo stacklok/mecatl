@@ -192,11 +192,10 @@ type ToolHiveBrokerClient struct {
 // only tokens issued to itself, never a user's gateway login token.
 //
 // Shortcut: that includes a gateway token AS-2 issued it, which the design
-// refuses; each exchange mints another gateway token with a new jti, up to
-// the original's expiry. ToolHive requires the token-exchange grant on this
-// client. Removed by #2533 once AS-2 resolves the ID-JAG's subject and marks
-// gateway tokens, which ToolHive refuses at token exchange
-// (stacklok/toolhive#7247).
+// refuses, and ToolHive requires the token-exchange grant on this client, so
+// each exchange mints another gateway token with a new jti, up to the
+// original's expiry; removed by #2533 (AS-2 marks gateway tokens, which
+// ToolHive refuses at token exchange, stacklok/toolhive#7247).
 func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,
@@ -215,6 +214,9 @@ func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.
 func as2Resource(issuer string) string {
 	return issuer + "/mcp"
 }
+
+// as2AccessTokenType is the JOSE typ of the access tokens AS-2 issues.
+const as2AccessTokenType = "at+jwt"
 
 // as2TokenEndpoint is the token endpoint of AS-2 at issuer.
 func as2TokenEndpoint(issuer string) string {

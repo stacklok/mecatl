@@ -844,6 +844,9 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 		t.Fatalf("parse the gateway token: %v", err)
 	}
 	claims, header := parsed.Claims.(jwt.MapClaims), parsed.Header
+	if header["typ"] != "at+jwt" {
+		t.Errorf("gateway token typ = %v, want at+jwt", header["typ"])
+	}
 	if claims["client_id"] != identitybroker.BrokerClientID {
 		t.Errorf("gateway token client_id = %v, want %s", claims["client_id"], identitybroker.BrokerClientID)
 	}
@@ -1142,11 +1145,10 @@ func TestAS2RedeemsAnIDJAGOnceUnderConcurrentRedemptions(t *testing.T) {
 	}
 }
 
-// TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed: AS-2 reaches a
-// trusted issuer's keys on a private or loopback address only when the trust
-// allows it, never as a side effect of trusting the issuer. The other AS-2
-// tests allow it for their loopback AS-1; without it, the same trust is
-// refused before AS-2 starts.
+// TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed: a trust whose key
+// set URL names a loopback address is refused when AS-2 is built unless the
+// trust allows private addresses. The other AS-2 tests allow it for their
+// loopback AS-1.
 func TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed(t *testing.T) {
 	config := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config)
 	config.AS2Trust.t.AllowPrivateAddresses = false
@@ -1164,40 +1166,66 @@ func TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed(t *testing.T) {
 // TestAS2AnswersAReplayStoreOutageWithServerError.
 var errConsumeForTest = errors.New("replay store unavailable for test")
 
-// failingReplayStore is the in-memory auth store with its replay store for
-// assertions, which AS-2 consults at each redemption, unavailable. It embeds
-// the concrete store so ToolHive still finds the store's other interfaces.
-type failingReplayStore struct{ *storage.MemoryStorage }
+// failingReplayStore is the in-memory auth store whose replay store for
+// assertions, which AS-2 consults at each redemption, is unavailable while
+// failing is set. It embeds the concrete store so ToolHive still finds the
+// store's other interfaces.
+type failingReplayStore struct {
+	*storage.MemoryStorage
+	failing *atomic.Bool
+}
 
-func (failingReplayStore) ConsumeAssertionJWT(context.Context, string, string, string, time.Time) error {
-	return errConsumeForTest
+func (s failingReplayStore) ConsumeAssertionJWT(ctx context.Context, purpose, issuer, jti string, exp time.Time) error {
+	if s.failing.Load() {
+		return errConsumeForTest
+	}
+	return s.MemoryStorage.ConsumeAssertionJWT(ctx, purpose, issuer, jti, exp)
 }
 
 // TestAS2AnswersAReplayStoreOutageWithServerError: when AS-2 cannot record a
 // redeemed ID-JAG, it refuses the redemption as server_error, which the
 // broker treats as an unavailable server, never as a refused grant or a
-// reason to prompt (credentials-and-lifecycle.md, step (8)).
+// reason to prompt, and a gateway token issued before the outage still works
+// at the vMCP (implementation.md, "Credential verification").
 func TestAS2AnswersAReplayStoreOutageWithServerError(t *testing.T) {
 	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
-	as2 := startTrustingAS2WithOptions(t, as1, broker.config, nil, toolHiveProcessOptions{
+	var failing atomic.Bool
+	process := startTrustingAS2WithOptions(t, as1, broker.config, nil, toolHiveProcessOptions{
 		localAuthStoreForTest: func(store storage.Storage) storage.Storage {
 			memory, ok := store.(*storage.MemoryStorage)
 			if !ok {
 				t.Fatalf("auth store %T, want the in-memory store", store)
 			}
-			return failingReplayStore{memory}
+			return failingReplayStore{MemoryStorage: memory, failing: &failing}
 		},
-	}).AS2
+	})
+	as2 := process.AS2
 	vmcp := as2.Resource
 	status, body := as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
+	if status != http.StatusOK {
+		t.Fatalf("redemption before the outage: status %d, body %v", status, body)
+	}
+	issued, _ := body["access_token"].(string)
+
+	failing.Store(true)
+	status, body = as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
 	if _, issued := body["access_token"]; issued || status != http.StatusInternalServerError || body["error"] != "server_error" {
 		t.Fatalf("redemption during a replay store outage: status %d, body %v; want 500 server_error and no token", status, body)
 	}
-	code, _ := body["error"].(string)
-	description, _ := body["error_description"].(string)
-	if refusal := identitybroker.NewServerRefusal(status, code, description); !identitybroker.IsUnavailable(refusal) {
-		t.Fatalf("the broker reads AS-2's answer as %+v, want an unavailable server", refusal)
+
+	mux := http.NewServeMux()
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount handlers: %v", err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, as2TestResource, strings.NewReader(mcpInitializeBody))
+	req.Header.Set("Authorization", "Bearer "+issued)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("vMCP initialize during the outage with a gateway token issued before it: status %d, body %s", recorder.Code, recorder.Body)
 	}
 }
 

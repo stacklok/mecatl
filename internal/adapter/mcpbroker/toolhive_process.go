@@ -291,7 +291,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			closeLocalStore()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
-		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
+		var authOptions []runner.EmbeddedAuthServerOption
+		if as2 {
+			// AS-2's gateway tokens are typed at+jwt (RFC 9068), as step (8)
+			// requires; the vMCP is the only resource server they reach.
+			authOptions = append(authOptions, runner.WithAccessTokenType(as2AccessTokenType))
+		}
+		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore, authOptions...)
 		if err != nil {
 			_ = authStore.Close()
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
