@@ -13,7 +13,7 @@ product features, starting with chat. The published image is
 `ghcr.io/stacklok/mecatl/studio`.
 
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
-one self-contained pnpm workspace (pnpm 12.18.0, Node 26, see `package.json`):
+one self-contained pnpm workspace (pnpm 12.23.0, Node 26, see `package.json`):
 
 | Package                                   | What it is                                                                                                                                                                                    |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

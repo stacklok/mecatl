@@ -530,7 +530,7 @@ function ModelCard({
       <div className="flex flex-wrap items-start justify-between gap-x-3">
         <h3 className="text-sm font-medium">{model.displayName}</h3>
         <Label
-          className="flex min-h-11 items-center gap-2 text-xs font-normal text-muted-foreground"
+          className="flex min-h-11 items-center gap-2 text-xs leading-4 font-normal text-muted-foreground"
           htmlFor={`visible-model-${model.providerId}-${model.id}`}
         >
           Visible
