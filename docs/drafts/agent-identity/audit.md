@@ -51,14 +51,14 @@ Each event type uses a fixed set of outcomes:
 
 | Event | Outcomes |
 | --- | --- |
-| Decision | `success` for allow; `denied`; `error` when evaluation failed or the decision's record was not accepted, which makes the effective decision deny. |
+| Decision | `success` for allow; `denied`; `error` when evaluation failed, which makes the effective decision deny. |
 | Dispatch | `success` when the request was sent; `failure` when it was not, which proves the operation did not run. |
 | Observed outcome | `success`, `failure`, `error`, or `unknown` when dispatch may have happened but no completion was observed. |
-| ID-JAG issuance | `success` when AS-1 issued it; `denied` when AS-1 or a broker check refused it; `error` when it could not be completed, such as `record_not_accepted`. |
+| ID-JAG issuance | `success` when AS-1 issued it; `denied` when AS-1 refused it (a broker check that refuses a call is recorded as a denied decision, and no ID-JAG is requested); `error` when it could not be completed, such as `record_not_accepted`. |
 | Session open, registration, delegation report, schedule setup or renewal | `success`; `denied` when a check refused it; `error` when it could not be completed, such as `record_not_accepted`. |
 | Session close | `success`. |
 
-A refusal that supersedes an earlier record uses the outcome of its reason: `error` for `record_not_accepted`, and `denied` when a close undid the event.
+A refusal that supersedes an earlier record, an allowing decision included, uses the outcome of its reason: `error` for `record_not_accepted`, and `denied` when a close undid the event.
 
 The identity work needs these event families:
 
@@ -129,11 +129,11 @@ Correctly shaped records are not enough if they can be lost, rewritten, or never
 
 | Event | Its record must be accepted | If it is not accepted |
 | --- | --- | --- |
-| Session open, of any kind | Before the open returns | The open changes nothing: a session it would have created is closed, a refresh token the session held stays as it was, and a refresh token the open got is discarded and revoked. The broker still remembers the source `jti` it converted. An open that converted the request's token fails as for a refused token, as when its session closes after the conversion ([step (3)](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token)), so the client refreshes it before opening again. Any other open fails as `UNAVAILABLE`. A scheduled run's open fails as its [section](credentials-and-lifecycle.md#scheduled-run-session-open) says. |
+| Session open, of any kind | Before the open returns | The open changes nothing: a session it would have created is closed, a refresh token the session held stays as it was, and a refresh token the open got is discarded and revoked. The broker still remembers the source `jti` it converted. An open that converted the request's token fails as for a refused token, as when its session closes after the conversion ([step (3)](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token)), so the client refreshes it before opening again; it gets 503 instead when the same caller failed the same way within the last minute ([step (3)](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token)). Any other open fails as `UNAVAILABLE`. A scheduled run's open fails as its [section](credentials-and-lifecycle.md#scheduled-run-session-open) says. |
 | Instance registration | Before the instance is admitted | The registration fails as `UNAVAILABLE`, and the instance is not registered. A new helper's or team member's first registration is not retried: it does not run. The root's registration is retried when the run starts, and a re-registration after a reopen on the instance's next call, as their sections say. |
 | Accepted delegation report | Before the delegation is stored | The report fails as `UNAVAILABLE`, and nothing is stored. A new helper's or team member's first report is not sent again: the helper or team member does not run. A delegation reported again after a reopen is reported again on the helper's next call. |
 | ID-JAG issuance, recording its `jti` when AS-1 returns it | Before the broker redeems the ID-JAG | The broker does not redeem it, and the call fails as `UNAVAILABLE`. |
-| Schedule setup or renewal | Before the schedule or its new grant is stored | As a session open that converted the request's token: nothing is stored, the grant AS-1 issued is revoked, and Alice's client refreshes before trying again. A failed renewal keeps the schedule's current grant. |
+| Schedule setup or renewal | Before the schedule or its new grant is stored | As a session open that converted the request's token, including the 503 on a repeat: nothing is stored, the grant AS-1 issued is revoked, and Alice's client refreshes before trying again. A failed renewal keeps the schedule's current grant. |
 | Decision that allows a tool call or a tool listing | Before the broker returns the access token | The broker returns no token, and the call fails as `UNAVAILABLE`, so it cannot be dispatched. |
 | Session close, from any path | Never waited for | The close takes effect. |
 | Refusal: a refused open, registration, or report, or a denied call | Never waited for | The refusal is returned. A refused open never leaves a session, whatever happens to its record. |
