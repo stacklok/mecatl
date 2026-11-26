@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	executorv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/executor/v1"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
@@ -30,10 +33,11 @@ type serveConfig struct {
 }
 
 type serveFlags struct {
-	listen   string
-	tlsDir   string
-	trustDir string
-	cfg      serveConfig
+	listen       string
+	healthListen string
+	tlsDir       string
+	trustDir     string
+	cfg          serveConfig
 }
 
 func runServeMode(ctx context.Context, args []string) error {
@@ -56,15 +60,53 @@ func runServeMode(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", sf.listen)
-	if err != nil {
+	servers := []*grpc.Server{srv}
+	listens := []string{sf.listen}
+	if sf.healthListen != "" {
+		servers = append(servers, newHealthServer(ctx, workspaceRoot, sf.cfg))
+		listens = append(listens, sf.healthListen)
+	}
+	return serveAll(ctx, servers, listens)
+}
+
+// serveAll serves each server on its address until ctx ends or one fails.
+func serveAll(ctx context.Context, servers []*grpc.Server, addrs []string) error {
+	errs := make(chan error, len(servers))
+	defer func() {
+		for _, srv := range servers {
+			srv.Stop()
+		}
+	}()
+	for i, srv := range servers {
+		lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addrs[i])
+		if err != nil {
+			return err
+		}
+		go func() { errs <- srv.Serve(lis) }()
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errs:
 		return err
 	}
-	go func() {
-		<-ctx.Done()
-		srv.Stop()
-	}()
-	return srv.Serve(lis)
+}
+
+// newHealthServer serves only gRPC health, without TLS, for the kubelet's
+// readiness probe; the status reflects whether root accepts writes.
+func newHealthServer(ctx context.Context, root string, cfg serveConfig) *grpc.Server {
+	var services []string
+	if cfg.files {
+		services = append(services, executorv1.FileService_ServiceDesc.ServiceName)
+	}
+	if cfg.commands {
+		services = append(services, executorv1.CommandService_ServiceDesc.ServiceName)
+	}
+	health := executionexecutor.NewWorkspaceHealth(root, services...)
+	go health.Run(ctx)
+	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
+	healthpb.RegisterHealthServer(srv, health)
+	return srv
 }
 
 func parseServeFlags(args []string) (serveFlags, error) {
@@ -72,6 +114,12 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	sf := serveFlags{cfg: serveConfig{keepalive: executionenv.DefaultExecutorKeepalive()}}
 	cfg := &sf.cfg
 	flags.StringVar(&sf.listen, "listen", "", "TCP address to serve the executor gRPC services on")
+	flags.StringVar(
+		&sf.healthListen,
+		executionenv.HealthListenFlag,
+		"",
+		"TCP address to serve plaintext gRPC health on, reporting whether /workspace is writable",
+	)
 	flags.BoolVar(&cfg.files, "files", false, "serve the Files service")
 	flags.BoolVar(&cfg.commands, "commands", false, "serve the Commands service")
 	flags.IntVar(
@@ -195,5 +243,6 @@ func newFileServer(root string, maxFileBytes int) (*fileserver.Server, error) {
 		fileserver.WithMaxResults(executionenv.MaxListEntries),
 		fileserver.WithMaxPathBytes(executionenv.MaxPathBytes),
 		fileserver.WithPathEscapeErrors(osfs.ErrPathEscape),
+		fileserver.WithStorageFullErrors(syscall.ENOSPC, syscall.EDQUOT),
 	)
 }

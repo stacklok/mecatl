@@ -40,6 +40,7 @@ type Server struct {
 	maxResults   int
 	maxPathBytes int
 	escapes      []error
+	full         []error
 }
 
 // Option configures a Server.
@@ -64,6 +65,14 @@ func WithMaxPathBytes(n int) Option {
 func WithPathEscapeErrors(errs ...error) Option {
 	return func(s *Server) error {
 		s.escapes = append(s.escapes, errs...)
+		return nil
+	}
+}
+
+// WithStorageFullErrors names the workspace errors that report full storage.
+func WithStorageFullErrors(errs ...error) Option {
+	return func(s *Server) error {
+		s.full = append(s.full, errs...)
 		return nil
 	}
 }
@@ -373,11 +382,13 @@ func (s *Server) checkResults(n int, requested uint32) error {
 func (s *Server) status(err error) error {
 	var mismatch *tool.VersionMismatchError
 	switch {
+	case isAny(err, s.full):
+		return status.Error(codes.ResourceExhausted, "workspace storage is full")
 	case errors.As(err, &mismatch):
 		return failure(codes.FailedPrecondition, reasonVersionMismatch, "file version mismatch")
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return status.FromContextError(err).Err()
-	case s.escaped(err):
+	case isAny(err, s.escapes):
 		return failure(codes.PermissionDenied, reasonPathEscape, "path is outside workspace")
 	case errors.Is(err, fs.ErrNotExist):
 		return failure(codes.NotFound, reasonNotFound, "path not found")
@@ -402,8 +413,8 @@ const (
 	reasonLimitExceeded   = executorv1.ErrorReason_ERROR_REASON_LIMIT_EXCEEDED
 )
 
-func (s *Server) escaped(err error) bool {
-	for _, target := range s.escapes {
+func isAny(err error, targets []error) bool {
+	for _, target := range targets {
 		if errors.Is(err, target) {
 			return true
 		}

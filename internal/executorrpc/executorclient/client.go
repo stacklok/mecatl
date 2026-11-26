@@ -12,20 +12,32 @@ import (
 
 // Client-side ceilings against a misbehaving executor.
 const (
-	DefaultMaxFileBytes   = 256 << 20
-	DefaultMaxOutputBytes = 256 << 20
+	DefaultMaxFileBytes    = 256 << 20
+	DefaultMaxOutputBytes  = 256 << 20
+	DefaultFileCallTimeout = time.Minute
 )
 
 // ErrLimitExceeded reports a response over a client limit.
 var ErrLimitExceeded = errors.New("executor: response exceeds client limit")
 
+// ErrStorageTimeout reports a file call that outlived its timeout. The
+// executor may still finish it.
+var ErrStorageTimeout = errors.New(
+	"workspace storage did not respond in time; a write may still have completed",
+)
+
 type limits struct {
-	maxFileBytes   int
-	maxOutputBytes int
+	maxFileBytes    int
+	maxOutputBytes  int
+	fileCallTimeout time.Duration
 }
 
 func newLimits(opts []Option) limits {
-	l := limits{maxFileBytes: DefaultMaxFileBytes, maxOutputBytes: DefaultMaxOutputBytes}
+	l := limits{
+		maxFileBytes:    DefaultMaxFileBytes,
+		maxOutputBytes:  DefaultMaxOutputBytes,
+		fileCallTimeout: DefaultFileCallTimeout,
+	}
 	for _, opt := range opts {
 		opt(&l)
 	}
@@ -49,6 +61,15 @@ func WithMaxOutputBytes(n int) Option {
 	return func(l *limits) {
 		if n > 0 {
 			l.maxOutputBytes = n
+		}
+	}
+}
+
+// WithFileCallTimeout bounds one Workspace call, streams included.
+func WithFileCallTimeout(d time.Duration) Option {
+	return func(l *limits) {
+		if d > 0 {
+			l.fileCallTimeout = d
 		}
 	}
 }

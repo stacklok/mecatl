@@ -37,7 +37,7 @@ flags:
 
 type config struct {
 	addr, ca, cert, key, serverName, root string
-	timeout                               time.Duration
+	timeout, fileTimeout                  time.Duration
 	maxFileBytes, maxOutputBytes          int
 }
 
@@ -69,6 +69,7 @@ func parseFlags() (config, []string) {
 	flag.StringVar(&cfg.serverName, "server-name", "localhost", "expected executor TLS name")
 	flag.StringVar(&cfg.root, "root", "/workspace", "executor workspace root")
 	flag.DurationVar(&cfg.timeout, "timeout", 0, "deadline for the operation")
+	flag.DurationVar(&cfg.fileTimeout, "file-timeout", 0, "deadline for one file call (default 1m)")
 	flag.IntVar(&cfg.maxFileBytes, "max-file-bytes", 0, "client file read limit")
 	flag.IntVar(&cfg.maxOutputBytes, "max-output-bytes", 0, "client command output limit")
 	flag.Usage = func() {
@@ -117,6 +118,7 @@ func run(ctx context.Context, cfg config, args []string) (int, error) {
 	opts := []executorclient.Option{
 		executorclient.WithMaxFileBytes(cfg.maxFileBytes),
 		executorclient.WithMaxOutputBytes(cfg.maxOutputBytes),
+		executorclient.WithFileCallTimeout(cfg.fileTimeout),
 	}
 	if args[0] == "run" {
 		if len(args) != 2 {
@@ -257,6 +259,8 @@ func classify(err error) string {
 		return "outcome-unknown"
 	case errors.Is(err, executorclient.ErrLimitExceeded):
 		return "limit-exceeded"
+	case errors.Is(err, executorclient.ErrStorageTimeout):
+		return "storage-timeout"
 	case errors.Is(err, tool.ErrNoShell):
 		return "no-shell"
 	case errors.As(err, &mismatch):

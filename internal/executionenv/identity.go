@@ -18,6 +18,13 @@ const (
 // ExecutorServerPort is the TCP port of the executor gRPC server in its Pod.
 const ExecutorServerPort = 7443
 
+// ExecutorHealthPort is the TCP port of the executor's plaintext health server,
+// which the kubelet's readiness probe calls.
+const ExecutorHealthPort = 7444
+
+// HealthListenFlag names the executor flag giving the health server's address.
+const HealthListenFlag = "health-listen"
+
 // ClientIdentity returns the single URI SAN of c with its scheme and host lowercased.
 func ClientIdentity(c *x509.Certificate) (string, error) {
 	if len(c.URIs) != 1 {
