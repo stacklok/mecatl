@@ -170,19 +170,20 @@ type perCallFixture struct {
 	grantedFixture
 	issuer *fakeIssuer
 	as2    *fakeAS2
-	rec    *identitybroker.MemoryRecorder
+	rec    *decisionRecorder
 	unbind func()
 }
 
 func newPerCall(t *testing.T, opts ...identitybroker.Option) perCallFixture {
 	t.Helper()
-	issuer, as2, rec := &fakeIssuer{}, &fakeAS2{}, identitybroker.NewMemoryRecorder()
+	issuer, as2, rec := &fakeIssuer{}, &fakeAS2{}, newDecisionRecorder()
 	opts = append([]identitybroker.Option{
 		identitybroker.WithRecorder(rec),
 		identitybroker.WithIDJAGIssuer(issuer),
 		identitybroker.WithGateway(identitybroker.Gateway{Issuer: as2Issuer, Resource: as2Resource, Servers: []string{"github", "calendar"}}),
 	}, opts...)
 	f := openGranted(t, opts...)
+	rec.b = f.b
 	unbind, err := f.b.BindGatewayAS2(boundAS2(as2))
 	if err != nil {
 		t.Fatalf("BindGatewayAS2: %v", err)
@@ -867,33 +868,33 @@ type closingRecorder struct {
 	close func()
 }
 
-func (r *closingRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
-	err := r.MemoryRecorder.RecordDecision(ctx, rec)
-	if rec.Outcome == identitybroker.OutcomeSuccess && r.close != nil {
+func (r *closingRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
+	err := r.MemoryRecorder.Record(ctx, rec)
+	if d, ok := rec.(*identitybroker.DecisionRecord); ok && d.Outcome == identitybroker.OutcomeSuccess && r.close != nil {
 		r.close()
 	}
 	return err
 }
 
-// faultyRecorder is a MemoryRecorder that refuses ID-JAG records, or
+// faultyRecorder is a MemoryRecorder that refuses successful ID-JAG records, or
 // success decisions, when told to.
 type faultyRecorder struct {
 	*identitybroker.MemoryRecorder
 	failIDJAG, failSuccess bool
 }
 
-func (r faultyRecorder) RecordIDJAG(ctx context.Context, rec identitybroker.IDJAGRecord) error {
-	if r.failIDJAG {
-		return errors.New("recorder unavailable")
+func (r faultyRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
+	switch rec := rec.(type) {
+	case *identitybroker.IDJAGRecord:
+		if r.failIDJAG && rec.Outcome == identitybroker.OutcomeSuccess {
+			return errors.New("recorder unavailable")
+		}
+	case *identitybroker.DecisionRecord:
+		if r.failSuccess && rec.Outcome == identitybroker.OutcomeSuccess {
+			return errors.New("recorder unavailable")
+		}
 	}
-	return r.MemoryRecorder.RecordIDJAG(ctx, rec)
-}
-
-func (r faultyRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
-	if r.failSuccess && rec.Outcome == identitybroker.OutcomeSuccess {
-		return errors.New("recorder unavailable")
-	}
-	return r.MemoryRecorder.RecordDecision(ctx, rec)
+	return r.MemoryRecorder.Record(ctx, rec)
 }
 
 func TestAuthorizeCallWriteOrder(t *testing.T) {
@@ -901,12 +902,21 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		rec := faultyRecorder{MemoryRecorder: identitybroker.NewMemoryRecorder(), failIDJAG: true}
 		f := newPerCall(t, identitybroker.WithRecorder(rec))
 		_, err := f.authorize(callRequest(f.s.ID, f.cred))
-		wantError(t, err, identitybroker.CodeUnavailable, "", f.cred)
+		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, f.cred)
 		f.wantCounts(t, 1, 0)
+		identitybroker.WaitRecords(f.b)
 		d := rec.Decisions()
 		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Code != identitybroker.CodeUnavailable ||
 			!strings.HasPrefix(d[0].AttemptID, "att_") || d[0].IDJAG.ID == "" {
 			t.Fatalf("decisions = %+v, want one error naming the attempt and ID-JAG", d)
+		}
+		// The sink may have kept the ID-JAG record without confirming it, so
+		// a refusal of the ID-JAG supersedes it.
+		jags := rec.IDJAGs()
+		if len(jags) != 1 || jags[0].Type != identitybroker.TypeIDJAG || jags[0].Outcome != identitybroker.OutcomeError ||
+			jags[0].Reason != identitybroker.ReasonRecordNotAccepted || !strings.HasPrefix(jags[0].Supersedes, "rec_") ||
+			jags[0].Supersedes == jags[0].AuditID || jags[0].IDJAG != d[0].IDJAG || jags[0].AttemptID != d[0].AttemptID {
+			t.Fatalf("ID-JAG records = %+v, want one refusal superseding the unaccepted ID-JAG record", jags)
 		}
 	})
 
@@ -914,13 +924,17 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 		rec := faultyRecorder{MemoryRecorder: identitybroker.NewMemoryRecorder(), failSuccess: true}
 		f := newPerCall(t, identitybroker.WithRecorder(rec))
 		got, err := f.authorize(callRequest(f.s.ID, f.cred))
-		wantError(t, err, identitybroker.CodeUnavailable, "", f.cred, f.as2.tokens()[0])
+		wantError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, f.cred, f.as2.tokens()[0])
 		if !got.GatewayToken.IsZero() {
 			t.Fatal("an unrecorded success returned a gateway token")
 		}
+		// The sink may have kept the success without confirming it, so the
+		// refusal supersedes it.
+		identitybroker.WaitRecords(f.b)
 		d := rec.Decisions()
-		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError {
-			t.Fatalf("decisions = %+v, want one error", d)
+		if len(d) != 1 || d[0].Outcome != identitybroker.OutcomeError || d[0].Reason != identitybroker.ReasonRecordNotAccepted ||
+			!strings.HasPrefix(d[0].Supersedes, "rec_") || d[0].Supersedes == d[0].AuditID {
+			t.Fatalf("decisions = %+v, want one error superseding the unaccepted success", d)
 		}
 		// The withheld token's attempt was never issued, so it cannot be
 		// reported rejected.
@@ -960,6 +974,7 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 			if !got.GatewayToken.IsZero() {
 				t.Fatal("a call whose session closed returned a gateway token")
 			}
+			identitybroker.WaitRecords(f.b)
 			d := rec.Decisions()
 			if len(d) < 2 {
 				t.Fatalf("decisions = %+v, want a success followed by a refusal", d)
@@ -977,11 +992,11 @@ func TestAuthorizeCallWriteOrder(t *testing.T) {
 // context, as a record sink honouring cancellation does.
 type ctxRecorder struct{ *identitybroker.MemoryRecorder }
 
-func (r ctxRecorder) RecordDecision(ctx context.Context, rec identitybroker.DecisionRecord) error {
+func (r ctxRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return r.MemoryRecorder.RecordDecision(ctx, rec)
+	return r.MemoryRecorder.Record(ctx, rec)
 }
 
 func TestAuthorizeCallRecordsARefusalOfACancelledCall(t *testing.T) {
@@ -994,6 +1009,7 @@ func TestAuthorizeCallRecordsARefusalOfACancelledCall(t *testing.T) {
 	}
 	_, err := f.b.AuthorizeCall(ctx, testWorkload, callRequest(f.s.ID, f.cred))
 	wantError(t, err, identitybroker.CodeUnavailable, "", f.cred)
+	identitybroker.WaitRecords(f.b)
 	if d := rec.Decisions(); len(d) != 1 || d[0].Code != identitybroker.CodeUnavailable {
 		t.Fatalf("decisions = %+v, want the cancelled call's refusal", d)
 	}

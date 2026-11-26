@@ -1,6 +1,9 @@
 package identitybroker
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // ClockSkew is the clock skew the package's test brokers configure.
 const ClockSkew = 30 * time.Second
@@ -8,6 +11,25 @@ const ClockSkew = 30 * time.Second
 // MaxRunsPerSession is how many run records, and how many delegation
 // records, a session keeps before forgetting the oldest.
 const MaxRunsPerSession = maxRunsPerSession
+
+// HostClosedLifetime is how long a close by host session refuses its opens.
+const HostClosedLifetime = hostClosedLifetime
+
+// MaxQueuedRecords bounds the record queue, and CloseReserve is how much of
+// it only closes and the records queued with one may fill.
+const (
+	MaxQueuedRecords = maxQueuedRecords
+	CloseReserve     = closeReserve
+)
+
+// QueueRecords queues recs on b's record queue as one group, as the broker
+// queues closes and refusals.
+func QueueRecords(b *Broker, recs ...Record) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.queueRecordLocked(recs...)
+}
 
 // SetClock replaces b's clock. Call it before b is used.
 func SetClock(b *Broker, now func() time.Time) { WithClock(now)(b) }
@@ -19,10 +41,10 @@ func AS2Bound(b *Broker) bool { return b.as2.Load() != nil }
 // HostLockRefs returns how many opens hold or wait for host's open lock, and
 // whether the lock has an entry at all.
 func HostLockRefs(b *Broker, host string) (int, bool) {
-	t := b.sessions
-	t.hostMu.Lock()
-	defer t.hostMu.Unlock()
-	l, ok := t.hostLocks[host]
+	k := &b.sessions.opening
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	l, ok := k.locks[host]
 	if !ok {
 		return 0, false
 	}
@@ -80,7 +102,7 @@ func CloseSessionWithReason(b *Broker, id string, reason Reason) {
 	t := b.sessions
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.closeLocked(t.byID[id], reason)
+	t.closeLocked(t.byID[id], reason, CloseRequested)
 }
 
 // ConvertedTokens returns how many converted access tokens b remembers,
@@ -92,3 +114,21 @@ func ConvertedTokens(b *Broker) int {
 	t.pruneConvertedLocked()
 	return len(t.converted)
 }
+
+// PreviousReports returns how many delegations' accepted reports b keeps
+// for root host session host.
+func PreviousReports(b *Broker, host string) int {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if p, ok := t.runs.previous[host]; ok {
+		return len(p.byID)
+	}
+	return 0
+}
+
+// WaitRecords returns once b has sent every queued close and refusal record.
+func WaitRecords(b *Broker) { _ = b.sessions.queue.wait(context.Background()) }
+
+// SetRecorder replaces b's record sink. Call it while no call is running.
+func SetRecorder(b *Broker, r Recorder) { b.recorder = r }

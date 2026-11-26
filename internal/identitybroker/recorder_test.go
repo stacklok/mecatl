@@ -11,10 +11,10 @@ func TestMemoryRecorderBoundsAndCopies(t *testing.T) {
 	r := NewMemoryRecorder()
 	for i := range maxMemoryRecords + 1 {
 		id := fmt.Sprintf("op-%d", i)
-		if err := r.RecordDecision(ctx, DecisionRecord{OperationID: id}); err != nil {
+		if err := r.Record(ctx, &DecisionRecord{OperationID: id}); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.RecordIDJAG(ctx, IDJAGRecord{OperationID: id}); err != nil {
+		if err := r.Record(ctx, &IDJAGRecord{OperationID: id}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -39,8 +39,16 @@ func TestDecisionOutcomes(t *testing.T) {
 		CodePermissionDenied: OutcomeDenied, CodeFailedPrecondition: OutcomeDenied, CodeUnauthenticated: OutcomeDenied,
 	}
 	for code, outcome := range want {
-		if got := outcomeFor(code); got != outcome {
+		if got := outcomeFor(code, ""); got != outcome {
 			t.Errorf("outcomeFor(%s) = %s, want %s", code, got, outcome)
 		}
+	}
+	// A record not accepted is an error, even for a converted open, which
+	// reports it as CodeUnauthenticated; a close undoing an event is denied.
+	if got := outcomeFor(CodeUnauthenticated, ReasonRecordNotAccepted); got != OutcomeError {
+		t.Errorf("outcomeFor(record_not_accepted at a converted open) = %s, want %s", got, OutcomeError)
+	}
+	if got := outcomeFor(ReasonSessionClosed.Code(), ReasonSessionClosed); got != OutcomeDenied {
+		t.Errorf("outcomeFor(session_closed) = %s, want %s", got, OutcomeDenied)
 	}
 }

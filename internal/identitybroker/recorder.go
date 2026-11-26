@@ -7,12 +7,23 @@ import (
 	"time"
 )
 
-// Recorder keeps the broker's records of AuthorizeCall: each ID-JAG it
-// obtains and each decision it makes. Records name credentials by reference,
-// never by value. An implementation is safe for concurrent use.
+// Recorder is the sink the broker's records go through: every open, close,
+// registration, delegation report, ID-JAG, and call decision. Record returns
+// nil once it accepts rec, and an error when it refuses it. A refusal is
+// handled per event: a successful open, registration, or delegation report
+// fails with ReasonRecordNotAccepted and changes nothing; an ID-JAG is not
+// redeemed and a success decision returns no gateway token, both failing
+// with ReasonRecordNotAccepted; refusals and closes take effect anyway. An
+// event undone after its record was sent is recorded again as refused,
+// superseding that record, since the sink may have kept it without
+// confirming it. Every refused
+// record is reported through WithDeliveryFailures. Records are
+// *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
+// *DelegationRecord, *IDJAGRecord, or *DecisionRecord. The broker owns rec
+// and may reuse it after the call, so the sink copies what it keeps. An
+// implementation is safe for concurrent use.
 type Recorder interface {
-	RecordIDJAG(ctx context.Context, rec IDJAGRecord) error
-	RecordDecision(ctx context.Context, rec DecisionRecord) error
+	Record(ctx context.Context, rec Record) error
 }
 
 // CredentialRef names a credential by its issuer and ID (iss, jti), never by
@@ -25,26 +36,33 @@ type CredentialRef struct {
 // DecisionOutcome is how an AuthorizeCall ended.
 type DecisionOutcome string
 
-// Decision outcomes: success when the call is allowed, error for a
-// CodeInternal or CodeUnavailable failure, and denied for any other refusal.
+// Outcomes: success when the event took effect, error for a CodeInternal
+// or CodeUnavailable failure or a record not accepted, and denied for any
+// other refusal (audit.md, "AuditEvent profile"). A refusal that supersedes
+// an earlier record therefore has error when that record was not accepted,
+// and denied when a close undid its event.
 const (
 	OutcomeSuccess DecisionOutcome = "success"
 	OutcomeDenied  DecisionOutcome = "denied"
 	OutcomeError   DecisionOutcome = "error"
 )
 
-// outcomeFor returns the outcome of a refusal with code.
-func outcomeFor(code Code) DecisionOutcome {
-	if code == CodeInternal || code == CodeUnavailable {
+// outcomeFor returns the outcome of a refusal with code and reason. A record
+// not accepted is an error even when a converted open reports it with
+// CodeUnauthenticated.
+func outcomeFor(code Code, reason Reason) DecisionOutcome {
+	if code == CodeInternal || code == CodeUnavailable || reason == ReasonRecordNotAccepted {
 		return OutcomeError
 	}
 	return OutcomeDenied
 }
 
-// IDJAGRecord records an ID-JAG the broker obtained for a call.
+// IDJAGRecord records an ID-JAG the broker obtained for a call, before it is
+// redeemed.
 type IDJAGRecord struct {
-	At        time.Time
+	RecordHeader
 	SessionID string
+	Workload  Workload
 	Agent     AgentRef
 	AgentID   string
 	RunID     string
@@ -53,17 +71,48 @@ type IDJAGRecord struct {
 	DelegationID string
 	// RunOwner is the owner the run acts for, as reported.
 	RunOwner Owner
-	// User is the user of the grant the ID-JAG was exchanged from.
-	User        Owner
-	OperationID string
-	AttemptID   string
-	IDJAG       CredentialRef
-	ExpiresAt   time.Time
+	// User is the company identity (owner) of the grant the ID-JAG was
+	// exchanged from, and UserRecord the AuditID of the open that stored the
+	// grant, which verified the user: AS-1's subject and client, as
+	// UserSubjects holds. User keeps its earlier name and type until the
+	// per-call records change with #2727; in the other records, User is the
+	// verified user and Owner the company identity.
+	User         Owner
+	UserRecord   string
+	UserSubjects User
+	// AgentInstance is the acting agent's incarnation, as mecak8s reported
+	// it at registration.
+	AgentInstance string
+	// RegistrationRecord is the AuditID of the acting agent's latest
+	// accepted registration; DelegationRecord that of the delegation the run
+	// acts under, empty for a root run.
+	RegistrationRecord string
+	DelegationRecord   string
+	OperationID        string
+	AttemptID          string
+	IDJAG              CredentialRef
+	ExpiresAt          time.Time
 }
+
+// Header implements Record.
+func (r *IDJAGRecord) Header() RecordHeader { return r.header(TypeIDJAG) }
+
+// Subjects implements Record. The user is the grant's, from the open that
+// stored it.
+func (r *IDJAGRecord) Subjects() Subjects {
+	s := Subjects{}
+	s.addUser(r.UserRecord != "", r.UserSubjects, ProvenanceFromRecord(r.UserRecord), r.User)
+	s.addWorkload(r.Workload)
+	s.addAgent(r.Agent, r.AgentID, ProvenanceVerified, r.AgentInstance, ProvenanceCredentialVerified)
+	s.addRunOwner(r.RunOwner)
+	return s
+}
+
+func (*IDJAGRecord) record() {}
 
 // DecisionRecord records one AuthorizeCall decision.
 type DecisionRecord struct {
-	At        time.Time
+	RecordHeader
 	SessionID string
 	Workload  Workload
 	// Owner is the broker session's verified owner, or the owner mecak8s
@@ -73,11 +122,26 @@ type DecisionRecord struct {
 	// session open, and false when it is only what mecak8s reported
 	// (audit.md, "verified" or "reported:<component>").
 	OwnerVerified bool
+	// UserRecord is the AuditID of the open that verified the session's
+	// user, and User that user; empty when none did. The broker sets both
+	// with OwnerVerified, and Subjects marks the owner by UserRecord: taken
+	// from that open's record.
+	UserRecord string
+	User       User
 	// Agent and AgentID are zero when the credential did not verify.
-	Agent             AgentRef
-	AgentID           string
-	RunID             string
-	DelegationID      string
+	Agent   AgentRef
+	AgentID string
+	// AgentInstance is the acting agent's incarnation, as mecak8s reported
+	// it at registration, and RegistrationRecord the AuditID of its latest
+	// accepted registration; empty before the run checks.
+	AgentInstance      string
+	RegistrationRecord string
+	RunID              string
+	DelegationID       string
+	// DelegationRecord is the AuditID of the delegation record of
+	// DelegationID; empty for a root run or a refusal before the run checks
+	// passed.
+	DelegationRecord  string
 	RunOwner          Owner
 	OperationID       string
 	AttemptID         string
@@ -90,11 +154,7 @@ type DecisionRecord struct {
 	// against (check 7), in Ceiling.String's form; empty when the call was
 	// refused before that check.
 	Ceiling string
-	Outcome DecisionOutcome
-	// Code and Reason are the refusal's; empty on success.
-	Code   Code
-	Reason Reason
-	IDJAG  CredentialRef
+	IDJAG   CredentialRef
 	// GatewayToken names the gateway token. GatewayTokenUnreferenced reports
 	// an issued token that is not a JWT, so it has no (iss, jti) reference;
 	// it does not mean no token was issued.
@@ -102,67 +162,130 @@ type DecisionRecord struct {
 	GatewayTokenUnreferenced bool
 }
 
-// WithRecorder has AuthorizeCall record its decisions with r. Without it, or
-// with nil, nothing is recorded.
+// Header implements Record.
+func (r *DecisionRecord) Header() RecordHeader { return r.header(TypeToolDecision) }
+
+// Subjects implements Record. The agent's identity is verified once its
+// credential verified; which instance it is, mecak8s reported.
+func (r *DecisionRecord) Subjects() Subjects {
+	s := Subjects{}
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
+	s.addWorkload(r.Workload)
+	instance := ProvenanceCredentialVerified
+	if r.AgentInstance == "" {
+		instance = ProvenanceUnavailable
+	}
+	s.addAgent(r.Agent, r.AgentID, ProvenanceVerified, r.AgentInstance, instance)
+	s.addRunOwner(r.RunOwner)
+	return s
+}
+
+func (*DecisionRecord) record() {}
+
+// WithRecorder has the broker send every record to r. Without it, or with
+// nil, nothing is recorded; a gateway requires one.
 func WithRecorder(r Recorder) Option {
 	return func(b *Broker) { b.recorder = r }
 }
 
-// recordDecision records rec, if a recorder is configured. A refusal is
-// returned whether or not its record is accepted, so the error is dropped.
-func (b *Broker) recordDecision(ctx context.Context, rec DecisionRecord) {
-	if b.recorder == nil {
-		return
-	}
-	// Shortcut: a refusal whose record is not accepted is not reported anywhere else; removed by #2541 (the record sink reports delivery failures on a separate channel).
-	_ = b.recorder.RecordDecision(ctx, rec)
+// recordDecision queues rec, a refusal, which is returned whether or not its
+// record is accepted, so no call waits on the sink to be denied (audit.md,
+// "Write order and failure").
+func (b *Broker) recordDecision(rec DecisionRecord) {
+	rec.AuditID = newAuditID()
+	b.recordAnyway(&rec)
 }
 
-// maxMemoryRecords bounds each of MemoryRecorder's record lists.
+// maxMemoryRecords bounds each kind of MemoryRecorder's records.
 const maxMemoryRecords = 10000
 
 // MemoryRecorder is a Recorder holding the most recent records in memory, up
-// to maxMemoryRecords of each kind, dropping the oldest. Its methods are safe
-// for concurrent use.
+// to maxMemoryRecords of each kind, dropping the oldest. It accepts every
+// record. Its methods are safe for concurrent use.
 //
-// Shortcut: records held in memory, dropping the oldest beyond 10,000 of each kind; removed by #2541 (record sink) and #2563 (durable state).
+// Shortcut: records held in memory, dropping the oldest beyond 10,000 of each kind; removed by #2566 (records written in the AuditEvent profile and delivered).
 type MemoryRecorder struct {
-	mu        sync.Mutex
-	idjags    []IDJAGRecord
-	decisions []DecisionRecord
+	mu            sync.Mutex
+	opens         []SessionOpenRecord
+	closes        []SessionCloseRecord
+	registrations []RegistrationRecord
+	delegations   []DelegationRecord
+	idjags        []IDJAGRecord
+	decisions     []DecisionRecord
 }
 
 // NewMemoryRecorder returns an empty MemoryRecorder.
 func NewMemoryRecorder() *MemoryRecorder { return &MemoryRecorder{} }
 
-// RecordIDJAG implements Recorder.
-func (r *MemoryRecorder) RecordIDJAG(_ context.Context, rec IDJAGRecord) error {
+// Record implements Recorder. It keeps a copy of rec.
+func (r *MemoryRecorder) Record(_ context.Context, rec Record) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.idjags = appendBounded(r.idjags, rec)
+	switch rec := rec.(type) {
+	case *SessionOpenRecord:
+		r.opens = appendBounded(r.opens, rec.clone())
+	case *SessionCloseRecord:
+		r.closes = appendBounded(r.closes, *rec)
+	case *RegistrationRecord:
+		r.registrations = appendBounded(r.registrations, *rec)
+	case *DelegationRecord:
+		r.delegations = appendBounded(r.delegations, *rec)
+	case *IDJAGRecord:
+		r.idjags = appendBounded(r.idjags, *rec)
+	case *DecisionRecord:
+		r.decisions = appendBounded(r.decisions, *rec)
+	}
 	return nil
 }
 
-// RecordDecision implements Recorder.
-func (r *MemoryRecorder) RecordDecision(_ context.Context, rec DecisionRecord) error {
+// Opens returns a copy of the session open records, oldest first.
+func (r *MemoryRecorder) Opens() []SessionOpenRecord {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.decisions = appendBounded(r.decisions, rec)
-	return nil
+	out := make([]SessionOpenRecord, len(r.opens))
+	for i := range r.opens {
+		out[i] = r.opens[i].clone()
+	}
+	return out
 }
+
+// clone returns a copy of r that shares no memory with it.
+func (r *SessionOpenRecord) clone() SessionOpenRecord {
+	c := *r
+	if c.User != nil {
+		u := *c.User
+		c.User = &u
+	}
+	if c.Replaced != nil {
+		g := *c.Replaced
+		c.Replaced = &g
+	}
+	return c
+}
+
+// Closes returns a copy of the session close records, oldest first.
+func (r *MemoryRecorder) Closes() []SessionCloseRecord { return cloneLocked(&r.mu, &r.closes) }
+
+// Registrations returns a copy of the registration records, oldest first.
+func (r *MemoryRecorder) Registrations() []RegistrationRecord {
+	return cloneLocked(&r.mu, &r.registrations)
+}
+
+// Delegations returns a copy of the delegation records, oldest first.
+func (r *MemoryRecorder) Delegations() []DelegationRecord { return cloneLocked(&r.mu, &r.delegations) }
 
 // IDJAGs returns a copy of the ID-JAG records, oldest first.
-func (r *MemoryRecorder) IDJAGs() []IDJAGRecord {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.idjags)
-}
+func (r *MemoryRecorder) IDJAGs() []IDJAGRecord { return cloneLocked(&r.mu, &r.idjags) }
 
 // Decisions returns a copy of the decision records, oldest first.
-func (r *MemoryRecorder) Decisions() []DecisionRecord {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.decisions)
+func (r *MemoryRecorder) Decisions() []DecisionRecord { return cloneLocked(&r.mu, &r.decisions) }
+
+// cloneLocked returns a copy of *list, read under mu. It takes a pointer so
+// that the slice header too is read with mu held.
+func cloneLocked[T any](mu *sync.Mutex, list *[]T) []T {
+	mu.Lock()
+	defer mu.Unlock()
+	return slices.Clone(*list)
 }
 
 // appendBounded appends rec to list, dropping the oldest records past

@@ -66,8 +66,9 @@ type recordingBroker struct {
 	editRegistration func(*identitybroker.Registration)
 	// openErr, when set, makes OpenSession fail with it.
 	openErr error
-	// afterOpen, when set, runs after each OpenSession the broker answered.
-	afterOpen func(identitybroker.OpenSessionRequest)
+	// afterOpen, when set, runs after each OpenSession the broker answered,
+	// and beforeOpen before each reaches the broker.
+	afterOpen, beforeOpen func(identitybroker.OpenSessionRequest)
 	// beforeFind, when set, runs before each FindSession reaches the broker.
 	beforeFind func(identitybroker.FindSessionRequest)
 }
@@ -112,8 +113,11 @@ func (b *recordingBroker) OpenSession(ctx context.Context, req identitybroker.Op
 	}
 	b.mu.Lock()
 	b.opens = append(b.opens, req)
-	openErr, after := b.openErr, b.afterOpen
+	openErr, before, after := b.openErr, b.beforeOpen, b.afterOpen
 	b.mu.Unlock()
+	if before != nil {
+		before(req)
+	}
 	if openErr != nil {
 		return identitybroker.Session{}, openErr
 	}
@@ -519,11 +523,46 @@ func TestIdentityBrokerClosesOnDeleteOnly(t *testing.T) {
 	}
 }
 
-// hangingFindBroker blocks FindSession until its context ends, as an
-// unresponsive remote broker would.
+// TestIdentityBrokerRecreatedSessionOpensAfterADelete proves that a session
+// deleted and created again under the same explicit ID within the broker's
+// host-closed window opens a broker session: the delete marks only the
+// deleted incarnation.
+func TestIdentityBrokerRecreatedSessionOpensAfterADelete(t *testing.T) {
+	broker := newRecordingBroker()
+	svc := newIdentityBrokerService(t, broker, mockllm.New())
+	ctx := aliceContext(t)
+	create := func() *session.Session {
+		t.Helper()
+		sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("reused"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	deleted := create()
+	wantBrokerSession(t, broker, deleted)
+	if err := svc.DeleteSession(ctx, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := broker.find(t, deleted.ID); ok {
+		t.Fatal("deleting the session left its broker session open")
+	}
+	recreated := create()
+	if recreated.Incarnation() == deleted.Incarnation() {
+		t.Fatal("the recreated session kept the deleted incarnation")
+	}
+	wantBrokerSession(t, broker, recreated)
+	if err := runToEnd(ctx, t, svc, recreated.ID); err != nil {
+		t.Fatalf("a run of the recreated session: %v", err)
+	}
+}
+
+// hangingFindBroker blocks FindSession, and CloseSession while hangClose is
+// set, until its context ends, as an unresponsive remote broker would.
 type hangingFindBroker struct {
 	*recordingBroker
-	hang bool
+	hang      bool
+	hangClose bool
 	// waiting, when set, receives a value each time a hanging FindSession
 	// starts waiting, so a test can act while the call is in flight.
 	waiting chan struct{}
@@ -541,6 +580,14 @@ func (b *hangingFindBroker) FindSession(ctx context.Context, req identitybroker.
 	return b.recordingBroker.FindSession(ctx, req)
 }
 
+func (b *hangingFindBroker) CloseSession(ctx context.Context, req identitybroker.CloseSessionRequest) error {
+	if b.hangClose {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return b.recordingBroker.CloseSession(ctx, req)
+}
+
 func TestIdentityBrokerCloseOnDeleteIsBounded(t *testing.T) {
 	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
 	defer restore()
@@ -551,7 +598,7 @@ func TestIdentityBrokerCloseOnDeleteIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker.hang = true
+	broker.hang, broker.hangClose = true, true
 	done := make(chan error, 1)
 	go func() { done <- svc.DeleteSession(ctx, sess.ID) }()
 	select {

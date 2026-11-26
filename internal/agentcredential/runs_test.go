@@ -213,6 +213,41 @@ func TestHolderReportsADelegationSetDuringAMove(t *testing.T) {
 	wantReportedInOrder(t, f.b, "bs_2", "dlg_c", "dlg_c2")
 }
 
+// TestHolderMovesAgainWhenTheSecondReportFails pins that when the report of
+// a delegation set during a move fails, the move is undone, so the helper's
+// next lookup moves it again and reports that delegation, rather than leaving
+// it in a session that never saw the delegation its calls name.
+func TestHolderMovesAgainWhenTheSecondReportFails(t *testing.T) {
+	f := newMovedTree(t)
+	mustEnsure(t, f.h, "bs_2")
+	next := agentcredential.Delegation{ID: "dlg_c2", Run: agentcredential.Run{ID: "run_c2"}, DelegatingRun: "run_root2", DelegatingAgentSession: "root"}
+	var once sync.Once
+	f.b.mu.Lock()
+	f.b.onReport = func(req identitybroker.ReportDelegationRequest) {
+		if req.SessionID == "bs_2" && req.DelegationID == "dlg_c" {
+			once.Do(func() {
+				if err := f.h.SetDelegation(f.childKey, next); err != nil {
+					t.Error(err)
+				}
+				// The report after the move fails.
+				f.b.setReportErr(identitybroker.NewError(identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted, "down"))
+			})
+		}
+	}
+	f.b.mu.Unlock()
+	if _, err := f.h.Credential(t.Context(), f.childKey, false); err == nil {
+		t.Fatal("a move whose second report failed succeeded")
+	}
+	if held, _ := f.h.Held(f.childKey); held.BrokerSessionID != "bs_1" {
+		t.Fatalf("held in %s after the second report failed, want bs_1", held.BrokerSessionID)
+	}
+	f.b.setReportErr(nil)
+	if cred, err := f.h.Credential(t.Context(), f.childKey, false); err != nil || cred.BrokerSessionID != "bs_2" {
+		t.Fatalf("lookup after the broker recovered = %+v, %v; want it moved", cred, err)
+	}
+	wantReportedInOrder(t, f.b, "bs_2", "dlg_c2")
+}
+
 // TestHolderReportsAnOlderParentRun pins that a helper delegated from an
 // earlier run of its parent, not the parent's current one, has that earlier
 // delegation reported first, so the new session knows the run it was

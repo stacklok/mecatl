@@ -25,6 +25,11 @@ import (
 // verified identity.
 const identityBrokerWorkload = "mecak8s-unverified"
 
+// identityBrokerDrainTimeout bounds how long shutdown waits for the identity
+// broker to send its queued close and refusal records; it reports each it
+// cannot send by then.
+const identityBrokerDrainTimeout = 10 * time.Second
+
 // errNoIdentityBrokerConfigFile refuses the identity broker without its
 // configuration file, which holds its keys.
 var errNoIdentityBrokerConfigFile = errors.New("the identity broker requires its configuration file (--identity-broker-config), which names its agent trust domain, audience, and keys")
@@ -651,7 +656,15 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, 
 	}
 	// Records are kept in memory (the shortcut on identitybroker.MemoryRecorder).
 	recorder := identitybroker.NewMemoryRecorder()
-	opts := []identitybroker.Option{identitybroker.WithRecorder(recorder), identitybroker.WithAgentIssuerFallbacks(file.Keys.AgentIssuerFallbacks...)}
+	diag := cfg.diag()
+	opts := []identitybroker.Option{
+		identitybroker.WithRecorder(loggedRecorder{recorder: recorder, diag: diag}),
+		identitybroker.WithDeliveryFailures(func(f identitybroker.DeliveryFailure) {
+			diag.Log(context.Background(), port.LevelWarn, "identity broker record not accepted",
+				"audit_id", f.AuditID, "type", f.Type, "err", f.Err.Error())
+		}),
+		identitybroker.WithAgentIssuerFallbacks(file.Keys.AgentIssuerFallbacks...),
+	}
 	if as1 != nil {
 		if client == nil {
 			return identityBroker{}, errNoBrokerClientKey
@@ -736,4 +749,25 @@ func definitionRefs(records []identitybroker.DefinitionRecord) []identitybroker.
 		refs[i] = rec.Ref
 	}
 	return refs
+}
+
+// loggedRecorder is the identity broker's record sink: recorder keeps each
+// record, and diag gets a one-line debug summary of it, with its type,
+// AuditID, outcome, and refusal, never its subjects or credential references.
+//
+// Shortcut: a diagnostics line repeats each broker record, the only way to see records outside the process while they are held in memory; removed by #2566 (records delivered in the AuditEvent profile).
+type loggedRecorder struct {
+	recorder identitybroker.Recorder
+	diag     port.Diagnostics
+}
+
+// Record implements identitybroker.Recorder.
+func (r loggedRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
+	if err := r.recorder.Record(ctx, rec); err != nil {
+		return err
+	}
+	h := rec.Header()
+	r.diag.Log(context.WithoutCancel(ctx), port.LevelDebug, "identity broker record",
+		"type", h.Type, "audit_id", h.AuditID, "outcome", string(h.Outcome), "code", string(h.Code), "reason", string(h.Reason))
+	return nil
 }

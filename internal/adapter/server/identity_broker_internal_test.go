@@ -644,3 +644,42 @@ func TestRootedRunContextCarriesTheSessionRun(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenRecordRefusalsRepeatPerCaller pins the window of the 503 rule: a
+// refusal repeats the caller's previous one within a minute, whatever host
+// session either opened; another caller's does not count, and a success
+// ends it.
+func TestOpenRecordRefusalsRepeatPerCaller(t *testing.T) {
+	alice := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "alice-204"}
+	bob := identitybroker.Owner{Issuer: "https://login.example.com", Subject: "bob-117"}
+	now := time.Date(2027, 1, 15, 10, 0, 0, 0, time.UTC)
+	var r openRecordRefusals
+	steps := []struct {
+		name    string
+		owner   identitybroker.Owner
+		success bool
+		after   time.Duration
+		repeat  bool
+	}{
+		{"a first refusal", alice, false, 0, false},
+		{"another caller's refusal", bob, false, time.Second, false},
+		{"the caller's second refusal", alice, false, 10 * time.Second, true},
+		{"one more within a minute of the last", alice, false, 59 * time.Second, true},
+		{"one a minute after the last", alice, false, 60 * time.Second, false},
+		{"a refusal after a success", alice, false, time.Second, false},
+	}
+	for i, step := range steps {
+		now = now.Add(step.after)
+		if i == len(steps)-1 {
+			r.succeeded(alice)
+		}
+		if got := r.refused(step.owner, now); got != step.repeat {
+			t.Fatalf("%s: repeat = %t, want %t", step.name, got, step.repeat)
+		}
+	}
+	// Entries older than the window are pruned as others are noted.
+	r.refused(bob, now.Add(2*time.Minute))
+	if n := len(r.at); n != 1 {
+		t.Fatalf("%d entries kept, want only the last one", n)
+	}
+}

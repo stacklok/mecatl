@@ -50,7 +50,7 @@ type harnessFixture struct {
 	// as1Server is AS-1, for revoking grants in it.
 	as1Server *as1server.Server
 	b         *identitybroker.Broker
-	rec       *identitybroker.MemoryRecorder
+	rec       *decisionRecorder
 	// as1 and as2 are the fault transports in front of each server's token
 	// endpoint.
 	as1, as2 *identityharness.FaultTransport
@@ -143,7 +143,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		t.Fatal(err)
 	}
 
-	rec := identitybroker.NewMemoryRecorder()
+	rec := newDecisionRecorder()
 	b := newBroker(t,
 		identitybroker.WithAuthServer(as1),
 		identitybroker.WithIDJAGIssuer(as1),
@@ -153,6 +153,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 			Servers: []string{"github"},
 			AS2:     identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource, AuthServer: as2Client},
 		}))
+	rec.b = b
 	if err := a.Server.UseCredentialVerifier(b); err != nil {
 		t.Fatal(err)
 	}
@@ -553,6 +554,14 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		newer, ok := identitybroker.SessionGrant(f.b, f.s.ID)
 		if !ok || newer.RefreshToken.Value() == old.RefreshToken.Value() {
 			t.Fatal("the session does not hold a newer grant")
+		}
+		// The decision names the grant its ID-JAG was exchanged from: the
+		// reopen's, not the one the session held when the call began.
+		opens, jags, decisions := f.rec.Opens(), f.rec.IDJAGs(), f.rec.Decisions()
+		reopen := opens[len(opens)-1]
+		if len(jags) != 1 || len(decisions) != 1 || jags[0].UserRecord != reopen.AuditID ||
+			decisions[0].UserRecord != reopen.AuditID || decisions[0].User != jags[0].UserSubjects || reopen.User == nil || decisions[0].User != *reopen.User {
+			t.Fatalf("ID-JAGs %+v and decisions %+v, want both naming the reopen %s and its user", jags, decisions, reopen.AuditID)
 		}
 	})
 

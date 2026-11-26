@@ -57,19 +57,19 @@ func TestSessionOpenWithATokenForAnotherAudience(t *testing.T) {
 	}
 	workload := identitybroker.Workload{Name: "system:serviceaccount:mecatl:mecak8s"}
 	alice := identitybroker.Owner{Issuer: h.IdP.Issuer(), Subject: identityharness.Alice}
-	// open opens host for Alice with token and returns whether the session it
-	// leaves holds a refresh token, and the open's error.
+	// open opens host for Alice with token and returns whether it left a
+	// session, which a refused open never does, and the open's error.
 	open := func(t *testing.T, host string, token identitybroker.Token) (bool, error) {
 		t.Helper()
 		ctx := context.Background()
 		_, openErr := b.OpenSession(ctx, workload, identitybroker.OpenSessionRequest{
 			HostSessionID: host, Incarnation: "inc_abcdefghijklmnopqrstuvwxya", Owner: alice, AccessToken: token,
 		})
-		s, ok, err := b.FindSession(ctx, workload, identitybroker.FindSessionRequest{RootHostSessionID: host})
-		if err != nil || !ok {
-			t.Fatalf("FindSession = %v, %v; want the paired session", ok, err)
+		_, ok, err := b.FindSession(ctx, workload, identitybroker.FindSessionRequest{RootHostSessionID: host})
+		if err != nil {
+			t.Fatalf("FindSession: %v", err)
 		}
-		return s.HoldsRefreshToken, openErr
+		return ok, openErr
 	}
 	wantError := func(t *testing.T, err error, code identitybroker.Code, reason identitybroker.Reason, token identitybroker.Token) {
 		t.Helper()
@@ -85,23 +85,23 @@ func TestSessionOpenWithATokenForAnotherAudience(t *testing.T) {
 	t.Run("as AS-1 issues it, without sub_id: the broker refuses it before AS-1", func(t *testing.T) {
 		before := transport.n.Load()
 		token := identitybroker.NewToken(f.signIn(t, otherAudience).AccessToken)
-		holds, err := open(t, "hostS42", token)
+		left, err := open(t, "hostS42", token)
 		wantError(t, err, identitybroker.CodeUnauthenticated, identitybroker.ReasonSubjectInvalid, token)
-		if holds || transport.n.Load() != before {
-			t.Fatalf("holds a refresh token %v after %d requests to AS-1; want none of either", holds, transport.n.Load()-before)
+		if left || transport.n.Load() != before {
+			t.Fatalf("left a session %v after %d requests to AS-1; want none of either", left, transport.n.Load()-before)
 		}
 	})
 	t.Run("with Alice's sub_id: subject_token_audience is a configuration fault", func(t *testing.T) {
 		before := transport.n.Load()
 		token := withSubID(t, keyFile, f.signIn(t, otherAudience).AccessToken, alice)
-		holds, err := open(t, "hostS43", token)
+		left, err := open(t, "hostS43", token)
 		wantError(t, err, identitybroker.CodeInternal, "", token)
 		// The detail names AS-1's reason, so the refusal is AS-1's own.
 		if !strings.Contains(err.Error(), "subject_token_audience") {
 			t.Fatalf("error = %v, want AS-1's subject_token_audience", err)
 		}
-		if holds || transport.n.Load() != before+1 {
-			t.Fatalf("holds a refresh token %v after %d requests to AS-1; want none and one", holds, transport.n.Load()-before)
+		if left || transport.n.Load() != before+1 {
+			t.Fatalf("left a session %v after %d requests to AS-1; want none and one", left, transport.n.Load()-before)
 		}
 	})
 }

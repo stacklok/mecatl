@@ -1617,6 +1617,14 @@ type Built struct {
 	Close              func()
 }
 
+// IdentityBrokerRecords returns the records the real identity broker kept;
+// nil without one.
+//
+// Shortcut: the identity broker keeps its records in memory, where operators and tests read them; removed by #2566 (audit delivery).
+func (b *Built) IdentityBrokerRecords() *identitybroker.MemoryRecorder {
+	return b.identityBrokerRecorder
+}
+
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
 // process-owned HTTP mux. A build with no broker HTTP surface is a no-op.
 func (b *Built) MountMCPBrokerHandlers(mux *http.ServeMux) error {
@@ -3150,7 +3158,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		childLiveness.Close()
 		closeBroker()
+		// AS-1 stops taking requests first, so no open or call queues a
+		// record after the drain; then the identity broker sends its queued
+		// close and refusal records, reporting any it cannot send in time.
 		ib.release()
+		if ib.core != nil {
+			drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
+			_ = ib.core.Close(drainCtx)
+			cancel()
+		}
 		mcpClose()
 		closeProfiles()
 		agentClose()

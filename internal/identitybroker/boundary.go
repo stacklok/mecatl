@@ -18,6 +18,11 @@ type Workload struct {
 	// proved: implementations must never treat it as the verified workload of
 	// the same name, and records must not present it as verified.
 	Verified bool
+	// Issuer is the issuer of the credential the authenticator verified,
+	// such as the cluster's ServiceAccount token issuer; empty when it
+	// verified none or names none. Records qualify a verified workload by
+	// it (audit.md, "AuditEvent profile").
+	Issuer string
 }
 
 // Validate reports whether w has a name. The error is an *Error with

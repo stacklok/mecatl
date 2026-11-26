@@ -278,8 +278,18 @@ func TestBuildCloseFinishesACallInFlightBeforeTheMCPBroker(t *testing.T) {
 		probe := g.call(s, cred)
 		probe.OperationID = fmt.Sprintf("probe-%d", i)
 		_, err := g.built.IdentityBroker.AuthorizeCall(cancelled, probe)
-		d := g.built.identityBrokerRecorder.Decisions()
-		if last := d[len(d)-1]; err != nil && last.OperationID == probe.OperationID && last.AttemptID == "" {
+		// The probe's refusal is queued, so wait for its record.
+		var last identitybroker.DecisionRecord
+		for last.OperationID != probe.OperationID {
+			if time.Now().After(deadline) {
+				t.Fatal("the probe's refusal was never recorded")
+			}
+			if d := g.built.identityBrokerRecorder.Decisions(); len(d) > 0 {
+				last = d[len(d)-1]
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if err != nil && last.AttemptID == "" {
 			wantBrokerError(t, err, identitybroker.CodeUnavailable, "")
 			break
 		}

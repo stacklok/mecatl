@@ -78,8 +78,15 @@ import (
 //     ReasonOwnerActionRequired and the reason's code, after which the user
 //     signs in again; an unavailable AS-1 fails with
 //     CodeUnavailable, and any other failure with CodeInternal. A failed
-//     exchange leaves the session paired, with any refresh token it held; an
-//     answer that does not match the request or cannot be decoded closes it.
+//     exchange leaves an existing session paired, with any refresh token it
+//     held, and closes one the open created: a refused open never leaves a
+//     session. An answer that does not match the request or cannot be
+//     decoded closes the session.
+//   - Returns only once the open's record is accepted. Otherwise the open
+//     changes nothing and fails with ReasonRecordNotAccepted: with
+//     CodeUnauthenticated when it converted the request's token, which is
+//     spent, so the client refreshes it before opening again, and
+//     CodeUnavailable otherwise.
 //     When the session closes while AS-1 converts the token, the open fails
 //     with CodeFailedPrecondition and ReasonSessionClosed and the session
 //     keeps no refresh token; the token has been spent, so the client
@@ -97,10 +104,15 @@ type Service interface {
 	// the one already open for it.
 	OpenSession(ctx context.Context, req OpenSessionRequest) (Session, error)
 	// FindSession returns the open broker session for a root host session, and
-	// whether one is open.
+	// whether one is open. While an open of the host session is creating a
+	// new broker session, it waits for that open to end, so a find-then-close
+	// closes the session the open made; a cancelled wait fails with
+	// CodeUnavailable.
 	FindSession(ctx context.Context, req FindSessionRequest) (Session, bool, error)
-	// CloseSession closes a broker session with a closing reason. Closing an
-	// already closed session succeeds and keeps its first reason.
+	// CloseSession closes a broker session with a closing reason, or a root
+	// host session's (CloseSessionRequest.RootHostSessionID), without
+	// waiting for an open in progress. Closing an already closed session
+	// succeeds and keeps its first reason.
 	CloseSession(ctx context.Context, req CloseSessionRequest) error
 	// RegisterAgent registers an agent instance in an open broker session and
 	// returns its reference and credential.
@@ -247,9 +259,25 @@ func (r FindSessionRequest) Validate() error {
 	return requireIDs("root host session", r.RootHostSessionID)
 }
 
-// CloseSessionRequest closes a broker session.
+// CloseSessionRequest closes a broker session, named by exactly one of
+// SessionID and RootHostSessionID.
 type CloseSessionRequest struct {
 	SessionID string
+	// RootHostSessionID closes a root host session instead, when the host
+	// session is deleted or its scheduled run ends: its open broker session,
+	// if any, and the one an open of it in progress is creating, which that
+	// open then fails and stores nothing for. For a while afterwards, any
+	// other open of the host session's RootHostIncarnation fails with
+	// ReasonSessionClosed before converting anything, so an open that
+	// started before the close gives the host session no new broker session;
+	// on another replica, or once that while has passed, it can. An open of
+	// another incarnation, as when the host session is created again, is
+	// unaffected. The host session's delegation history is forgotten.
+	// Closing a host session with no broker session succeeds.
+	RootHostSessionID string
+	// RootHostIncarnation is the closed host session's incarnation, required
+	// with RootHostSessionID and empty otherwise.
+	RootHostIncarnation string
 	// Reason is the closing reason later calls on the session fail with.
 	// ReasonSessionClosed is the only closing reason Mecatl supplies today.
 	Reason Reason
@@ -258,8 +286,23 @@ type CloseSessionRequest struct {
 // Validate reports whether r is well formed. The error is an *Error with
 // CodeInvalidArgument.
 func (r CloseSessionRequest) Validate() error {
-	if err := requireIDs("broker session", r.SessionID); err != nil {
-		return err
+	switch {
+	case r.SessionID != "" && r.RootHostSessionID != "":
+		return invalid("a close names a broker session or a root host session, not both")
+	case r.RootHostSessionID != "":
+		if err := requireIDs("root host session", r.RootHostSessionID); err != nil {
+			return err
+		}
+		if !isIncarnation(r.RootHostIncarnation) {
+			return invalidIncarnation(r.RootHostIncarnation)
+		}
+	default:
+		if err := requireIDs("broker session", r.SessionID); err != nil {
+			return err
+		}
+		if r.RootHostIncarnation != "" {
+			return invalid("a close of a broker session names no root host incarnation")
+		}
 	}
 	if r.Reason != ReasonSessionClosed {
 		return invalid(fmt.Sprintf("closing reason %q is not supported", r.Reason))

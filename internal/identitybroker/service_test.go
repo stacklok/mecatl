@@ -63,6 +63,7 @@ func TestReasonsCarryTheDesignCodes(t *testing.T) {
 		ReasonOwnerActionRequired: CodeFailedPrecondition,
 		ReasonNoGrant:             CodeFailedPrecondition,
 		ReasonConsentRequired:     CodeFailedPrecondition,
+		ReasonRecordNotAccepted:   CodeUnavailable,
 		Reason("unknown"):         CodeInternal,
 	}
 	for reason, code := range want {

@@ -1198,6 +1198,11 @@ type Service struct {
 	placementAttachMu  sync.Mutex
 	attachedPlacements map[session.EnvironmentRef]*servicePlacementAttachment
 
+	// openRecordRefusals remembers converted identity broker opens whose
+	// record the broker's audit sink did not accept, so a repeat fails as
+	// unavailable rather than as a refused token.
+	openRecordRefusals openRecordRefusals
+
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
 	// background live-catalog refresh completes (multi-provider live listing). It is
@@ -4622,7 +4627,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			s.closeIdentityBrokerSession(ctx, id)
+			s.closeIdentityBrokerSession(ctx, sess)
 			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
 				return fmt.Errorf("%w: confirm deleted session reference: %v", ErrInternal, confirmErr)
 			}
@@ -4644,7 +4649,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	// The durable record is gone, so close the identity broker session before
 	// confirming the reference: a failed confirmation returns, and a retry finds
 	// the record absent and never reaches the cleanup below.
-	s.closeIdentityBrokerSession(ctx, id)
+	s.closeIdentityBrokerSession(ctx, sess)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: session deleted but reference confirmation must be retried", ErrInternal)
 	}
@@ -4722,7 +4727,7 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	// The durable record is gone, so close the identity broker session before
 	// confirming the reference: a failed confirmation returns, and a retry finds
 	// the record absent and never reaches the cleanup below.
-	s.closeIdentityBrokerSession(ctx, candidate.ID)
+	s.closeIdentityBrokerSession(ctx, sess)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}
@@ -4791,7 +4796,7 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	defer unlockBroker()
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			s.closeIdentityBrokerSession(ctx, id)
+			s.closeIdentityBrokerSession(ctx, sess)
 			if confirmErr := s.confirmReferenceDelete(ctx, referenceDelete); confirmErr != nil {
 				return fmt.Errorf("%w: confirm deleted retention reference: %v", ErrInternal, confirmErr)
 			}
@@ -4810,7 +4815,7 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	// The durable record is gone, so close the identity broker session before
 	// confirming the reference: a failed confirmation returns, and a retry finds
 	// the record absent and never reaches the cleanup below.
-	s.closeIdentityBrokerSession(ctx, id)
+	s.closeIdentityBrokerSession(ctx, sess)
 	if err := s.confirmReferenceDelete(ctx, referenceDelete); err != nil {
 		return fmt.Errorf("%w: retention deleted session but reference confirmation must be retried", ErrInternal)
 	}

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -96,13 +97,21 @@ type heldGrant struct {
 	// verified (docs/drafts/agent-identity/run-owner.md, item 3: grants keyed by session and user, one
 	// per session for now). A call's run owner must equal it.
 	owner Owner
+	// user is the user AS-1 accepted the converted token for, owner among
+	// them, and openRecord the AuditID of the open that stored the grant.
+	user       User
+	openRecord string
 }
 
 // accessTokenClaims are the claims the broker reads from an access token
-// without verifying it.
+// without verifying it. iss, sub, and client_id are kept only once AS-1
+// accepts the token; a claim that is missing or not a string is empty.
 type accessTokenClaims struct {
-	owner Owner
-	jti   string
+	owner    Owner
+	jti      string
+	iss      string
+	sub      string
+	clientID string
 	// exp is zero when the token has no numeric exp.
 	exp time.Time
 }
@@ -121,9 +130,12 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 		return accessTokenClaims{}, false
 	}
 	var claims struct {
-		JTI   string          `json:"jti"`
-		Exp   json.RawMessage `json:"exp"`
-		SubID json.RawMessage `json:"sub_id"`
+		JTI      json.RawMessage `json:"jti"`
+		Exp      json.RawMessage `json:"exp"`
+		SubID    json.RawMessage `json:"sub_id"`
+		Iss      json.RawMessage `json:"iss"`
+		Sub      json.RawMessage `json:"sub"`
+		ClientID json.RawMessage `json:"client_id"`
 	}
 	if json.Unmarshal(payload, &claims) != nil {
 		return accessTokenClaims{}, false
@@ -132,12 +144,24 @@ func readAccessToken(token Token) (accessTokenClaims, bool) {
 	if err != nil {
 		return accessTokenClaims{}, false
 	}
-	out := accessTokenClaims{owner: owner, jti: claims.JTI}
+	out := accessTokenClaims{
+		owner: owner, jti: stringClaim(claims.JTI),
+		iss: stringClaim(claims.Iss), sub: stringClaim(claims.Sub), clientID: stringClaim(claims.ClientID),
+	}
 	var exp float64
 	if len(claims.Exp) > 0 && json.Unmarshal(claims.Exp, &exp) == nil && exp > 0 {
 		out.exp = time.Unix(int64(exp), 0)
 	}
 	return out, true
+}
+
+// stringClaim returns raw as a string, or empty when it is not one.
+func stringClaim(raw json.RawMessage) string {
+	var v string
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return v
 }
 
 // OwnerFromSubjectIdentifier parses raw, an RFC 9493 subject identifier as
@@ -205,27 +229,30 @@ func (t *sessionTable) pruneConvertedLocked() {
 // and t.mu, which convert releases while AS-1 is called and holds again on
 // return.
 //
-// A refused or failed conversion leaves s paired under the reported owner,
-// with whatever refresh token it held, so a retry with a fresh access token
-// finds it; only an answer that does not match the request or cannot be
-// decoded closes it. s is open and, if it holds a refresh token, not past
+// A refused or failed conversion leaves s as it was, with whatever refresh
+// token it held, so a retry with a fresh access token finds it; only an
+// answer that does not match the request or cannot be decoded closes it. A
+// session the open created is closed by the caller (refuseOpen). s is open and, if it holds a refresh token, not past
 // its hard expiry (pairLocked closes such a session first).
-func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionRequest) (Session, error) {
+//
+// It fills rec with what it learns and returns the refresh token to store
+// once rec is accepted, or nil, with s as it is, for a token AS-1 may already
+// have converted. It never stores a refresh token itself.
+func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionRequest, rec *SessionOpenRecord) (*heldGrant, error) {
 	t := b.sessions
 	// Check 1: the token's company identity is the owner mecak8s reports.
-	// Recording refused opens belongs to the audit records
-	// (docs/drafts/agent-identity/audit.md), not built yet.
 	claims, ok := readAccessToken(req.AccessToken)
 	if !ok {
-		return Session{}, ReasonError(ReasonSubjectInvalid, "the access token has no iss_sub sub_id")
+		return nil, ReasonError(ReasonSubjectInvalid, "the access token has no iss_sub sub_id")
 	}
+	rec.SourceJTI = claims.jti
 	if claims.owner != req.Owner {
-		return Session{}, ReasonError(ReasonOwnerMismatch, "the access token's sub_id is not the reported owner")
+		return nil, ReasonError(ReasonOwnerMismatch, "the access token's sub_id is not the reported owner")
 	}
 	// Check 2: s is open (it came from t.open), and has no verified owner or
-	// this one. A refusal belongs to the audit records too.
+	// this one.
 	if s.verifiedOwner != nil && *s.verifiedOwner != claims.owner {
-		return Session{}, ReasonError(ReasonSessionOwned, "the broker session's verified owner is another user")
+		return nil, ReasonError(ReasonSessionOwned, "the broker session's verified owner is another user")
 	}
 	// A token AS-1 may already have converted, for any session, is never
 	// presented to AS-1 again: AS-1 would refuse it with token_used and, once
@@ -235,9 +262,11 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 	// and token_used otherwise.
 	if t.wasConvertedLocked(claims.jti) {
 		if view := t.viewLocked(s); view.HoldsRefreshToken {
-			return view, nil
+			rec.Kind = OpenAlreadyConverted
+			rec.setSessionUser(s)
+			return nil, nil
 		}
-		return Session{}, ReasonError(ReasonTokenUsed, "the access token was already converted; refresh it and open again")
+		return nil, ReasonError(ReasonTokenUsed, "the access token was already converted; refresh it and open again")
 	}
 	// A new refresh token never extends the session: once it has a hard
 	// expiry, ask for no more. pairLocked already closed s if that expiry had
@@ -256,30 +285,36 @@ func (b *Broker) convert(ctx context.Context, s *brokerSession, req OpenSessionR
 
 	if errors.Is(err, ErrMalformedResponse) {
 		// AS-1 may have issued a refresh token the broker cannot read: treat
-		// it as a mismatched answer.
-		t.closeLocked(s, ReasonSessionClosed)
-		return Session{}, NewError(CodeInternal, "", "the authorization server's answer could not be decoded")
+		// it as a mismatched answer. The close's record follows the
+		// refusal's (refuseOpen).
+		t.holdCloseLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
+		return nil, NewError(CodeInternal, "", "the authorization server's answer could not be decoded")
 	}
 	if err != nil {
-		return Session{}, exchangeError(err)
+		return nil, exchangeError(err)
 	}
-	// Only CloseSession can have changed s meanwhile: opens of its host
-	// session wait for the open lock this call holds.
+	// Only a close can have changed s meanwhile: opens of its host session
+	// wait for the open lock this call holds.
 	if s.closed != "" {
-		return Session{}, ReasonError(s.closed, "the broker session closed during the open")
+		return nil, ReasonError(s.closed, "the broker session closed during the open")
 	}
 	if !echoMatches(res, sent, t.now()) {
 		// Phase 1 has no revocation: discarding the refresh token and closing
-		// the session stops its use by the broker.
-		t.closeLocked(s, ReasonSessionClosed)
-		return Session{}, NewError(CodeInternal, "", "the authorization server's answer does not match the requested grant")
+		// the session stops its use by the broker. The close's record
+		// follows the refusal's (refuseOpen).
+		t.holdCloseLocked(s, ReasonSessionClosed, CloseMismatchedAnswer)
+		return nil, NewError(CodeInternal, "", "the authorization server's answer does not match the requested grant")
 	}
-	owner := claims.owner
-	s.verifiedOwner = &owner
-	// One live refresh token per session: a new one replaces, and discards,
-	// any held before.
-	s.grant = &heldGrant{refreshToken: res.RefreshToken, expiresAt: res.Grants[0].ExpiresAt, sourceJTI: claims.jti, owner: owner}
-	return t.viewLocked(s), nil
+	// AS-1 accepted the token, so the user it names is kept from now on.
+	user := User{Owner: claims.owner, Issuer: claims.iss, Subject: claims.sub, ClientID: claims.clientID}
+	rec.Kind, rec.User, rec.HardExpiry = OpenConverted, &user, res.Grants[0].ExpiresAt
+	if s.grant != nil {
+		rec.Replaced = &ReplacedGrant{OpenRecord: s.grant.openRecord, SourceJTI: s.grant.sourceJTI}
+	}
+	return &heldGrant{
+		refreshToken: res.RefreshToken, expiresAt: res.Grants[0].ExpiresAt, sourceJTI: claims.jti,
+		owner: claims.owner, user: user, openRecord: rec.AuditID,
+	}, nil
 }
 
 // exchangeUnlocked is exchange with t.mu released, for a caller holding it.
@@ -392,30 +427,39 @@ func echoMatches(res TokenExchangeResult, sent ExchangeGrant, now time.Time) boo
 	return true
 }
 
-// hostLock serializes opens of one root host session. refs counts the opens
-// holding or waiting for it, so the entry is dropped when none do.
-type hostLock struct {
+// keyedLock is one key's lock in keyedLocks. refs counts the callers holding
+// or waiting for it, so the entry is dropped when none do.
+type keyedLock struct {
 	sem  chan struct{}
 	refs int
 }
 
-// lockHost waits for the open lock of host, or for ctx to end, and returns
-// its release. It never holds t.mu.
-func (t *sessionTable) lockHost(ctx context.Context, host string) (func(), error) {
-	t.hostMu.Lock()
-	l := t.hostLocks[host]
+// keyedLocks serializes callers by key: opens of one root host session,
+// registrations of one incarnation, or delegation reports to one broker
+// session.
+type keyedLocks struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+// lock waits for key's lock, or for ctx to end, and returns its release; a
+// wait that ctx ends fails with CodeUnavailable and cancelled. It never
+// takes sessionTable.mu.
+func (k *keyedLocks) lock(ctx context.Context, key, cancelled string) (func(), error) {
+	k.mu.Lock()
+	l := k.locks[key]
 	if l == nil {
-		l = &hostLock{sem: make(chan struct{}, 1)}
-		t.hostLocks[host] = l
+		l = &keyedLock{sem: make(chan struct{}, 1)}
+		k.locks[key] = l
 	}
 	l.refs++
-	t.hostMu.Unlock()
+	k.mu.Unlock()
 	drop := func() {
-		t.hostMu.Lock()
+		k.mu.Lock()
 		if l.refs--; l.refs == 0 {
-			delete(t.hostLocks, host)
+			delete(k.locks, key)
 		}
-		t.hostMu.Unlock()
+		k.mu.Unlock()
 	}
 	release := func() { <-l.sem; drop() }
 	// An uncontended lock is taken whatever ctx's state, as before opens
@@ -430,6 +474,6 @@ func (t *sessionTable) lockHost(ctx context.Context, host string) (func(), error
 		return release, nil
 	case <-ctx.Done():
 		drop()
-		return nil, NewError(CodeUnavailable, "", "the session open was cancelled")
+		return nil, NewError(CodeUnavailable, "", cancelled)
 	}
 }

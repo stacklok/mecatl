@@ -178,3 +178,61 @@ func TestIdentityBrokerResumedHelperGatewayCallAfterReopen(t *testing.T) {
 		t.Fatalf("the resumed subagent called as %v, before the reopen as %v; want the same agent", resumed, child)
 	}
 }
+
+// TestIdentityBrokerRecordsWhoActed pins that a real run records who acted:
+// the broker session's open, the registrations of the main agent and a
+// subagent, the subagent's delegation, and each gateway call's ID-JAG and
+// decision, all accepted by the broker's record sink, which the test reads.
+func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
+	d := serveDelegations(t)
+	d.writeScript(t, gatewayTurn("main-call"),
+		`{"tool_calls":[{"id":"delegate","name":"Subagent","args":{"prompt":"call the calendar"}}]}`,
+		gatewayTurn("child-call"), scriptText, scriptText)
+	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
+	d.wantHelperGatewayCalls(t, 1)
+
+	sink := d.built.IdentityBrokerRecords()
+	if sink == nil {
+		t.Fatal("mecak8s built no identity broker record sink")
+	}
+	var accepted []identitybroker.Record
+	for _, r := range sink.Opens() {
+		accepted = append(accepted, &r)
+	}
+	for _, r := range sink.Registrations() {
+		accepted = append(accepted, &r)
+	}
+	for _, r := range sink.Delegations() {
+		accepted = append(accepted, &r)
+	}
+	for _, r := range sink.IDJAGs() {
+		accepted = append(accepted, &r)
+	}
+	for _, r := range sink.Decisions() {
+		accepted = append(accepted, &r)
+	}
+	successes := map[string]int{}
+	ids := map[string]bool{}
+	for _, r := range accepted {
+		h := r.Header()
+		t.Logf("record %s %s %s", h.Type, h.AuditID, h.Outcome)
+		if ids[h.AuditID] || !strings.HasPrefix(h.AuditID, "rec_") {
+			t.Fatalf("record %+v repeats or lacks an AuditID", h)
+		}
+		ids[h.AuditID] = true
+		if h.Outcome == identitybroker.OutcomeSuccess {
+			successes[h.Type]++
+		}
+	}
+	for typ, want := range map[string]int{
+		identitybroker.TypeSessionOpen:        1,
+		identitybroker.TypeInstanceRegistered: 2,
+		identitybroker.TypeDelegation:         1,
+		identitybroker.TypeIDJAG:              2,
+		identitybroker.TypeToolDecision:       2,
+	} {
+		if successes[typ] < want {
+			t.Errorf("%d successful %s records, want at least %d", successes[typ], typ, want)
+		}
+	}
+}

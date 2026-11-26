@@ -135,21 +135,34 @@ type sessionOpenFixture struct {
 	events *memstore.EventLog
 	as1    *fakeAS1
 	broker *recordingBroker
-	auth   *server.Authenticator
-	tokens map[string]session.Principal
-	next   int
+	// records is the broker's audit sink.
+	records *openRecorder
+	auth    *server.Authenticator
+	tokens  map[string]session.Principal
+	next    int
 }
 
 func newSessionOpenFixture(t *testing.T, llm *mockllm.Provider, configure ...func(*server.Config)) *sessionOpenFixture {
 	t.Helper()
-	f := &sessionOpenFixture{as1: &fakeAS1{}, events: memstore.NewEventLog(), tokens: map[string]session.Principal{}}
-	f.broker = newRecordingBroker(identitybroker.WithAuthServer(f.as1))
+	f := &sessionOpenFixture{as1: &fakeAS1{}, events: memstore.NewEventLog(), tokens: map[string]session.Principal{}, records: &openRecorder{}}
+	f.broker = newRecordingBroker(identitybroker.WithAuthServer(f.as1), identitybroker.WithRecorder(f.records))
 	f.svc = newIdentityBrokerService(t, f.broker, llm, append([]func(*server.Config){func(cfg *server.Config) {
 		f.store = cfg.Store.(*memstore.Store)
 		cfg.EventLog = f.events
 	}}, configure...)...)
 	f.auth = server.NewAuthenticator(server.SecurityConfig{Validator: fakeValidator{ok: f.tokens}})
 	return f
+}
+
+// openRecorder is an audit sink that keeps nothing and refuses session-open
+// records while refuseOpens is set.
+type openRecorder struct{ refuseOpens atomic.Bool }
+
+func (r *openRecorder) Record(_ context.Context, rec identitybroker.Record) error {
+	if r.refuseOpens.Load() && rec.Header().Type == identitybroker.TypeSessionOpen {
+		return errors.New("sink unavailable")
+	}
+	return nil
 }
 
 // token mints a fresh access token for Alice, admitted by f.auth.
@@ -248,7 +261,9 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		ownedByBob bool
 		// closeDuring closes the broker session while AS-1 converts the token.
 		closeDuring bool
-		want        error
+		// unrecorded has the broker's audit sink refuse the open's records.
+		unrecorded bool
+		want       error
 		// as1Called is whether AS-1 sees the token; the broker's own checks
 		// refuse without calling it.
 		as1Called bool
@@ -269,15 +284,24 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 		{name: "invalid_client", refuse: func(a *fakeAS1) {
 			a.setRefusal(identitybroker.NewServerRefusal(http.StatusUnauthorized, "invalid_client", ""))
 		}, want: server.ErrInternal, as1Called: true},
-		// The design fails a request whose broker session closed after its
-		// token was converted as for a refused token.
-		{name: "session_closed during exchange", refuse: func(*fakeAS1) {}, closeDuring: true, want: server.ErrBearerRejected, as1Called: true},
+		// A request whose broker session closed while its token was
+		// converted, and whose session is still stored, fails as retryable;
+		// after a 503 the client refreshes the token it presented.
+		{name: "session_closed during exchange", refuse: func(*fakeAS1) {}, closeDuring: true, want: server.ErrIdentityBrokerUnavailable, as1Called: true},
+		// An open that converted the token but whose record the broker's
+		// audit sink did not accept is undone; the token is spent, so it
+		// fails as for a refused token (record_not_accepted).
+		{name: "record_not_accepted after the conversion", refuse: func(*fakeAS1) {}, unrecorded: true, want: server.ErrBearerRejected, as1Called: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := mockllm.New(mockllm.TextTurn("must not run"))
 			f := newSessionOpenFixture(t, llm)
 			var run func(context.Context) error
-			if tc.ownedByBob {
+			// A broker session can close during the exchange only if it
+			// exists already: a new one is not reachable until its open is
+			// recorded. So the close runs on a prompt whose root's broker
+			// session holds no refresh token.
+			if tc.ownedByBob || tc.closeDuring {
 				sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatal(err)
@@ -286,9 +310,12 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 				if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
 					t.Fatal(err)
 				}
+				owner := identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject}
+				if tc.ownedByBob {
+					owner.Subject = "bob-117"
+				}
 				if _, err := f.broker.inner.OpenSession(t.Context(), identitybroker.OpenSessionRequest{
-					HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()),
-					Owner: identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: "bob-117"},
+					HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()), Owner: owner,
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -303,6 +330,7 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 			if tc.closeDuring {
 				f.closeDuringExchange(t)
 			}
+			f.records.refuseOpens.Store(tc.unrecorded)
 			bearer := f.token()
 			if tc.otherSubID {
 				bearer = accessTokenFor(&session.Principal{Issuer: brokerAlice.Issuer, Subject: "bob-117"}, "jti-mismatch")
@@ -327,15 +355,209 @@ func TestIdentityBrokerOpenRefusalMapping(t *testing.T) {
 				t.Fatal("the agent ran after a refused open")
 			}
 			if !tc.ownedByBob {
-				// The refused create paired a broker session before the
-				// conversion; it must not outlive the unsaved session.
+				// A refused open leaves no broker session open: neither the
+				// one a refused create would have created nor one closed
+				// during the exchange.
 				host := session.SessionID(f.broker.openRequests()[opensBefore].HostSessionID)
 				if open, ok := f.broker.find(t, host); ok {
-					t.Fatalf("the refused create left broker session %+v open", open)
+					t.Fatalf("the refused open left broker session %+v open", open)
 				}
 			}
 		})
 	}
+}
+
+// TestIdentityBrokerDeleteClosesAnOpenInProgress proves that deleting a
+// session while another replica's open of its broker session is still in
+// progress, longer than the delete's broker timeout, leaves no broker session
+// open: the delete closes the host session without waiting, and the open,
+// once it ends, fails and stores no refresh token.
+func TestIdentityBrokerDeleteClosesAnOpenInProgress(t *testing.T) {
+	restore := server.SetEngineCloseTimeoutForTest(50 * time.Millisecond)
+	defer restore()
+	f := newSessionOpenFixture(t, mockllm.New())
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alices := wantBrokerSession(t, f.broker, sess)
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.as1.mu.Lock()
+	f.as1.during = func() {
+		close(entered)
+		<-release
+	}
+	f.as1.mu.Unlock()
+	opened := make(chan error, 1)
+	go func() {
+		// Another replica opens the host session again, creating a new
+		// broker session; its exchange stalls past the delete's timeout.
+		_, err := f.broker.inner.OpenSession(context.Background(), identitybroker.OpenSessionRequest{
+			HostSessionID: string(sess.ID), Incarnation: string(sess.Incarnation()),
+			Owner:       identitybroker.Owner{Issuer: brokerAlice.Issuer, Subject: brokerAlice.Subject},
+			AccessToken: identitybroker.NewToken(f.token()),
+		})
+		opened <- err
+	}()
+	<-entered
+	if err := f.svc.DeleteSession(aliceContext(t), sess.ID); err != nil {
+		t.Fatalf("DeleteSession during an open: %v", err)
+	}
+	close(release)
+	err = <-opened
+	var brokerErr *identitybroker.Error
+	if !errors.As(err, &brokerErr) || brokerErr.Reason != identitybroker.ReasonSessionClosed {
+		t.Fatalf("the open in progress at the delete = %v, want it refused as session_closed", err)
+	}
+	if open, ok := f.broker.find(t, sess.ID); ok {
+		t.Fatalf("the delete left broker session %+v open", open)
+	}
+}
+
+// TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable proves that a
+// converted open whose record the broker's audit sink did not accept fails as
+// for a refused token the first time, and as the broker being unavailable
+// when the same caller's previous such open, of any host session, failed the
+// same way within a minute, so a sink outage does not have the client spend
+// fresh tokens (credentials-and-lifecycle.md step (3)). Creates open a new
+// host session each time, so the rule keys on the caller alone; presenting
+// the token a 503 spent again (token_used) keeps the rule, and a success ends
+// it.
+func TestIdentityBrokerRepeatedUnrecordedOpenIsUnavailable(t *testing.T) {
+	f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The session's broker session holds no refresh token, so a prompt
+	// presents its token.
+	alices := wantBrokerSession(t, f.broker, sess)
+	if err := f.broker.inner.CloseSession(t.Context(), identitybroker.CloseSessionRequest{SessionID: alices.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatal(err)
+	}
+	prompt := func(bearer string) error {
+		var err error
+		withinRequest(t, "unary", f.auth, bearer, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
+		return err
+	}
+	create := func(bearer string) error {
+		var err error
+		withinRequest(t, "unary", f.auth, bearer, func(ctx context.Context) {
+			_, err = f.svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
+		})
+		return err
+	}
+	f.records.refuseOpens.Store(true)
+	if err := prompt(f.token()); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("first unrecorded open = %v, want %v", err, server.ErrBearerRejected)
+	}
+	// Each create opens a new host session, and repeats the refusal.
+	spent := f.token()
+	if err := create(spent); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("repeated unrecorded open by a create = %v, want %v", err, server.ErrIdentityBrokerUnavailable)
+	}
+	// The 503 spent the token: presenting it again is token_used, which
+	// does not end the rule.
+	if err := create(spent); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("create with the token the 503 spent = %v, want %v", err, server.ErrBearerRejected)
+	}
+	if err := create(f.token()); !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+		t.Fatalf("unrecorded open after token_used = %v, want %v", err, server.ErrIdentityBrokerUnavailable)
+	}
+	// Once the sink accepts the records again, the open succeeds, and the
+	// next refusal is a first one.
+	f.records.refuseOpens.Store(false)
+	if err := create(f.token()); err != nil {
+		t.Fatalf("create with the sink back = %v", err)
+	}
+	f.records.refuseOpens.Store(true)
+	if err := create(f.token()); !errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("unrecorded open after a success = %v, want %v", err, server.ErrBearerRejected)
+	}
+}
+
+// TestIdentityBrokerOpenOfAClosedHostSession proves how an open the broker
+// refuses with session_closed because its host session was closed is
+// answered, with or without the request's token: 404 when the store no
+// longer holds the session, and the retryable 503 when it does, as after a
+// scheduled run ends, which keeps the session for result delivery. A token
+// is never answered bearer_rejected here, as the refusal converted nothing.
+func TestIdentityBrokerOpenOfAClosedHostSession(t *testing.T) {
+	closeHost := func(t *testing.T, f *sessionOpenFixture, sess *session.Session) {
+		t.Helper()
+		req := identitybroker.CloseSessionRequest{RootHostSessionID: string(sess.ID), RootHostIncarnation: string(sess.Incarnation()), Reason: identitybroker.ReasonSessionClosed}
+		if err := f.broker.inner.CloseSession(t.Context(), req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	interactive := func(t *testing.T, f *sessionOpenFixture) *session.Session {
+		t.Helper()
+		sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantBrokerSession(t, f.broker, sess)
+		return sess
+	}
+
+	t.Run("deleted while the request opened it", func(t *testing.T) {
+		f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+		sess := interactive(t, f)
+		// The delete lands after the request loaded the session, before its
+		// open reaches the broker.
+		f.broker.set(func(b *recordingBroker) {
+			b.beforeOpen = func(identitybroker.OpenSessionRequest) {
+				if err := f.store.Delete(context.Background(), sess.ID); err != nil {
+					t.Error(err)
+				}
+				closeHost(t, f, sess)
+			}
+		})
+		closeHost(t, f, sess)
+		err := runToEnd(aliceContext(t), t, f.svc, sess.ID)
+		if !errors.Is(err, server.ErrNotFound) {
+			t.Fatalf("open of a deleted session = %v, want %v", err, server.ErrNotFound)
+		}
+	})
+
+	t.Run("a scheduled run ended and the session is kept", func(t *testing.T) {
+		f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+		sess, err := f.svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+			server.WithSessionID("fire-3"), server.WithOwner(brokerAlice), server.WithScheduledRelationship("nightly", ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantBrokerSession(t, f.broker, sess)
+		f.svc.EndScheduledRun(t.Context(), sess)
+		// A later run of the kept session opens it again.
+		before := f.broker.openCount()
+		run, err := f.svc.StartScheduledRunContent(t.Context(), sess.ID, "again", nil)
+		if run != nil {
+			drain(run)
+		}
+		if f.broker.openCount() != before+1 {
+			t.Fatalf("opens after the scheduled run ended = %d, want 1", f.broker.openCount()-before)
+		}
+		if !errors.Is(err, server.ErrIdentityBrokerUnavailable) {
+			t.Fatalf("open of a kept session whose scheduled run ended = %v, want %v", err, server.ErrIdentityBrokerUnavailable)
+		}
+	})
+
+	t.Run("an open presenting a token", func(t *testing.T) {
+		f := newSessionOpenFixture(t, mockllm.New(mockllm.TextTurn("must not run")))
+		sess := interactive(t, f)
+		closeHost(t, f, sess)
+		var err error
+		if n := f.within(t, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) }); n != 1 {
+			t.Fatalf("opens presenting the request's token = %d, want 1", n)
+		}
+		if !errors.Is(err, server.ErrIdentityBrokerUnavailable) || errors.Is(err, server.ErrBearerRejected) {
+			t.Fatalf("open presenting a token for a closed host session = %v, want %v without the bearer_rejected tag", err, server.ErrIdentityBrokerUnavailable)
+		}
+	})
 }
 
 // TestIdentityBrokerRefusedTokenChangesNothing proves that on every path that
@@ -761,10 +983,11 @@ func TestIdentityBrokerConvertsATokenForASessionHoldingNone(t *testing.T) {
 	}
 }
 
-// TestIdentityBrokerCloseDuringConversionRejectsTheToken proves a run whose
-// broker session closes while its token is converted fails as for a refused
-// token, having changed nothing.
-func TestIdentityBrokerCloseDuringConversionRejectsTheToken(t *testing.T) {
+// TestIdentityBrokerCloseDuringConversionIsRetryable proves a run whose
+// broker session closes while its token is converted, while the session is
+// still stored, fails as retryable, not bearer_rejected, having changed
+// nothing.
+func TestIdentityBrokerCloseDuringConversionIsRetryable(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("must not run"))
 	f := newSessionOpenFixture(t, llm)
 	sess, err := f.svc.CreateSession(aliceContext(t), session.ModeDefault, session.Limits{})
@@ -774,8 +997,8 @@ func TestIdentityBrokerCloseDuringConversionRejectsTheToken(t *testing.T) {
 	f.closeDuringExchange(t)
 	before := f.state(t)
 	f.within(t, func(ctx context.Context) { err = runToEnd(ctx, t, f.svc, sess.ID) })
-	if !errors.Is(err, server.ErrBearerRejected) {
-		t.Fatalf("run whose broker session closed during the conversion: %v, want ErrBearerRejected", err)
+	if !errors.Is(err, server.ErrIdentityBrokerUnavailable) || errors.Is(err, server.ErrBearerRejected) {
+		t.Fatalf("run whose broker session closed during the conversion: %v, want ErrIdentityBrokerUnavailable", err)
 	}
 	if n := f.as1.exchanges(); n != 1 {
 		t.Fatalf("exchanges = %d, want 1", n)
@@ -837,9 +1060,13 @@ func TestIdentityBrokerReopenNeverRepresentsAConvertedToken(t *testing.T) {
 // after the stream answered is never
 // reported with the bearer_rejected tag: the client could not replay it.
 func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
-	// session_closed tags an open that converted the token; a late open
-	// presented none, so it must not carry the tag either.
-	for _, reason := range []identitybroker.Reason{identitybroker.ReasonTokenUsed, identitybroker.ReasonSessionClosed} {
+	// session_closed tags no open of a saved session: the session is still
+	// stored, so it is retryable; token_used tags an open that converted the
+	// token, and a late open presented none.
+	for reason, want := range map[identitybroker.Reason]error{
+		identitybroker.ReasonTokenUsed:     server.ErrInternal,
+		identitybroker.ReasonSessionClosed: server.ErrIdentityBrokerUnavailable,
+	} {
 		t.Run(string(reason), func(t *testing.T) {
 			broker := newRecordingBroker()
 			svc := newIdentityBrokerService(t, broker, mockllm.New(mockllm.TextTurn("must not run")))
@@ -868,8 +1095,8 @@ func TestIdentityBrokerRefusalAfterAResponseIsNotTagged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !errors.Is(runErr, server.ErrInternal) || errors.Is(runErr, server.ErrBearerRejected) {
-				t.Fatalf("open refused with %s after the stream answered: %v; want ErrInternal without the bearer_rejected tag", reason, runErr)
+			if !errors.Is(runErr, want) || errors.Is(runErr, server.ErrBearerRejected) {
+				t.Fatalf("open refused with %s after the stream answered: %v; want %v without the bearer_rejected tag", reason, runErr, want)
 			}
 			// The create's open, then the run's, which came after the answer and so
 			// presented nothing.

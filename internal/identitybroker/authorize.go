@@ -34,29 +34,35 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	}
 	t.mu.Unlock()
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// Check 3: the credential identifies an agent registered to this open
 	// session.
 	agent, err := b.VerifyCredential(ctx, VerifyCredentialRequest{SessionID: s.ID, Credential: req.Credential})
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 	rec.Agent, rec.AgentID = agent.Agent, agent.AgentID
 
 	// Checks 4 and 5: the run belongs to this session and is bound to the
 	// agent, and its reported owner is the run's and the grant's.
 	t.mu.Lock()
+	if a, ok := t.agents[agent.Agent.Subject]; ok {
+		rec.AgentInstance, rec.RegistrationRecord = a.incarnation, a.registrationRecord
+	}
 	err = t.checkRunLocked(s, agent.Agent.Subject, req)
+	if err == nil && req.DelegationID != "" {
+		rec.DelegationRecord = t.runs.forLocked(s.ID).delegations[req.DelegationID].record
+	}
 	t.mu.Unlock()
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// Check 6: a configured gateway routes the server.
 	if !b.gateway.routes(req.Server) {
-		return Authorization{}, b.refuse(ctx, rec, ReasonError(ReasonDenied, "no gateway routes the server"))
+		return Authorization{}, b.refuse(rec, ReasonError(ReasonDenied, "no gateway routes the server"))
 	}
 
 	// Check 7: the agent's stored effective ceiling allows the exact server
@@ -68,18 +74,18 @@ func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req Autho
 	rec.Ceiling = ceiling.String()
 	// Validate checked that a call's tool is named for its server.
 	if err := checkCeiling(ceiling, req.Method, req.Server, strings.TrimPrefix(req.Tool, req.Server+".")); err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 
 	// AS-2 may not be bound yet (the #2559 shortcut on BindGatewayAS2).
 	as2, release, ok := b.acquireAS2()
 	if !ok {
-		return Authorization{}, b.refuse(ctx, rec, NewError(CodeUnavailable, "", "the gateway's authorization server is not bound yet"))
+		return Authorization{}, b.refuse(rec, NewError(CodeUnavailable, "", "the gateway's authorization server is not bound yet"))
 	}
 	defer release()
 	auth, err := b.authorizeAtGateway(ctx, as2, s, req, &rec)
 	if err != nil {
-		return Authorization{}, b.refuse(ctx, rec, err)
+		return Authorization{}, b.refuse(rec, err)
 	}
 	return auth, nil
 }
@@ -134,6 +140,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 	if err != nil {
 		return Authorization{}, err
 	}
+	rec.useGrant(g)
 	attemptID := "att_" + strings.ToLower(rand.Text())
 	rec.AttemptID = attemptID
 
@@ -145,6 +152,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			if g, err = t.retryGrant(s); err != nil {
 				return Authorization{}, err
 			}
+			rec.useGrant(g)
 		}
 		res, err := b.idjag.IssueIDJAG(ctx, IDJAGRequest{
 			SubjectToken: g.refreshToken, ActorToken: req.Credential,
@@ -166,13 +174,17 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 			return Authorization{}, NewError(CodeInternal, "", "the authorization server's answer is not an ID-JAG")
 		}
 		rec.IDJAG = claims.ref
-		if err := b.recorder.RecordIDJAG(ctx, IDJAGRecord{
-			At: t.now(), SessionID: s.ID, Agent: rec.Agent, AgentID: rec.AgentID,
+		jag := &IDJAGRecord{
+			RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeIDJAG, At: t.now(), Outcome: OutcomeSuccess},
+			SessionID:    s.ID, Workload: rec.Workload, Agent: rec.Agent, AgentID: rec.AgentID,
 			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, User: g.owner,
+			UserRecord: g.openRecord, UserSubjects: g.user, AgentInstance: rec.AgentInstance,
+			RegistrationRecord: rec.RegistrationRecord, DelegationRecord: rec.DelegationRecord,
 			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
-		}); err != nil {
-			return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")
+		}
+		if err := b.record(ctx, jag); err != nil {
+			return Authorization{}, b.refuseIDJAG(*jag, errNotRecorded("call"))
 		}
 		if err := t.stillOpen(s); err != nil {
 			return Authorization{}, err
@@ -280,7 +292,7 @@ func (t *sessionTable) afterRevocation(s *brokerSession, g *heldGrant) error {
 	if next, err := grantForCallLocked(s); err == nil && next != g {
 		return nil
 	}
-	t.closeLocked(s, ReasonSessionClosed)
+	t.closeLocked(s, ReasonSessionClosed, CloseGrantLost)
 	return ReasonError(ReasonSessionClosed, "the broker session's grant was revoked")
 }
 
@@ -307,23 +319,27 @@ func (t *sessionTable) stillOpen(s *brokerSession) error {
 // the success, and issues the attempt unless the call is itself a retry, so a
 // retry's token cannot be reported rejected again. A success that cannot be
 // recorded returns no token, as does one whose session closed while it was
-// recorded. In that case the success record is followed by a refusal for the
-// same attempt, so the records show that the token was withheld.
+// recorded. Either way the success is followed by a refusal for the same
+// attempt that supersedes it, so the records show that the token was
+// withheld.
 func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallRequest, rec *DecisionRecord, key callKey, v GatewayTokenResult, expiresAt time.Time) (Authorization, error) {
 	t := b.sessions
 	if ref, ok := readJWTRef(v.AccessToken); ok {
 		rec.GatewayToken = ref.ref
 	} else {
-		// Shortcut: a gateway token that is not a JWT has no reference; removed by #2541 (the record sink references AS-2's redemption event).
+		// Shortcut: a gateway token that is not a JWT has no reference; removed by #2848 (references to AS-2's redemption events).
 		rec.GatewayTokenUnreferenced = true
 	}
 	if err := t.stillOpen(s); err != nil {
 		return Authorization{}, err
 	}
 	success := *rec
-	success.Outcome = OutcomeSuccess
-	if err := b.recorder.RecordDecision(ctx, success); err != nil {
-		return Authorization{}, NewError(CodeUnavailable, "", "the call could not be recorded")
+	success.AuditID, success.Outcome = newAuditID(), OutcomeSuccess
+	if err := b.record(ctx, &success); err != nil {
+		// The caller records the refusal, which names the success the sink
+		// may have kept without confirming it.
+		rec.Supersedes = success.AuditID
+		return Authorization{}, errNotRecorded("call")
 	}
 	t.mu.Lock()
 	closed := t.closedLocked(s)
@@ -332,6 +348,8 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	}
 	t.mu.Unlock()
 	if closed != nil {
+		// The caller records the refusal, after the success.
+		rec.Supersedes = success.AuditID
 		return Authorization{}, closed
 	}
 	return Authorization{GatewayToken: v.AccessToken, ExpiresAt: expiresAt, AttemptID: rec.AttemptID}, nil
@@ -505,30 +523,47 @@ func grantForCallLocked(s *brokerSession) (*heldGrant, error) {
 
 // decisionRecord returns the record of a decision on req in s, before any
 // outcome. Its owner is the session's verified owner, or the reported one
-// when the session has none. The caller holds t.mu.
+// when the session has none, and its user the session's verified user, until
+// the call selects a grant (useGrant). The caller holds t.mu.
 func decisionRecord(now time.Time, workload Workload, s *brokerSession, req AuthorizeCallRequest) DecisionRecord {
 	owner := s.Owner
 	if s.verifiedOwner != nil {
 		owner = *s.verifiedOwner
 	}
+	userRecord, user := sessionUser(s)
 	return DecisionRecord{
-		At: now, SessionID: s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
+		RecordHeader: RecordHeader{Type: TypeToolDecision, At: now},
+		SessionID:    s.ID, Workload: workload, Owner: owner, OwnerVerified: s.verifiedOwner != nil,
+		UserRecord: userRecord, User: user,
 		RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner,
 		OperationID: req.OperationID, RejectedAttemptID: req.RejectedAttemptID,
 		Method: req.Method, Server: req.Server, Tool: req.Tool, ArgumentsSHA256: req.ArgumentsSHA256,
 	}
 }
 
-// refuse records err as the refusal of rec's call and returns err. The
-// refusal is recorded even when ctx is cancelled, as a cancelled call is
-// still a decision.
-func (b *Broker) refuse(ctx context.Context, rec DecisionRecord, err error) error {
-	rec.Code = CodeInternal
-	var e *Error
-	if errors.As(err, &e) {
-		rec.Code, rec.Reason = e.Code, e.Reason
-	}
-	rec.Outcome = outcomeFor(rec.Code)
-	b.recordDecision(context.WithoutCancel(ctx), rec)
+// useGrant names g's user and the open that stored g in r, so a decision
+// names the grant its ID-JAG was exchanged from, a retry's newer grant
+// included, rather than the session's user when the call began.
+func (r *DecisionRecord) useGrant(g *heldGrant) {
+	r.UserRecord, r.User = g.openRecord, g.user
+}
+
+// refuseIDJAG queues err as the refusal of the ID-JAG jag records, whose
+// record the sink did not accept, and returns err. The sink may have kept
+// that record without confirming it, so the refusal supersedes it (audit.md,
+// "Write order and failure"); the ID-JAG is never redeemed.
+func (b *Broker) refuseIDJAG(jag IDJAGRecord, err error) error {
+	jag.RecordHeader = jag.supersede()
+	jag.refused(err)
+	b.recordAnyway(&jag)
+	return err
+}
+
+// refuse queues err as the refusal of rec's call and returns err without
+// waiting on the sink. The refusal is recorded even when the call was
+// cancelled, as a cancelled call is still a decision.
+func (b *Broker) refuse(rec DecisionRecord, err error) error {
+	rec.refused(err)
+	b.recordDecision(rec)
 	return err
 }
