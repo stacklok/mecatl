@@ -859,7 +859,7 @@ jobs:
 
       # Same gate as the release job (publish-studio), here before any merge.
       - name: Scan Studio image for fixable critical vulnerabilities
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
         with:
           image: mecatl-studio:ci
           fail-build: true
@@ -1342,7 +1342,7 @@ jobs:
       # GORELEASER_VERSION.
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: "v2.20.2"
+          version: "v2.20.3"
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
@@ -1476,7 +1476,7 @@ jobs:
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
 
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
 
       # The publisher-format release fixture signs once, then verifies the exact
       # bundles strict admission consumes and rejects statement tampering.

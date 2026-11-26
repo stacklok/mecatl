@@ -1,6 +1,6 @@
 # Tracked tagged digests are updated by Renovate's native Dockerfile manager.
-ARG GO_IMAGE=docker.io/library/golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
-ARG RUNTIME_IMAGE=ghcr.io/stacklok/brood-box/base:latest@sha256:431a9ff16991081da5efd9b9121998e4954c089d609c0e95cb159c95824adb9f
+ARG GO_IMAGE=docker.io/library/golang:1.27.4@sha256:5f1b98fa02fe396ebce2a0227a0e08309e11792915b9dd2e1f71053d7e7e6666
+ARG RUNTIME_IMAGE=ghcr.io/stacklok/brood-box/base:latest@sha256:7e4533084b85257d3244ad9dc2a1376c72b8699d5c8a2abb719f31eb022d8210
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 ARG TARGETOS
 ARG TARGETARCH
