@@ -412452,6 +412452,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795683279070,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69d189468b6fdf58c948155a898ce13f9babeca3",
+          "message": "feat(identitybroker): record who acted, for whom, and what was decided (#2985)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-26T09:00:36-05:00",
+          "tree_id": "ce7b9da6d6d9f7ccb6f61b31a95718f190d59b2e",
+          "url": "https://github.com/stacklok/mecatl/commit/69d189468b6fdf58c948155a898ce13f9babeca3"
+        },
+        "date": 1795702399399,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -594982,6 +595016,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795702395645,
+  "lastUpdate": 1795702400555,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
