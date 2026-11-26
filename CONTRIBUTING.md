@@ -55,8 +55,8 @@ from these contributor test targets.
 | Node.js (SDK) | 26.x | TypeScript SDK; CI also checks the Node 22 floor |
 | Node.js (docs) | 24.x | Documentation tooling |
 | Node.js (Studio) | 26.x | Studio, selected by [`apps/.node-version`](apps/.node-version) |
-| pnpm | 12.18.0 | TypeScript SDK and Studio dependencies |
-| Bun | 1.4.4 | Node/Bun offline SDK wire tests (`task sdk:e2e`) |
+| pnpm | 12.23.0 | TypeScript SDK and Studio dependencies |
+| Bun | 1.4.5 | Node/Bun offline SDK wire tests (`task sdk:e2e`) |
 | Deno | 2.9.3 | Deno SDK checks (`task sdk:deno`); CI also tests current 2.x |
 | Buf | 1.75.0 | Protocol contract generation (`task generate`) |
 
@@ -69,10 +69,10 @@ With [mise](https://mise.jdx.dev/), you can select the SDK runtimes for one comm
 without changing your defaults:
 
 ```sh
-mise exec node@24 pnpm@12.18.0 bun@1.4.4 -- task sdk:e2e
+mise exec node@24 pnpm@12.23.0 bun@1.4.5 -- task sdk:e2e
 ```
 
-To make Bun your personal default, use `mise use --global bun@1.4.4`.
+To make Bun your personal default, use `mise use --global bun@1.4.5`.
 `mise use` installs and selects a tool; `mise install` alone only installs it.
 Check `node --version`, `pnpm --version`, and `bun --version` in the checkout
 before running the gates. A runtime-manager shim on `PATH` does not by itself

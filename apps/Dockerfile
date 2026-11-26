@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 # SPDX-License-Identifier: Apache-2.0
 #
 # Mecatl Studio image — ghcr.io/stacklok/mecatl/studio: one image serving the
@@ -12,7 +12,7 @@
 # one commit, and a change spanning all three needs no intermediate SDK release.
 #
 # Shape (multi-stage):
-#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.18.0 via
+#   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.23.0 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen
 #                lockfile installs for SDK and Studio, `pnpm build` (contracts
@@ -59,7 +59,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 26 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS build
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:abe7e5a82b61a8ef67b315b85497c9e65173387ccf2f4a029248184b8e020be5 AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1

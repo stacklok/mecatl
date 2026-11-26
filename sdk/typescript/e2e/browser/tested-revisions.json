@@ -1,8 +1,8 @@
 {
-  "playwright": "1.65.0",
+  "playwright": "1.65.1",
   "chromium": {
-    "revision": "1254",
-    "browserVersion": "158.0.8127.18"
+    "revision": "1255",
+    "browserVersion": "159.0.8154.6"
   },
   "firefox": {
     "revision": "1572",

@@ -52,7 +52,7 @@ export function SettingsRow({
     >
       <div className="min-w-0 space-y-0.5">
         {htmlFor ? (
-          <Label className="text-sm font-medium" htmlFor={htmlFor}>
+          <Label className="text-sm leading-5 font-medium" htmlFor={htmlFor}>
             {label}
           </Label>
         ) : (

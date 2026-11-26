@@ -218,7 +218,7 @@ function ChatCard() {
           label="Tool activity"
         >
           <Label
-            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm font-normal"
+            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm leading-5 font-normal"
             htmlFor="show-tool-activity"
           >
             <span className="flex items-center gap-2">
