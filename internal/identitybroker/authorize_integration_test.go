@@ -119,7 +119,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		subjects = subjects[1:]
 	}
 	process := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
+		Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
 		Subjects: subjects,
 	})
 	as2 := process.AS2

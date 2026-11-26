@@ -301,6 +301,10 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}})
 		process.auth = auth
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
+		// Shortcut: ToolHive's token validator refuses only an ID-JAG's typ,
+		// so the vMCP accepts AS-2-signed tokens with typ JWT or none, not
+		// only at+jwt (RFC 9068 section 4); removed when ToolHive's validator
+		// requires at+jwt, which has no ToolHive issue yet.
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: resource, Resource: resource, JWKSURL: issuer + "/.well-known/jwks.json"},
 		}, "mecatl-broker", nil, reader, auth.KeyProvider(), issuer)

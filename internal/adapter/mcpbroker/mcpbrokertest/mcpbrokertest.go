@@ -22,9 +22,10 @@ const CallbackURL = "https://broker.example/callback"
 const clientSecretEnv = "MECATL_TEST_CLIENT_SECRET" // #nosec G101 -- environment variable name, not a credential.
 
 // AS1Trust is an ID-JAG issuer for AS-2 to trust: its issuer, its JWKS URL
-// and the CA file that verifies it, the AS-1 subjects it may issue for, and
-// the oldest ID-JAG AS-2 accepts. Zero MaxAssertionAge selects ten minutes in
-// TrustAS1.
+// and the CA file that verifies it, whether that URL may be a private or
+// loopback address (a test's AS-1 is on loopback, so set
+// AllowPrivateAddresses), the AS-1 subjects it may issue for, and the oldest
+// ID-JAG AS-2 accepts. Zero MaxAssertionAge selects ten minutes in TrustAS1.
 type AS1Trust = as2trust.Trust
 
 // TrustAS1 returns the AS-2 trust in trust's issuer, for

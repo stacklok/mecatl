@@ -89,7 +89,7 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.Gat
 	}
 	if trustAS1 {
 		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-			Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()),
+			Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
 			Subjects: []string{as1servertest.Subject(t, access)},
 		})
 	}
