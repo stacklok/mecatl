@@ -458343,6 +458343,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795707343742,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "57b2a0c52ed058060a0cfad8724a1d6442d6e803",
+          "message": "chore(deps): update javascript dependencies (#2790)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-11-26T17:00:49+01:00",
+          "tree_id": "2ac29b90a57930efb4270df3baf4d89aa067e187",
+          "url": "https://github.com/stacklok/mecatl/commit/57b2a0c52ed058060a0cfad8724a1d6442d6e803"
+        },
+        "date": 1795709613947,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13399,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12893.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -596549,6 +596588,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795709610105,
+  "lastUpdate": 1795709614705,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
