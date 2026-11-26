@@ -412810,6 +412810,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795702399399,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "663f88ff21bc775a003fa5fbcd812373811360e3",
+          "message": "test(e2e): prove the deployable identity broker slice in kind (#2987)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-26T14:37:25Z",
+          "tree_id": "a641823d205fcb9838b8f369f4e74b32ce418a6b",
+          "url": "https://github.com/stacklok/mecatl/commit/663f88ff21bc775a003fa5fbcd812373811360e3"
+        },
+        "date": 1795704566184,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -595493,6 +595527,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795704562526,
+  "lastUpdate": 1795704566803,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
