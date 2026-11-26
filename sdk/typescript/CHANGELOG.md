@@ -4,6 +4,21 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.7.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.7.0)
+
+- chore(sdk): move SDK tooling to Node 26 LTS (#2767) ([`b59ee2c`](https://github.com/stacklok/mecatl/commit/b59ee2c70e34555b02b78061d0b35005d89dbe92))
+- feat(api): report execution capabilities as lists and bump the API to major 2 (#2777) ([`ff7a9ab`](https://github.com/stacklok/mecatl/commit/ff7a9abe38de68952bddfcebdfd44c6763a0f2ae))
+- feat(server): honor execution capability requests in mecak8s (#2816) ([`9598f7c`](https://github.com/stacklok/mecatl/commit/9598f7c6675a4e3bfdb9eabcbe89eb91c402bbc4))
+- chore(deps): lock file maintenance (#2797) ([`8368b4c`](https://github.com/stacklok/mecatl/commit/8368b4c8453a52e3edd312ba405736ae70070a48))
+- fix(sdk): ignore the unpatched picomatch advisory in the SDK audit (#2837) ([`dfeea8b`](https://github.com/stacklok/mecatl/commit/dfeea8bb52d36969991ea62456cb19481cbc8a78))
+- chore(deps): update tooling dependencies (#2791) ([`07914ea`](https://github.com/stacklok/mecatl/commit/07914eaf232f1cfbd8381e73ac1f0db51ab3071b))
+- fix(build): drop dev tooling from the Studio image and bump undici in the Slack bot (#2839) ([`c6e64d3`](https://github.com/stacklok/mecatl/commit/c6e64d3f942c3786276df5c049090ac5d8d009c1))
+- fix(slack-bot): isolate offline daemon startup (#2872) ([`cea6d32`](https://github.com/stacklok/mecatl/commit/cea6d32e5a031f9a01b51e1de45e8e0a32ca9193))
+- feat(api): report effort levels and the requested effort (#2927) ([`d3a72e2`](https://github.com/stacklok/mecatl/commit/d3a72e2dd9c74ab90864b3cad9403055368002e2))
+- chore(deps): lock file maintenance (#2952) ([`333de04`](https://github.com/stacklok/mecatl/commit/333de043be83ef010c65842d9082cd11bc6389b4))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.6.0...sdk/typescript/v0.7.0)
+
 ## [0.6.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.6.0)
 
 - feat(mecatui): add comfort transcript presentation (#2375) ([`e78d943`](https://github.com/stacklok/mecatl/commit/e78d9432e6be43bbb0d6373f6ed41d45daa4cc0f))
