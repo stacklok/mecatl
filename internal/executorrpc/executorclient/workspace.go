@@ -93,9 +93,9 @@ func (w *Workspace) ReadVersion(
 	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
-	streamCtx, cancel := context.WithCancel(ctx)
+	ctx, cancel := w.bound(ctx)
 	defer cancel()
-	stream, err := w.files.ReadFile(streamCtx, &executorv1.ReadFileRequest{Context: rc, Path: path})
+	stream, err := w.files.ReadFile(ctx, &executorv1.ReadFileRequest{Context: rc, Path: path})
 	if err != nil {
 		return nil, tool.FileVersion{}, fileError(ctx, path, err)
 	}
@@ -130,6 +130,8 @@ func (w *Workspace) Stat(ctx context.Context, path string) (tool.FileInfo, error
 	if err != nil {
 		return tool.FileInfo{}, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	resp, err := w.files.StatFile(ctx, &executorv1.StatFileRequest{Context: rc, Path: path})
 	if err != nil {
 		return tool.FileInfo{}, fileError(ctx, path, err)
@@ -150,6 +152,8 @@ func (w *Workspace) CreateFile(
 	if err != nil {
 		return tool.FileVersion{}, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	stream, err := w.files.CreateFile(ctx)
 	if err != nil {
 		return tool.FileVersion{}, fileError(ctx, path, err)
@@ -183,6 +187,8 @@ func (w *Workspace) ReplaceFile(
 	if token, err := tool.EncodeFileVersion(old); err == nil {
 		expected = &executorv1.FileVersion{Token: []byte(token)}
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	stream, err := w.files.ReplaceFile(ctx)
 	if err != nil {
 		return tool.FileVersion{}, fileError(ctx, path, err)
@@ -223,6 +229,8 @@ func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	resp, err := w.files.Glob(ctx, &executorv1.GlobRequest{Context: rc, Pattern: pattern})
 	if err != nil {
 		return nil, fileError(ctx, pattern, err)
@@ -236,6 +244,8 @@ func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	resp, err := w.files.Grep(ctx, &executorv1.GrepRequest{
 		Context:  rc,
 		Pattern:  pattern,
@@ -257,6 +267,8 @@ func (w *Workspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, 
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	resp, err := w.files.ReadDir(ctx, &executorv1.ReadDirRequest{Context: rc, Path: path})
 	if err != nil {
 		return nil, fileError(ctx, path, err)
@@ -274,6 +286,8 @@ func (w *Workspace) Remove(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	_, err = w.files.RemoveFile(ctx, &executorv1.RemoveFileRequest{Context: rc, Path: path})
 	return fileError(ctx, path, err)
 }
@@ -284,6 +298,8 @@ func (w *Workspace) Rename(ctx context.Context, oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	_, err = w.files.RenameFile(ctx, &executorv1.RenameFileRequest{
 		Context:         rc,
 		SourcePath:      oldPath,
@@ -302,6 +318,8 @@ func (w *Workspace) CopyFile(
 	if err != nil {
 		return tool.FileVersion{}, err
 	}
+	ctx, cancel := w.bound(ctx)
+	defer cancel()
 	resp, err := w.files.CopyFile(ctx, &executorv1.CopyFileRequest{
 		Context:         rc,
 		SourcePath:      source,
@@ -318,6 +336,8 @@ func (w *Workspace) AuthorityResourcePath(path string) (target, workspace string
 	if err != nil {
 		return "", "", err
 	}
+	ctx, stop := w.bound(ctx)
+	defer stop()
 	resp, err := w.files.ResolveAuthorityPath(ctx, &executorv1.ResolveAuthorityPathRequest{
 		Context: rc,
 		Path:    path,
@@ -370,7 +390,7 @@ func fileError(ctx context.Context, path string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if ctxErr := callContextError(ctx, err); ctxErr != nil {
+	if ctxErr := callContextError(ctx, path, err); ctxErr != nil {
 		return ctxErr
 	}
 	switch reason(err) {
@@ -389,11 +409,25 @@ func fileError(ctx context.Context, path string, err error) error {
 	}
 }
 
-// callContextError returns ctx's error when it ended the call.
-func callContextError(ctx context.Context, err error) error {
+// callContextError returns the error that ended the call through ctx, if one did.
+// gRPC can report a passed deadline before ctx's own timer fires.
+func callContextError(ctx context.Context, path string, err error) error {
 	code := status.Code(err)
-	if ctx.Err() != nil && (code == codes.Canceled || code == codes.DeadlineExceeded) {
-		return ctx.Err()
+	if code != codes.Canceled && code != codes.DeadlineExceeded {
+		return nil
 	}
-	return nil
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		<-ctx.Done()
+	}
+	if ctx.Err() == nil {
+		return nil
+	}
+	if cause := context.Cause(ctx); errors.Is(cause, ErrStorageTimeout) {
+		return fmt.Errorf("%s: %w", path, cause)
+	}
+	return ctx.Err()
+}
+
+func (w *Workspace) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeoutCause(ctx, w.limits.fileCallTimeout, ErrStorageTimeout)
 }

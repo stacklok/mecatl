@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -383,5 +384,68 @@ func TestServeRequiresTLSMounts(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), missing) {
 			t.Fatalf("%v: err = %v", flags, err)
 		}
+	}
+}
+
+func TestHealthReportsWhetherWorkspaceIsWritable(t *testing.T) {
+	root := t.TempDir()
+	cfg := serveConfig{files: true, commands: true}
+	srv := newHealthServer(t.Context(), root, cfg)
+	lis := bufconn.Listen(1 << 20)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	health := healthpb.NewHealthClient(conn)
+	wait := func(want healthpb.HealthCheckResponse_ServingStatus) {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for _, service := range []string{
+			"",
+			executorv1.FileService_ServiceDesc.ServiceName,
+			executorv1.CommandService_ServiceDesc.ServiceName,
+		} {
+			req := &healthpb.HealthCheckRequest{Service: service}
+			for {
+				resp, err := health.Check(t.Context(), req)
+				if err == nil && resp.GetStatus() == want {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("health of %q = %v, %v; want %v", service, resp, err, want)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
+
+	wait(healthpb.HealthCheckResponse_SERVING)
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	wait(healthpb.HealthCheckResponse_NOT_SERVING)
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wait(healthpb.HealthCheckResponse_SERVING)
+}
+
+func TestServeParsesHealthListen(t *testing.T) {
+	flag := "-" + executionenv.HealthListenFlag + "=:7444"
+	sf, err := parseServeFlags([]string{"-listen=:7443", "-files", flag})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf.healthListen != ":7444" {
+		t.Fatalf("health listen = %q", sf.healthListen)
 	}
 }

@@ -29,6 +29,7 @@ func testServerArgs() []string {
 		"-keepalive-timeout=10s",
 		"-tls-dir=/etc/mecatl-executor/tls",
 		"-provider-trust-dir=/etc/mecatl-executor/provider",
+		"-health-listen=:7444",
 	}
 }
 
@@ -51,6 +52,7 @@ func TestExecutorPodRunsTheServer(t *testing.T) {
 	wantArgs := testServerArgs()
 	wantPorts := []corev1.ContainerPort{
 		{Name: "executor", ContainerPort: 7443, Protocol: corev1.ProtocolTCP},
+		{Name: "health", ContainerPort: 7444, Protocol: corev1.ProtocolTCP},
 	}
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyAlways ||
 		!reflect.DeepEqual(c.Command, []string{"/mecatl-executor", "serve"}) ||
@@ -60,8 +62,9 @@ func TestExecutorPodRunsTheServer(t *testing.T) {
 			pod.Spec.RestartPolicy, c.Command, c.Args, c.Ports)
 	}
 	probe := c.ReadinessProbe
-	if probe == nil || probe.TCPSocket == nil || probe.TCPSocket.Port != intstr.FromInt32(7443) {
-		t.Fatalf("readiness probe does not check the server port: %+v", probe)
+	if probe == nil || probe.GRPC == nil || probe.GRPC.Port != 7444 ||
+		probe.GRPC.Service == nil || *probe.GRPC.Service != "" {
+		t.Fatalf("readiness probe does not check the health server: %+v", probe)
 	}
 }
 
@@ -226,7 +229,31 @@ func TestExecutorDriftCheckRequiresTheServer(t *testing.T) {
 			p.Spec.Containers[0].ReadinessProbe = nil
 		},
 		"readiness port": func(p *corev1.Pod) {
-			p.Spec.Containers[0].ReadinessProbe.TCPSocket.Port = intstr.FromInt32(1)
+			p.Spec.Containers[0].ReadinessProbe.GRPC.Port = 1
+		},
+		"readiness service": func(p *corev1.Pod) {
+			service := "mecatl.executor.v1.FileService"
+			p.Spec.Containers[0].ReadinessProbe.GRPC.Service = &service
+		},
+		"health listen address": func(p *corev1.Pod) {
+			args := p.Spec.Containers[0].Args
+			args[len(args)-1] = "-health-listen=:8444"
+		},
+		"no health listen": func(p *corev1.Pod) {
+			args := p.Spec.Containers[0].Args
+			p.Spec.Containers[0].Args = args[:len(args)-1]
+		},
+		"legacy probe": func(p *corev1.Pod) {
+			p.Spec.Containers[0].ReadinessProbe = legacyReadinessProbe()
+		},
+		"legacy probe without health port": func(p *corev1.Pod) {
+			p.Spec.Containers[0].ReadinessProbe = legacyReadinessProbe()
+			p.Spec.Containers[0].Ports = p.Spec.Containers[0].Ports[:1]
+		},
+		"legacy args and ports": func(p *corev1.Pod) {
+			c := &p.Spec.Containers[0]
+			c.Args = c.Args[:len(c.Args)-1]
+			c.Ports = c.Ports[:1]
 		},
 		"liveness probe": func(p *corev1.Pod) {
 			p.Spec.Containers[0].LivenessProbe = &corev1.Probe{}
@@ -248,6 +275,41 @@ func TestExecutorDriftCheckRequiresTheServer(t *testing.T) {
 				t.Fatal("drifted executor server accepted")
 			}
 		})
+	}
+}
+
+func TestExecutorDriftCheckAcceptsPodsFromBeforeTheHealthServer(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	k := kubefake.NewSimpleClientset()
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	profiles := testProfiles()
+	r := NewReconciler(d, k, "ns", profiles)
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := pod.DeepCopy()
+	c := &legacy.Spec.Containers[0]
+	c.Args = slices.DeleteFunc(c.Args, func(a string) bool { return a == healthListenArg })
+	c.Ports = c.Ports[:1]
+	c.ReadinessProbe = &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{
+			Port: intstr.FromInt32(7443),
+		}},
+		PeriodSeconds:    2,
+		TimeoutSeconds:   1,
+		SuccessThreshold: 1,
+		FailureThreshold: 3,
+	}
+	profile, _ := profiles.get("go")
+	if err := validatePod(env, profile, testPodInputs(profiles, pod), legacy); err != nil {
+		t.Fatalf("Pod from before the health server rejected: %v", err)
 	}
 }
 

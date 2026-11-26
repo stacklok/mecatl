@@ -60,7 +60,7 @@ For the **`v1-` execution-template contract**, preserve these runtime requiremen
 | --- | --- |
 | Executor compatibility | Keep `/mecatl-executor` from the selected release. The provider calls the executor's private gRPC server, which has no separate version negotiation. Pair provider and executor from the same release and requalify upgrades rather than assuming cross-release helper compatibility. |
 | Identity | The Pod runs as UID **65532**, GID **65532**, with filesystem group **65532**. Added programs must be executable by that identity without privilege escalation or Linux capabilities. |
-| Startup | The provider overrides the image entrypoint and runs `/mecatl-executor serve` as the container's main process, listening on TCP port 7443. Kubernetes restarts the container in the same Pod if the server exits. Keep `/bin/sh`; foreground commands use it. |
+| Startup | The provider overrides the image entrypoint and runs `/mecatl-executor serve` as the container's main process, listening on TCP port 7443, with readiness on port 7444. Kubernetes restarts the container in the same Pod if the server exits. Keep `/bin/sh`; foreground commands use it. |
 | Writable paths | `/workspace` is the retained workspace PVC; `/tmp` is a size-bounded ephemeral `emptyDir`. The image root filesystem is read-only. Put caches and generated files on those writable mounts, and install utilities into the image at build time. Image contents under the mount points are hidden by the mounts. |
 | Foreground commands | The executor invokes `/bin/sh -c` in `/workspace` with only `HOME=/workspace`, `PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin`, `TMPDIR=/tmp`, and `GOTMPDIR=/tmp`. Image `ENV` additions and provider credentials are not inherited by these commands. |
 
@@ -688,6 +688,22 @@ For denied run acquisition or renewal, check current client template scope and
 revision revocation; replaying an existing claim cannot bypass withdrawn policy.
 Reference release and authorized administrative cleanup remain available under
 their own safety checks.
+
+### An environment is not ready because of its workspace volume
+
+The executor Pod is ready only while `/workspace` accepts a new file within
+30 seconds. The executor checks every 2 seconds and serves the result over
+plaintext gRPC health on port 7444, which the kubelet's readiness probe calls.
+Pods created before this check keep their TCP readiness probe until replaced.
+A full volume stays ready so the agent can delete files; its writes fail with a
+`workspace storage is full` tool error. The Pod also stays ready when the agent
+removes write permission from `/workspace`, so the agent can restore it.
+
+`mecak8s` waits at most one minute for each file operation. After that, the
+tool call fails with `workspace storage did not respond in time; a write may
+still have completed`. An operation blocked on storage can't be stopped and
+may complete once storage recovers, so read the file before retrying a write.
+Commands aren't bounded this way and can stay blocked on storage.
 
 ### Session creation refuses a capability request
 
