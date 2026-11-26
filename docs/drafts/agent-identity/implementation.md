@@ -6,7 +6,7 @@ This companion records implementation and verification requirements for the [age
 
 Verify that session enumeration, session access, and event replay enforce the authenticated caller's ownership, including on shared storage. Include negative tests proving another user cannot obtain session titles, prompts, or archived conversation content.
 
-Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration, provided the IdP gives the same issuer and subject across application registrations rather than pairwise subjects per application. mecak8s keys ownership on the `sub_id` identity alone, so the audit records must also carry AS-1's own subject and the token's `client_id` (see [audit](audit.md#auditevent-profile) and the evidence for [step (1)](credentials-and-lifecycle.md#1-as-1-access-token)). Test the following:
+Session ownership is keyed by the company identity in the validated AS-1 access token's `sub_id`, not by the token's own `(iss, sub)`, so existing owners need no migration, provided the IdP gives the same issuer and subject across application registrations rather than pairwise subjects per application. mecak8s keys ownership on the `sub_id` identity alone, so the audit records must also carry AS-1's own subject and the client the token was issued to, `user_client_id` (see [audit](audit.md#auditevent-profile) and the evidence for [step (1)](credentials-and-lifecycle.md#1-as-1-access-token)). Test the following:
 
 - mecak8s rejects an AS-1 token without `sub_id`.
 - It accepts `sub_id` only from tokens AS-1 issued.
@@ -45,6 +45,7 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 | Owner | `(https://login.example.com, alice-204)` | Verified when AS-1 first accepts a token for the session; until then the owner mecak8s reports only pairs the session. Later opens for another user are refused. |
 | Host session and incarnation | `hostS42` | Restart and recovery continuity. |
 | Source access-token `jti` | | Joins the broker's open record to AS-1's conversion record. |
+| Open record | `rec_…` | The `AuditID` of the open record that stored the refresh token, so a later open names the token it replaces. |
 | Expiry | | The `expires_at` AS-1 echoed; the broker does not use a grant past it. |
 | Revocation reason | | Set when the broker revokes it: `session_closed`, `signed_out`, `upstream_revoked`, `owner_action_required`, or, for a schedule grant, `schedule_ended`. |
 
@@ -285,7 +286,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Each field means the same in the JSON record and in the slog output, including `Metadata.Extra`, `Data`, and the occurrence time; the two outputs name some fields differently.
 - A caller-supplied `AuditID` and `LoggedAt` are unchanged when the event is sent again.
 - Records with a missing identity, a reported-only identity, and an unauthenticated denial carry the right provenance marks, and an unverified identity never appears as `user_id`.
-- An unknown outcome, a retry, and a late result produce distinct attempts and events, and the late result references the earlier event.
+- A retry after an unknown outcome is a new attempt. A late result is a new observed-outcome event in the unknown outcome's attempt, with the same operation and attempt IDs and `mecatl.late_result=true`.
 - Each event type rejects outcomes outside its fixed set.
 - `Data` is valid JSON matching its structure version, and `Subjects`, `Target`, and `Data` contain only keys allowlisted for the type.
 - No token, assertion, refresh token, authorization header, or token-endpoint request body appears in any record, including errors.
@@ -296,6 +297,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
 - With a lossless sink configured, an unavailable sink blocks dispatch, and no record is dropped under back-pressure or when the sink restarts.
 - The broker refuses to dispatch when its decision record cannot be delivered, and dispatches only after the sink accepts it.
+- A session open, instance registration, or accepted delegation report whose record the sink does not accept leaves no session, instance, or delegation behind, and the broker records a refusal that supersedes it. The open fails as for `token_used` when it converted the request's token, as `UNAVAILABLE` otherwise, and with 503 `identity_broker_unavailable` when the same caller's previous open of that host session failed the same way within the last minute. Registration and delegation reports fail as `UNAVAILABLE`: a new helper's first registration or report is not retried and the helper does not run, the root's registration is retried when the run starts, and re-registrations and re-reports after a reopen on the next call. Schedule setup and renewal, the decision for a tool listing, and a scheduled run's open each fail as the write-order table says, and a refusal supersedes an accepted record when a close undoes its event. A close or a refusal whose record is not accepted still takes effect, and a refused open never leaves a session.
 - Removing a record or ending a stream without its stop event shows as a sequence gap.
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
 - The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
