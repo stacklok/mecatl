@@ -597420,9 +597420,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795712388544,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "328978+blkt@users.noreply.github.com",
+            "name": "Michelangelo Mori",
+            "username": "blkt"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84990f47cddf3cf4fece4f6d79118c27a8b3d374",
+          "message": "fix(scheduler): bind scheduled fires to the source's agent definition (#2996)\n\nA fire was created without its origin's agent definition, so a fire\nfrom an agent-bound session would run with default tools and authority.\nAgent-bound sessions don't get the `Schedule` tool today, so this is\ndefensive.\n\n`bindScheduledOrigin` loads the origin once in `CreateSessionWithProfile`\nand binds the fire to its incarnation and `AgentDefinitionName`; the\nagent-definition factory refuses a definition that no longer exists, and\n`bindRelatedIncarnations` refuses an origin whose incarnation changed.\n`fireCapabilities` narrows an agent-bound source's request to its\neffective set. Fires from unbound sources are unchanged.\n\nCloses: #2824",
+          "timestamp": "2026-11-26T20:27:33+01:00",
+          "tree_id": "2198685bf11be0a0b0350eb40f33b82953420a63",
+          "url": "https://github.com/stacklok/mecatl/commit/84990f47cddf3cf4fece4f6d79118c27a8b3d374"
+        },
+        "date": 1795721994881,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 777.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3103,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32183.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2158,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1795721990949,
+  "lastUpdate": 1795721995596,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
