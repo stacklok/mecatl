@@ -460328,6 +460328,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795772781463,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c56191ec46384250a9f46b4d95627bd38a6f0d98",
+          "message": "feat(mcpbroker): trust AS-1 for ID-JAGs only at AS-2 (#3002)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-27T11:15:54Z",
+          "tree_id": "66a669df77e52f9cb2650088a32a7484352f830b",
+          "url": "https://github.com/stacklok/mecatl/commit/c56191ec46384250a9f46b4d95627bd38a6f0d98"
+        },
+        "date": 1795778915303,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13424.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12918,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 681,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -599104,6 +599143,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795778911255,
+  "lastUpdate": 1795778916414,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
