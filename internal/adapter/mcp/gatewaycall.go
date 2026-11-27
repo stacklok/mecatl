@@ -341,14 +341,9 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		defer func() { _ = req.Body.Close() }()
 	}
 	// Until the tools/call has started, the token is presented only before
-	// sendBy. The tools/call itself is checked again just before it is
-	// written, below.
-	w.mu.Lock()
-	callStarted := w.callStarted
-	w.mu.Unlock()
-	if !callStarted && !time.Now().Before(w.sendBy) {
-		return nil, w.refuse(GatewayRejectionExpired)
-	}
+	// sendBy: roundTripOther checks a request other than the tools/call, and
+	// startCall the tools/call itself, just before it is written. Nothing is
+	// written before those checks.
 	out := req.Clone(req.Context())
 	out.Header.Set("Authorization", w.authorization)
 	var msg gatewayMessage
@@ -414,7 +409,15 @@ func (w *gatewayWire) roundTripOther(out *http.Request, method string) (*http.Re
 	if cancelHandshake {
 		// Initialize must not be cancelled. The SDK sends this notification
 		// on a detached context; waiting for it can stall failed-handshake cleanup.
+		// It is refused whatever the time, so it records no refusal: after a
+		// hung handshake it can arrive past sendBy.
 		return nil, errGatewayRefused
+	}
+	w.mu.Lock()
+	callStarted := w.callStarted
+	w.mu.Unlock()
+	if !callStarted && !time.Now().Before(w.sendBy) {
+		return nil, w.refuse(GatewayRejectionExpired)
 	}
 	resp, err := w.base.RoundTrip(out)
 	if method == "notifications/cancelled" {

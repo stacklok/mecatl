@@ -349,26 +349,46 @@ func TestSendGatewayCallDropAfterWriteIsUnknown(t *testing.T) {
 }
 
 // hangingTransport never answers a request until its context ends.
-type hangingTransport struct{}
+// hangingTransport never answers: each request waits for its context to
+// end. entered counts the requests it received.
+type hangingTransport struct{ entered atomic.Int64 }
 
-func (hangingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (h *hangingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	h.entered.Add(1)
 	<-req.Context().Done()
 	return nil, req.Context().Err()
 }
 
+// TestSendGatewayCallHandshakeEndsAtSendBy: a handshake the gateway never
+// answers ends at the send-by deadline, less the margin, rather than hanging,
+// and the attempt is not sent. The window before the deadline is short, so a
+// slow runner may reach the deadline before the handshake starts; that
+// attempt must then be refused as authorization_expired without a request,
+// and the test runs again with a longer window, rather than reading a timing
+// race as a failure.
 func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
-	f := newGatewayFixture(t)
-	req := f.request("att_1")
-	req.HTTPClient = &http.Client{Transport: hangingTransport{}}
-	req.SendBy = time.Now().Add(gatewaySendMargin + 50*time.Millisecond)
-	done := make(chan GatewayAttempt, 1)
-	go func() { done <- SendGatewayCall(t.Context(), req) }()
-	select {
-	case got := <-done:
-		wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
-	case <-time.After(5 * time.Second):
-		t.Fatal("a hung handshake outlived the authorization's send deadline")
+	for window := 50 * time.Millisecond; window <= 3200*time.Millisecond; window *= 2 {
+		f := newGatewayFixture(t)
+		req := f.request("att_1")
+		hanging := &hangingTransport{}
+		req.HTTPClient = &http.Client{Transport: hanging}
+		req.SendBy = time.Now().Add(gatewaySendMargin + window)
+		done := make(chan GatewayAttempt, 1)
+		go func() { done <- SendGatewayCall(t.Context(), req) }()
+		var got GatewayAttempt
+		select {
+		case got = <-done:
+		case <-time.After(window + 5*time.Second):
+			t.Fatal("a hung handshake outlived the authorization's send deadline")
+		}
+		if hanging.entered.Load() > 0 {
+			wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
+			return
+		}
+		// The deadline passed before the handshake started.
+		wantAttempt(t, got, GatewayAttemptNotSent, GatewayRejectionExpired, 0)
 	}
+	t.Fatal("the handshake never started before the send-by deadline")
 }
 
 // TestSendGatewayCallChecksSendByBeforeTheToolsCall: a tools/call whose
@@ -449,6 +469,35 @@ func TestSendGatewayCallKeepsTheMarginBeforeTheHandshake(t *testing.T) {
 type gatewayRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f gatewayRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestGatewayHandshakeCancellationAfterSendByRecordsNoRefusal: when a hung
+// handshake reaches its deadline, the SDK sends notifications/cancelled for
+// the initialize from its own goroutine, which can reach the wire after
+// sendBy. The wire never writes a cancellation before the tools/call, so it
+// is not a request the deadline refused: the attempt keeps no rejection
+// rather than authorization_expired, whichever comes first.
+func TestGatewayHandshakeCancellationAfterSendByRecordsNoRefusal(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	var written atomic.Int64
+	req.HTTPClient = &http.Client{Transport: gatewayRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		written.Add(1)
+		return nil, errors.New("unreachable")
+	})}
+	wire := newGatewayWire(req, time.Now().Add(-time.Second))
+	cancel, err := http.NewRequestWithContext(t.Context(), http.MethodPost, req.Endpoint,
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.RoundTrip(cancel); !errors.Is(err, errGatewayRefused) {
+		t.Fatalf("RoundTrip = %v, want errGatewayRefused", err)
+	}
+	if n := written.Load(); n != 0 {
+		t.Fatalf("%d requests written", n)
+	}
+	wantAttempt(t, wire.classify(GatewayAttempt{AttemptID: "att_1"}, nil, nil), GatewayAttemptNotSent, "", 0)
+}
 
 func TestGatewayHandshakeCancellationDoesNotBlockClose(t *testing.T) {
 	f := newGatewayFixture(t)
