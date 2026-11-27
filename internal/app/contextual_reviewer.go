@@ -872,17 +872,16 @@ func (b *reviewEvidenceBudget) reserve(size, limit int64) bool {
 }
 
 type reviewToolState struct {
-	mu               sync.Mutex
-	req              agent.ToolReviewRequest
-	source           agent.ReviewEvidenceSource
-	budget           *reviewEvidenceBudget
-	cancel           context.CancelFunc
-	read             map[string]string
-	used             bool
-	failure          error
-	submitting       bool
-	submitted        *agent.ToolReviewResult
-	assessmentSchema json.RawMessage
+	mu         sync.Mutex
+	req        agent.ToolReviewRequest
+	source     agent.ReviewEvidenceSource
+	budget     *reviewEvidenceBudget
+	cancel     context.CancelFunc
+	read       map[string]string
+	used       bool
+	failure    error
+	submitting bool
+	submitted  *agent.ToolReviewResult
 }
 
 func newReviewToolState(req agent.ToolReviewRequest, source agent.ReviewEvidenceSource, budgets ...*reviewEvidenceBudget) *reviewToolState {
@@ -892,7 +891,6 @@ func newReviewToolState(req agent.ToolReviewRequest, source agent.ReviewEvidence
 	}
 	return &reviewToolState{
 		req: req, source: source, budget: budget, read: make(map[string]string),
-		assessmentSchema: reviewAssessmentSchemaFor(reviewSourceRefList(req)),
 	}
 }
 
@@ -1055,8 +1053,8 @@ func validateReadEvidence(evidence agent.ReviewEvidence, args agent.ReviewEviden
 
 type submitReviewAssessmentTool struct{ state *reviewToolState }
 
-func (t *submitReviewAssessmentTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: submitReviewAssessmentToolName, Description: "Submit the final contextual assessment. A valid call is terminal. Use only evidence handles actually read; unsupported, duplicate, or missing references make the review operationally unresolved.", Schema: slices.Clone(t.state.assessmentSchema)}
+func (*submitReviewAssessmentTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: submitReviewAssessmentToolName, Description: "Submit the final contextual assessment. A valid call is terminal. Use only evidence handles actually read; unsupported, duplicate, or missing references make the review operationally unresolved.", Schema: json.RawMessage(reviewAssessmentSchema)}
 }
 func (*submitReviewAssessmentTool) ReadOnly() bool      { return true }
 func (*submitReviewAssessmentTool) DispatchSerialTool() {}
@@ -1087,12 +1085,12 @@ func (t *submitReviewAssessmentTool) Execute(_ context.Context, call session.Too
 	return session.NewToolResult(call.ID, "assessment accepted"), nil
 }
 
+// reviewAssessmentSchema is byte-identical for every review. Tool schemas sit at
+// the front of the provider prompt, so a per-request value here (for example a
+// source_ref enum) would defeat prompt caching for the whole tools+system
+// prefix. The allowed source refs travel in the request message instead, and
+// parseReviewAssessment enforces them.
 const reviewAssessmentSchema = `{"type":"object","additionalProperties":false,"required":["assessment","concerns","evidence","missing_evidence"],"properties":{"assessment":{"type":"string","enum":["acceptable","prohibited","unresolved"]},"concerns":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["ref","category","rationale","source_ref"],"properties":{"ref":{"type":"string"},"category":{"type":"string"},"rationale":{"type":"string"},"source_ref":{"type":"string"}}}},"evidence":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["handle","version","supports"],"properties":{"handle":{"type":"string"},"version":{"type":"string"},"supports":{"type":"array","items":{"type":"string"}}}}},"missing_evidence":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["ref","kind","handle","reason"],"properties":{"ref":{"type":"string"},"kind":{"type":"string"},"handle":{"type":"string"},"reason":{"type":"string"}}}}}}`
-
-func reviewAssessmentSchemaFor(sourceRefs []string) json.RawMessage {
-	enum, _ := json.Marshal(sourceRefs)
-	return json.RawMessage(strings.Replace(reviewAssessmentSchema, `"source_ref":{"type":"string"}`, `"source_ref":{"type":"string","enum":`+string(enum)+`}`, 1))
-}
 
 func revalidateReviewBinding(req agent.ToolReviewRequest, current session.EnvironmentRef) error {
 	if req.Environment.Kind == "" || req.Environment.ID == "" || req.Environment.Revision == "" {
