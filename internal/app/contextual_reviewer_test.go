@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,22 +85,32 @@ func TestContextualGuardrails_RubricContract(t *testing.T) {
 	if !strings.Contains(got.Messages[len(got.Messages)-1].Text, `"AllowedSourceRefs":["P1","P2","call","ev_opaque_1"]`) {
 		t.Fatal("initial request did not contain the deterministic allowed source-ref inventory")
 	}
-	if !strings.Contains(string(got.Tools[1].Schema), `"source_ref":{"type":"string","enum":["P1","P2","call","ev_opaque_1"]}`) {
-		t.Fatalf("submit schema did not carry the per-request source-ref enum: %s", got.Tools[1].Schema)
+	if strings.Contains(string(got.Tools[1].Schema), "ev_opaque_1") {
+		t.Fatalf("submit schema carries per-request source refs, which breaks prompt caching: %s", got.Tools[1].Schema)
 	}
-	firstSchema := got.Tools[1].Schema
-	firstSchemaText := string(firstSchema)
+	firstTools := slices.Clone(got.Tools)
+	firstSystem := got.System.StablePrefix
 	req := reviewRequestWithoutEvidence()
 	req.PrincipalFacts = []agent.ReviewPrincipalFact{{Ref: "P3", Kind: "user_task", Statement: "Second task"}}
 	req.Trajectory = []agent.ReviewTrajectoryFact{{Ref: "T1"}}
 	if _, _, err := reviewer.Review(context.Background(), req, nil); err != nil {
 		t.Fatalf("second Review: %v", err)
 	}
-	if len(got.Tools) != 2 || got.Tools[1].Name != submitReviewAssessmentToolName || !strings.Contains(string(got.Tools[1].Schema), `"source_ref":{"type":"string","enum":["P3","T1","call"]}`) {
-		t.Fatalf("second request did not receive its own source-ref enum: %+v", got.Tools)
+	if !strings.Contains(got.Messages[len(got.Messages)-1].Text, `"AllowedSourceRefs":["P3","T1","call"]`) {
+		t.Fatal("second request did not contain its own allowed source-ref inventory")
 	}
-	if string(firstSchema) != firstSchemaText {
-		t.Fatal("second review mutated the first request's tool schema")
+	// The tools+system prefix must be byte-identical across reviews so
+	// provider prompt caches can reuse it; per-request data belongs in messages.
+	if len(got.Tools) != len(firstTools) {
+		t.Fatalf("review tools changed between reviews: %+v", got.Tools)
+	}
+	for i := range firstTools {
+		if got.Tools[i].Name != firstTools[i].Name || got.Tools[i].Description != firstTools[i].Description || string(got.Tools[i].Schema) != string(firstTools[i].Schema) {
+			t.Fatalf("review tool %d differs between reviews:\nfirst:  %+v\nsecond: %+v", i, firstTools[i], got.Tools[i])
+		}
+	}
+	if got.System.StablePrefix != firstSystem {
+		t.Fatal("review system prefix differs between reviews")
 	}
 }
 
