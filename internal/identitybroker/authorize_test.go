@@ -88,11 +88,52 @@ func (f *fakeIssuer) IssueIDJAG(_ context.Context, req identitybroker.IDJAGReque
 	}
 	res, err := answer(n, req)
 	if err == nil {
+		// AS-1 signs the call entry it was sent into the ID-JAG.
+		res.IDJAG = withClaim(res.IDJAG, "authorization_details", req.AuthorizationDetails)
 		f.mu.Lock()
 		f.issued = append(f.issued, res.IDJAG)
 		f.mu.Unlock()
 	}
 	return res, err
+}
+
+// withClaim returns token with claim name set to value when token is a
+// compact JWT with a JSON object payload that lacks it and value is set;
+// otherwise token.
+func withClaim(token identitybroker.Token, name string, value json.RawMessage) identitybroker.Token {
+	parts := strings.Split(token.Value(), ".")
+	if len(value) == 0 || len(parts) != 3 {
+		return token
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims map[string]json.RawMessage
+	if err != nil || json.Unmarshal(payload, &claims) != nil || claims == nil {
+		return token
+	}
+	if _, ok := claims[name]; ok {
+		return token
+	}
+	claims[name] = value
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return token
+	}
+	parts[1] = base64.RawURLEncoding.EncodeToString(raw)
+	return identitybroker.NewToken(strings.Join(parts, "."))
+}
+
+// signedClaim returns claim name of a compact JWT, nil when it has none.
+func signedClaim(token, name string) json.RawMessage {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	var claims map[string]json.RawMessage
+	if err != nil || json.Unmarshal(payload, &claims) != nil {
+		return nil
+	}
+	return claims[name]
 }
 
 func (f *fakeIssuer) requests() []identitybroker.IDJAGRequest {
@@ -108,9 +149,12 @@ func (f *fakeIssuer) tokens() []identitybroker.Token {
 }
 
 // fakeAS2 is AS-2's redemption, answering call n (from 1) with answer, or
-// redeemGatewayToken when answer is nil.
+// redeemGatewayToken when answer is nil. Like AS-2, it returns the ID-JAG's
+// signed authorization_details claim in a successful answer that sets
+// none, after details when set: details may drop or change it.
 type fakeAS2 struct {
-	answer func(n int, req identitybroker.Redemption) (identitybroker.GatewayTokenResult, error)
+	answer  func(n int, req identitybroker.Redemption) (identitybroker.GatewayTokenResult, error)
+	details func(signed json.RawMessage) json.RawMessage
 
 	mu         sync.Mutex
 	assertions []string
@@ -128,6 +172,12 @@ func (f *fakeAS2) Redeem(_ context.Context, req identitybroker.Redemption) (iden
 	}
 	res, err := answer(n, req)
 	if err == nil {
+		if res.AuthorizationDetails == nil {
+			res.AuthorizationDetails = signedClaim(req.Assertion.Value(), "authorization_details")
+			if f.details != nil {
+				res.AuthorizationDetails = f.details(res.AuthorizationDetails)
+			}
+		}
 		f.mu.Lock()
 		f.issued = append(f.issued, res.AccessToken)
 		f.mu.Unlock()

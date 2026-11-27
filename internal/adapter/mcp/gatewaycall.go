@@ -110,6 +110,14 @@ const (
 	// GatewayRejectionInvalidToken means 401 with error="invalid_token", on the
 	// handshake or the tools/call.
 	GatewayRejectionInvalidToken GatewayRejection = "invalid_token"
+	// GatewayRejectionDenied means 403 refusing the request before the
+	// gateway ran it: with error="insufficient_scope" (RFC 6750 §3.1), or,
+	// as ToolHive's vMCP answers, with a JSON-RPC error of code 403 answering
+	// the request's own ID. ToolHive's call binding answers so a tools/call
+	// other than the one its token's call entry names, and its
+	// authorization a call its policy denies
+	// (credentials-and-lifecycle.md, step (9), checks 3 and 4).
+	GatewayRejectionDenied GatewayRejection = "denied"
 	// GatewayRejectionSessionNotFound means 404 for a request naming a session.
 	GatewayRejectionSessionNotFound GatewayRejection = "session_not_found"
 	// GatewayRejectionURLElicitation means -32042 in reply to the tools/call.
@@ -354,6 +362,9 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		GotConn: func(httptrace.GotConnInfo) { gotConn.Store(true) },
 	}))
 	resp, err := w.base.RoundTrip(traced)
+	// A 403's body is read before taking the lock, so a slow body never
+	// holds up the call's cancellation.
+	denied := err == nil && resp.StatusCode == http.StatusForbidden && deniedBefore(resp, msg.id)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err != nil {
@@ -362,6 +373,9 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	w.callWritten = true
 	w.call = answerOf(out, resp)
+	if w.call.rejection == "" && denied {
+		w.call.rejection = GatewayRejectionDenied
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Body != nil {
 		resp.Body = &replyWatcher{
 			body: resp.Body, wire: w,
@@ -503,12 +517,15 @@ func notProcessed(code int64) bool {
 }
 
 // answerOf is the status of resp and, when it means the request never ran,
-// why: 401 invalid_token, or 404 for a request naming a session.
+// why: 401 invalid_token, 403 insufficient_scope, or 404 for a request
+// naming a session.
 func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	a := gatewayAnswer{status: resp.StatusCode}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInvalidTokenChallenge):
 		a.rejection = GatewayRejectionInvalidToken
+	case resp.StatusCode == http.StatusForbidden && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInsufficientScopeChallenge):
+		a.rejection = GatewayRejectionDenied
 	case resp.StatusCode == http.StatusNotFound && req.Header.Get("Mcp-Session-Id") != "":
 		a.rejection = GatewayRejectionSessionNotFound
 	}
@@ -518,13 +535,63 @@ func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 // isInvalidTokenChallenge reports a WWW-Authenticate value carrying a Bearer
 // challenge with error="invalid_token" (RFC 6750 §3). A value that does not
 // parse is not one.
-func isInvalidTokenChallenge(header string) bool {
+func isInvalidTokenChallenge(header string) bool { return hasBearerError(header, "invalid_token") }
+
+// jsonRPCCodeDenied is the JSON-RPC error code ToolHive's vMCP answers a
+// request it refuses before dispatch with, alongside HTTP 403.
+const jsonRPCCodeDenied = 403
+
+// maxDenialBody bounds how much of a 403 answer deniedBefore reads.
+const maxDenialBody = 64 << 10
+
+// deniedBefore reports whether resp, a 403 answering the request with ID id,
+// carries a JSON-RPC error of code jsonRPCCodeDenied for that ID: ToolHive's
+// vMCP refused the request before running it. It restores the body it
+// reads, so the caller still sees all of it.
+func deniedBefore(resp *http.Response, id json.RawMessage) bool {
+	if resp.Body == nil || len(id) == 0 {
+		return false
+	}
+	head, err := io.ReadAll(io.LimitReader(resp.Body, maxDenialBody))
+	resp.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(head), resp.Body), Closer: resp.Body}
+	if err != nil {
+		return false
+	}
+	var reply struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   *struct {
+			Code int64 `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(head, &reply) != nil {
+		return false
+	}
+	return reply.JSONRPC == "2.0" && reply.Error != nil && reply.Error.Code == jsonRPCCodeDenied && sameID(reply.ID, id)
+}
+
+// readCloser reads from Reader and closes Closer.
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// isInsufficientScopeChallenge reports a WWW-Authenticate value carrying a
+// Bearer challenge with error="insufficient_scope" (RFC 6750 §3.1). A value
+// that does not parse is not one.
+func isInsufficientScopeChallenge(header string) bool {
+	return hasBearerError(header, "insufficient_scope")
+}
+
+// hasBearerError reports a WWW-Authenticate value carrying a Bearer
+// challenge whose error parameter is code.
+func hasBearerError(header, code string) bool {
 	challenges, err := parseDirectChallenges(header)
 	if err != nil {
 		return false
 	}
 	return slices.ContainsFunc(challenges, func(c directChallenge) bool {
-		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == "invalid_token"
+		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == code
 	})
 }
 

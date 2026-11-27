@@ -1,0 +1,483 @@
+package identitybroker_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
+
+	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
+	"github.com/stacklok/mecatl/internal/identitybroker"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
+	"github.com/stacklok/mecatl/internal/testutil/identityharness"
+)
+
+// The tests in this file are implementation.md's "Test the per-call V" and
+// "Test the binding at the vMCP" (credentials-and-lifecycle.md, steps (8),
+// (8a), and (9), check 3) against the real AS-1, the real ToolHive AS-2, and
+// the real vMCP, routing a real backend. Like the rest of the harness, none
+// is parallel.
+
+// bindingTokenLifetime and bindingGrace are the gateway tokens' lifetime and
+// the grace after it in which the vMCP still accepts their call's messages,
+// short so the tests can outlive them.
+const (
+	bindingTokenLifetime = 2 * time.Second
+	bindingGrace         = 4 * time.Second
+)
+
+// calendarBackend is an anonymous MCP backend the vMCP routes as
+// "calendar": echo answers at once; slow runs until it is cancelled.
+type calendarBackend struct {
+	slowStarted, slowCancelled chan struct{}
+}
+
+func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHiveProfile) {
+	t.Helper()
+	b := &calendarBackend{slowStarted: make(chan struct{}, 4), slowCancelled: make(chan struct{}, 4)}
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "calendar", Version: "v1"}, nil)
+	type args struct {
+		A int `json:"a,omitempty"`
+	}
+	text := func(s string) *mcpsdk.CallToolResult {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: s}}}
+	}
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "echo"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in args) (*mcpsdk.CallToolResult, any, error) {
+		return text(fmt.Sprintf("echo %d", in.A)), nil, nil
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "slow"}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ args) (*mcpsdk.CallToolResult, any, error) {
+		b.slowStarted <- struct{}{}
+		select {
+		case <-ctx.Done():
+			b.slowCancelled <- struct{}{}
+			return nil, nil, ctx.Err()
+		case <-time.After(time.Minute):
+			return text("slow done"), nil, nil
+		}
+	})
+	backend := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil))
+	// The vMCP's streams to the backend can outlive its stop; Close would
+	// wait for them.
+	t.Cleanup(func() { backend.CloseClientConnections(); backend.Close() })
+	return b, mcpbroker.ToolHiveProfile{Name: "calendar", URL: backend.URL, Auth: "none"}
+}
+
+// newBindingFixture is a harness fixture whose gateway routes the calendar
+// backend, with short gateway tokens and grace.
+func newBindingFixture(t *testing.T) (*harnessFixture, *calendarBackend) {
+	t.Helper()
+	backend, profile := startCalendarBackend(t)
+	f := newHarnessFixtureWith(t, harnessOptions{
+		as2: mcpbrokertest.AS2Options{
+			Profiles:             []mcpbroker.ToolHiveProfile{profile},
+			GatewayTokenLifetime: bindingTokenLifetime, ExpiredTokenGrace: bindingGrace,
+		},
+		servers: []string{"calendar"},
+	})
+	return f, backend
+}
+
+// calendarCall is a tools/call of the calendar backend's tool with args, for
+// operation op.
+func (f *harnessFixture) calendarCall(t *testing.T, op, tool, args string) identitybroker.AuthorizeCallRequest {
+	t.Helper()
+	req := ownerCall(f.s, f.cred)
+	req.OperationID, req.Server, req.Tool = op, "calendar", "calendar."+tool
+	sum, err := callbinding.ArgumentsSHA256(json.RawMessage(args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ArgumentsSHA256 = sum
+	return req
+}
+
+// calendarListing is a tools/list of the calendar backend, for operation op.
+func (f *harnessFixture) calendarListing(op string) identitybroker.AuthorizeCallRequest {
+	req := ownerCall(f.s, f.cred)
+	req.OperationID, req.Method, req.Server, req.Tool, req.ArgumentsSHA256 = op, identitybroker.MethodToolsList, "calendar", "", ""
+	return req
+}
+
+func (f *harnessFixture) mustAuthorize(t *testing.T, req identitybroker.AuthorizeCallRequest) identitybroker.Authorization {
+	t.Helper()
+	got, err := f.authorize(req)
+	if err != nil {
+		t.Fatalf("AuthorizeCall(%s %s): %v", req.Method, req.Tool, err)
+	}
+	return got
+}
+
+// send makes the call auth is for with Mecatl's MCP client, as the MCP
+// broker does, sending args.
+func (f *harnessFixture) send(ctx context.Context, auth identitybroker.Authorization, req identitybroker.AuthorizeCallRequest, args string) mcpadapter.GatewayAttempt {
+	return mcpadapter.SendGatewayCall(ctx, mcpadapter.GatewayCallRequest{
+		Endpoint: f.as2Resource, HTTPClient: f.vmcpClient(), Token: auth.GatewayToken,
+		OperationID: req.OperationID, AttemptID: auth.AttemptID, Tool: req.Tool,
+		Arguments: json.RawMessage(args), ArgumentsSHA256: req.ArgumentsSHA256, SendBy: auth.ExpiresAt,
+		HashArguments: func(raw json.RawMessage) (string, error) { return callbinding.ArgumentsSHA256(raw) },
+	})
+}
+
+// vmcpClient reaches the real vMCP in process, streaming its answers.
+func (f *harnessFixture) vmcpClient() *http.Client {
+	return inprocesshttp.NewStreamingClient(f.vmcp, func(*url.URL) error { return nil })
+}
+
+// exchange is one HTTP exchange a wireRecorder saw: the JSON-RPC message
+// kind it sent (a method, "response" for a reply to the vMCP, or the HTTP
+// method of a bodiless request) and the status it got.
+type exchange struct {
+	kind   string
+	status int
+	body   string
+}
+
+// wireRecorder sends every request with a bearer token and records each
+// exchange.
+type wireRecorder struct {
+	base  http.RoundTripper
+	token string
+
+	mu   sync.Mutex
+	seen []exchange
+}
+
+func (w *wireRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	kind := req.Method
+	if req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		var msg struct {
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
+		}
+		if json.Unmarshal(body, &msg) == nil {
+			switch {
+			case msg.Method != "":
+				kind = msg.Method
+			case msg.Result != nil || msg.Error != nil:
+				kind = "response"
+			}
+		}
+	}
+	out := req.Clone(req.Context())
+	out.Header.Set("Authorization", "Bearer "+w.token)
+	resp, err := w.base.RoundTrip(out)
+	if err != nil {
+		return nil, err
+	}
+	e := exchange{kind: kind, status: resp.StatusCode}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		e.body = string(body)
+	}
+	w.mu.Lock()
+	w.seen = append(w.seen, e)
+	w.mu.Unlock()
+	return resp, nil
+}
+
+// statuses returns the statuses of the exchanges of kind, oldest first.
+func (w *wireRecorder) statuses(kind string) []int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []int
+	for _, e := range w.seen {
+		if e.kind == kind {
+			out = append(out, e.status)
+		}
+	}
+	return out
+}
+
+// last returns the latest exchange of kind, false when there is none.
+func (w *wireRecorder) last(kind string) (exchange, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := len(w.seen) - 1; i >= 0; i-- {
+		if w.seen[i].kind == kind {
+			return w.seen[i], true
+		}
+	}
+	return exchange{}, false
+}
+
+// connect opens a vMCP session with token through a new wireRecorder. A
+// refused initialize returns the error and the recorder.
+func (f *harnessFixture) connect(t *testing.T, token identitybroker.Token) (*mcpsdk.ClientSession, *wireRecorder, error) {
+	t.Helper()
+	rec := &wireRecorder{base: f.vmcpClient().Transport, token: token.Value()}
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "identitybroker-test", Version: "v1"}, &mcpsdk.ClientOptions{
+		Capabilities: &mcpsdk.ClientCapabilities{Elicitation: &mcpsdk.ElicitationCapabilities{URL: &mcpsdk.URLElicitationCapabilities{}}},
+		ElicitationHandler: func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error) {
+			return &mcpsdk.ElicitResult{Action: "decline"}, nil
+		},
+	})
+	cs, err := client.Connect(t.Context(), &mcpsdk.StreamableClientTransport{
+		Endpoint: f.as2Resource, HTTPClient: &http.Client{Transport: rec}, MaxRetries: -1, DisableStandaloneSSE: true,
+	}, nil)
+	if err == nil {
+		t.Cleanup(func() { _ = cs.Close() })
+	}
+	return cs, rec, err
+}
+
+// gatewayTokenExp is the exp of a gateway token.
+func gatewayTokenExp(t *testing.T, token identitybroker.Token) time.Time {
+	t.Helper()
+	return unixClaim(t, jwtPart(t, token.Value(), 1), "exp")
+}
+
+// waitUntil sleeps until at.
+func waitUntil(at time.Time) { time.Sleep(time.Until(at)) }
+
+// within fails t unless ch delivers within a few seconds.
+func within[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		var zero T
+		return zero
+	}
+}
+
+// TestAuthorizeCallBindsEachGatewayTokenToItsCallAtAS2: the broker sends
+// AS-1 a call entry for every gateway call, tool calls and tool listings
+// alike; AS-1 signs it into the ID-JAG; AS-2 copies it into the gateway
+// token, unchanged, and returns it; the broker's output check finds it equal
+// and records that; and each call gets its own token, with a lifetime of
+// seconds (implementation.md, "Test the per-call V").
+func TestAuthorizeCallBindsEachGatewayTokenToItsCallAtAS2(t *testing.T) {
+	f, _ := newBindingFixture(t)
+	call := f.calendarCall(t, "op-bind-call", "echo", `{"a":1}`)
+	listing := f.calendarListing("op-bind-list")
+	want := map[string][]any{
+		call.OperationID: {map[string]any{
+			"type": identitybroker.CallEntryType, "server": "calendar", "tool": "calendar.echo",
+			"arguments_sha256": call.ArgumentsSHA256, "operation_id": call.OperationID,
+		}},
+		listing.OperationID: {map[string]any{"type": identitybroker.CallEntryType, "server": "calendar", "method": "tools/list"}},
+	}
+	for i, req := range []identitybroker.AuthorizeCallRequest{call, listing} {
+		got := f.mustAuthorize(t, req)
+		exchanges := requests(f.as1, identityharness.KindIDJAG)
+		if len(exchanges) != i+1 {
+			t.Fatalf("the broker sent %d ID-JAG exchanges, want %d", len(exchanges), i+1)
+		}
+		var sent []any
+		if r := exchanges[i]; !r.HasAuthorizationDetails || json.Unmarshal([]byte(r.AuthorizationDetails), &sent) != nil || !reflect.DeepEqual(sent, want[req.OperationID]) {
+			t.Errorf("%s: the exchange sent authorization_details %q, want %v", req.Method, r.AuthorizationDetails, want[req.OperationID])
+		}
+		if claim := f.issued(t)[i]["authorization_details"]; !reflect.DeepEqual(claim, want[req.OperationID]) {
+			t.Errorf("%s: the ID-JAG's authorization_details = %v, want the entry sent", req.Method, claim)
+		}
+		if redemption := requests(f.as2, identityharness.KindRedemption)[i]; redemption.HasAuthorizationDetails {
+			t.Errorf("%s: the redemption carried authorization_details %q, want none", req.Method, redemption.AuthorizationDetails)
+		}
+		v := jwtPart(t, got.GatewayToken.Value(), 1)
+		if !reflect.DeepEqual(v["authorization_details"], want[req.OperationID]) {
+			t.Errorf("%s: the gateway token's authorization_details = %v, want the entry sent", req.Method, v["authorization_details"])
+		}
+		if life := unixClaim(t, v, "exp").Sub(unixClaim(t, v, "iat")); life != bindingTokenLifetime {
+			t.Errorf("%s: the gateway token lives %v, want %v", req.Method, life, bindingTokenLifetime)
+		}
+		if d := f.rec.Decisions()[i]; d.Outcome != identitybroker.OutcomeSuccess || d.CallEntryCheck != identitybroker.CallEntryEqual || d.GatewayToken.ID != v["jti"] {
+			t.Errorf("%s: the decision = %s, check %q, token %+v; want success, equal, and the token's jti", req.Method, d.Outcome, d.CallEntryCheck, d.GatewayToken)
+		}
+	}
+}
+
+// TestRealVMCPRunsOnlyTheCallItsTokenNames: a gateway token starts only the
+// tools/call its call entry names, once; a listing token only its listing,
+// answered with the calendar backend's tools alone and no cursor
+// (implementation.md, "Test the binding at the vMCP").
+func TestRealVMCPRunsOnlyTheCallItsTokenNames(t *testing.T) {
+	f, _ := newBindingFixture(t)
+	ctx := t.Context()
+
+	// The call the token names runs, through Mecatl's MCP client.
+	echo := f.calendarCall(t, "op-run", "echo", `{"a":1}`)
+	auth := f.mustAuthorize(t, echo)
+	if a := f.send(ctx, auth, echo, `{"a":1}`); a.Outcome != mcpadapter.GatewayAttemptCompleted || !strings.Contains(fmt.Sprint(mcpadapter.GatewayToolResult("c", "calendar", "mcp__calendar__echo", a).Content), "echo 1") {
+		t.Fatalf("the bound call = %+v, want it completed with the backend's answer", a)
+	}
+	// The token has started its call: it starts no other, on the same call's
+	// terms or any other.
+	if cs, rec, err := f.connect(t, auth.GatewayToken); err == nil {
+		if _, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.echo", Arguments: map[string]any{"a": 1}}); err == nil {
+			t.Fatal("a spent token started a second call")
+		}
+		if e, _ := rec.last("tools/call"); e.status != http.StatusUnauthorized || !strings.Contains(e.body, "token_reused") {
+			t.Fatalf("a second call with a spent token: %d %s, want 401 token_reused", e.status, e.body)
+		}
+	} else if e, _ := rec.last("initialize"); e.status != http.StatusUnauthorized || !strings.Contains(e.body, "token_reused") {
+		t.Fatalf("a second session with a spent token: %d %s, want 401 token_reused", e.status, e.body)
+	}
+
+	// refused calls tool with args using a token for req, and wants the vMCP
+	// to refuse it with reason before it runs.
+	refused := func(name string, req identitybroker.AuthorizeCallRequest, tool string, args map[string]any, status int, reason string) {
+		t.Helper()
+		auth := f.mustAuthorize(t, req)
+		cs, rec, err := f.connect(t, auth.GatewayToken)
+		if err != nil {
+			t.Fatalf("%s: initialize: %v", name, err)
+		}
+		if _, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: args}); err == nil {
+			t.Fatalf("%s: the vMCP ran the call", name)
+		}
+		if e, _ := rec.last("tools/call"); e.status != status || !strings.Contains(e.body, reason) {
+			t.Fatalf("%s: the vMCP answered %d %s, want %d %s", name, e.status, e.body, status, reason)
+		}
+	}
+	refused("other arguments", f.calendarCall(t, "op-args", "echo", `{"a":1}`), "calendar.echo", map[string]any{"a": 2}, http.StatusForbidden, "arguments_mismatch")
+	refused("another tool", f.calendarCall(t, "op-tool", "echo", `{"a":1}`), "calendar.slow", map[string]any{"a": 1}, http.StatusForbidden, "tool_mismatch")
+	// A listing token cannot start a tools/call.
+	refused("a listing token", f.calendarListing("op-list-call"), "calendar.echo", map[string]any{"a": 1}, http.StatusForbidden, "method_mismatch")
+
+	// A listing token lists the calendar backend's tools alone.
+	list := f.mustAuthorize(t, f.calendarListing("op-list"))
+	cs, _, err := f.connect(t, list.GatewayToken)
+	if err != nil {
+		t.Fatalf("initialize with the listing token: %v", err)
+	}
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("tools/list with the listing token: %v", err)
+	}
+	var names []string
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"calendar.echo", "calendar.slow"}) || listed.NextCursor != "" {
+		t.Fatalf("the listing = %v, cursor %q; want the calendar backend's tools alone and no cursor", names, listed.NextCursor)
+	}
+	if _, err := cs.ListTools(ctx, nil); err == nil {
+		t.Fatal("the listing token listed twice")
+	}
+}
+
+// TestRetriedCallGetsANewTokenAtTheVMCP: a retried tools/call, after the
+// gateway rejected its token, gets a new gateway token, which the vMCP
+// accepts, while the first, spent token is refused (implementation.md, "Test
+// the per-call V").
+func TestRetriedCallGetsANewTokenAtTheVMCP(t *testing.T) {
+	f, _ := newBindingFixture(t)
+	req := f.calendarCall(t, "op-retry", "echo", `{"a":3}`)
+	first := f.mustAuthorize(t, req)
+	if a := f.send(t.Context(), first, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptCompleted {
+		t.Fatalf("the first attempt = %+v, want completed", a)
+	}
+	req.RejectedAttemptID = first.AttemptID
+	retry := f.mustAuthorize(t, req)
+	firstJTI, retryJTI := jwtPart(t, first.GatewayToken.Value(), 1)["jti"], jwtPart(t, retry.GatewayToken.Value(), 1)["jti"]
+	if retry.AttemptID == first.AttemptID || retryJTI == firstJTI {
+		t.Fatalf("the retry got attempt %s token %v, the first %s %v; want new ones", retry.AttemptID, retryJTI, first.AttemptID, firstJTI)
+	}
+	if a := f.send(t.Context(), first, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptNotSent || a.Rejection != mcpadapter.GatewayRejectionInvalidToken {
+		t.Fatalf("the first token sent again = %+v, want refused as invalid_token before the call", a)
+	}
+	if a := f.send(t.Context(), retry, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptCompleted {
+		t.Fatalf("the retry = %+v, want completed with its new token", a)
+	}
+}
+
+// TestRealVMCPCancelsACallThatOutlivesItsToken: Mecatl's MCP client cancels
+// a call after its gateway token expired, within the grace; the vMCP
+// accepts the cancellation and the backend's tool is cancelled
+// (implementation.md, "Test the binding at the vMCP").
+func TestRealVMCPCancelsACallThatOutlivesItsToken(t *testing.T) {
+	f, backend := newBindingFixture(t)
+	req := f.calendarCall(t, "op-outlive", "slow", `{}`)
+	auth := f.mustAuthorize(t, req)
+	exp := gatewayTokenExp(t, auth.GatewayToken)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan mcpadapter.GatewayAttempt, 1)
+	go func() { done <- f.send(ctx, auth, req, `{}`) }()
+	within(t, backend.slowStarted, "the slow tool to start")
+	waitUntil(exp.Add(500 * time.Millisecond))
+	cancel()
+	within(t, backend.slowCancelled, "the backend to see the cancellation sent after the token expired")
+	if time.Now().After(exp.Add(bindingGrace)) {
+		t.Fatal("the cancellation arrived after the grace; the test proves nothing")
+	}
+	if a := within(t, done, "the call to return"); a.Outcome != mcpadapter.GatewayAttemptUnknown {
+		t.Fatalf("the cancelled call = %+v, want an unknown outcome", a)
+	}
+}
+
+// TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace: once a call's
+// gateway token has expired, the vMCP accepts the call's cancellation for
+// the grace, and answers 401 after it. Replies to requests the vMCP sends
+// during a call are not tested: it answers a tools/call as one JSON
+// response, and Mecatl's MCP client opens no stream for them, so a
+// backend's request never reaches it.
+func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
+	t.Run("a cancellation within the grace", func(t *testing.T) {
+		f, backend := newBindingFixture(t)
+		auth := f.mustAuthorize(t, f.calendarCall(t, "op-cancel", "slow", `{}`))
+		cs, rec, err := f.connect(t, auth.GatewayToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() {
+			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
+		}()
+		within(t, backend.slowStarted, "the slow tool to start")
+		waitUntil(gatewayTokenExp(t, auth.GatewayToken).Add(500 * time.Millisecond))
+		cancel()
+		within(t, backend.slowCancelled, "the backend to see the cancellation")
+		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusAccepted}) {
+			t.Fatalf("the cancellation got %v, want 202", got)
+		}
+	})
+	t.Run("a cancellation after the grace", func(t *testing.T) {
+		f, backend := newBindingFixture(t)
+		auth := f.mustAuthorize(t, f.calendarCall(t, "op-late", "slow", `{}`))
+		cs, rec, err := f.connect(t, auth.GatewayToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() {
+			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
+		}()
+		within(t, backend.slowStarted, "the slow tool to start")
+		waitUntil(gatewayTokenExp(t, auth.GatewayToken).Add(bindingGrace + time.Second))
+		cancel()
+		deadline := time.Now().Add(5 * time.Second)
+		for len(rec.statuses("notifications/cancelled")) == 0 && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusUnauthorized}) {
+			t.Fatalf("the cancellation after the grace got %v, want 401", got)
+		}
+	})
+}

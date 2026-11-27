@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
@@ -167,6 +168,14 @@ func TestBuildGatewaySigningKeyRules(t *testing.T) {
 	t.Run("with an injected core", func(t *testing.T) {
 		cfg := Config{UseMock: true, NoSoul: true, NoShell: true, IdentityBroker: true, identityBrokerCore: newClosableCore(t), MCPAuthority: protectedBrokerAuthorityWithKey(t)}
 		wantBuildRefused(t, cfg, errAS2SigningKeyWithoutEntry, "")
+	})
+	t.Run("a gateway token lifetime with an entry routing no servers", func(t *testing.T) {
+		// The gateway issues no gateway token, so the setting would be inert.
+		cfg := entryBuild(t, brokerconfigtest.Options{Gateways: embeddedEntry()})
+		declaration, _ := cfg.MCPAuthority.Broker()
+		declaration.GatewayTokenLifetime = 10 * time.Second
+		cfg.MCPAuthority = mcpauthority.NewBroker(declaration)
+		wantBuildRefused(t, cfg, errGatewayTokenLifetimeWithoutServers, "")
 	})
 	t.Run("unreadable", func(t *testing.T) {
 		cfg := entryBuild(t, brokerconfigtest.Options{Gateways: embeddedEntry()})

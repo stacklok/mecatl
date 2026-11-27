@@ -55,6 +55,9 @@ func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, err
 	if opts.Operator != nil && opts.Operator.Broker.SigningKeyFile != "" {
 		return nil, fmt.Errorf("%w: mcp.broker.signing_key_file is inert in global mode", ErrMCPProfileInvalid)
 	}
+	if opts.Operator != nil && opts.Operator.Broker.GatewayTokenLifetime != "" {
+		return nil, fmt.Errorf("%w: mcp.broker.gateway_token_lifetime is inert in global mode", ErrMCPProfileInvalid)
+	}
 	if opts.Operator != nil {
 		for _, route := range opts.Operator.Servers {
 			if route.Auth.OAuth == nil {
@@ -155,9 +158,14 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 	} else if section.Broker.SigningKeyFile != "" {
 		return nil, fmt.Errorf("%w: mcp.broker.signing_key_file requires a broker OAuth server, whose embedded authorization server signs with it", ErrMCPProfileInvalid)
 	}
+	lifetime, err := section.Broker.ParseGatewayTokenLifetime()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMCPProfileInvalid, err)
+	}
 	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{
 		Routes: section.Servers, CallbackURL: callback,
 		SigningKeyFile: section.Broker.SigningKeyFile, FallbackKeyFiles: section.Broker.FallbackKeyFiles,
+		GatewayTokenLifetime: lifetime,
 	}), nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
@@ -42,6 +43,23 @@ func TrustAS1(trust AS1Trust) mcpbroker.AS2Trust {
 // not be parallel.
 func StartAS2(t testing.TB, brokerClientID string, brokerKeySet []byte, trust AS1Trust) *mcpbroker.Process {
 	t.Helper()
+	return StartAS2With(t, brokerClientID, brokerKeySet, trust, AS2Options{})
+}
+
+// AS2Options vary the process StartAS2With starts.
+type AS2Options struct {
+	// Profiles are upstreams added after the static protected one, such as
+	// anonymous backends the vMCP routes.
+	Profiles []mcpbroker.ToolHiveProfile
+	// GatewayTokenLifetime and ExpiredTokenGrace set the
+	// mcpbroker.ToolHiveConfig fields of those names; zero keeps their
+	// defaults.
+	GatewayTokenLifetime, ExpiredTokenGrace time.Duration
+}
+
+// StartAS2With is StartAS2 with opts.
+func StartAS2With(t testing.TB, brokerClientID string, brokerKeySet []byte, trust AS1Trust, opts AS2Options) *mcpbroker.Process {
+	t.Helper()
 	t.Setenv(clientSecretEnv, "construction-only-secret")
 	keySetFile := filepath.Join(t.TempDir(), "broker-client-jwks.json")
 	if err := os.WriteFile(keySetFile, brokerKeySet, 0o600); err != nil {
@@ -49,16 +67,18 @@ func StartAS2(t testing.TB, brokerClientID string, brokerKeySet []byte, trust AS
 	}
 	cfg := mcpbroker.ToolHiveConfig{
 		CallbackURL: CallbackURL,
-		Profiles: []mcpbroker.ToolHiveProfile{{
+		Profiles: append([]mcpbroker.ToolHiveProfile{{
 			Name: "private", URL: "https://private.example/mcp", Auth: "oauth",
 			OAuth: &mcpbroker.ToolHiveOAuth{ // #nosec G101 -- placeholder endpoints and an environment variable name, not credentials.
 				AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token",
 				ClientID: "private-client", ClientSecretEnv: clientSecretEnv, Scopes: []string{"openid"},
 			},
 			Static: []mcpbroker.StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
-		}},
-		BrokerClient: &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
-		AS2Trust:     TrustAS1(trust),
+		}}, opts.Profiles...),
+		BrokerClient:         &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
+		AS2Trust:             TrustAS1(trust),
+		GatewayTokenLifetime: opts.GatewayTokenLifetime,
+		ExpiredTokenGrace:    opts.ExpiredTokenGrace,
 	}
 	process, err := mcpbroker.NewToolHiveProcess(t.Context(), cfg)
 	if err != nil {

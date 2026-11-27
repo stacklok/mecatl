@@ -16,8 +16,12 @@ import (
 
 var errNotIJSON = errors.New("mcpbroker: arguments are not I-JSON")
 
+// jsonWhitespace is JSON's insignificant whitespace (RFC 8259 section 2).
+const jsonWhitespace = " \t\n\r"
+
 // argumentsSHA256 returns the lowercase hex SHA-256 of the RFC 8785 form of
-// params.arguments as sent; absent (empty or JSON null) is {}. It refuses
+// params.arguments as sent; absent (empty, JSON whitespace only, or JSON
+// null) is {}. It refuses
 // anything that is not a JSON object, invalid UTF-8, lone surrogate escapes,
 // duplicate member names, non-finite numbers, and integer-valued numbers
 // with magnitude > 2^53. sent is the value to send: {} when absent, otherwise
@@ -38,7 +42,10 @@ func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, er
 // canonicalArguments returns the value to send and its RFC 8785 form, with the
 // refusals of argumentsSHA256.
 func canonicalArguments(args json.RawMessage) (sent json.RawMessage, canonical string, err error) {
-	trimmed := bytes.TrimSpace(args)
+	// Only JSON's own whitespace (RFC 8259 section 2) is insignificant;
+	// bytes.TrimSpace would also drop Unicode spaces such as U+00A0, which
+	// the vMCP refuses rather than reading as absent.
+	trimmed := bytes.Trim(args, jsonWhitespace)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
 		args = json.RawMessage(`{}`)
 	}

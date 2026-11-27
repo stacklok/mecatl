@@ -109,6 +109,10 @@ type GrantRequest struct {
 	// Operation is the request's mecatl_operation, the call's operation ID
 	// an ID-JAG exchange names.
 	Operation string
+	// AuthorizationDetails is the request's authorization_details parameter,
+	// and HasAuthorizationDetails whether the request carried one.
+	AuthorizationDetails    string
+	HasAuthorizationDetails bool
 }
 
 // FailNext answers the next request of kind with answer without forwarding
@@ -206,6 +210,7 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rec := GrantRequest{
 		Kind: grantKind(form), ClientAssertion: form.Get("client_assertion"), Assertion: form.Get("assertion"),
 		ActorToken: form.Get("actor_token"), Operation: form.Get("mecatl_operation"),
+		AuthorizationDetails: form.Get("authorization_details"), HasAuthorizationDetails: form.Has("authorization_details"),
 	}
 	q := f.pop(rec.Kind)
 	rec.Fault = q.fault
@@ -230,7 +235,8 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		_ = resp.Body.Close()
 		return nil, errConnectionClosed
 	case FaultDuplicate:
-		dup := GrantRequest{Kind: rec.Kind, Fault: FaultDuplicate, ClientAssertion: rec.ClientAssertion, Assertion: rec.Assertion, ActorToken: rec.ActorToken, Operation: rec.Operation}
+		dup := GrantRequest{Kind: rec.Kind, Fault: FaultDuplicate, ClientAssertion: rec.ClientAssertion, Assertion: rec.Assertion, ActorToken: rec.ActorToken, Operation: rec.Operation,
+			AuthorizationDetails: rec.AuthorizationDetails, HasAuthorizationDetails: rec.HasAuthorizationDetails}
 		if again, err := f.forward(req, body, &dup); err == nil {
 			_ = again.Body.Close()
 		}

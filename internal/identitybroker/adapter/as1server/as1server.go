@@ -35,10 +35,12 @@ import (
 	"time"
 
 	"github.com/stacklok/toolhive/pkg/authserver"
+	"github.com/stacklok/toolhive/pkg/authserver/authorizationdetails"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
 	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/mcp/toolcalldetails"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
@@ -207,6 +209,12 @@ func newServer(ctx context.Context, cfg Config, opts options) (*Server, error) {
 		runOpts = append(runOpts, runner.WithActorTokenValidators(map[string]tokenexchange.ActorValidatorRegistration{
 			actorValidatorName: {Validator: actors, ActIssuer: actors.actIssuer},
 		}))
+		registry, err := callEntryRegistry()
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		runOpts = append(runOpts, runner.WithAuthorizationDetailsRegistry(registry))
 	}
 	// ToolHive borrows store on success and failure; AS-1 closes it.
 	auth, err := runner.NewEmbeddedAuthServerWithStorage(ctx, runConfig, store, runOpts...)
@@ -456,4 +464,19 @@ func (s *Server) RevokeGrant(ctx context.Context, refreshToken string) error {
 		return fmt.Errorf("as1server: revoke grant: %w", err)
 	}
 	return nil
+}
+
+// callEntryRegistry is AS-1's authorization_details registry: ToolHive's MCP
+// call type alone, which AS-1 accepts on an ID-JAG exchange and signs into
+// the ID-JAG it issues (credentials-and-lifecycle.md, step (7)). ToolHive
+// registers no type by default, and the session-open exchange grant has a
+// registry of its own.
+func callEntryRegistry() (*authorizationdetails.Registry, error) {
+	types := map[string]authorizationdetails.Type{}
+	toolcalldetails.Register(types)
+	registry, err := authorizationdetails.New(types)
+	if err != nil {
+		return nil, fmt.Errorf("as1server: register the MCP call type: %w", err)
+	}
+	return registry, nil
 }

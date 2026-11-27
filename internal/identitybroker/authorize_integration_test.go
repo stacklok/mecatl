@@ -81,6 +81,10 @@ type harnessOptions struct {
 	// unknownAS2Key has the broker sign its AS-2 client assertions with a key
 	// AS-2 does not know.
 	unknownAS2Key bool
+	// as2 varies the MCP broker process, and servers are further servers the
+	// broker's gateway routes, besides "github", such as backends as2 adds.
+	as2     mcpbrokertest.AS2Options
+	servers []string
 }
 
 func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
@@ -118,10 +122,10 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 	if opts.distrustAlice {
 		subjects = subjects[1:]
 	}
-	process := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
+	process := mcpbrokertest.StartAS2With(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
 		Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
 		Subjects: subjects,
-	})
+	}, opts.as2)
 	as2 := process.AS2
 
 	as1HTTP := a.HTTPClient()
@@ -150,7 +154,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		identitybroker.WithRecorder(rec),
 		identitybroker.WithGateway(identitybroker.Gateway{
 			Issuer: as2.Issuer, Resource: as2.Resource,
-			Servers: []string{"github"},
+			Servers: append([]string{"github"}, opts.servers...),
 			AS2:     identitybroker.GatewayAS2{Issuer: as2.Issuer, Resource: as2.Resource, AuthServer: as2Client},
 		}))
 	rec.b = b
@@ -560,7 +564,7 @@ func TestAuthorizeCallRevokedRulesAtAS1(t *testing.T) {
 		opens, jags, decisions := f.rec.Opens(), f.rec.IDJAGs(), f.rec.Decisions()
 		reopen := opens[len(opens)-1]
 		if len(jags) != 1 || len(decisions) != 1 || jags[0].UserRecord != reopen.AuditID ||
-			decisions[0].UserRecord != reopen.AuditID || decisions[0].User != jags[0].UserSubjects || reopen.User == nil || decisions[0].User != *reopen.User {
+			decisions[0].UserRecord != reopen.AuditID || decisions[0].User != jags[0].User || reopen.User == nil || decisions[0].User != *reopen.User {
 			t.Fatalf("ID-JAGs %+v and decisions %+v, want both naming the reopen %s and its user", jags, decisions, reopen.AuditID)
 		}
 	})

@@ -91,9 +91,9 @@ func TestAuthorizeCallRecordsTheRunInTheIDJAGRecord(t *testing.T) {
 	}
 	for i, want := range []struct{ run, delegation string }{{"R42", ""}, {"R43", "D1"}} {
 		r := got[i]
-		if r.RunID != want.run || r.DelegationID != want.delegation || r.RunOwner != testOwner || r.User != testOwner {
-			t.Errorf("ID-JAG record %d = run %s, delegation %q, run owner %+v, user %+v; want %s, %q, and %+v twice",
-				i, r.RunID, r.DelegationID, r.RunOwner, r.User, want.run, want.delegation, testOwner)
+		if r.RunID != want.run || r.DelegationID != want.delegation || r.RunOwner != testOwner || r.Owner != testOwner {
+			t.Errorf("ID-JAG record %d = run %s, delegation %q, run owner %+v, owner %+v; want %s, %q, and %+v twice",
+				i, r.RunID, r.DelegationID, r.RunOwner, r.Owner, want.run, want.delegation, testOwner)
 		}
 	}
 }

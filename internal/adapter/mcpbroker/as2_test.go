@@ -188,12 +188,12 @@ func (s trustedAS1) act() map[string]any {
 
 // jwt is Alice's access token turned into a JWT AS-1 signs for the broker
 // client: aud audience, typ typ (none when empty), a fresh jti, five
-// minutes to live, and an ID-JAG's resource and act claims for as2 unless
-// claims replaces them.
+// minutes to live, and an ID-JAG's resource, act, and call entry
+// (testCallDetails) for as2 unless claims replaces them.
 func (s trustedAS1) jwt(t *testing.T, as2 *AS2, audience, typ string, claims map[string]any) string {
 	t.Helper()
 	if claims == nil {
-		claims = map[string]any{"resource": as2.Resource, "act": s.act()}
+		claims = map[string]any{"resource": as2.Resource, "act": s.act(), "authorization_details": testCallDetails()}
 	}
 	now := time.Now()
 	return s.a.Forge(t, s.alice, as1servertest.Forgery{
@@ -212,10 +212,29 @@ func (s trustedAS1) jwt(t *testing.T, as2 *AS2, audience, typ string, claims map
 	}).Value()
 }
 
-// idJAG is an ID-JAG for Alice from AS-1, for the broker client at as2.
+// idJAG is an ID-JAG for Alice from AS-1, for the broker client at as2,
+// carrying the call entry testCallDetails, as every ID-JAG the broker asks
+// for does.
 func (s trustedAS1) idJAG(t *testing.T, as2 *AS2) string {
 	t.Helper()
 	return s.jwt(t, as2, as2.Issuer, idJAGType, nil)
+}
+
+// unboundIDJAG is an ID-JAG for Alice from AS-1, for the broker client at
+// as2, with no call entry.
+func (s trustedAS1) unboundIDJAG(t *testing.T, as2 *AS2) string {
+	t.Helper()
+	return s.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": as2.Resource, "act": s.act()})
+}
+
+// testCallDetails is the authorization_details claim of the tests' ID-JAGs:
+// one tool-call entry for the private backend's echo tool
+// (credentials-and-lifecycle.md, step (8)).
+func testCallDetails() []any {
+	return []any{map[string]any{
+		"type": identitybroker.CallEntryType, "server": "private", "tool": "private.echo",
+		"arguments_sha256": strings.Repeat("ab", 32), "operation_id": "op_test",
+	}}
 }
 
 // unverifiedClaims decodes a JWT's claims without verifying it.
@@ -859,6 +878,15 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	if aud, _ := claims.GetAudience(); !slices.Equal([]string(aud), []string{as2.Resource}) {
 		t.Errorf("gateway token aud = %v, want [%s]", aud, as2.Resource)
 	}
+	// AS-2 copies the ID-JAG's call entry into the gateway token and returns
+	// it in the token response (step (8)).
+	if want := testCallDetails(); !reflect.DeepEqual(claims["authorization_details"], want) || !reflect.DeepEqual(body["authorization_details"], want) {
+		t.Errorf("gateway token authorization_details = %v, response's %v; want %v in both", claims["authorization_details"], body["authorization_details"], want)
+	}
+	// It lives for the broker client's gateway-token lifetime.
+	if iat, exp := claims["iat"].(float64), claims["exp"].(float64); time.Duration(exp-iat)*time.Second != DefaultGatewayTokenLifetime {
+		t.Errorf("gateway token lives %v, want %v", time.Duration(exp-iat)*time.Second, DefaultGatewayTokenLifetime)
+	}
 
 	// The vMCP's incoming authentication accepts the gateway token.
 	mux := http.NewServeMux()
@@ -1280,28 +1308,37 @@ func TestAS2AnswersAReplayStoreOutageWithServerError(t *testing.T) {
 }
 
 // TestAS2LetsTheBrokerClientExchangeItsGatewayToken records the shortcut on
-// as2DelegateClient: the broker client exchanges a gateway token AS-2 issued
-// to it, which the design refuses. #2533 flips this test to a refusal once
-// AS-2 marks gateway tokens (stacklok/toolhive#7247).
+// as2DelegateClient: the broker client exchanges a gateway token without a
+// call entry that AS-2 issued to it, which the design refuses. #2533 flips
+// that case to a refusal once AS-2 marks gateway tokens
+// (stacklok/toolhive#7247). A call-bound gateway token, the only kind the
+// broker obtains, is refused already (stacklok/toolhive#7282): exchanging it
+// would mint a fresh token with a new jti and get around its single use.
 func TestAS2LetsTheBrokerClientExchangeItsGatewayToken(t *testing.T) {
 	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
 	vmcp := as2.Resource
-	status, body := as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
-	if status != http.StatusOK {
-		t.Fatalf("ID-JAG redemption: status %d, body %v", status, body)
+	exchange := func(idJAG string) (int, map[string]any) {
+		t.Helper()
+		status, body := as2Redemption(t, as2, broker, idJAG, &vmcp, true)
+		if status != http.StatusOK {
+			t.Fatalf("ID-JAG redemption: status %d, body %v", status, body)
+		}
+		gatewayToken, _ := body["access_token"].(string)
+		return postAS2Token(t, as2, url.Values{
+			"grant_type":            {oauthproto.GrantTypeTokenExchange},
+			"subject_token":         {gatewayToken},
+			"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+			"resource":              {as2.Resource},
+			"client_assertion_type": {clientAssertionTyp},
+			"client_assertion":      {broker.assertion(t, as2.Issuer)},
+		})
 	}
-	gatewayToken, _ := body["access_token"].(string)
-	status, body = postAS2Token(t, as2, url.Values{
-		"grant_type":            {oauthproto.GrantTypeTokenExchange},
-		"subject_token":         {gatewayToken},
-		"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
-		"resource":              {as2.Resource},
-		"client_assertion_type": {clientAssertionTyp},
-		"client_assertion":      {broker.assertion(t, as2.Issuer)},
-	})
-	if status != http.StatusOK {
-		t.Fatalf("broker client exchanging its own gateway token: status %d, body %v; if AS-2 now refuses it, make this a refusal and update #2533", status, body)
+	if status, body := exchange(as1.idJAG(t, as2)); status != http.StatusBadRequest || body["access_token"] != nil {
+		t.Fatalf("broker client exchanging its call-bound gateway token: status %d, body %v; want a refusal", status, body)
+	}
+	if status, body := exchange(as1.unboundIDJAG(t, as2)); status != http.StatusOK {
+		t.Fatalf("broker client exchanging its gateway token without a call entry: status %d, body %v; if AS-2 now refuses it, make this a refusal and update #2533", status, body)
 	}
 }
 
@@ -1337,4 +1374,64 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+// TestAS2BindsGatewayTokensToTheirCall: AS-2 issues the broker client's
+// gateway tokens for the configured lifetime, copies the ID-JAG's call entry
+// into them, and the vMCP refuses a token of the broker client without a
+// call entry, and its listing token on a tools/call
+// (credentials-and-lifecycle.md, steps (8) and (9)).
+func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	broker := newAS2BrokerClient(t)
+	process := startTrustingAS2With(t, as1, broker.config, func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 7 * time.Second })
+	as2 := process.AS2
+	// redeem redeems idJAG, or a fresh call-bound one when it is empty.
+	redeem := func(idJAG string) string {
+		t.Helper()
+		if idJAG == "" {
+			idJAG = as1.idJAG(t, as2)
+		}
+		status, body := postAS2Token(t, as2, url.Values{
+			"grant_type": {oauthproto.GrantTypeJWTBearer}, "assertion": {idJAG}, "resource": {as2.Resource},
+			"client_assertion_type": {clientAssertionTyp}, "client_assertion": {broker.assertion(t, as2.Issuer)},
+		})
+		token, _ := body["access_token"].(string)
+		if status != http.StatusOK || token == "" {
+			t.Fatalf("ID-JAG redemption: status %d, body %v", status, body)
+		}
+		return token
+	}
+
+	bound := unverifiedClaims(t, redeem(""))
+	if iat, exp := bound["iat"].(float64), bound["exp"].(float64); time.Duration(exp-iat)*time.Second != 7*time.Second {
+		t.Fatalf("the gateway token lives %vs, want the configured 7s", exp-iat)
+	}
+	if status := vmcpInitialize(t, process, redeem("")); status != http.StatusOK {
+		t.Fatalf("vMCP initialize with a call-bound gateway token: status %d, want 200", status)
+	}
+	if status := vmcpInitialize(t, process, redeem(as1.unboundIDJAG(t, as2))); status != http.StatusForbidden {
+		t.Fatalf("vMCP initialize with a gateway token without a call entry: status %d, want 403 entry_required", status)
+	}
+}
+
+// TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange: the gateway token
+// lifetime is whole seconds from 2s to 5m, and the grace after its expiry
+// positive and at most the maximum call duration.
+func TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange(t *testing.T) {
+	for name, edit := range map[string]func(*ToolHiveConfig){
+		"a lifetime under 2s":         func(c *ToolHiveConfig) { c.GatewayTokenLifetime = time.Second },
+		"a lifetime over 5m":          func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 6 * time.Minute },
+		"a lifetime of part a second": func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 2500 * time.Millisecond },
+		"a negative grace":            func(c *ToolHiveConfig) { c.ExpiredTokenGrace = -time.Second },
+		"a grace over the maximum":    func(c *ToolHiveConfig) { c.ExpiredTokenGrace = gatewayMaxCallDuration + time.Second },
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := ToolHiveConfig{CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}}
+			edit(&config)
+			if _, err := NewToolHiveProcess(t.Context(), config); !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue", err)
+			}
+		})
+	}
 }

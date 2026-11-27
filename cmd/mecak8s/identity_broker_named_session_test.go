@@ -140,9 +140,7 @@ func TestIdentityBrokerNamedSessionGetsItsDefinitionsGatewayTools(t *testing.T) 
 	if len(ops) != 1 {
 		t.Fatalf("calendar-reader made %d gateway calls, want 1", len(ops))
 	}
-	if got := diag.call(ops[0]); got["code"] != "completed" || got["outcome"] != "completed" {
-		t.Fatalf("calendar-reader's gateway call = %v, want completed at the vMCP", got)
-	}
+	gw.wantStandInRefusal(t, ops[0], diag.call(ops[0]))
 	// The one ID-JAG names as its actor the agent registered as the
 	// session's main agent, running calendar-reader: registering that
 	// instance again under its definition returns the same agent. The

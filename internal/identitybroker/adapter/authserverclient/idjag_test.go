@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -298,5 +299,29 @@ func TestIssueIDJAGNeverPutsTokensInErrors(t *testing.T) {
 			}
 			assertNoSecrets(t, err, secrets...)
 		})
+	}
+}
+
+// TestIssueIDJAGSendsTheCallEntry: the exchange sends the request's call
+// entry as authorization_details, byte for byte, for AS-1 to sign into the
+// ID-JAG; TestIssueIDJAGSendsTheForm shows it is omitted when empty.
+func TestIssueIDJAGSendsTheCallEntry(t *testing.T) {
+	var form url.Values
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		form = r.PostForm
+		_, _ = w.Write([]byte(`{"access_token":"jag-secret-value","issued_token_type":"` + tokenTypeJAG + `","token_type":"N_A","expires_in":90}`))
+	}))
+	t.Cleanup(server.Close)
+	const entry = `[{"type":"https://toolhive.dev/mcp_tool_call","server":"github","method":"tools/list"}]`
+	req := idjagRequest(identitybroker.NewToken("rt-secret"), testAS2Issuer, testVMCP)
+	req.AuthorizationDetails = json.RawMessage(entry)
+	if _, err := newStubClient(t, server.URL, server.Client()).IssueIDJAG(t.Context(), req); err != nil {
+		t.Fatalf("IssueIDJAG: %v", err)
+	}
+	if got := form["authorization_details"]; len(got) != 1 || got[0] != entry {
+		t.Fatalf("authorization_details = %q, want %s", got, entry)
 	}
 }

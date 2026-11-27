@@ -65,6 +65,14 @@ const (
 	// ReasonConsentRequired: the gateway's authorization server needs the
 	// user's consent before it issues a token for the call.
 	ReasonConsentRequired Reason = "consent_required"
+	// ReasonCallEntryMissing: AS-2's token response carries no call entry
+	// (step (8a), check 1). The gateway token is discarded; the call fails
+	// with CodeInternal and is not retried.
+	ReasonCallEntryMissing Reason = "call_entry_missing"
+	// ReasonCallEntryMismatch: AS-2's token response carries a call entry
+	// other than the one the broker sent (step (8a), check 2). As for
+	// ReasonCallEntryMissing.
+	ReasonCallEntryMismatch Reason = "call_entry_mismatch"
 	// ReasonRecordNotAccepted: the broker's audit sink did not accept, within
 	// its deadline, a record the operation waits for, so the operation changed
 	// nothing (credentials-and-lifecycle.md, "Error reasons"). What follows

@@ -665,6 +665,8 @@ type MCPBrokerProfile struct {
 	SigningKeyFile string `yaml:"signing_key_file"`
 	// FallbackKeyFiles are absolute paths of earlier signing keys, PEM private keys of the same types as SigningKeyFile: tokens they signed still verify while they are listed, so the key can rotate. They require SigningKeyFile, and no key may be listed twice, SigningKeyFile included.
 	FallbackKeyFiles []string `yaml:"fallback_key_files"`
+	// GatewayTokenLifetime is the lifetime of each gateway token the embedded MCP gateway's authorization server issues the identity broker for one tool call or listing, a Go duration in whole seconds from 2s to 5m; empty selects 30s. A token only has to start its one call: the gateway still accepts that call's cancellation for five minutes after the token expires. The token never outlives the ID-JAG it was redeemed from. It requires SigningKeyFile, and mecak8s refuses it unless the identity broker's embedded gateway entry routes servers, the only calls that get gateway tokens.
+	GatewayTokenLifetime string `yaml:"gateway_token_lifetime"`
 }
 
 // MCPServerProfile is one named Streamable HTTP endpoint and its explicit auth mode.
@@ -889,7 +891,10 @@ func (s *MCPSection) strictFields() map[string]any {
 }
 
 func (b *MCPBrokerProfile) strictFields() map[string]any {
-	return map[string]any{"callback_url": &b.CallbackURL, "signing_key_file": &b.SigningKeyFile, "fallback_key_files": &b.FallbackKeyFiles}
+	return map[string]any{
+		"callback_url": &b.CallbackURL, "signing_key_file": &b.SigningKeyFile, "fallback_key_files": &b.FallbackKeyFiles,
+		"gateway_token_lifetime": &b.GatewayTokenLifetime,
+	}
 }
 
 // UnmarshalYAML strictly decodes broker-only metadata and checks the signing
@@ -913,7 +918,37 @@ func (b *MCPBrokerProfile) UnmarshalYAML(node ast.Node) error {
 			return err
 		}
 	}
+	if b.GatewayTokenLifetime != "" {
+		if b.SigningKeyFile == "" {
+			return errors.New("mcp.broker.gateway_token_lifetime requires mcp.broker.signing_key_file")
+		}
+		if _, err := b.ParseGatewayTokenLifetime(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// Bounds of mcp.broker.gateway_token_lifetime: ToolHive's smallest
+// per-client token lifetime, and the identity broker's largest ID-JAG
+// lifetime, which caps the token anyway.
+const (
+	minGatewayTokenLifetime = 2 * time.Second
+	maxGatewayTokenLifetime = 5 * time.Minute
+)
+
+// ParseGatewayTokenLifetime returns GatewayTokenLifetime as a duration, zero
+// when it is empty, or an error when it is not whole seconds from 2s to 5m.
+func (b MCPBrokerProfile) ParseGatewayTokenLifetime() (time.Duration, error) {
+	if b.GatewayTokenLifetime == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(b.GatewayTokenLifetime)
+	if err != nil || d < minGatewayTokenLifetime || d > maxGatewayTokenLifetime || d%time.Second != 0 {
+		return 0, fmt.Errorf("mcp.broker.gateway_token_lifetime %q must be a duration in whole seconds from %s to %s",
+			b.GatewayTokenLifetime, minGatewayTokenLifetime, maxGatewayTokenLifetime)
+	}
+	return d, nil
 }
 
 // validateMCPAbsolutePath refuses an empty, relative, or control-character

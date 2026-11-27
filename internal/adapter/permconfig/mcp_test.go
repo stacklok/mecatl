@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-yaml/parser"
 
@@ -522,12 +523,16 @@ func TestMCPBrokerSigningKeySettings(t *testing.T) {
   broker:
     signing_key_file: /keys/as2/key.pem
     fallback_key_files: [/keys/as2-old/key.pem, /keys/as2-older/key.pem]
+    gateway_token_lifetime: 15s
 `))
 	if err != nil {
 		t.Fatalf("parse signing key settings: %v", err)
 	}
 	if got := cfg.MCP.Broker; got.SigningKeyFile != "/keys/as2/key.pem" || !slices.Equal(got.FallbackKeyFiles, []string{"/keys/as2-old/key.pem", "/keys/as2-older/key.pem"}) {
 		t.Fatalf("broker signing key settings = %#v", got)
+	}
+	if lifetime, err := cfg.MCP.Broker.ParseGatewayTokenLifetime(); err != nil || lifetime != 15*time.Second {
+		t.Fatalf("gateway token lifetime = %v, %v; want 15s", lifetime, err)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"a relative key":               {`signing_key_file: key.pem`, "mcp.broker.signing_key_file must be absolute"},
@@ -537,6 +542,11 @@ func TestMCPBrokerSigningKeySettings(t *testing.T) {
 		"fallbacks without a key":      {`fallback_key_files: [/keys/old.pem]`, "mcp.broker.fallback_key_files requires mcp.broker.signing_key_file"},
 		"a relative fallback":          {"signing_key_file: /keys/key.pem\nfallback_key_files: [old.pem]", "mcp.broker.fallback_key_files[0] must be absolute"},
 		"an unknown signing key field": {`signing_key: /keys/key.pem`, "signing_key"},
+		"a lifetime without a key":     {`gateway_token_lifetime: 30s`, "mcp.broker.gateway_token_lifetime requires mcp.broker.signing_key_file"},
+		"a lifetime too short":         {"signing_key_file: /keys/key.pem\ngateway_token_lifetime: 1s", "whole seconds from 2s to 5m0s"},
+		"a lifetime too long":          {"signing_key_file: /keys/key.pem\ngateway_token_lifetime: 6m", "whole seconds from 2s to 5m0s"},
+		"a fractional lifetime":        {"signing_key_file: /keys/key.pem\ngateway_token_lifetime: 2500ms", "whole seconds from 2s to 5m0s"},
+		"a lifetime that is no time":   {"signing_key_file: /keys/key.pem\ngateway_token_lifetime: soon", "whole seconds from 2s to 5m0s"},
 	} {
 		// The settings parser reports a value-free schema error, so decode the
 		// section itself to see which rule refused it.

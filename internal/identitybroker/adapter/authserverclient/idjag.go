@@ -15,7 +15,8 @@ var _ identitybroker.IDJAGIssuer = (*Client)(nil)
 // (design step (7)). It posts an RFC 8693 token exchange of the session's
 // refresh token, with the agent's SVID as the actor token, for an ID-JAG for
 // req.Audience and req.Resource, naming the call's operation in
-// mecatl_operation. A success response that is not valid JSON of the expected
+// mecatl_operation and sending req.AuthorizationDetails, when set, for AS-1
+// to sign into the ID-JAG. A success response that is not valid JSON of the expected
 // shape, lacks access_token, or does not issue an ID-JAG wraps both
 // identitybroker.ErrMalformedResponse and
 // identitybroker.ErrTransportConfiguration; other errors are Token's.
@@ -30,6 +31,9 @@ func (c *Client) IssueIDJAG(ctx context.Context, req identitybroker.IDJAGRequest
 		"audience":             {req.Audience},
 		"resource":             {req.Resource},
 		"mecatl_operation":     {req.OperationID},
+	}
+	if len(req.AuthorizationDetails) != 0 {
+		form.Set("authorization_details", string(req.AuthorizationDetails))
 	}
 	var out struct {
 		AccessToken     string `json:"access_token"`

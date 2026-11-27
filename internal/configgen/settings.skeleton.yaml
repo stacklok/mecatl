@@ -605,6 +605,15 @@
 #     # listed, so the key can rotate. They require SigningKeyFile, and no key may be
 #     # listed twice, SigningKeyFile included.
 #     fallback_key_files: []
+#     # GatewayTokenLifetime is the lifetime of each gateway token the embedded MCP
+#     # gateway's authorization server issues the identity broker for one tool call or
+#     # listing, a Go duration in whole seconds from 2s to 5m; empty selects 30s. A token
+#     # only has to start its one call: the gateway still accepts that call's cancellation
+#     # for five minutes after the token expires. The token never outlives the ID-JAG it
+#     # was redeemed from. It requires SigningKeyFile, and mecak8s refuses it unless the
+#     # identity broker's embedded gateway entry routes servers, the only calls that get
+#     # gateway tokens.
+#     gateway_token_lifetime: ""
 #   # Servers is the ordered list of neutral Streamable HTTP route declarations.
 #   servers: []
 #|

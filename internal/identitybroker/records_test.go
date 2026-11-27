@@ -1754,9 +1754,9 @@ func TestADelegationReportedAgainRefersToItsEarlierRecord(t *testing.T) {
 }
 
 // TestAnInvalidRequestIsRecordedAsRefused pins that an open, registration,
-// or delegation report refused because it failed validation is recorded with
-// its reason and the calling workload, and with none of the request's
-// unvalidated fields.
+// delegation report, or call refused because it failed validation is
+// recorded with its reason and the calling workload, and with none of the
+// request's unvalidated fields.
 func TestAnInvalidRequestIsRecordedAsRefused(t *testing.T) {
 	ctx := context.Background()
 	f := newRecordFixture(t)
@@ -1767,11 +1767,13 @@ func TestAnInvalidRequestIsRecordedAsRefused(t *testing.T) {
 	wantError(t, err, identitybroker.CodeInvalidArgument, "")
 	err = f.b.ReportDelegation(ctx, testWorkload, identitybroker.ReportDelegationRequest{SessionID: junk})
 	wantError(t, err, identitybroker.CodeInvalidArgument, "")
-	opens, regs, d := f.sink.Opens(), f.sink.Registrations(), f.sink.Delegations()
-	if len(opens) != 1 || len(regs) != 1 || len(d) != 1 {
-		t.Fatalf("records: %d opens, %d registrations, %d delegations; want one refusal of each", len(opens), len(regs), len(d))
+	_, err = f.b.AuthorizeCall(ctx, testWorkload, identitybroker.AuthorizeCallRequest{SessionID: junk, OperationID: junk})
+	wantError(t, err, identitybroker.CodeInvalidArgument, "")
+	opens, regs, d, calls := f.sink.Opens(), f.sink.Registrations(), f.sink.Delegations(), f.sink.Decisions()
+	if len(opens) != 1 || len(regs) != 1 || len(d) != 1 || len(calls) != 1 {
+		t.Fatalf("records: %d opens, %d registrations, %d delegations, %d decisions; want one refusal of each", len(opens), len(regs), len(d), len(calls))
 	}
-	for _, rec := range []identitybroker.Record{&opens[0], &regs[0], &d[0]} {
+	for _, rec := range []identitybroker.Record{&opens[0], &regs[0], &d[0], &calls[0]} {
 		h := rec.Header()
 		if h.Outcome != identitybroker.OutcomeDenied || h.Code != identitybroker.CodeInvalidArgument || !strings.HasPrefix(h.AuditID, "rec_") {
 			t.Errorf("%s record header = %+v, want an INVALID_ARGUMENT refusal", h.Type, h)

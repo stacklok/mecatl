@@ -2355,7 +2355,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// and on shutdown. Its embedded gateway entry must describe the embedded
 	// gateway the MCP broker will run.
 	ib, err := buildIdentityBroker(ctx, cfg, deriveEmbeddedGateway(cfg, brokerDeclaration, brokerSelected),
-		as2SigningKey{file: brokerDeclaration.SigningKeyFile, fallbacks: brokerDeclaration.FallbackKeyFiles})
+		as2Settings{
+			file: brokerDeclaration.SigningKeyFile, fallbacks: brokerDeclaration.FallbackKeyFiles,
+			gatewayTokenLifetime: brokerDeclaration.GatewayTokenLifetime,
+		})
 	if err != nil {
 		childLiveness.Close()
 		mcpClose()

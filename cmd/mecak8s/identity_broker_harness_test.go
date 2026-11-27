@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -361,7 +362,10 @@ const gatewaySettings = `mcp:
 //	no gateway stand-in: the vMCP is real, but     #2537
 //	  it finds no provider credential for the
 //	  caller, so initialize succeeds without
-//	  the backend and a call does not reach it
+//	  the backend and a call does not reach it:
+//	  the vMCP accepts the call-bound token and
+//	  refuses the call as tool_not_found
+//	  (wantStandInRefusal)
 //	in-memory send-once record                     #2730
 //
 // It is not parallel: the protected route's client secret is read from an
@@ -548,9 +552,7 @@ func TestIdentityBrokerGatewayCallRenewsAnExpiredCredential(t *testing.T) {
 	if issued := gw.idjags(t); len(issued) != 1 || exchanges[1].IssuedToken == "" {
 		t.Fatalf("AS-1 issued %d ID-JAGs, want one, for the retry", len(issued))
 	}
-	if got := diag.call(ops[0]); got["code"] != "completed" || got["outcome"] != "completed" || got["attempts"] == "" || strings.Contains(got["attempts"], ",") {
-		t.Fatalf("gateway call diagnostics %v; want one attempt the vMCP completed", got)
-	}
+	gw.wantStandInRefusal(t, ops[0], diag.call(ops[0]))
 }
 
 // brokerTrustDomain is the agent trust domain of the identity broker's test
@@ -577,7 +579,97 @@ type gatewayServe struct {
 	// clockOffset moves the broker's clock from wall time, which AS-1, AS-2,
 	// and the vMCP keep.
 	clockOffset atomic.Int64
+	// refusals are the call-binding refusals the vMCP logged.
+	refusals *bindingRefusals
 }
+
+// bindingRefusals is a slog handler that records the reason of each
+// call-binding refusal the vMCP logs, by the operation its token's call
+// entry names, and passes every record on.
+type bindingRefusals struct {
+	next slog.Handler
+	mu   *sync.Mutex
+	byOp map[string][]string
+}
+
+// captureBindingRefusals installs a bindingRefusals as the default logger
+// for t, whose tests must not be parallel: the vMCP logs through it.
+func captureBindingRefusals(t *testing.T) *bindingRefusals {
+	t.Helper()
+	previous := slog.Default()
+	// Records go on to stderr, not to previous's handler: slog's initial
+	// handler writes through the log package, which SetDefault points back
+	// at the new default, so wrapping it would deadlock.
+	h := &bindingRefusals{next: slog.NewTextHandler(os.Stderr, nil), mu: &sync.Mutex{}, byOp: map[string][]string{}}
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return h
+}
+
+func (*bindingRefusals) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *bindingRefusals) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "call binding: refused a request" {
+		var op, reason string
+		r.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "operation_id":
+				op = a.Value.String()
+			case "reason":
+				reason = a.Value.String()
+			}
+			return true
+		})
+		h.mu.Lock()
+		h.byOp[op] = append(h.byOp[op], reason)
+		h.mu.Unlock()
+	}
+	if h.next.Enabled(ctx, r.Level) {
+		return h.next.Handle(ctx, r)
+	}
+	return nil
+}
+
+func (h *bindingRefusals) WithAttrs(attrs []slog.Attr) slog.Handler {
+	c := *h
+	c.next = h.next.WithAttrs(attrs)
+	return &c
+}
+
+func (h *bindingRefusals) WithGroup(name string) slog.Handler {
+	c := *h
+	c.next = h.next.WithGroup(name)
+	return &c
+}
+
+// reasons returns the refusal reasons logged for operation op, oldest first.
+func (h *bindingRefusals) reasons(op string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.byOp[op])
+}
+
+// wantStandInRefusal fails t unless the gateway call op, whose diagnostic
+// is got, reached the vMCP once with a call-bound token the vMCP accepted,
+// and the vMCP refused it before running it only because it finds no
+// provider credential for the calendar backend, #2537's stand-in: the call
+// binding's tool_not_found, and no other refusal. A token the vMCP did not
+// accept gets 401, and one whose call entry does not match the call another
+// reason.
+func (gw *gatewayServe) wantStandInRefusal(t *testing.T, op string, got map[string]string) {
+	t.Helper()
+	if got["code"] != "gateway_refused" || got["outcome"] != "refused" || got["http_status"] != "403" ||
+		got["attempts"] == "" || strings.Contains(got["attempts"], ",") {
+		t.Errorf("gateway call %s diagnostics %v; want one attempt the vMCP refused before running it", op, got)
+	}
+	if reasons := gw.refusals.reasons(op); !slices.Equal(reasons, []string{"tool_not_found"}) {
+		t.Errorf("the vMCP refused gateway call %s for %v; want only tool_not_found, the stand-in's missing provider credential", op, reasons)
+	}
+}
+
+// standInResult is the tool result of a gateway call wantStandInRefusal
+// accepts.
+const standInResult = "MCP gateway call not run: the gateway refused it before running it; it is not retried (code gateway_refused)."
 
 // idjags returns the claims of the ID-JAGs AS-1 issued the broker, oldest
 // first, after checking each is for AS-2 and the vMCP and names an ag_ agent
@@ -638,13 +730,21 @@ func gatewayTokenClaims(t *testing.T, got identitybroker.Authorization) jwt.MapC
 // application configuration after that.
 func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []string, edit func(*app.Config)) *gatewayServe {
 	t.Helper()
+	return serveGatewayIdentityBrokerWith(t, "", extraSettings, extraArgs, edit)
+}
+
+// serveGatewayIdentityBrokerWith is serveGatewayIdentityBroker with
+// brokerSettings, further lines of the mcp.broker mapping, each indented by
+// four spaces.
+func serveGatewayIdentityBrokerWith(t *testing.T, brokerSettings, extraSettings string, extraArgs []string, edit func(*app.Config)) *gatewayServe {
+	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	issueIDJAGs := as1servertest.IssueIDJAGs(brokerTrustDomain, gatewayAS2Issuer, gatewayResource)
 	a := as1servertest.Start(t, h, func(c *as1server.Config, d *as1server.DelegateClient) {
 		issueIDJAGs(c, d)
 		d.IDJAGMaxLifetime = gatewayGrantLifetime
 	})
-	gw := &gatewayServe{h: h, as1Server: a}
+	gw := &gatewayServe{h: h, as1Server: a, refusals: captureBindingRefusals(t)}
 	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at her
 	// first sign-in, so she signs in before the build.
 	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
@@ -654,7 +754,7 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
 	signingKey := brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "gateway-signing-key.pem"), brokerconfigtest.NewKey(t))
-	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey, 1)+extraSettings), 0o600); err != nil {
+	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey+"\n"+brokerSettings, 1)+extraSettings), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	caFile := h.WriteCACert(t, t.TempDir())
@@ -805,15 +905,12 @@ func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
 		t.Fatalf("AS-1 issued %d ID-JAGs for operations %v, want one for the call's operation %s", len(issued), ops, operation("call-open"))
 	}
 	// The broker allowed the call: only an allowed decision issues an
-	// attempt, and the call completed at the vMCP with it.
-	if got := diag.call(operation("call-open")); got["code"] != "completed" || got["outcome"] != "completed" || got["attempts"] == "" || strings.Contains(got["attempts"], ",") {
-		t.Fatalf("gateway call diagnostics %v; want one attempt the vMCP completed", got)
-	}
-	// The vMCP accepted the token. Without a provider credential it does not
-	// reach the backend, so its answer is whatever it returns then; only a
-	// refusal or a rejected token would be the gateway path failing.
-	if res := toolResult("call-open"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
-		t.Fatalf("the call's result is a refusal: %q", res.Content)
+	// attempt, and the vMCP accepted its call-bound token. Without a
+	// provider credential the vMCP does not route the tool, so it refuses
+	// the call before running it.
+	gw.wantStandInRefusal(t, operation("call-open"), diag.call(operation("call-open")))
+	if res := toolResult("call-open"); !res.IsError || res.Content != standInResult {
+		t.Fatalf("the call's result = %q, want the stand-in's refusal", res.Content)
 	}
 
 	// The broker session closes while the next call waits for approval.

@@ -134,13 +134,25 @@ type embeddedGateway struct {
 	Routes []string
 }
 
-// as2SigningKey is the embedded gateway's signing key and its fallbacks
-// (mcp.broker.signing_key_file and fallback_key_files). The identity broker
-// never holds it; startup only checks it is not one of the broker's keys.
-type as2SigningKey struct {
+// as2Settings are the embedded gateway's settings startup checks against
+// the identity broker's gateway entry: its signing key and fallbacks
+// (mcp.broker.signing_key_file and fallback_key_files), which the identity
+// broker never holds, and its gateway token lifetime
+// (mcp.broker.gateway_token_lifetime), zero when unset.
+type as2Settings struct {
 	file      string
 	fallbacks []string
+	// gatewayTokenLifetime requires file, so an entry, and an entry routing
+	// servers: only then does the gateway issue gateway tokens.
+	gatewayTokenLifetime time.Duration
 }
+
+// errGatewayTokenLifetimeWithoutServers refuses a gateway token lifetime
+// while the identity broker's gateway entry routes no servers, so no gateway
+// token is ever issued.
+//
+// Shortcut: production's gateway entry routes no servers, so the setting is refused there; removed by #2533 (AS-2 trusts AS-1).
+var errGatewayTokenLifetimeWithoutServers = errors.New("mcp.broker.gateway_token_lifetime requires the identity broker's embedded gateway entry to route servers, the only calls that get gateway tokens")
 
 // errEmbeddedEntryWithoutEmbeddedGateway refuses an embedded gateway entry in
 // a process that runs no embedded gateway.
@@ -202,7 +214,7 @@ func as1Issuer(cfg Config) string {
 // checking it against the embedded gateway this process runs and the
 // embedded gateway's signing key against the broker's keys; nil when file
 // has none, which then refuses a signing key. It runs before AS-1 is built.
-func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGateway, key as2SigningKey) (*identitybroker.GatewayEntry, error) {
+func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGateway, key as2Settings) (*identitybroker.GatewayEntry, error) {
 	if len(file.Gateways) == 0 {
 		if key.file != "" {
 			return nil, errAS2SigningKeyWithoutEntry
@@ -239,6 +251,9 @@ func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGat
 	}
 	if key.file == "" {
 		return nil, errNoAS2SigningKey
+	}
+	if key.gatewayTokenLifetime != 0 && len(entry.Servers) == 0 {
+		return nil, errGatewayTokenLifetimeWithoutServers
 	}
 	as2Keys, err := as2SigningPublicKeys(key)
 	if err != nil {
@@ -347,7 +362,7 @@ func (p identityBrokerParts) bindAS2(as2 *identityBrokerAS2) (unbind func(), err
 // tokens at that AS-1 in process: buildBrokerWithHostedAS1 registers the
 // file's broker client key set there for the confidential delegate, which may
 // obtain ID-JAGs for the entry when it routes servers.
-func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGateway, as2Key as2SigningKey) (identityBrokerParts, error) {
+func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGateway, as2Key as2Settings) (identityBrokerParts, error) {
 	if !cfg.IdentityBroker {
 		if err := checkIdentityBrokerOff(cfg, as2Key); err != nil {
 			return identityBrokerParts{}, err
@@ -431,7 +446,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGate
 
 // checkIdentityBrokerOff refuses configuration that needs the identity
 // broker when it is off.
-func checkIdentityBrokerOff(cfg Config, as2Key as2SigningKey) error {
+func checkIdentityBrokerOff(cfg Config, as2Key as2Settings) error {
 	switch {
 	case cfg.IdentityBrokerHostedAS1 != nil:
 		return errIdentityBrokerAS1WithoutBroker

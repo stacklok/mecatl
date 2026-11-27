@@ -710,3 +710,91 @@ func TestIsInvalidTokenChallenge(t *testing.T) {
 		}
 	}
 }
+
+// forbiddingTransport answers a tools/call with HTTP 403, the header, and
+// the body built from the call's JSON-RPC ID; it carries every other
+// request to base.
+type forbiddingTransport struct {
+	base   http.RoundTripper
+	header http.Header
+	body   func(id json.RawMessage) string
+}
+
+func (f forbiddingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body == nil {
+		return f.base.RoundTrip(req)
+	}
+	body, err := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	var msg struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if json.Unmarshal(body, &msg) != nil || msg.Method != gatewayToolsCall {
+		return f.base.RoundTrip(req)
+	}
+	header := f.header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	header.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode: http.StatusForbidden, Header: header, Request: req,
+		Body: io.NopCloser(strings.NewReader(f.body(msg.ID))),
+	}, nil
+}
+
+// TestSendGatewayCallClassifiesADenial: a 403 the gateway answers before
+// running the tools/call refuses it, as ToolHive's vMCP answers a call its
+// token's call entry does not name, or its policy denies: a JSON-RPC error
+// of code 403 for the call's own ID, or, from another gateway, an
+// insufficient_scope challenge (credentials-and-lifecycle.md, step (9)). Any
+// other 403 may come from after the call ran, so its outcome is unknown.
+func TestSendGatewayCallClassifiesADenial(t *testing.T) {
+	denied := func(id json.RawMessage) string {
+		return `{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":403,"message":"Forbidden: the access token does not permit this request (tool_mismatch)"}}`
+	}
+	for name, c := range map[string]struct {
+		header  http.Header
+		body    func(json.RawMessage) string
+		outcome GatewayAttemptOutcome
+		reject  GatewayRejection
+	}{
+		"ToolHive's denial": {nil, denied, GatewayAttemptRefused, GatewayRejectionDenied},
+		"an insufficient_scope challenge": {
+			http.Header{"Www-Authenticate": {`Bearer error="insufficient_scope", scope="tools"`}},
+			func(json.RawMessage) string { return "forbidden" }, GatewayAttemptRefused, GatewayRejectionDenied,
+		},
+		"another error code": {nil, func(id json.RawMessage) string {
+			return `{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":-32603,"message":"internal"}}`
+		}, GatewayAttemptUnknown, ""},
+		"another request's ID": {nil, func(json.RawMessage) string { return denied(json.RawMessage(`"other"`)) }, GatewayAttemptUnknown, ""},
+		"not JSON-RPC":         {nil, func(json.RawMessage) string { return "<html>forbidden</html>" }, GatewayAttemptUnknown, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGatewayFixture(t)
+			req := f.request("att_1")
+			req.HTTPClient = &http.Client{Transport: forbiddingTransport{base: f.wire, header: c.header, body: c.body}, Timeout: 10 * time.Second}
+			wantAttempt(t, SendGatewayCall(t.Context(), req), c.outcome, c.reject, http.StatusForbidden)
+		})
+	}
+}
+
+func TestIsInsufficientScopeChallenge(t *testing.T) {
+	for challenge, want := range map[string]bool{
+		`Bearer error="insufficient_scope"`:                  true,
+		`Bearer realm="vmcp", error="insufficient_scope"`:    true,
+		`Bearer error="invalid_token"`:                       false,
+		`Basic error="insufficient_scope"`:                   false,
+		`Bearer realm="a,error=insufficient_scope"`:          false,
+		`Basic realm="x", Bearer error="insufficient_scope"`: true,
+	} {
+		if got := isInsufficientScopeChallenge(challenge); got != want {
+			t.Errorf("isInsufficientScopeChallenge(%q) = %v, want %v", challenge, got, want)
+		}
+	}
+}

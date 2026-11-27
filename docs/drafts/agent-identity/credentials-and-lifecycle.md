@@ -533,8 +533,6 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 
 ### (7) ID-JAG from AS-1
 
-*Not yet enforced: the call entry is not yet signed into the ID-JAG; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 For each call, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
 
 **Input.** An RFC 8693 token exchange with `RT-A42` as subject token, `reviewerSVID` as actor token, AS-2 as audience, and the vMCP as `resource`. The call entry is an RFC 9396 `authorization_details` entry of type `https://toolhive.dev/mcp_tool_call`. It names the server, the tool, the argument hash, and the operation ID. A tool listing sends the list form, which names the server and the method. The broker sends one entry on every gateway call, tool calls and tool listings alike. The operation ID is carried only in the entry, so no other Mecatl parameter is sent to AS-1:
@@ -653,11 +651,9 @@ AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. Th
 
 ### (8) AS-2 access token
 
-*Not yet enforced: AS-2 does not yet process the signed claim; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. The call is not named in this request. AS-2 takes the call entry from the `authorization_details` claim that AS-1 signed into the ID-JAG at step (7), and copies it into `V`. That restricts `V` to one call: the server, the tool, the argument hash, and the operation ID. Form encoding is shown decoded.
 
-**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
+**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent or `null`. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
 
 ```text
 POST https://gateway.example.com/oauth/token
@@ -757,8 +753,6 @@ Until Mecatl pins ToolHive v0.67.0 or later (reason codes for ID-JAG redemption 
 
 ### (8a) Broker output check
 
-*Not yet enforced: the broker check is not yet built; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** The token response from step (8), including its `authorization_details` member, and the entry the broker sent in step (7) for the same attempt. The broker builds that entry from the request that step (6) checked, and dispatch uses that request ([authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch)).
 
 **Checks, at the broker,** before it returns `V`:
@@ -785,8 +779,6 @@ A gateway call with no entry never reaches AS-1: the broker sends one on every g
 
 ### (9) vMCP decision and provider credential
 
-*Not yet enforced: the call-entry check and the single-use record are not yet enforced; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The same IDs go on every message of the call, including the session handshake, the cancellation, and replies to requests the vMCP sends; an error reply carries them in `error.data._meta`. The broker mints the attempt ID with each authorization and returns it with `V` ([audit](audit.md#delivery-protection-and-reconciliation)); the MCP client only passes it on. The run ID travels in trace headers.
 
 **Checks, at the vMCP:**
@@ -806,14 +798,14 @@ A gateway call with no entry never reaches AS-1: the broker sends one on every g
 | --- | --- | --- |
 | 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. |
 | 2 | 404 for the session | mecak8s opens a new vMCP session and retries once with a new `V`. |
-| 3 | 403 `insufficient_scope` | A broker or MCP client bug: fail the call, do not retry. |
+| 3 | 403, with `insufficient_scope` or, from ToolHive's vMCP, a JSON-RPC error of code 403 answering the call's request | A broker or MCP client bug: fail the call, do not retry. |
 | 4 | Tool error | Returned as a denial; not retried. |
 | 5 | Tool error | A broker or gateway bug: fail the call, do not retry. |
 | 6, access token expired | — | The gateway refreshes it with the stored refresh token and continues. |
 | 6, no row, or refresh no longer possible | An MCP URL-mode elicitation with the gateway's connect link | The existing `mcp_authorization_pending` outcome with that link. If the vMCP refused before running the call, the call was not sent; after Alice connects GitHub, it runs again with a new authorization and passes every check again. A row owned by another user is refused and recorded. |
 | 6, refresh or storage failure | 5xx | An unknown outcome: the MCP client cannot tell this 5xx from one returned after the call ran, so it is not retried automatically. A new tool call can be made. |
 
-The answers to checks 1, 2, 3, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, 403 `insufficient_scope`, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
+The answers to checks 1, 2, 3, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, 403 with `insufficient_scope` or a JSON-RPC error of code 403 for that request, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
 
 A JSON-RPC error that rejects the request itself (-32700, -32600, -32601, or -32602) means the tool did not run, and the call fails. Any other JSON-RPC error, such as -32603, or any other HTTP error status after the request was written, including a 5xx, is also an unknown outcome: the MCP client sees only the status and cannot tell a 5xx the vMCP returned before running the call from one returned after it ran, for example by a proxy or after a crash.
 
@@ -936,8 +928,8 @@ The failures each step can return: where each is detected, what the user sees, a
 | User unknown at the gateway (embedded) | AS-2 | `access_denied` with `subject_unknown` | `mcp_authorization_pending` with a link to sign in at the embedded gateway | Nothing |
 | Gateway refuses the acting agent | AS-2 | `access_denied` with `actor_denied` | Call denied | Nothing |
 | ID-JAG reused where the issuer requires single use | AS-2 | `invalid_grant` with `invalid_assertion` | Call fails; a broker bug or a stolen ID-JAG | Nothing |
-| `V` rejected by vMCP | vMCP | 401 `invalid_token` | None: mecak8s reports it, and the call is retried once with a new `V` | Nothing |
-| Call does not match `V`'s binding, or `V` already used for a call | vMCP | 403 `insufficient_scope` | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
+| `V` rejected by vMCP, or already used for a call | vMCP | 401 `invalid_token`; `token_reused` for a `V` already used | None: mecak8s reports it, and the call is retried once with a new `V` | Nothing |
+| Call does not match `V`'s binding | vMCP | 403, with `insufficient_scope` or a JSON-RPC error of code 403 | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
 | `V` lacks the entry the broker sent, or its entry differs ([step (8a)](#8a-broker-output-check)) | Broker | `INTERNAL` with `call_entry_missing` or `call_entry_mismatch` | Call fails before the gateway; a broker, AS-1, or AS-2 fault | Nothing |
 | vMCP session rejected | vMCP | 404 | None: one retry with a new session | Stored session ID dropped |
 | vMCP policy denies the tool | vMCP | Tool error | Call denied | Nothing |
@@ -977,6 +969,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `subject_unknown` | AS-2 (`access_denied`) | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, with a link that Mecatl builds to its embedded gateway's sign-in: the user must sign in at the gateway once. Not `mcp_owner_action_required`, which means signing in again at AS-1. Mecatl builds no link for an external gateway, so there the call fails. |
 | `actor_denied` | AS-2 (`access_denied`) | `PERMISSION_DENIED` | Deny the call, as for `denied`. |
 | `resource_denied` | AS-2 (`access_denied`) | `INTERNAL` | Fail the call; a configuration fault. |
+| `call_entry_missing`, `call_entry_mismatch` | Broker, [step (8a)](#8a-broker-output-check) | `INTERNAL` | Fail the call before it reaches the gateway; not retried. |
 | HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. At session open, a 502 or 504 follows the lost-response rule of [step (3)](#3-session-open-and-the-broker-refresh-token). |
 | `invalid_client`, `unauthorized_client`, `invalid_target`, `access_denied` with no reason, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
