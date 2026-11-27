@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	thvmcp "github.com/stacklok/toolhive/pkg/mcp"
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
 
 // hashVectors is the shared argument hash vectors file,
@@ -103,6 +106,9 @@ func TestArgumentsSHA256Vectors(t *testing.T) {
 		t.Fatal("no vectors")
 	}
 	for _, v := range file.Vectors {
+		if v.GatewayRefuses {
+			continue // TestArgumentsSHA256RefusesWhatTheGatewayRefuses
+		}
 		t.Run(v.Name, func(t *testing.T) {
 			sent, sum, err := argumentsSHA256(v.Arguments)
 			if err != nil {
@@ -117,6 +123,66 @@ func TestArgumentsSHA256Vectors(t *testing.T) {
 			}
 			if string(sent) != wantSent {
 				t.Errorf("sent = %s, want %s", sent, wantSent)
+			}
+		})
+	}
+}
+
+// TestArgumentsSHA256RefusesWhatTheGatewayRefuses: every shared vector the
+// vMCP refuses with -32600 before hashing (gateway_refuses: member names
+// equal under case folding) is refused here too, before anything is
+// authorized, although its hash still agrees with the vMCP's.
+func TestArgumentsSHA256RefusesWhatTheGatewayRefuses(t *testing.T) {
+	file := readHashVectors(t)
+	n := 0
+	for _, v := range file.Vectors {
+		if !v.GatewayRefuses {
+			continue
+		}
+		n++
+		t.Run(v.Name, func(t *testing.T) {
+			if sent, sum, err := argumentsSHA256(v.Arguments); !errors.Is(err, errCaseFoldedMembers) || sent != nil || sum != "" {
+				t.Fatalf("argumentsSHA256(%s) = %s, %q, %v; want errCaseFoldedMembers", v.Arguments, sent, sum, err)
+			}
+			if sum, err := callbinding.ArgumentsSHA256(v.Arguments); err != nil || sum != v.SHA256 {
+				t.Errorf("the vMCP's hash = %q, %v; want %s", sum, err, v.SHA256)
+			}
+		})
+	}
+	if n == 0 {
+		t.Fatal("no gateway_refuses vectors")
+	}
+}
+
+// TestHasCaseFoldedMembersMatchesTheVMCP checks hasCaseFoldedMembers
+// against the vMCP's own request parser, mcp.DecodeMessage, which refuses a
+// tools/call whose arguments it reports, and only those.
+func TestHasCaseFoldedMembersMatchesTheVMCP(t *testing.T) {
+	for _, c := range []struct {
+		args string
+		want bool
+	}{
+		{`{"a":1,"b":2}`, false},
+		{`{"a":1,"A":2}`, true},
+		{`{"x":{"k":1,"K":2}}`, true},
+		{`{"l":[{"a":1,"A":2}]}`, true},
+		{`{"a":{"A":1}}`, false},
+		{`{"l":[{"a":1},{"A":1}]}`, false},
+		{`{"k":1,"K":2}`, true},   // KELVIN SIGN folds to k
+		{`{"s":1,"ſ":2}`, true},   // LATIN SMALL LETTER LONG S folds to s
+		{`{"ß":1,"ẞ":2}`, true},   // sharp s and capital sharp s
+		{`{"ss":1,"ß":2}`, false}, // only full case folding maps ß to ss
+		{`{"σ":1,"ς":2}`, true},   // sigma and final sigma
+		{`{"ab":1,"aB":2,"c":[]}`, true},
+		{`{"":1,"e":{},"f":[1,{"g":{"h":2,"H":3}}]}`, true},
+	} {
+		t.Run(c.args, func(t *testing.T) {
+			if got := hasCaseFoldedMembers(json.RawMessage(c.args)); got != c.want {
+				t.Errorf("hasCaseFoldedMembers = %v, want %v", got, c.want)
+			}
+			_, err := thvmcp.DecodeMessage([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + c.args + `}}`))
+			if refused := err != nil; refused != c.want {
+				t.Errorf("the vMCP's parser refuses = %v (%v), want %v", refused, err, c.want)
 			}
 		})
 	}

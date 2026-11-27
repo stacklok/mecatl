@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
+	"unicode"
 
 	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
@@ -11,6 +13,12 @@ import (
 // errNotIJSON is the refusal of arguments that have no argument hash. Its
 // text is fixed, so it never quotes the arguments.
 var errNotIJSON = errors.New("mcpbroker: arguments are not I-JSON")
+
+// errCaseFoldedMembers is the refusal of arguments with an object whose
+// member names collide under case folding, which the vMCP refuses with
+// -32600 before it computes the hash. Its text is fixed, so it never quotes
+// the arguments.
+var errCaseFoldedMembers = errors.New("mcpbroker: arguments have member names that differ only by case")
 
 // jsonWhitespace is JSON's insignificant whitespace (RFC 8259 section 2).
 const jsonWhitespace = " \t\n\r"
@@ -22,6 +30,9 @@ const jsonWhitespace = " \t\n\r"
 // the vMCP's own, callbinding.ArgumentsSHA256 over sent, so the two sides
 // agree by construction; arguments it refuses (anything that is not exactly
 // one I-JSON object) fail with errNotIJSON, before anything is authorized.
+// Arguments the vMCP's request parser refuses although they have a hash, an
+// object with member names equal under case folding, fail with
+// errCaseFoldedMembers, also before anything is authorized.
 func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, err error) {
 	sent = args
 	// Only JSON's own whitespace is insignificant; bytes.TrimSpace would
@@ -33,5 +44,71 @@ func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, er
 	if err != nil {
 		return nil, "", errNotIJSON
 	}
+	if hasCaseFoldedMembers(sent) {
+		return nil, "", errCaseFoldedMembers
+	}
 	return sent, sum, nil
+}
+
+// hasCaseFoldedMembers reports whether an object anywhere in args, valid
+// JSON, has two member names equal under Unicode simple case folding, the
+// equivalence strings.EqualFold uses. It is the rule of ToolHive's vMCP
+// request parser (pkg/mcp, hasAmbiguousJSONMembers), which refuses such a
+// request with -32600 Invalid Request: names are compared within one object,
+// at any depth, after folding each rune to the smallest rune in its
+// unicode.SimpleFold orbit.
+func hasCaseFoldedMembers(args json.RawMessage) bool {
+	type container struct {
+		seen         map[string]struct{} // nil for an array
+		expectingKey bool
+	}
+	dec := json.NewDecoder(bytes.NewReader(args))
+	dec.UseNumber()
+	var stack []container
+	for {
+		token, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if n := len(stack); n > 0 && stack[n-1].seen != nil {
+			top := &stack[n-1]
+			if top.expectingKey {
+				if key, ok := token.(string); ok {
+					folded := foldMemberName(key)
+					if _, dup := top.seen[folded]; dup {
+						return true
+					}
+					top.seen[folded] = struct{}{}
+					top.expectingKey = false
+					continue
+				}
+			} else {
+				top.expectingKey = true
+			}
+		}
+		switch token {
+		case json.Delim('{'):
+			stack = append(stack, container{seen: map[string]struct{}{}, expectingKey: true})
+		case json.Delim('['):
+			stack = append(stack, container{})
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+		}
+	}
+}
+
+// foldMemberName returns one representative of name's class under Unicode
+// simple case folding: each rune folded to the smallest rune in its
+// unicode.SimpleFold orbit, as ToolHive's vMCP folds member names.
+func foldMemberName(name string) string {
+	var folded strings.Builder
+	folded.Grow(len(name))
+	for _, r := range name {
+		canonical := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			canonical = min(canonical, next)
+		}
+		folded.WriteRune(canonical)
+	}
+	return folded.String()
 }

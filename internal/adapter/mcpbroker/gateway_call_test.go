@@ -699,6 +699,29 @@ func TestGatewayCallPassesResultThroughAfterDecliningARequest(t *testing.T) {
 	}
 }
 
+// TestGatewayCallRefusesWhatTheGatewayRefuses: arguments the vMCP's parser
+// refuses (each gateway_refuses vector of the shared argument hash vectors)
+// are refused as refused_arguments before anything is authorized, so no
+// gateway token is minted for a call that cannot run.
+func TestGatewayCallRefusesWhatTheGatewayRefuses(t *testing.T) {
+	for _, v := range readHashVectors(t).Vectors {
+		if !v.GatewayRefuses {
+			continue
+		}
+		t.Run(v.Name, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			res, err := f.execute(mainAgent(t), t, "call-1", string(v.Arguments))
+			wantRow(t, res, err, outcomeRefusedArguments)
+			if n := len(f.auth.calls()); n != 0 {
+				t.Fatalf("AuthorizeCall called %d times, want none", n)
+			}
+			if n := len(f.toolsCalls()); n != 0 {
+				t.Fatalf("%d tools/call sent", n)
+			}
+		})
+	}
+}
+
 func TestGatewayCallRefusesArgumentsOutsideIJSON(t *testing.T) {
 	f := newGatewayFixture(t, gatewayFixtureOptions{})
 	res, err := f.execute(mainAgent(t), t, "call-1", `{"a":9007199254740993}`)
@@ -775,6 +798,7 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{identitybroker.NewError(identitybroker.CodeInternal, "", ""), "internal"},
 		{errors.New("unexpected"), "internal"},
 		{errNotIJSON, "refused_arguments"},
+		{errCaseFoldedMembers, "refused_arguments"},
 		{ErrAlreadySent, "already_sent"},
 		{errSendOnceFull, "send_once_full"},
 		{agentcredential.ErrNoCredential, "identity_unavailable"},

@@ -36,7 +36,7 @@ var (
 	outcomeSVIDExpired         = gatewayOutcome{code: "svid_expired", text: "MCP gateway call refused: the agent's identity could not be renewed (code svid_expired)."}
 	outcomeUnavailable         = gatewayOutcome{code: "unavailable", text: "MCP gateway call failed: authorization is unavailable; the call was not sent and can be retried (code unavailable)."}
 	outcomeInternal            = gatewayOutcome{code: "internal", text: "MCP gateway call failed: internal error; the call was not sent (code internal)."}
-	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys); change them and retry (code refused_arguments)."}
+	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys, including keys that differ only by case); change them and retry (code refused_arguments)."}
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
 	outcomeTokenReused         = gatewayOutcome{code: "token_reused", text: "MCP gateway call outcome unknown: the gateway says its authorization was already used for a call, which may have run; it is not retried automatically (code token_reused)."}
@@ -64,7 +64,7 @@ func outcomeConnectionRequired(server, link string) gatewayOutcome {
 func outcomeForAuthorization(err error) gatewayOutcome {
 	var brokerErr *identitybroker.Error
 	switch {
-	case errors.Is(err, errNotIJSON):
+	case errors.Is(err, errNotIJSON), errors.Is(err, errCaseFoldedMembers):
 		return outcomeRefusedArguments
 	case errors.Is(err, ErrAlreadySent):
 		return outcomeAlreadySent
