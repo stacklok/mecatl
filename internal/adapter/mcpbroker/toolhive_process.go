@@ -141,10 +141,6 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return nil, err
 	}
-	gatewayTokenLifetime, err := config.gatewayTokenLifetime()
-	if err != nil {
-		return nil, err
-	}
 	diag := config.Diagnostics
 	if diag == nil {
 		diag = port.NopDiagnostics{}
@@ -253,7 +249,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			SigningKeyConfig: signingKeys,
 		}
 		if as2 {
-			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, gatewayTokenLifetime, config.AS2Trust)
+			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)
 		}
 		client, err := registration.New(registration.Config{
 			ID:                      protectedTarget.clientID,

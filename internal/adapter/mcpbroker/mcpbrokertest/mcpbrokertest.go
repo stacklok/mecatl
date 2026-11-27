@@ -51,10 +51,9 @@ type AS2Options struct {
 	// Profiles are upstreams added after the static protected one, such as
 	// anonymous backends the vMCP routes.
 	Profiles []mcpbroker.ToolHiveProfile
-	// GatewayTokenLifetime sets mcpbroker.ToolHiveConfig's field of that
-	// name, and ExpiredTokenGrace the vMCP's grace after a gateway token's
-	// exp, through the trust; zero keeps their defaults.
-	GatewayTokenLifetime, ExpiredTokenGrace time.Duration
+	// ExpiredTokenGrace sets the vMCP's grace after a gateway token's exp,
+	// through the trust; zero keeps the default.
+	ExpiredTokenGrace time.Duration
 }
 
 // StartAS2With is StartAS2 with opts.
@@ -75,9 +74,8 @@ func StartAS2With(t testing.TB, brokerClientID string, brokerKeySet []byte, trus
 			},
 			Static: []mcpbroker.StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
 		}}, opts.Profiles...),
-		BrokerClient:         &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
-		AS2Trust:             TrustAS1(withGrace(trust, opts.ExpiredTokenGrace)),
-		GatewayTokenLifetime: opts.GatewayTokenLifetime,
+		BrokerClient: &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
+		AS2Trust:     TrustAS1(withGrace(trust, opts.ExpiredTokenGrace)),
 	}
 	process, err := mcpbroker.NewToolHiveProcess(t.Context(), cfg)
 	if err != nil {

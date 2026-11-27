@@ -3,8 +3,6 @@
 package mcpauthority
 
 import (
-	"time"
-
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
@@ -28,17 +26,12 @@ type BrokerConfig struct {
 	// lets it generate its key at each start.
 	SigningKeyFile   string
 	FallbackKeyFiles []string
-	// GatewayTokenLifetime is the lifetime of the gateway tokens the embedded
-	// authorization server issues the identity broker; zero selects the
-	// adapter's default.
-	GatewayTokenLifetime time.Duration
 }
 
 func (c *BrokerConfig) clone() *BrokerConfig {
 	return &BrokerConfig{
 		Routes: cloneRoutes(c.Routes), CallbackURL: c.CallbackURL,
 		SigningKeyFile: c.SigningKeyFile, FallbackKeyFiles: append([]string(nil), c.FallbackKeyFiles...),
-		GatewayTokenLifetime: c.GatewayTokenLifetime,
 	}
 }
 

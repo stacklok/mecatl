@@ -85,6 +85,9 @@ type harnessOptions struct {
 	// broker's gateway routes, besides "github", such as backends as2 adds.
 	as2     mcpbrokertest.AS2Options
 	servers []string
+	// idjagLifetime, when set, is the lifetime of the ID-JAGs AS-1 issues,
+	// which caps each gateway token redeemed from one.
+	idjagLifetime time.Duration
 }
 
 func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
@@ -95,7 +98,11 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		t.Fatal(err)
 	}
 	h := identityharness.New(t, identityharness.Options{})
-	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(testTrustDomain, as2Issuer, as2Resource))
+	issueIDJAGs := as1servertest.IssueIDJAGs(testTrustDomain, as2Issuer, as2Resource)
+	a := as1servertest.Start(t, h, func(c *as1server.Config, d *as1server.DelegateClient) {
+		issueIDJAGs(c, d)
+		d.IDJAG.Targets[0].Lifetime = opts.idjagLifetime
+	})
 	// Alice and Bob sign in first, so AS-2's test trust can name their AS-1
 	// subjects.
 	accessToken := func(user string) string { return a.SignIn(t, as1servertest.SignIn{User: user}).Value() }

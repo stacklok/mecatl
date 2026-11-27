@@ -977,7 +977,7 @@ func TestHostedAS1RequestsUseTheConfiguredTimeout(t *testing.T) {
 			IdentityBrokerConfigFile: brokerconfigtest.Write(t, brokerconfigtest.Options{HostedAS1: true, Durations: durations}).Path,
 			IdentityBrokerHostedAS1:  hostedAS1Config(t, h, "https://as1.mecatl.test/as1"),
 		}
-		parts, err := buildIdentityBroker(t.Context(), cfg, nil, as2Settings{})
+		parts, err := buildIdentityBroker(t.Context(), cfg, nil, as2SigningKey{})
 		if err != nil {
 			t.Fatalf("buildIdentityBroker: %v", err)
 		}
@@ -1024,7 +1024,7 @@ func TestBuildRefusesAnUnworkableBrokerDuration(t *testing.T) {
 // even when a test injects the broker core, so it never starts without them
 // (the server refuses an identity broker with none).
 func TestIdentityBrokerWithAnInjectedCoreSendsTheConfiguredDefinitions(t *testing.T) {
-	parts, err := buildIdentityBroker(t.Context(), Config{IdentityBroker: true, NoShell: true, identityBrokerCore: newClosableCore(t)}, nil, as2Settings{})
+	parts, err := buildIdentityBroker(t.Context(), Config{IdentityBroker: true, NoShell: true, identityBrokerCore: newClosableCore(t)}, nil, as2SigningKey{})
 	if err != nil {
 		t.Fatalf("buildIdentityBroker: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/goccy/go-yaml"
 
@@ -237,16 +236,13 @@ func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 // server's signing key into the broker declaration, and refuses it where no
 // embedded authorization server runs.
 func TestMCPAuthorityBrokerSigningKeyRules(t *testing.T) {
-	key := permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback", SigningKeyFile: "/keys/as2/key.pem", FallbackKeyFiles: []string{"/keys/as2-old/key.pem"}, GatewayTokenLifetime: "20s"}
+	key := permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback", SigningKeyFile: "/keys/as2/key.pem", FallbackKeyFiles: []string{"/keys/as2-old/key.pem"}}
 	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Broker: key, Servers: []permconfig.MCPServerProfile{brokerOAuthRoute()}}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
 	if err != nil {
 		t.Fatalf("broker with a signing key: %v", err)
 	}
-	if broker, ok := got.Broker(); !ok || broker.SigningKeyFile != key.SigningKeyFile || !reflect.DeepEqual(broker.FallbackKeyFiles, key.FallbackKeyFiles) || broker.GatewayTokenLifetime != 20*time.Second {
-		t.Fatalf("broker declaration = %#v, want the signing key paths and the gateway token lifetime", broker)
-	}
-	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "global", Broker: permconfig.MCPBrokerProfile{GatewayTokenLifetime: "20s"}}, DefaultMode: mcpauthority.Global}); !errors.Is(err, ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "gateway_token_lifetime is inert in global mode") {
-		t.Fatalf("global gateway token lifetime error = %v", err)
+	if broker, ok := got.Broker(); !ok || broker.SigningKeyFile != key.SigningKeyFile || !reflect.DeepEqual(broker.FallbackKeyFiles, key.FallbackKeyFiles) {
+		t.Fatalf("broker declaration = %#v, want the signing key paths", broker)
 	}
 	noOAuth := permconfig.MCPBrokerProfile{SigningKeyFile: key.SigningKeyFile}
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Broker: noOAuth}, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) || !strings.Contains(err.Error(), "signing_key_file requires a broker OAuth server") {

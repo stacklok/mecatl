@@ -730,14 +730,6 @@ func gatewayTokenClaims(t *testing.T, got identitybroker.Authorization) jwt.MapC
 // application configuration after that.
 func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []string, edit func(*app.Config)) *gatewayServe {
 	t.Helper()
-	return serveGatewayIdentityBrokerWith(t, "", extraSettings, extraArgs, edit)
-}
-
-// serveGatewayIdentityBrokerWith is serveGatewayIdentityBroker with
-// brokerSettings, further lines of the mcp.broker mapping, each indented by
-// four spaces.
-func serveGatewayIdentityBrokerWith(t *testing.T, brokerSettings, extraSettings string, extraArgs []string, edit func(*app.Config)) *gatewayServe {
-	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	issueIDJAGs := as1servertest.IssueIDJAGs(brokerTrustDomain, gatewayAS2Issuer, gatewayResource)
 	a := as1servertest.Start(t, h, func(c *as1server.Config, d *as1server.DelegateClient) {
@@ -754,7 +746,7 @@ func serveGatewayIdentityBrokerWith(t *testing.T, brokerSettings, extraSettings 
 	t.Setenv(gatewayClientSecretEnv, "construction-only-secret")
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
 	signingKey := brokerconfigtest.WriteKey(t, filepath.Join(t.TempDir(), "gateway-signing-key.pem"), brokerconfigtest.NewKey(t))
-	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey+"\n"+brokerSettings, 1)+extraSettings), 0o600); err != nil {
+	if err := os.WriteFile(settings, []byte(strings.Replace(gatewaySettings, gatewaySigningKeyPlaceholder, signingKey, 1)+extraSettings), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	caFile := h.WriteCACert(t, t.TempDir())

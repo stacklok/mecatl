@@ -15,7 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/authorizationdetails"
-	"github.com/stacklok/toolhive/pkg/authserver/server"
 	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
 	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
@@ -30,7 +29,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
-	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 const (
@@ -100,27 +98,7 @@ type ToolHiveConfig struct {
 	// SigningKeyFile.
 	SigningKeyFile   string
 	FallbackKeyFiles []string
-	// GatewayTokenLifetime, with AS-2 set up, is the lifetime of each
-	// gateway token AS-2 issues the broker client, in whole seconds between
-	// minGatewayTokenLifetime and maxGatewayTokenLifetime. AS-2 caps it at
-	// the ID-JAG's remaining validity. It needs AS-2 to trust an ID-JAG
-	// issuer, since ToolHive applies it only to redeemed tokens. Zero selects
-	// DefaultGatewayTokenLifetime.
-	GatewayTokenLifetime time.Duration
 }
-
-// The gateway token's lifetime bounds (credentials-and-lifecycle.md, step
-// (8)): a token only has to start its one call, so it lives for seconds.
-const (
-	// DefaultGatewayTokenLifetime is ToolHiveConfig.GatewayTokenLifetime's
-	// default.
-	DefaultGatewayTokenLifetime = 30 * time.Second
-	// minGatewayTokenLifetime is ToolHive's smallest per-client lifetime.
-	minGatewayTokenLifetime = server.MinClientAccessTokenLifespan
-	// maxGatewayTokenLifetime is the identity broker's largest ID-JAG
-	// lifetime, which caps the gateway token anyway.
-	maxGatewayTokenLifetime = identitybroker.MaxIDJAGLifetime
-)
 
 // gatewayMaxCallDuration is how long the vMCP keeps a gateway call open: it
 // accepts the call's messages, and keeps its token's single-use record, for
@@ -131,24 +109,6 @@ const gatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
 // accepts the messages of the call it started: long enough for a user to
 // answer an elicitation, far shorter than gatewayMaxCallDuration.
 const defaultExpiredTokenGrace = 5 * time.Minute
-
-// gatewayTokenLifetime returns c's gateway token lifetime, the default for
-// zero, or an error when it is out of bounds, not whole seconds, or set
-// while AS-2 trusts no ID-JAG issuer, so it would never apply.
-func (c ToolHiveConfig) gatewayTokenLifetime() (time.Duration, error) {
-	d := c.GatewayTokenLifetime
-	if d == 0 {
-		return DefaultGatewayTokenLifetime, nil
-	}
-	if !c.AS2Trust.TrustsAnIssuer() {
-		return 0, fmt.Errorf("%w: a gateway token lifetime needs AS-2 to trust an ID-JAG issuer", ErrInvalidCatalogue)
-	}
-	if d < minGatewayTokenLifetime || d > maxGatewayTokenLifetime || d%time.Second != 0 {
-		return 0, fmt.Errorf("%w: the gateway token lifetime %s must be whole seconds from %s to %s",
-			ErrInvalidCatalogue, d, minGatewayTokenLifetime, maxGatewayTokenLifetime)
-	}
-	return d, nil
-}
 
 // expiredTokenGrace is how long after a gateway token's exp the vMCP
 // accepts the messages of the call it started: defaultExpiredTokenGrace,
@@ -291,8 +251,8 @@ type ToolHiveBrokerClient struct {
 }
 
 // as2DelegateClient is ToolHive's configuration of the broker client at AS-2
-// with the vMCP resource, whose redeemed gateway tokens live for lifetime;
-// zero leaves AS-2's default.
+// with the vMCP resource. Its gateway tokens get AS-2's default lifetime,
+// capped at the remaining validity of the ID-JAG they are redeemed from.
 // Restricted with no source clients, it can exchange only tokens issued to
 // itself, never a user's gateway login token. ToolHive refuses a subject
 // token that carries authorization_details (stacklok/toolhive#7282), so it
@@ -300,7 +260,7 @@ type ToolHiveBrokerClient struct {
 // token's single use with a new jti.
 //
 // Shortcut: ToolHive requires the token-exchange grant on this client, so a gateway token without a call entry, which the broker never obtains since it sends one on every call, could still be exchanged for another up to its expiry; removed by #2533 (AS-2 marks gateway tokens, which ToolHive refuses at token exchange, stacklok/toolhive#7247).
-func as2DelegateClient(client ToolHiveBrokerClient, resource string, lifetime time.Duration) authserver.DelegateClientRunConfig {
+func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,
 		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodPrivateKeyJWT,
@@ -309,16 +269,7 @@ func as2DelegateClient(client ToolHiveBrokerClient, resource string, lifetime ti
 		Scopes:                  []string{"openid"},
 		Audiences:               []string{resource},
 		TokenExchange:           &authserver.DelegateClientTokenExchange{SelfIssuedSubjectTokens: authserver.SelfIssuedSubjectTokensRestricted},
-		AccessTokenLifespan:     lifespan(lifetime),
 	}
-}
-
-// lifespan is d as ToolHive's duration string, empty for zero.
-func lifespan(d time.Duration) string {
-	if d == 0 {
-		return ""
-	}
-	return d.String()
 }
 
 // as2Resource is the vMCP resource when the embedded authorization server at
@@ -349,25 +300,18 @@ func AS2Endpoints(callbackURL string) (issuer, tokenEndpoint, resource string, e
 }
 
 // as2RunConfig returns AS-2's additions to the embedded authorization
-// server's RunConfig, with redeemed gateway tokens living for lifetime.
-// trust is zero in production.
-func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, lifetime time.Duration, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer) {
+// server's RunConfig. trust is zero in production.
+func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer) {
 	// Leaving JWTBearer unset keeps ToolHive's JWT-bearer grant, and so
-	// ID-JAG redemption, disabled. ToolHive refuses a client lifetime, which
-	// applies only to redeemed tokens, while it is.
+	// ID-JAG redemption, disabled.
+	grants := &authserver.InboundGrantsRunConfig{TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
+		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, resource)},
+	}}
 	var trusted []tokenexchange.TrustedIssuer
-	var jwtBearer *authserver.JWTBearerInboundGrantRunConfig
 	if trust.t != nil {
-		trusted, jwtBearer = as2TrustRunConfig(trust.t, issuer, resource)
-	} else {
-		lifetime = 0
+		trusted, grants.JWTBearer = as2TrustRunConfig(trust.t, issuer, resource)
 	}
-	return &authserver.InboundGrantsRunConfig{
-		TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
-			DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, resource, lifetime)},
-		},
-		JWTBearer: jwtBearer,
-	}, trusted
+	return grants, trusted
 }
 
 // as2TrustRef names the trusted issuer for its JWT-bearer policy.

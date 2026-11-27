@@ -563,6 +563,10 @@ func isInvalidTokenChallenge(header string) bool { return hasBearerError(header,
 
 // tokenReusedReason is how ToolHive's vMCP names a call-bound token that has
 // already started a call in an invalid_token challenge's error_description.
+// The match depends on ToolHive's description text, which is not a stable
+// contract: a distinct error signal for a spent token has been requested
+// from ToolHive. Until it exists, a change to that text would make a spent
+// token look like any rejected one and be retried with a new token.
 const tokenReusedReason = "(token_reused)" // #nosec G101 -- a reason code, not a credential.
 
 // isTokenReusedChallenge reports a WWW-Authenticate value carrying a Bearer

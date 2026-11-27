@@ -33,11 +33,11 @@ import (
 // the real vMCP, routing a real backend. Like the rest of the harness, none
 // is parallel.
 
-// bindingTokenLifetime and bindingGrace are the gateway tokens' lifetime and
-// the grace after it in which the vMCP still accepts their call's messages,
-// short so the tests can outlive them.
+// bindingIDJAGLifetime caps the gateway tokens' lifetime, and bindingGrace is
+// the grace after it in which the vMCP still accepts their call's messages:
+// short, so the tests can outlive them.
 const (
-	bindingTokenLifetime = 2 * time.Second
+	bindingIDJAGLifetime = 3 * time.Second
 	bindingGrace         = 4 * time.Second
 )
 
@@ -78,16 +78,15 @@ func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHivePro
 }
 
 // newBindingFixture is a harness fixture whose gateway routes the calendar
-// backend, with short gateway tokens and grace.
+// backend, with short ID-JAGs, so short gateway tokens, and a short grace.
 func newBindingFixture(t *testing.T) (*harnessFixture, *calendarBackend) {
 	t.Helper()
 	backend, profile := startCalendarBackend(t)
 	f := newHarnessFixtureWith(t, harnessOptions{
 		as2: mcpbrokertest.AS2Options{
-			Profiles:             []mcpbroker.ToolHiveProfile{profile},
-			GatewayTokenLifetime: bindingTokenLifetime, ExpiredTokenGrace: bindingGrace,
+			Profiles: []mcpbroker.ToolHiveProfile{profile}, ExpiredTokenGrace: bindingGrace,
 		},
-		servers: []string{"calendar"},
+		servers: []string{"calendar"}, idjagLifetime: bindingIDJAGLifetime,
 	})
 	return f, backend
 }
@@ -275,8 +274,8 @@ func gatewayTokenExp(t *testing.T, token identitybroker.Token) time.Time {
 // AS-1 a call entry for every gateway call, tool calls and tool listings
 // alike; AS-1 signs it into the ID-JAG; AS-2 copies it into the gateway
 // token, unchanged, and returns it; the broker's output check finds it equal
-// and records that; and each call gets its own token, with a lifetime of
-// seconds (implementation.md, "Test the per-call V").
+// and records that; and each call gets its own token, which expires no
+// later than its ID-JAG (implementation.md, "Test the per-call V").
 func TestAuthorizeCallBindsEachGatewayTokenToItsCallAtAS2(t *testing.T) {
 	f, _ := newBindingFixture(t)
 	call := f.calendarCall(t, "op-bind-call", "echo", `{"a":1}`)
@@ -308,8 +307,8 @@ func TestAuthorizeCallBindsEachGatewayTokenToItsCallAtAS2(t *testing.T) {
 		if !reflect.DeepEqual(v["authorization_details"], want[req.OperationID]) {
 			t.Errorf("%s: the gateway token's authorization_details = %v, want the entry sent", req.Method, v["authorization_details"])
 		}
-		if life := unixClaim(t, v, "exp").Sub(unixClaim(t, v, "iat")); life != bindingTokenLifetime {
-			t.Errorf("%s: the gateway token lives %v, want %v", req.Method, life, bindingTokenLifetime)
+		if exp, idjagExp := unixClaim(t, v, "exp"), unixClaim(t, f.issued(t)[i], "exp"); exp.After(idjagExp) {
+			t.Errorf("%s: the gateway token expires at %v, after its ID-JAG at %v", req.Method, exp, idjagExp)
 		}
 		if d := f.rec.Decisions()[i]; d.Outcome != identitybroker.OutcomeSuccess || d.CallEntryCheck != identitybroker.CallEntryEqual || d.GatewayToken.ID != v["jti"] {
 			t.Errorf("%s: the decision = %s, check %q, token %+v; want success, equal, and the token's jti", req.Method, d.Outcome, d.CallEntryCheck, d.GatewayToken)

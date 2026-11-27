@@ -883,10 +883,6 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	if want := testCallDetails(); !reflect.DeepEqual(claims["authorization_details"], want) || !reflect.DeepEqual(body["authorization_details"], want) {
 		t.Errorf("gateway token authorization_details = %v, response's %v; want %v in both", claims["authorization_details"], body["authorization_details"], want)
 	}
-	// It lives for the broker client's gateway-token lifetime.
-	if iat, exp := claims["iat"].(float64), claims["exp"].(float64); time.Duration(exp-iat)*time.Second != DefaultGatewayTokenLifetime {
-		t.Errorf("gateway token lives %v, want %v", time.Duration(exp-iat)*time.Second, DefaultGatewayTokenLifetime)
-	}
 
 	// The vMCP's incoming authentication accepts the gateway token.
 	mux := http.NewServeMux()
@@ -1376,14 +1372,13 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	return parsed
 }
 
-// TestAS2BindsGatewayTokensToTheirCall: AS-2 issues the broker client's
-// gateway tokens for the configured lifetime, and the vMCP accepts a
-// call-bound one and refuses one of the broker client without a call entry
+// TestAS2BindsGatewayTokensToTheirCall: the vMCP accepts a call-bound
+// gateway token and refuses one of the broker client without a call entry
 // (credentials-and-lifecycle.md, steps (8) and (9)).
 func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
-	process := startTrustingAS2With(t, as1, broker.config, func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 7 * time.Second })
+	process := startTrustingAS2(t, as1, broker.config)
 	as2 := process.AS2
 	// redeem redeems idJAG, or a fresh call-bound one when it is empty.
 	redeem := func(idJAG string) string {
@@ -1402,42 +1397,11 @@ func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 		return token
 	}
 
-	bound := unverifiedClaims(t, redeem(""))
-	if iat, exp := bound["iat"].(float64), bound["exp"].(float64); time.Duration(exp-iat)*time.Second != 7*time.Second {
-		t.Fatalf("the gateway token lives %vs, want the configured 7s", exp-iat)
-	}
 	if status := vmcpInitialize(t, process, redeem("")); status != http.StatusOK {
 		t.Fatalf("vMCP initialize with a call-bound gateway token: status %d, want 200", status)
 	}
 	if status := vmcpInitialize(t, process, redeem(as1.unboundIDJAG(t, as2))); status != http.StatusForbidden {
 		t.Fatalf("vMCP initialize with a gateway token without a call entry: status %d, want 403 entry_required", status)
-	}
-}
-
-// TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange: the gateway token
-// lifetime is whole seconds from 2s to 5m, and needs AS-2 to trust an ID-JAG
-// issuer, since ToolHive applies it only to redeemed tokens.
-func TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange(t *testing.T) {
-	trust := NewAS2Trust(as2trust.Trust{Issuer: "https://as1.example"})
-	for name, c := range map[string]struct {
-		lifetime time.Duration
-		trust    AS2Trust
-		want     string
-	}{
-		"a lifetime under 2s":          {time.Second, trust, "whole seconds from 2s to 5m0s"},
-		"a lifetime over 5m":           {6 * time.Minute, trust, "whole seconds from 2s to 5m0s"},
-		"a lifetime of part a second":  {2500 * time.Millisecond, trust, "whole seconds from 2s to 5m0s"},
-		"a lifetime AS-2 cannot apply": {30 * time.Second, AS2Trust{}, "needs AS-2 to trust an ID-JAG issuer"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			config := ToolHiveConfig{
-				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")},
-				GatewayTokenLifetime: c.lifetime, AS2Trust: c.trust,
-			}
-			if _, err := NewToolHiveProcess(t.Context(), config); !errors.Is(err, ErrInvalidCatalogue) || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue: %s", err, c.want)
-			}
-		})
 	}
 }
 

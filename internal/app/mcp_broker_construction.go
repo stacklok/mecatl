@@ -123,7 +123,7 @@ func deriveEmbeddedGateway(cfg Config, declaration mcpauthority.BrokerConfig, se
 
 // as2SigningPublicKeys reads the embedded gateway's signing key and its
 // fallbacks as its authorization server does, and returns their public keys.
-func as2SigningPublicKeys(key as2Settings) ([]crypto.PublicKey, error) {
+func as2SigningPublicKeys(key as2SigningKey) ([]crypto.PublicKey, error) {
 	return mcpbroker.SigningPublicKeys(key.file, key.fallbacks)
 }
 
@@ -205,9 +205,6 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	// Startup allows a signing key only with an embedded gateway entry
 	// (checkGatewayEntry).
 	config.SigningKeyFile, config.FallbackKeyFiles = declaration.SigningKeyFile, append([]string(nil), declaration.FallbackKeyFiles...)
-	// The lifetime requires the signing key (permconfig), so an embedded
-	// gateway entry too.
-	config.GatewayTokenLifetime = declaration.GatewayTokenLifetime
 	if identity.entry != nil && identity.clientKeySetFile != "" {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: identity.clientKeySetFile}
 	}

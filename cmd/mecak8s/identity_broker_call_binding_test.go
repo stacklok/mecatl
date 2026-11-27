@@ -5,25 +5,22 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 // TestIdentityBrokerBindsEachGatewayTokenToItsCall runs #2727 through
-// mecak8s's real startup and served vMCP endpoint, offline: the operator
-// sets the gateway token's lifetime in settings.yaml; every gateway token
-// the identity broker obtains carries the call entry it sent AS-1, copied by
-// the real AS-2; a listing token cannot start a tools/call at the served
-// vMCP; and a token past its exp with no open call is refused. The calls
+// mecak8s's real startup and served vMCP endpoint, offline: every gateway
+// token the identity broker obtains carries the call entry it sent AS-1,
+// copied by the real AS-2, and expires no later than its ID-JAG; and a
+// listing token cannot start a tools/call at the served vMCP. The calls
 // themselves are refused by the stand-in (TestIdentityBrokerGatewayCallAgainstRealAS1),
 // so a call outliving its token is covered against the real AS-2 and vMCP
 // by the identity broker's TestRealVMCPCancelsACallThatOutlivesItsToken. It
 // is not parallel: the protected route's client secret is read from an
 // environment variable.
 func TestIdentityBrokerBindsEachGatewayTokenToItsCall(t *testing.T) {
-	const lifetime = 3 * time.Second
-	gw := serveGatewayIdentityBrokerWith(t, "    gateway_token_lifetime: 3s", notesRoute(t), nil, nil)
+	gw := serveGatewayIdentityBroker(t, notesRoute(t), nil, nil)
 	created := createSession(t, gw.api, gw.alice)
 	if status, body := apiCall(t, http.MethodPost, gw.api+"/v1/sessions/"+created+"/prompt", gw.alice, `{"text":"hello"}`); status != http.StatusOK {
 		t.Fatalf("Alice prompts her session: status %d: %s", status, body)
@@ -54,9 +51,13 @@ func TestIdentityBrokerBindsEachGatewayTokenToItsCall(t *testing.T) {
 	call := authorize("op-call", identitybroker.MethodToolsCall, "calendar.echo", hash)
 	listing := authorize("op-list", identitybroker.MethodToolsList, "", "")
 
-	// Each token carries the entry the broker sent, and lives for the
-	// configured lifetime.
-	for _, c := range []struct {
+	// Each token carries the entry the broker sent, and expires no later than
+	// the ID-JAG it was redeemed from.
+	issued := gw.idjags(t)
+	if len(issued) != 2 {
+		t.Fatalf("AS-1 issued %d ID-JAGs, want one per call", len(issued))
+	}
+	for i, c := range []struct {
 		name  string
 		auth  identitybroker.Authorization
 		entry map[string]any
@@ -71,10 +72,10 @@ func TestIdentityBrokerBindsEachGatewayTokenToItsCall(t *testing.T) {
 		if want := []any{c.entry}; !reflect.DeepEqual(claims["authorization_details"], want) {
 			t.Errorf("the %s token's authorization_details = %v, want %v", c.name, claims["authorization_details"], want)
 		}
-		iat, _ := claims.GetIssuedAt()
 		exp, _ := claims.GetExpirationTime()
-		if iat == nil || exp == nil || exp.Sub(iat.Time) != lifetime {
-			t.Errorf("the %s token lives from %v to %v, want %v", c.name, iat, exp, lifetime)
+		idjagExp, _ := issued[i].GetExpirationTime()
+		if exp == nil || idjagExp == nil || exp.After(idjagExp.Time) {
+			t.Errorf("the %s token expires at %v, want no later than its ID-JAG at %v", c.name, exp, idjagExp)
 		}
 	}
 
@@ -90,11 +91,5 @@ func TestIdentityBrokerBindsEachGatewayTokenToItsCall(t *testing.T) {
 	// The refusal did not spend the listing token, which ends its session.
 	if _, status, body := servedVMCP(t, http.MethodDelete, gw.api, listing.GatewayToken.Value(), session, ""); status >= 300 {
 		t.Fatalf("DELETE of the listing token's session: %d %s", status, body)
-	}
-
-	// Past its exp, a token that started no call is refused.
-	time.Sleep(time.Until(call.ExpiresAt.Add(time.Second)))
-	if _, status, body := servedVMCP(t, http.MethodPost, gw.api, call.GatewayToken.Value(), "", mcpInitialize); status != http.StatusUnauthorized {
-		t.Fatalf("initialize with an expired gateway token: %d %s, want 401", status, body)
 	}
 }
