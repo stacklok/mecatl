@@ -190,6 +190,12 @@ type ToolHiveBrokerClient struct {
 // as2DelegateClient is ToolHive's configuration of the broker client at AS-2
 // with the vMCP resource. Restricted with no source clients, it can exchange
 // only tokens issued to itself, never a user's gateway login token.
+//
+// Shortcut: that includes a gateway token AS-2 issued it, which the design
+// refuses, and ToolHive requires the token-exchange grant on this client, so
+// each exchange mints another gateway token with a new jti, up to the
+// original's expiry; removed by #2533 (AS-2 marks gateway tokens, which
+// ToolHive refuses at token exchange, stacklok/toolhive#7247).
 func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,
@@ -208,6 +214,9 @@ func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.
 func as2Resource(issuer string) string {
 	return issuer + "/mcp"
 }
+
+// as2AccessTokenType is the JOSE typ of the access tokens AS-2 issues.
+const as2AccessTokenType = "at+jwt"
 
 // as2TokenEndpoint is the token endpoint of AS-2 at issuer.
 func as2TokenEndpoint(issuer string) string {
@@ -245,18 +254,21 @@ func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS
 const as2TrustRef = "as1"
 
 // as2TrustRunConfig is ToolHive's configuration of t at AS-2: ID-JAGs for
-// issuer that may obtain only resource.
+// issuer that may obtain only resource. It accepts ID-JAGs only, never plain
+// RFC 7523 assertions, which ToolHive would otherwise redeem from a trusted
+// issuer without client authentication.
 func as2TrustRunConfig(t *as2trust.Trust, issuer, resource string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
 	bindings := make([]tokenexchange.JWTBearerSubjectBinding, len(t.Subjects))
 	for i, subject := range t.Subjects {
 		bindings[i] = tokenexchange.JWTBearerSubjectBinding{Subject: subject, AllowedResources: []string{resource}}
 	}
 	trusted := []tokenexchange.TrustedIssuer{{
-		Name: as2TrustRef, IssuerURL: t.Issuer, JWKSURL: t.JWKSURL, CAFilePath: t.CAFile, AllowPrivateIPs: true,
+		Name: as2TrustRef, IssuerURL: t.Issuer, JWKSURL: t.JWKSURL, CAFilePath: t.CAFile, AllowPrivateIPs: t.AllowPrivateAddresses,
 	}}
 	return trusted, &authserver.JWTBearerInboundGrantRunConfig{IssuerPolicies: []authserver.JWTBearerIssuerPolicyRunConfig{{
 		IssuerRef: as2TrustRef, MaxAssertionAge: t.MaxAssertionAge.String(),
 		SubjectBindings: bindings, AcceptedAudiences: []string{issuer},
+		AcceptedAssertionTypes: []tokenexchange.JWTBearerAssertionType{tokenexchange.JWTBearerAssertionTypeIDJAG},
 	}}}
 }
 

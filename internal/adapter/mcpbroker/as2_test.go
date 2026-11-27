@@ -128,17 +128,36 @@ func (c as2BrokerClient) signAssertion(t *testing.T, key *ecdsa.PrivateKey, clai
 // status and decoded JSON body.
 func postAS2Token(t *testing.T, as2 *AS2, form url.Values) (int, map[string]any) {
 	t.Helper()
+	status, body, err := tryPostAS2Token(as2, form)
+	if err != nil {
+		t.Fatalf("AS-2 token request: %v", err)
+	}
+	return status, body
+}
+
+// tryPostAS2Token is postAS2Token returning the request's error, for
+// goroutines other than the test's.
+func tryPostAS2Token(as2 *AS2, form url.Values) (int, map[string]any, error) {
 	client := inprocesshttp.NewClient(as2.Handler(), func(*url.URL) error { return nil })
 	client.Timeout = 5 * time.Second
 	resp, err := client.PostForm(as2.TokenEndpoint, form)
 	if err != nil {
-		t.Fatalf("AS-2 token request: %v", err)
+		return 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var body map[string]any
 	raw, _ := io.ReadAll(resp.Body)
 	_ = json.Unmarshal(raw, &body)
-	return resp.StatusCode, body
+	return resp.StatusCode, body, nil
+}
+
+// refusalReason is the reason code the identity broker reads from an AS-2
+// refusal body: the known code that starts error_description, "unknown" for
+// any other text, and empty when there is none.
+func refusalReason(body map[string]any) string {
+	code, _ := body["error"].(string)
+	description, _ := body["error_description"].(string)
+	return identitybroker.NewServerRefusal(0, code, description).Reason
 }
 
 // trustedAS1 is the real AS-1, with the harness IdP as its upstream, and
@@ -713,18 +732,33 @@ func startTrustingAS2(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient
 // configuration first.
 func startTrustingAS2With(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient, edit func(*ToolHiveConfig)) *Process {
 	t.Helper()
+	return startTrustingAS2WithOptions(t, as1, client, edit, toolHiveProcessOptions{})
+}
+
+// trustingAS2Config is the configuration of AS-2 trusting as1, for Alice
+// and Bob, with client as its broker client. It sets an environment
+// variable, so t must not be parallel.
+func trustingAS2Config(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient) ToolHiveConfig {
+	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
-	config := ToolHiveConfig{
+	return ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: client,
 		AS2Trust: NewAS2Trust(as2trust.Trust{
 			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: as1.a.Harness.WriteCACert(t, t.TempDir()),
-			Subjects: []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
+			AllowPrivateAddresses: true,
+			Subjects:              []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
 		}.WithDefaults()),
 	}
+}
+
+// startTrustingAS2WithOptions is startTrustingAS2With built with options.
+func startTrustingAS2WithOptions(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient, edit func(*ToolHiveConfig), options toolHiveProcessOptions) *Process {
+	t.Helper()
+	config := trustingAS2Config(t, as1, client)
 	if edit != nil {
 		edit(&config)
 	}
-	process, err := NewToolHiveProcess(t.Context(), config)
+	process, err := newToolHiveProcess(t.Context(), config, options)
 	if err != nil {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
@@ -805,7 +839,14 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 		t.Fatal("the gateway token came with a refresh token")
 	}
 	gatewayToken, _ := body["access_token"].(string)
-	claims := unverifiedClaims(t, gatewayToken)
+	parsed, _, err := jwt.NewParser().ParseUnverified(gatewayToken, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse the gateway token: %v", err)
+	}
+	claims, header := parsed.Claims.(jwt.MapClaims), parsed.Header
+	if header["typ"] != "at+jwt" {
+		t.Errorf("gateway token typ = %v, want at+jwt", header["typ"])
+	}
 	if claims["client_id"] != identitybroker.BrokerClientID {
 		t.Errorf("gateway token client_id = %v, want %s", claims["client_id"], identitybroker.BrokerClientID)
 	}
@@ -824,18 +865,85 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
 		t.Fatalf("mount handlers: %v", err)
 	}
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, as2TestResource, strings.NewReader(mcpInitializeBody))
-	req.Header.Set("Authorization", "Bearer "+gatewayToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
+	vmcpInitialize := func(token string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, as2TestResource, strings.NewReader(mcpInitializeBody))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, req)
+		return recorder
+	}
+	if recorder := vmcpInitialize(gatewayToken); recorder.Code != http.StatusOK {
 		t.Fatalf("vMCP initialize with the gateway token: status %d, body %s", recorder.Code, recorder.Body)
 	}
 
+	// The vMCP rejects a gateway token from another issuer, for another
+	// audience, with the wrong typ, or expired (implementation.md,
+	// "Credential verification"), as invalid_token, which the broker retries
+	// once with a new gateway token (credentials-and-lifecycle.md, step (8)).
+	// Each variant is the gateway token with one change, signed again; the
+	// unchanged copy, signed the same way, is accepted, so each rejection is
+	// the change's.
+	signing, err := process.auth.KeyProvider().SigningKey(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// resign is the gateway token after edit, signed by key under kid with
+	// method.
+	resign := func(method jwt.SigningMethod, key any, kid string, edit func(jwt.MapClaims, map[string]any)) string {
+		t.Helper()
+		token := jwt.NewWithClaims(method, maps.Clone(claims))
+		token.Header = maps.Clone(header)
+		token.Header["alg"], token.Header["kid"] = method.Alg(), kid
+		edit(token.Claims.(jwt.MapClaims), token.Header)
+		signed, err := token.SignedString(key)
+		if err != nil {
+			t.Fatalf("sign a gateway token variant: %v", err)
+		}
+		return signed
+	}
+	asAS2 := func(edit func(jwt.MapClaims, map[string]any)) string {
+		return resign(jwt.GetSigningMethod(signing.Algorithm), signing.Key, signing.KeyID, edit)
+	}
+	if recorder := vmcpInitialize(asAS2(func(jwt.MapClaims, map[string]any) {})); recorder.Code != http.StatusOK {
+		t.Fatalf("vMCP initialize with the gateway token signed again: status %d, body %s", recorder.Code, recorder.Body)
+	}
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherIssuer := func(c jwt.MapClaims, _ map[string]any) { c["iss"] = "https://other-as2.example" }
+	for name, token := range map[string]string{
+		"another issuer, signed by another key":           resign(jwt.SigningMethodES256, otherKey, "other-as2-key", otherIssuer),
+		"another issuer, signed by AS-2's key":            asAS2(otherIssuer),
+		"AS-2's issuer and key ID, signed by another key": resign(jwt.SigningMethodES256, otherKey, signing.KeyID, func(jwt.MapClaims, map[string]any) {}),
+		"another audience":                                asAS2(func(c jwt.MapClaims, _ map[string]any) { c["aud"] = []string{"https://other.example/mcp"} }),
+		"typ ID-JAG":                                      asAS2(func(_ jwt.MapClaims, h map[string]any) { h["typ"] = idJAGType }),
+		"expired": asAS2(func(c jwt.MapClaims, _ map[string]any) {
+			c["iat"], c["exp"] = time.Now().Add(-10*time.Minute).Unix(), time.Now().Add(-5*time.Minute).Unix()
+		}),
+	} {
+		recorder := vmcpInitialize(token)
+		if challenge := recorder.Header().Get("WWW-Authenticate"); recorder.Code != http.StatusUnauthorized || !strings.Contains(challenge, `error="invalid_token"`) {
+			t.Errorf("vMCP initialize with a gateway token, %s: status %d, WWW-Authenticate %q; want 401 invalid_token", name, recorder.Code, challenge)
+		}
+	}
+	// The vMCP accepts these, which the design refuses: see the shortcut on
+	// the vMCP's incoming authentication in newToolHiveProcess. Flip them to
+	// 401 when Mecatl turns on stacklok/toolhive#7345's check.
+	for name, edit := range map[string]func(jwt.MapClaims, map[string]any){
+		"typ JWT":    func(_ jwt.MapClaims, h map[string]any) { h["typ"] = "JWT" },
+		"typ absent": func(_ jwt.MapClaims, h map[string]any) { delete(h, "typ") },
+	} {
+		if recorder := vmcpInitialize(asAS2(edit)); recorder.Code != http.StatusOK {
+			t.Errorf("vMCP initialize with a gateway token, %s: status %d; if the vMCP now refuses it, make this a 401 and drop the shortcut", name, recorder.Code)
+		}
+	}
+
 	// An ID-JAG redeems once.
-	if status, body := redeem(first, broker.assertion(t, as2.Issuer)); status != http.StatusBadRequest || body["error"] != "invalid_grant" {
+	if status, body := redeem(first, broker.assertion(t, as2.Issuer)); status != http.StatusBadRequest || body["error"] != "invalid_grant" || refusalReason(body) != "invalid_assertion" {
 		t.Fatalf("second redemption of one ID-JAG: status %d, body %v", status, body)
 	}
 
@@ -921,29 +1029,105 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	twoAudiences := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{
 		"aud": []string{as2.Issuer, "https://other.example/v1/mcp/broker"}, "resource": as2.Resource, "act": as1.act(),
 	})
+	// withClaims is an ID-JAG for AS-2 with claims changed.
+	withClaims := func(claims map[string]any) string {
+		all := map[string]any{"resource": as2.Resource, "act": as1.act()}
+		maps.Copy(all, claims)
+		return as1.jwt(t, as2, as2.Issuer, idJAGType, all)
+	}
+	now := time.Now()
+	unbound := withClaims(map[string]any{"sub": "not-a-bound-subject"})
+	// Plain RFC 7523 assertions from AS-1, for a bound subject: AS-2 trusts
+	// AS-1 for ID-JAGs only, so it refuses them, and ToolHive's plain path,
+	// which would otherwise redeem them without client authentication, never
+	// sees them (credentials-and-lifecycle.md, step (8)).
+	plainJWT := func() string { return as1.jwt(t, as2, as2.Issuer, "JWT", nil) }
+	plainNoTyp := func() string { return as1.jwt(t, as2, as2.Issuer, "", nil) }
+	// ToolHive's hints for the refusals below, as of v0.69.0. The generic
+	// hint is the one ToolHive gives every assertion it cannot validate.
+	const (
+		hintResource    = "The requested resource is invalid"
+		hintUngoverned  = "resource claim names a resource this server does not govern"
+		hintUnverified  = "The ID-JAG assertion is invalid or could not be verified"
+		hintOneAudience = "aud must name exactly one audience"
+		hintLifetime    = "exceeds the configured maximum age"
+		hintOtherClient = "was not issued to the requesting client"
+		hintTyp         = "JOSE typ header is not supported"
+		hintPlain       = "issuer is not enabled for this grant"
+	)
+	// otherSignature is an ID-JAG that is valid but for its signature: AS-1's
+	// issuer and key ID, signed with another key.
+	otherSignature := func() string {
+		valid, _, err := jwt.NewParser().ParseUnverified(idJAG(as2.Issuer), jwt.MapClaims{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := jwt.NewWithClaims(jwt.SigningMethodES256, valid.Claims)
+		forged.Header = maps.Clone(valid.Header)
+		forged.Header["alg"] = jwt.SigningMethodES256.Alg()
+		signed, err := forged.SignedString(otherKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
 	for _, test := range []struct {
 		name       string
 		assertion  string
 		resource   *string
 		clientAuth bool
 		wantError  string
+		// wantReason is the reason code AS-2 puts first in error_description
+		// (step (8)'s failure rows), as the broker reads it: "unknown" for
+		// invalid_target, which carries ToolHive's prose and no reason.
+		wantReason string
+		// wantHint is text error_description must contain: many refusals
+		// share invalid_assertion, and ToolHive tells their causes apart
+		// only in the hint after it.
+		wantHint string
 	}{
-		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target"},
-		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target"},
+		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target", "unknown", hintResource},
+		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target", "unknown", hintResource},
 		// An ID-JAG whose resource claim names a resource AS-2 does not
 		// govern is refused, whether or not the request names the vMCP's.
-		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant"},
-		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant"},
-		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant"},
-		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant"},
-		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant"},
-		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant"},
-		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant"},
+		// ToolHive checks the claim itself before comparing it with the
+		// request or with policy (ID-JAG draft, section 4.4.1), so step (8)'s
+		// invalid_target and resource_denied rows apply only to a claim AS-2
+		// governs.
+		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant", "invalid_assertion", hintUngoverned},
+		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUngoverned},
+		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOneAudience},
+		{"ID-JAG for a subject AS-2 cannot map", unbound, resource(as2.Resource), true, "access_denied", "subject_unknown", ""},
+		{"expired ID-JAG", withClaims(map[string]any{"iat": now.Add(-3 * time.Minute).Unix(), "exp": now.Add(-2 * time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		// AS-2 limits an ID-JAG's lifetime, exp - iat, not its age: it does
+		// not compare iat with the current time.
+		{"ID-JAG with a lifetime over the maximum", withClaims(map[string]any{"iat": now.Unix(), "exp": now.Add(as2trust.DefaultMaxAssertionAge + time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintLifetime},
+		{"ID-JAG for another client", withClaims(map[string]any{"client_id": "other-client"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOtherClient},
+		{"ID-JAG naming an issuer AS-2 does not trust", withClaims(map[string]any{"iss": "https://untrusted-as1.example"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG with AS-1's issuer and key ID, signed by another key", otherSignature(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintTyp},
+		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintTyp},
+		{"plain JWT, typ JWT", plainJWT(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, typ JWT, without client authentication", plainJWT(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, no typ", plainNoTyp(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, no typ, without client authentication", plainNoTyp(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintPlain},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			status, body := as2Redemption(t, as2, broker, test.assertion, test.resource, test.clientAuth)
 			if _, issued := body["access_token"]; issued || status != http.StatusBadRequest || body["error"] != test.wantError {
 				t.Fatalf("status %d, body %v; want 400 %s and no token", status, body, test.wantError)
+			}
+			if got := refusalReason(body); got != test.wantReason {
+				t.Fatalf("reason %q, body %v; want %q", got, body, test.wantReason)
+			}
+			if description, _ := body["error_description"].(string); !strings.Contains(description, test.wantHint) {
+				t.Fatalf("error_description %q; want it to contain %q", description, test.wantHint)
 			}
 		})
 	}
@@ -955,26 +1139,169 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	}
 }
 
-// TestAS2RedeemsWhatTrackedShortcutsAllow records a redemption AS-2 accepts
-// today through the test-only trust that the design refuses, so the ticket
-// that closes it flips these cases to refusals rather than finding the
-// behaviour by accident.
-func TestAS2RedeemsWhatTrackedShortcutsAllow(t *testing.T) {
+// TestAS2RedeemsAnIDJAGOnceUnderConcurrentRedemptions sends one ID-JAG to
+// AS-2 several times at once: exactly one redemption gets a gateway token,
+// and every other one is refused as a replay (step (8) check 5).
+func TestAS2RedeemsAnIDJAGOnceUnderConcurrentRedemptions(t *testing.T) {
+	as1, broker, process := newTrustingAS2(t)
+	as2 := process.AS2
+	idJAG := as1.idJAG(t, as2)
+	const redemptions = 8
+	forms := make([]url.Values, redemptions)
+	for i := range forms {
+		forms[i] = url.Values{
+			"grant_type": {oauthproto.GrantTypeJWTBearer}, "assertion": {idJAG}, "resource": {as2.Resource},
+			"client_assertion_type": {clientAssertionTyp}, "client_assertion": {broker.assertion(t, as2.Issuer)},
+		}
+	}
+	type answer struct {
+		status int
+		body   map[string]any
+		err    error
+	}
+	answers := make([]answer, redemptions)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range forms {
+		wg.Go(func() {
+			<-start
+			answers[i].status, answers[i].body, answers[i].err = tryPostAS2Token(as2, forms[i])
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	issued := 0
+	for _, a := range answers {
+		switch {
+		case a.err != nil:
+			t.Errorf("concurrent redemption: %v", a.err)
+		case a.status == http.StatusOK:
+			if token, _ := a.body["access_token"].(string); token == "" {
+				t.Errorf("concurrent redemption: status 200 with no gateway token, body %v", a.body)
+				continue
+			}
+			issued++
+		default:
+			description, _ := a.body["error_description"].(string)
+			if _, token := a.body["access_token"]; token || a.status != http.StatusBadRequest || a.body["error"] != "invalid_grant" ||
+				refusalReason(a.body) != "invalid_assertion" || !strings.Contains(description, "has already been used") {
+				t.Errorf("concurrent redemption: status %d, body %v; want 200 with a token, or 400 invalid_grant refusing a replay and no token", a.status, a.body)
+			}
+		}
+	}
+	if issued != 1 {
+		t.Fatalf("%d of %d concurrent redemptions of one ID-JAG got a gateway token, want 1", issued, redemptions)
+	}
+}
+
+// TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed: a trust whose key
+// set URL names a loopback address is refused when AS-2 is built unless the
+// trust allows private addresses. The other AS-2 tests allow it for their
+// loopback AS-1.
+func TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed(t *testing.T) {
+	config := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config)
+	config.AS2Trust.t.AllowPrivateAddresses = false
+	process, err := NewToolHiveProcess(t.Context(), config)
+	if err == nil {
+		_ = process.Close()
+		t.Fatal("AS-2 trusting a loopback AS-1 without private addresses allowed was built")
+	}
+	if !strings.Contains(err.Error(), "private or loopback") {
+		t.Fatalf("NewToolHiveProcess: %v; want a refusal of the loopback key set URL", err)
+	}
+}
+
+// errConsumeForTest is the replay store's failure in
+// TestAS2AnswersAReplayStoreOutageWithServerError.
+var errConsumeForTest = errors.New("replay store unavailable for test")
+
+// failingReplayStore is the in-memory auth store whose replay store for
+// assertions, which AS-2 consults at each redemption, is unavailable while
+// failing is set. It embeds the concrete store so ToolHive still finds the
+// store's other interfaces.
+type failingReplayStore struct {
+	*storage.MemoryStorage
+	failing *atomic.Bool
+}
+
+func (s failingReplayStore) ConsumeAssertionJWT(ctx context.Context, purpose, issuer, jti string, exp time.Time) error {
+	if s.failing.Load() {
+		return errConsumeForTest
+	}
+	return s.MemoryStorage.ConsumeAssertionJWT(ctx, purpose, issuer, jti, exp)
+}
+
+// TestAS2AnswersAReplayStoreOutageWithServerError: when AS-2 cannot record a
+// redeemed ID-JAG, it refuses the redemption as server_error, which the
+// broker treats as an unavailable server, never as a refused grant or a
+// reason to prompt, and a gateway token issued before the outage still works
+// at the vMCP (implementation.md, "Credential verification").
+func TestAS2AnswersAReplayStoreOutageWithServerError(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	broker := newAS2BrokerClient(t)
+	var failing atomic.Bool
+	process := startTrustingAS2WithOptions(t, as1, broker.config, nil, toolHiveProcessOptions{
+		localAuthStoreForTest: func(store storage.Storage) storage.Storage {
+			memory, ok := store.(*storage.MemoryStorage)
+			if !ok {
+				t.Fatalf("auth store %T, want the in-memory store", store)
+			}
+			return failingReplayStore{MemoryStorage: memory, failing: &failing}
+		},
+	})
+	as2 := process.AS2
+	vmcp := as2.Resource
+	status, body := as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
+	if status != http.StatusOK {
+		t.Fatalf("redemption before the outage: status %d, body %v", status, body)
+	}
+	issued, _ := body["access_token"].(string)
+
+	failing.Store(true)
+	status, body = as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
+	if _, issued := body["access_token"]; issued || status != http.StatusInternalServerError || body["error"] != "server_error" {
+		t.Fatalf("redemption during a replay store outage: status %d, body %v; want 500 server_error and no token", status, body)
+	}
+
+	mux := http.NewServeMux()
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount handlers: %v", err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, as2TestResource, strings.NewReader(mcpInitializeBody))
+	req.Header.Set("Authorization", "Bearer "+issued)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("vMCP initialize during the outage with a gateway token issued before it: status %d, body %s", recorder.Code, recorder.Body)
+	}
+}
+
+// TestAS2LetsTheBrokerClientExchangeItsGatewayToken records the shortcut on
+// as2DelegateClient: the broker client exchanges a gateway token AS-2 issued
+// to it, which the design refuses. #2533 flips this test to a refusal once
+// AS-2 marks gateway tokens (stacklok/toolhive#7247).
+func TestAS2LetsTheBrokerClientExchangeItsGatewayToken(t *testing.T) {
 	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
 	vmcp := as2.Resource
-
-	// Trusting an issuer for the JWT-bearer grant also accepts plain RFC 7523
-	// assertions from it, without client authentication. #2533 trusts AS-1 for
-	// ID-JAGs only (acceptedAssertionTypes [id_jag], PR
-	// stacklok/toolhive#6678), which refuses these.
-	for name, typ := range map[string]string{
-		"typ JWT":    "JWT",
-		"typ absent": "",
-	} {
-		if status, body := as2Redemption(t, as2, broker, as1.jwt(t, as2, as2.Issuer, typ, nil), &vmcp, false); status != http.StatusOK {
-			t.Errorf("plain AS-1 assertion (%s) without client authentication: status %d, body %v; if ToolHive now refuses it, make this a refusal and update #2533", name, status, body)
-		}
+	status, body := as2Redemption(t, as2, broker, as1.idJAG(t, as2), &vmcp, true)
+	if status != http.StatusOK {
+		t.Fatalf("ID-JAG redemption: status %d, body %v", status, body)
+	}
+	gatewayToken, _ := body["access_token"].(string)
+	status, body = postAS2Token(t, as2, url.Values{
+		"grant_type":            {oauthproto.GrantTypeTokenExchange},
+		"subject_token":         {gatewayToken},
+		"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":              {as2.Resource},
+		"client_assertion_type": {clientAssertionTyp},
+		"client_assertion":      {broker.assertion(t, as2.Issuer)},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("broker client exchanging its own gateway token: status %d, body %v; if AS-2 now refuses it, make this a refusal and update #2533", status, body)
 	}
 }
 

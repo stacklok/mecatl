@@ -372,8 +372,10 @@ func TestClientAuthenticationRefusals(t *testing.T) {
 		edit   func(*as1servertest.AS1, *authserverclient.Config)
 		replay bool
 	}{
-		// AS-1 also accepts its token endpoint as the audience (RFC 7523).
 		{name: "wrong audience", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) { c.Issuer = "https://not-as1.example" }},
+		// AS-1 accepts only its issuer as the audience, not its token
+		// endpoint (draft-ietf-oauth-rfc7523bis).
+		{name: "token endpoint audience", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) { c.Issuer = c.TokenEndpoint }},
 		{name: "expired", edit: func(_ *as1servertest.AS1, c *authserverclient.Config) {
 			// Expired 2 minutes ago: AS-1 (ToolHive) allows 60 seconds of skew on assertion expiry.
 			c.Now = func() time.Time { return time.Now().Add(-identitybroker.MaxClientAssertionLifetime - 2*time.Minute) }

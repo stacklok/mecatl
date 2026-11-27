@@ -291,7 +291,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			closeLocalStore()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
-		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore)
+		var authOptions []runner.EmbeddedAuthServerOption
+		if as2 {
+			// AS-2's gateway tokens are typed at+jwt (RFC 9068), as step (8)
+			// requires; the vMCP is the only resource server they reach.
+			authOptions = append(authOptions, runner.WithAccessTokenType(as2AccessTokenType))
+		}
+		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore, authOptions...)
 		if err != nil {
 			_ = authStore.Close()
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
@@ -301,6 +307,11 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}})
 		process.auth = auth
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
+		// Shortcut: ToolHive's token validator refuses only an ID-JAG's typ,
+		// so the vMCP accepts AS-2-signed tokens with typ JWT or none, not
+		// only at+jwt (RFC 9068 section 4); removed once Mecatl pins a
+		// ToolHive release with stacklok/toolhive#7345 and turns on its
+		// option to require at+jwt from AS-2 here.
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: resource, Resource: resource, JWKSURL: issuer + "/.well-known/jwks.json"},
 		}, "mecatl-broker", nil, reader, auth.KeyProvider(), issuer)

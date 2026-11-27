@@ -8,9 +8,12 @@ import (
 )
 
 // Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only, with
-// its keys fetched from JWKSURL over a private address, trusting CAFile.
+// its keys fetched from JWKSURL, trusting CAFile. AllowPrivateAddresses lets
+// that fetch reach a private or loopback address; without it, ToolHive
+// refuses a JWKSURL naming one.
 type Trust struct {
 	Issuer, JWKSURL, CAFile string
+	AllowPrivateAddresses   bool
 	Subjects                []string
 	MaxAssertionAge         time.Duration
 }

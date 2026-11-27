@@ -39,7 +39,7 @@ func TestRedeemAtRealAS2(t *testing.T) {
 		t.Fatal(err)
 	}
 	as2 := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: x.a.Issuer(), JWKSURL: x.a.JWKSURL(), CAFile: x.a.Harness.WriteCACert(t, t.TempDir()),
+		Issuer: x.a.Issuer(), JWKSURL: x.a.JWKSURL(), CAFile: x.a.Harness.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
 		Subjects: []string{as1servertest.Subject(t, x.access)},
 	}).AS2
 	jag, err := x.client.IssueIDJAG(t.Context(), x.request(as2.Issuer, as2.Resource))

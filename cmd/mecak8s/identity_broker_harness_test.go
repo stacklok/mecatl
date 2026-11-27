@@ -671,7 +671,7 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		args:      append([]string{"--permission-config", settings}, extraArgs...),
 		edit: func(cfg *app.Config) {
 			cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile,
+				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile, AllowPrivateAddresses: true,
 				Subjects: []string{as1servertest.Subject(t, alice)},
 			})
 			if edit != nil {
