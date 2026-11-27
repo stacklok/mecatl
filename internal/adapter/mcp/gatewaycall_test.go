@@ -360,7 +360,7 @@ func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
 	f := newGatewayFixture(t)
 	req := f.request("att_1")
 	req.HTTPClient = &http.Client{Transport: hangingTransport{}}
-	req.SendBy = time.Now().Add(50 * time.Millisecond)
+	req.SendBy = time.Now().Add(gatewaySendMargin + 50*time.Millisecond)
 	done := make(chan GatewayAttempt, 1)
 	go func() { done <- SendGatewayCall(t.Context(), req) }()
 	select {
@@ -368,6 +368,42 @@ func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
 		wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
 	case <-time.After(5 * time.Second):
 		t.Fatal("a hung handshake outlived the authorization's send deadline")
+	}
+}
+
+// TestSendGatewayCallChecksSendByBeforeTheToolsCall: a tools/call whose
+// handshake ends less than gatewaySendMargin before SendBy is not written,
+// so nothing is sent for the call with the token, and the attempt is not
+// sent as authorization_expired, never invalid_token. Past exp, ToolHive's
+// vMCP answers a token that already started a call with token_expired, which
+// a caller would retry with a new token, running a stolen token's call twice.
+func TestSendGatewayCallChecksSendByBeforeTheToolsCall(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.SendBy = time.Now().Add(gatewaySendMargin + 300*time.Millisecond)
+	// The handshake ends, and the tools/call is about to be written, after
+	// SendBy less the margin but before SendBy itself.
+	req.hooks.sending = onToolsCall(func(*mcpsdk.CallToolParams) {
+		time.Sleep(time.Until(req.SendBy.Add(-gatewaySendMargin / 2)))
+	})
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionExpired, 0)
+	if n := len(f.calls("att_1", "initialize")); n != 1 {
+		t.Fatalf("the gateway saw %d initialize, want the handshake sent", n)
+	}
+	if n := len(f.calls("att_1", gatewayToolsCall)); n != 0 {
+		t.Fatalf("the gateway saw %d tools/call, want none after SendBy less the margin", n)
+	}
+}
+
+// TestSendGatewayCallKeepsTheMarginBeforeTheHandshake: an authorization
+// that lapses within gatewaySendMargin is not presented at all.
+func TestSendGatewayCallKeepsTheMarginBeforeTheHandshake(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.SendBy = time.Now().Add(gatewaySendMargin / 2)
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionExpired, 0)
+	if n := len(f.g.Calls()); n != 0 {
+		t.Fatalf("the gateway saw %d requests, want none", n)
 	}
 }
 
@@ -399,7 +435,7 @@ func TestGatewayHandshakeCancellationDoesNotBlockClose(t *testing.T) {
 			return nil, context.Canceled
 		}
 	})}
-	wire := newGatewayWire(req)
+	wire := newGatewayWire(req, req.SendBy)
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, nil)
 	client.AddSendingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {

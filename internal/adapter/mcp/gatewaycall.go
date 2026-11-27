@@ -46,6 +46,17 @@ const (
 	// cancelNotifyWait bounds the wait for the SDK's notifications/cancelled
 	// before the session closes; it matches the SDK's own bound.
 	cancelNotifyWait = 5 * time.Second
+	// gatewaySendMargin is how long before SendBy the token is last
+	// presented for the handshake and the tools/call. ToolHive's vMCP checks
+	// exp with no leeway, and once exp has passed it answers a token that
+	// already started a call with token_expired rather than token_reused,
+	// which reads as a plain invalid_token that a caller retries; so the
+	// tools/call must reach the vMCP before exp. The embedded vMCP shares
+	// Mecatl's clock and is reached in process, so the margin covers only the
+	// time from the check to the vMCP's own: well under a millisecond, more
+	// under load. 250ms covers that many times over and keeps three quarters
+	// of the shortest ID-JAG lifetime the broker accepts (one second).
+	gatewaySendMargin = 250 * time.Millisecond
 )
 
 // errGatewayRefused is the transport error for a request refused before it
@@ -70,8 +81,10 @@ type GatewayCallRequest struct {
 	// ArgumentsSHA256 is the authorized hash; the tools/call body is checked
 	// against it with HashArguments before it is written.
 	ArgumentsSHA256 string
-	// SendBy is when the authorization lapses; the first request must start
-	// before it.
+	// SendBy is when the authorization lapses. Every request before the
+	// tools/call, and the tools/call itself, is written at least
+	// gatewaySendMargin before it, or not at all; the messages of a call that
+	// has started are not limited by it.
 	SendBy time.Time
 	// HashArguments computes the argument hash the authorization was issued
 	// for.
@@ -132,7 +145,9 @@ const (
 	// GatewayRejectionChanged means the tools/call about to be written differs in
 	// name or argument hash from the authorized one.
 	GatewayRejectionChanged GatewayRejection = "changed_after_authorization"
-	// GatewayRejectionExpired means SendBy had passed before the first request.
+	// GatewayRejectionExpired means SendBy, less gatewaySendMargin, passed
+	// before the tools/call was written: the tools/call was not sent with the
+	// token, and neither was any later handshake request.
 	GatewayRejectionExpired GatewayRejection = "authorization_expired"
 )
 
@@ -166,11 +181,12 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 		req.AttemptID == "" || req.Tool == "" || req.ArgumentsSHA256 == "" || req.HashArguments == nil {
 		return attempt
 	}
-	if !time.Now().Before(req.SendBy) {
+	sendBy := req.SendBy.Add(-gatewaySendMargin)
+	if !time.Now().Before(sendBy) {
 		attempt.Rejection = GatewayRejectionExpired
 		return attempt
 	}
-	wire := newGatewayWire(req)
+	wire := newGatewayWire(req, sendBy)
 	var declined atomic.Int64
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, &mcpsdk.ClientOptions{
 		// URL elicitation only: no roots, no sampling, no form elicitation.
@@ -203,7 +219,7 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 	// Shortcut: each gateway call uses its own vMCP session, and a 404 for the session fails the call; removed by #2564 (vMCP session reuse and a new session on 404).
 	// The handshake must finish while the token can still be sent; the SDK
 	// detaches the session from this context once connected.
-	connectCtx, cancelConnect := context.WithDeadline(ctx, req.SendBy)
+	connectCtx, cancelConnect := context.WithDeadline(ctx, sendBy)
 	cs, err := client.Connect(connectCtx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
 	cancelConnect()
 	var res *mcpsdk.CallToolResult
@@ -278,13 +294,14 @@ type gatewayWire struct {
 	tool            string
 	argumentsSHA256 string
 	hash            func(json.RawMessage) (string, error)
-	sendBy          time.Time
+	// sendBy is SendBy less gatewaySendMargin: no request is written after it
+	// until the tools/call has started.
+	sendBy time.Time
 
 	cancelled  chan struct{}
 	cancelOnce sync.Once
 
 	mu          sync.Mutex
-	started     bool
 	refusal     GatewayRejection
 	handshake   gatewayAnswer // the first refusing answer before the tools/call
 	callStarted bool
@@ -301,7 +318,7 @@ type gatewayAnswer struct {
 
 type gatewayReply struct{ err *jsonrpc.Error }
 
-func newGatewayWire(req GatewayCallRequest) *gatewayWire {
+func newGatewayWire(req GatewayCallRequest, sendBy time.Time) *gatewayWire {
 	base := req.HTTPClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
@@ -314,7 +331,7 @@ func newGatewayWire(req GatewayCallRequest) *gatewayWire {
 		tool:            req.Tool,
 		argumentsSHA256: req.ArgumentsSHA256,
 		hash:            req.HashArguments,
-		sendBy:          req.SendBy,
+		sendBy:          sendBy,
 		cancelled:       make(chan struct{}),
 	}
 }
@@ -323,11 +340,13 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		defer func() { _ = req.Body.Close() }()
 	}
+	// Until the tools/call has started, the token is presented only before
+	// sendBy. The tools/call itself is checked again just before it is
+	// written, below.
 	w.mu.Lock()
-	first := !w.started
-	w.started = true
+	callStarted := w.callStarted
 	w.mu.Unlock()
-	if first && !time.Now().Before(w.sendBy) {
+	if !callStarted && !time.Now().Before(w.sendBy) {
 		return nil, w.refuse(GatewayRejectionExpired)
 	}
 	out := req.Clone(req.Context())
@@ -351,14 +370,8 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !w.authorized(msg.params) {
 		return nil, w.refuse(GatewayRejectionChanged)
 	}
-	w.mu.Lock()
-	second := w.callStarted
-	if !second {
-		w.callStarted, w.callID = true, msg.id
-	}
-	w.mu.Unlock()
-	if second {
-		return nil, errGatewayRefused
+	if err := w.startCall(msg.id); err != nil {
+		return nil, err
 	}
 
 	// Only a failure while net/http was still obtaining a connection proves
@@ -427,6 +440,27 @@ func (w *gatewayWire) authorized(params map[string]json.RawMessage) bool {
 	}
 	sum, err := w.hash(params["arguments"])
 	return err == nil && sum == w.argumentsSHA256
+}
+
+// startCall marks the tools/call with id as started, just before it is
+// written, unless a tools/call has already started or sendBy has passed. The
+// deadline is checked here, after the argument hash and with nothing left
+// before the write: a tools/call refused here was not written, so nothing was
+// sent for this call with the token, and the attempt is not sent.
+func (w *gatewayWire) startCall(id json.RawMessage) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case w.callStarted:
+		return errGatewayRefused
+	case !time.Now().Before(w.sendBy):
+		if w.refusal == "" {
+			w.refusal = GatewayRejectionExpired
+		}
+		return errGatewayRefused
+	}
+	w.callStarted, w.callID = true, id
+	return nil
 }
 
 func (w *gatewayWire) refuse(r GatewayRejection) error {

@@ -2,6 +2,7 @@ package identitybroker_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,9 +45,11 @@ const (
 )
 
 // calendarBackend is an anonymous MCP backend the vMCP routes as
-// "calendar": echo answers at once; slow runs until it is cancelled.
+// "calendar": echo answers at once, counting its runs; slow runs until it is
+// cancelled.
 type calendarBackend struct {
 	slowStarted, slowCancelled chan struct{}
+	echoRuns                   atomic.Int64
 }
 
 func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHiveProfile) {
@@ -59,6 +63,7 @@ func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHivePro
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: s}}}
 	}
 	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "echo"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in args) (*mcpsdk.CallToolResult, any, error) {
+		b.echoRuns.Add(1)
 		return text(fmt.Sprintf("echo %d", in.A)), nil, nil
 	})
 	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "slow"}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ args) (*mcpsdk.CallToolResult, any, error) {
@@ -465,6 +470,95 @@ func TestRetriedCallGetsANewTokenAtTheVMCP(t *testing.T) {
 	if a := f.send(t.Context(), auth, stolen, `{"a":4}`); a.Outcome != mcpadapter.GatewayAttemptUnknown || a.Rejection != mcpadapter.GatewayRejectionTokenReused {
 		t.Fatalf("the call after its token was spent = %+v, want an unknown outcome for token_reused", a)
 	}
+}
+
+// TestSpentTokenIsNotPresentedAfterItsSendBy: someone who took a gateway
+// token spends it on its call while Mecatl's handshake is still under way,
+// and that handshake ends after the token's exp. Before exp, the vMCP answers
+// Mecatl's tools/call with token_reused, never retried; after exp it answers
+// token_expired, an invalid_token the MCP broker would retry with a new
+// token, running the call a second time. Mecatl's MCP client writes no
+// request with the token after its send-by deadline, less a margin, until
+// its tools/call has started; so its tools/call is not sent, the attempt is
+// authorization_expired, which the MCP broker does not retry, and the call
+// ran once.
+func TestSpentTokenIsNotPresentedAfterItsSendBy(t *testing.T) {
+	f, backend := newBindingFixture(t)
+	req := f.calendarCall(t, "op-spent-late", "echo", `{"a":7}`)
+	auth := f.mustAuthorize(t, req)
+	exp := gatewayTokenExp(t, auth.GatewayToken)
+	var spent error
+	held := &heldHandshake{base: f.vmcpClient().Transport, hold: func() {
+		// The vMCP has accepted Mecatl's handshake. The token is spent
+		// elsewhere, and the answer reaches Mecatl after exp.
+		cs, _, err := f.connect(t, auth.GatewayToken)
+		if err == nil {
+			_, err = cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "calendar.echo", Arguments: map[string]any{"a": 7}})
+		}
+		spent = err
+		time.Sleep(time.Until(exp.Add(500 * time.Millisecond)))
+	}}
+	a := mcpadapter.SendGatewayCall(t.Context(), mcpadapter.GatewayCallRequest{
+		Endpoint: f.as2Resource, HTTPClient: &http.Client{Transport: held}, Token: auth.GatewayToken,
+		OperationID: req.OperationID, AttemptID: auth.AttemptID, Tool: req.Tool,
+		Arguments: json.RawMessage(`{"a":7}`), ArgumentsSHA256: req.ArgumentsSHA256, SendBy: auth.ExpiresAt,
+		HashArguments: func(raw json.RawMessage) (string, error) { return callbinding.ArgumentsSHA256(raw) },
+	})
+	if spent != nil {
+		t.Fatalf("spend the token elsewhere: %v", spent)
+	}
+	if a.Outcome != mcpadapter.GatewayAttemptNotSent || a.Rejection != mcpadapter.GatewayRejectionExpired {
+		t.Fatalf("Mecatl's attempt after exp = %+v, want not sent as authorization_expired", a)
+	}
+	if got := held.methods(); slices.Contains(got, "tools/call") {
+		t.Fatalf("Mecatl wrote %v, want no tools/call with the spent token", got)
+	}
+	if n := backend.echoRuns.Load(); n != 1 {
+		t.Fatalf("the call ran %d times, want once", n)
+	}
+}
+
+// heldHandshake sends requests to base and records each one's JSON-RPC
+// method; it runs hold once, after the vMCP has answered
+// notifications/initialized and before that answer is returned.
+type heldHandshake struct {
+	base http.RoundTripper
+	hold func()
+
+	once sync.Once
+	mu   sync.Mutex
+	sent []string
+}
+
+func (h *heldHandshake) RoundTrip(req *http.Request) (*http.Response, error) {
+	var msg struct {
+		Method string `json:"method"`
+	}
+	if req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		_ = json.Unmarshal(body, &msg)
+	}
+	h.mu.Lock()
+	h.sent = append(h.sent, cmp.Or(msg.Method, req.Method))
+	h.mu.Unlock()
+	resp, err := h.base.RoundTrip(req)
+	if err == nil && msg.Method == "notifications/initialized" {
+		h.once.Do(h.hold)
+	}
+	return resp, err
+}
+
+// methods returns the JSON-RPC methods, or HTTP methods of bodiless
+// requests, written so far.
+func (h *heldHandshake) methods() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.sent)
 }
 
 // TestRealVMCPCancelsACallThatOutlivesItsToken: Mecatl's MCP client cancels

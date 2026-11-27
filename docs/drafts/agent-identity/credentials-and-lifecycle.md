@@ -796,7 +796,7 @@ A gateway call with no entry never reaches AS-1: the broker sends one on every g
 
 | Check | Response | mecak8s outcome and retry |
 | --- | --- | --- |
-| 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. A 401 naming `token_reused` (check 3) is not: the call `V` names may already have run with it, so its outcome is unknown. |
+| 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. A 401 naming `token_reused` (check 3) is not: the call `V` names may already have run with it, so its outcome is unknown. After `exp` the vMCP answers a spent `V` with `token_expired`, not `token_reused`, so the MCP client writes the `tools/call`, and every handshake request before it, a short margin before `V`'s use-before deadline or not at all; a call not written by then is not sent and not retried. |
 | 2 | 404 for the session | mecak8s opens a new vMCP session and retries once with a new `V`. |
 | 3 | 403, with `insufficient_scope` or, from ToolHive's vMCP, a JSON-RPC error of code 403 answering the call's request | A broker or MCP client bug: fail the call, do not retry. |
 | 4 | Tool error | Returned as a denial; not retried. |

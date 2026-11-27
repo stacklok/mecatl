@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,9 +44,11 @@ const (
 // a nil entry, or one past the end, allows with a fresh token and attempt.
 type fakeAuthorizer struct {
 	tokenPrefix string
-	mu          sync.Mutex
-	script      []error
-	requests    []identitybroker.AuthorizeCallRequest
+	// lifetime is how long each token may be sent; zero means a minute.
+	lifetime time.Duration
+	mu       sync.Mutex
+	script   []error
+	requests []identitybroker.AuthorizeCallRequest
 }
 
 func (f *fakeAuthorizer) AuthorizeCall(_ context.Context, req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
@@ -58,7 +61,7 @@ func (f *fakeAuthorizer) AuthorizeCall(_ context.Context, req identitybroker.Aut
 	}
 	return identitybroker.Authorization{
 		GatewayToken: identitybroker.NewToken(f.tokenPrefix + strconv.Itoa(n)),
-		ExpiresAt:    time.Now().Add(time.Minute),
+		ExpiresAt:    time.Now().Add(cmp.Or(f.lifetime, time.Minute)),
 		AttemptID:    "att_" + strconv.Itoa(n),
 	}, nil
 }
@@ -1333,6 +1336,33 @@ func TestGatewayCallNamesItsRun(t *testing.T) {
 // the call it names may have run with it. Unlike any other invalid_token,
 // the call is not retried with a new token, and the claim is kept, on the
 // call and on the handshake (credentials-and-lifecycle.md, step (9)).
+// TestGatewayCallExpiredBeforeTheToolsCallIsNotRetried: a handshake that
+// ends after the token's send-by deadline, less the MCP client's margin,
+// leaves the tools/call unwritten. The call was not sent, so its claim is
+// released; and it is not retried with a new token, unlike an invalid_token,
+// since nothing tells whether someone else already spent this one.
+func TestGatewayCallExpiredBeforeTheToolsCallIsNotRetried(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.auth.lifetime = time.Second
+	f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+		if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			time.Sleep(900 * time.Millisecond)
+		}
+		return nil
+	}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeUnavailable)
+	if n := len(f.auth.calls()); n != 1 {
+		t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+	}
+	if n := len(f.toolsCalls()); n != 0 {
+		t.Fatalf("%d tools/call sent, want none after the send-by deadline", n)
+	}
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("Claim = %v, want the never-sent call released", err)
+	}
+}
+
 func TestGatewayCallTokenReusedIsNotRetried(t *testing.T) {
 	const challenge = `Bearer realm="vmcp", error="invalid_token", error_description="the access token is not accepted (token_reused)"`
 	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
