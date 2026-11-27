@@ -932,7 +932,7 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	}
 	// The vMCP accepts these, which the design refuses: see the shortcut on
 	// the vMCP's incoming authentication in newToolHiveProcess. Flip them to
-	// 401 with stacklok/toolhive#7345.
+	// 401 when Mecatl turns on stacklok/toolhive#7345's check.
 	for name, edit := range map[string]func(jwt.MapClaims, map[string]any){
 		"typ JWT":    func(_ jwt.MapClaims, h map[string]any) { h["typ"] = "JWT" },
 		"typ absent": func(_ jwt.MapClaims, h map[string]any) { delete(h, "typ") },
@@ -1043,6 +1043,38 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	// sees them (credentials-and-lifecycle.md, step (8)).
 	plainJWT := func() string { return as1.jwt(t, as2, as2.Issuer, "JWT", nil) }
 	plainNoTyp := func() string { return as1.jwt(t, as2, as2.Issuer, "", nil) }
+	// ToolHive's hints for the refusals below, as of v0.69.0. The generic
+	// hint is the one ToolHive gives every assertion it cannot validate.
+	const (
+		hintResource    = "The requested resource is invalid"
+		hintUngoverned  = "resource claim names a resource this server does not govern"
+		hintUnverified  = "The ID-JAG assertion is invalid or could not be verified"
+		hintOneAudience = "aud must name exactly one audience"
+		hintLifetime    = "exceeds the configured maximum age"
+		hintOtherClient = "was not issued to the requesting client"
+		hintTyp         = "JOSE typ header is not supported"
+		hintPlain       = "issuer is not enabled for this grant"
+	)
+	// otherSignature is an ID-JAG that is valid but for its signature: AS-1's
+	// issuer and key ID, signed with another key.
+	otherSignature := func() string {
+		valid, _, err := jwt.NewParser().ParseUnverified(idJAG(as2.Issuer), jwt.MapClaims{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := jwt.NewWithClaims(jwt.SigningMethodES256, valid.Claims)
+		forged.Header = maps.Clone(valid.Header)
+		forged.Header["alg"] = jwt.SigningMethodES256.Alg()
+		signed, err := forged.SignedString(otherKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signed
+	}
 	for _, test := range []struct {
 		name       string
 		assertion  string
@@ -1053,31 +1085,38 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 		// (step (8)'s failure rows), as the broker reads it: "unknown" for
 		// invalid_target, which carries ToolHive's prose and no reason.
 		wantReason string
+		// wantHint is text error_description must contain: many refusals
+		// share invalid_assertion, and ToolHive tells their causes apart
+		// only in the hint after it.
+		wantHint string
 	}{
-		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target", "unknown"},
-		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target", "unknown"},
+		{"resource is AS-2's issuer", idJAG(as2.Issuer), resource(as2.Issuer), true, "invalid_target", "unknown", hintResource},
+		{"resource is another server", idJAG(as2.Issuer), resource("https://other.example/mcp"), true, "invalid_target", "unknown", hintResource},
 		// An ID-JAG whose resource claim names a resource AS-2 does not
 		// govern is refused, whether or not the request names the vMCP's.
 		// ToolHive checks the claim itself before comparing it with the
 		// request or with policy (ID-JAG draft, section 4.4.1), so step (8)'s
 		// invalid_target and resource_denied rows apply only to a claim AS-2
 		// governs.
-		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant", "invalid_assertion"},
-		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG for a subject AS-2 cannot map", unbound, resource(as2.Resource), true, "access_denied", "subject_unknown"},
-		{"expired ID-JAG", withClaims(map[string]any{"iat": now.Add(-3 * time.Minute).Unix(), "exp": now.Add(-2 * time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG older than the maximum assertion age", withClaims(map[string]any{"iat": now.Add(-as2trust.DefaultMaxAssertionAge - time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG for another client", withClaims(map[string]any{"client_id": "other-client"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"ID-JAG naming an issuer AS-2 does not trust", withClaims(map[string]any{"iss": "https://untrusted-as1.example"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant", "invalid_assertion"},
-		{"plain JWT, typ JWT", plainJWT(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"plain JWT, typ JWT, without client authentication", plainJWT(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion"},
-		{"plain JWT, no typ", plainNoTyp(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion"},
-		{"plain JWT, no typ, without client authentication", plainNoTyp(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion"},
+		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant", "invalid_assertion", hintUngoverned},
+		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUngoverned},
+		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOneAudience},
+		{"ID-JAG for a subject AS-2 cannot map", unbound, resource(as2.Resource), true, "access_denied", "subject_unknown", ""},
+		{"expired ID-JAG", withClaims(map[string]any{"iat": now.Add(-3 * time.Minute).Unix(), "exp": now.Add(-2 * time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		// AS-2 limits an ID-JAG's lifetime, exp - iat, not its age: it does
+		// not compare iat with the current time.
+		{"ID-JAG with a lifetime over the maximum", withClaims(map[string]any{"iat": now.Unix(), "exp": now.Add(as2trust.DefaultMaxAssertionAge + time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintLifetime},
+		{"ID-JAG for another client", withClaims(map[string]any{"client_id": "other-client"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOtherClient},
+		{"ID-JAG naming an issuer AS-2 does not trust", withClaims(map[string]any{"iss": "https://untrusted-as1.example"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"ID-JAG with AS-1's issuer and key ID, signed by another key", otherSignature(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
+		{"AS-1 access token", accessToken, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintTyp},
+		{"AS-1 access token without client authentication", accessToken, resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintTyp},
+		{"plain JWT, typ JWT", plainJWT(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, typ JWT, without client authentication", plainJWT(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, no typ", plainNoTyp(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintPlain},
+		{"plain JWT, no typ, without client authentication", plainNoTyp(), resource(as2.Resource), false, "invalid_grant", "invalid_assertion", hintPlain},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			status, body := as2Redemption(t, as2, broker, test.assertion, test.resource, test.clientAuth)
@@ -1086,6 +1125,9 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 			}
 			if got := refusalReason(body); got != test.wantReason {
 				t.Fatalf("reason %q, body %v; want %q", got, body, test.wantReason)
+			}
+			if description, _ := body["error_description"].(string); !strings.Contains(description, test.wantHint) {
+				t.Fatalf("error_description %q; want it to contain %q", description, test.wantHint)
 			}
 		})
 	}
@@ -1135,9 +1177,17 @@ func TestAS2RedeemsAnIDJAGOnceUnderConcurrentRedemptions(t *testing.T) {
 		case a.err != nil:
 			t.Errorf("concurrent redemption: %v", a.err)
 		case a.status == http.StatusOK:
+			if token, _ := a.body["access_token"].(string); token == "" {
+				t.Errorf("concurrent redemption: status 200 with no gateway token, body %v", a.body)
+				continue
+			}
 			issued++
-		case a.status != http.StatusBadRequest || a.body["error"] != "invalid_grant" || refusalReason(a.body) != "invalid_assertion":
-			t.Errorf("concurrent redemption: status %d, body %v; want 200, or 400 invalid_grant with invalid_assertion", a.status, a.body)
+		default:
+			description, _ := a.body["error_description"].(string)
+			if _, token := a.body["access_token"]; token || a.status != http.StatusBadRequest || a.body["error"] != "invalid_grant" ||
+				refusalReason(a.body) != "invalid_assertion" || !strings.Contains(description, "has already been used") {
+				t.Errorf("concurrent redemption: status %d, body %v; want 200 with a token, or 400 invalid_grant refusing a replay and no token", a.status, a.body)
+			}
 		}
 	}
 	if issued != 1 {
