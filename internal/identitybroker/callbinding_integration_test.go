@@ -139,18 +139,21 @@ func (f *harnessFixture) vmcpClient() *http.Client {
 
 // exchange is one HTTP exchange a wireRecorder saw: the JSON-RPC message
 // kind it sent (a method, "response" for a reply to the vMCP, or the HTTP
-// method of a bodiless request) and the status it got.
+// method of a bodiless request), when it was sent, and the status it got.
 type exchange struct {
 	kind   string
+	sent   time.Time
 	status int
 	body   string
 }
 
 // wireRecorder sends every request with a bearer token and records each
-// exchange.
+// exchange. recorded, buffered with room for one, is signalled after each
+// exchange is recorded.
 type wireRecorder struct {
-	base  http.RoundTripper
-	token string
+	base     http.RoundTripper
+	token    string
+	recorded chan struct{}
 
 	mu   sync.Mutex
 	seen []exchange
@@ -181,11 +184,12 @@ func (w *wireRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	out := req.Clone(req.Context())
 	out.Header.Set("Authorization", "Bearer "+w.token)
+	sent := time.Now()
 	resp, err := w.base.RoundTrip(out)
 	if err != nil {
 		return nil, err
 	}
-	e := exchange{kind: kind, status: resp.StatusCode}
+	e := exchange{kind: kind, sent: sent, status: resp.StatusCode}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
@@ -195,7 +199,35 @@ func (w *wireRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	w.mu.Lock()
 	w.seen = append(w.seen, e)
 	w.mu.Unlock()
+	select {
+	case w.recorded <- struct{}{}:
+	default:
+	}
 	return resp, nil
+}
+
+// await returns the first exchange of kind, waiting up to waitLimit for it
+// to be recorded. The vMCP forwards a cancellation to the backend before its
+// answer reaches the client, so the backend can see the call cancelled
+// before the cancellation's exchange is recorded.
+func (w *wireRecorder) await(t *testing.T, kind string) exchange {
+	t.Helper()
+	deadline := time.After(waitLimit)
+	for {
+		w.mu.Lock()
+		for _, e := range w.seen {
+			if e.kind == kind {
+				w.mu.Unlock()
+				return e
+			}
+		}
+		w.mu.Unlock()
+		select {
+		case <-w.recorded:
+		case <-deadline:
+			t.Fatalf("no %s exchange within %v", kind, waitLimit)
+		}
+	}
 }
 
 // statuses returns the statuses of the exchanges of kind, oldest first.
@@ -248,7 +280,7 @@ func (w *wireRecorder) reply(t *testing.T, endpoint, session string) int {
 // refused initialize returns the error and the recorder.
 func (f *harnessFixture) connect(t *testing.T, token identitybroker.Token) (*mcpsdk.ClientSession, *wireRecorder, error) {
 	t.Helper()
-	rec := &wireRecorder{base: f.vmcpClient().Transport, token: token.Value()}
+	rec := &wireRecorder{base: f.vmcpClient().Transport, token: token.Value(), recorded: make(chan struct{}, 1)}
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "identitybroker-test", Version: "v1"}, &mcpsdk.ClientOptions{
 		Capabilities: &mcpsdk.ClientCapabilities{Elicitation: &mcpsdk.ElicitationCapabilities{URL: &mcpsdk.URLElicitationCapabilities{}}},
 		ElicitationHandler: func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error) {
@@ -477,12 +509,16 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
 		}()
 		receive(t, backend.slowStarted)
-		time.Sleep(time.Until(gatewayTokenExp(t, auth.GatewayToken).Add(500 * time.Millisecond)))
+		exp := gatewayTokenExp(t, auth.GatewayToken)
+		time.Sleep(time.Until(exp.Add(500 * time.Millisecond)))
 		if status := rec.reply(t, f.as2Resource, cs.ID()); status != http.StatusAccepted {
 			t.Fatalf("a reply within the grace got %d, want 202", status)
 		}
 		cancel()
 		receive(t, backend.slowCancelled)
+		if e := rec.await(t, "notifications/cancelled"); e.status != http.StatusAccepted && e.sent.After(exp.Add(bindingGrace)) {
+			t.Fatalf("the cancellation was sent %v after exp, past the grace; the test proves nothing", e.sent.Sub(exp))
+		}
 		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusAccepted}) {
 			t.Fatalf("the cancellation got %v, want 202", got)
 		}
@@ -504,10 +540,7 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 			t.Fatalf("a reply after the grace got %d, want 401", status)
 		}
 		cancel()
-		deadline := time.Now().Add(5 * time.Second)
-		for len(rec.statuses("notifications/cancelled")) == 0 && time.Now().Before(deadline) {
-			time.Sleep(50 * time.Millisecond)
-		}
+		rec.await(t, "notifications/cancelled")
 		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusUnauthorized}) {
 			t.Fatalf("the cancellation after the grace got %v, want 401", got)
 		}
