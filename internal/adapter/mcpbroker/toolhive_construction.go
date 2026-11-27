@@ -265,6 +265,8 @@ type ToolHiveBrokerClient struct {
 // cannot exchange a call-bound gateway token, which would get around the
 // token's single use with a new jti.
 //
+// Shortcut: a gateway token gets AS-2's default lifetime (one hour), capped at the remaining validity of its ID-JAG (id_jag_lifetime), rather than a short lifetime of its own set for this client; removed by #2533 (AS-2 trusts AS-1 in production, where a per-client lifetime takes effect).
+//
 // Shortcut: ToolHive requires the token-exchange grant on this client, so a gateway token without a call entry, which the broker never obtains since it sends one on every call, could still be exchanged for another up to its expiry; removed by #2533 (AS-2 marks gateway tokens, which ToolHive refuses at token exchange, stacklok/toolhive#7247).
 func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{

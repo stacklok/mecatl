@@ -73,7 +73,7 @@ In external mode, the gateway administrator configures AS-2 with:
 - permitted actors and allowed vMCP resources;
 - processing of the call entry (`authorization_details`) and the per-call check at the vMCP, which Mecatl's tool calls need before it calls that gateway;
 - the oldest ID-JAG it accepts, and single use for AS-1's issuer (recommended; Mecatl never re-submits an ID-JAG);
-- the gateway token's lifetime for `mecatl`, which AS-2 also caps at the ID-JAG's remaining validity.
+- the gateway token's lifetime for `mecatl`, which AS-2 also caps at the ID-JAG's remaining validity. Mecatl's embedded AS-2 does not set it until #2533, so its gateway tokens get AS-2's default, capped the same way.
 
 Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent trust domain and audience, the allowed AS-2 targets, and the ID-JAG lifetime. Embedded mode uses the same roles and checks with local configuration, and AS-2 trusts AS-1 as an ID-JAG issuer, and both sign users in through the same company IdP. Co-location does not create isolation.
 

@@ -653,7 +653,7 @@ AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. Th
 
 **Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. The call is not named in this request. AS-2 takes the call entry from the `authorization_details` claim that AS-1 signed into the ID-JAG at step (7), and copies it into `V`. That restricts `V` to one call: the server, the tool, the argument hash, and the operation ID. Form encoding is shown decoded.
 
-**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent or `null`. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
+**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent or `null`. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. It also refuses an object whose member names are equal under Unicode simple case folding, such as `{"a":1,"A":2}`, which the vMCP's request parser refuses with `-32600` although both sides would agree on its hash. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
 
 ```text
 POST https://gateway.example.com/oauth/token
@@ -692,6 +692,8 @@ The redemption carries no `authorization_details` parameter. The entry comes onl
    "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]}
 ```
 
+*Not yet enforced: until #2533, Mecatl does not set `V`'s lifetime, so a `V` gets AS-2's default of one hour, capped at the ID-JAG's remaining validity (`id_jag_lifetime`, 60 seconds by default).*
+
 `V-reviewer`, decoded:
 
 ```json
@@ -715,7 +717,7 @@ The redemption carries no `authorization_details` parameter. The entry comes onl
 
 `V` also carries a **delegated-access marker**. AS-2 emits this claim only after an approved redemption, on this grant or on RFC 8693 token exchange. A wildcard delegate client or `may_act` never earns it. `V` is terminal. In token exchange, AS-2 refuses a token that carries the marker, as subject token or as actor token. So `V` cannot be exchanged for a native-subject token, and it cannot act as native Alice for someone else. The vMCP reads provider credentials only for a token that carries the marker.
 
-`V`'s lifetime does not exceed the ID-JAG's. It also limits how stale an approval can be, because AS-2 checks the approval record only at redemption. Revoking an approval stops new `V`s at once. A `V` already issued keeps working until it expires. Keep `V` short. Disconnecting a provider takes effect at once, because the vMCP reads the credential on every call.
+`V`'s lifetime does not exceed the ID-JAG's. It also limits how stale an approval can be, because AS-2 checks the approval record only at redemption. Revoking an approval stops new `V`s at once. A `V` already issued keeps working until it expires. Keep `V` short. *Not yet enforced: until #2533, Mecatl does not set `V`'s lifetime, so a `V` gets AS-2's default of one hour, capped at the ID-JAG's remaining validity (`id_jag_lifetime`, 60 seconds by default).* Disconnecting a provider takes effect at once, because the vMCP reads the credential on every call.
 
 The approval-continuation profile is a convention that AS-2 advertises in its metadata. Under it, a refused redemption carries `access_denied` with `consent_required` and an `error_uri`. The `error_uri` names a pending approval that the user can open.
 
@@ -991,7 +993,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | Schedule grant | Its horizon, schedule deletion, sign out everywhere, or the upstream re-check. | Never extended. Renewal sets up a new grant while Alice is present; the old one runs out. Alice is notified before the horizon. | Alice |
 | Upstream refresh token | IdP expiry or revocation. | At most once per re-check interval, at an ID-JAG exchange or scheduled-run open; one refresh per user at a time. | AS-1 |
 | ID-JAG | Short lifetime. | Never renewed or re-submitted; one per `V`. | Broker |
-| `V` | One call, a short lifetime of seconds, and single use: the vMCP records `jti` and refuses a second. | Never renewed; a new `V` for every call, and one more within the same call after a 401. | Broker, through steps (7) and (8) |
+| `V` | One call, a short lifetime of seconds, and single use: the vMCP records `jti` and refuses a second. Until #2533 the lifetime is not set: AS-2's default, capped at the ID-JAG's remaining validity. | Never renewed; a new `V` for every call, and one more within the same call after a 401. | Broker, through steps (7) and (8) |
 | Key sets: AS-1's, AS-2's, the agent trust bundle, and the cluster JWKS | Operator rotation. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
 | The broker client's configured key set (not `jwks_uri`) | Operator rotation. | Registered again at each server, which reads it only then; a hosted AS-1 registers it at process start. | Operator, or mecak8s at startup |
 | Consent link | Revocation in the gateway UI or by Mecatl. | The user links again. | Alice |
@@ -1089,7 +1091,7 @@ Every signing key, and every secret that protects an authorization server's opaq
 
 None of the values below is selected. Each bounds a risk the operator should know:
 
-- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration and the grace after a `V`'s expiry, which together bound how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
+- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable (not set until #2533, so capped only by the ID-JAG's remaining validity), the maximum call duration and the grace after a `V`'s expiry, which together bound how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
 - **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp` (a `V`'s, at least until the call it started ends). ToolHive fixes the skew it allows on a client assertion at 60 seconds.
 - **Upstream re-check:** the re-check interval, the maximum upstream refresh-token lifetime per IdP when the IdP sends no `refresh_expires_in`, and the lease timeout for a refresh in flight.
 - **Key refresh:** the rate limit on refreshing a key set after an unknown `kid`.
