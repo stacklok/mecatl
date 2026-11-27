@@ -110,6 +110,13 @@ const (
 	// GatewayRejectionInvalidToken means 401 with error="invalid_token", on the
 	// handshake or the tools/call.
 	GatewayRejectionInvalidToken GatewayRejection = "invalid_token"
+	// GatewayRejectionTokenReused means 401 with error="invalid_token"
+	// naming token_reused, as ToolHive's vMCP answers a call-bound token that
+	// has already started a call. This request did not run, but a token is
+	// issued for one call alone, so the call it names may already have run
+	// with it: the attempt's outcome is unknown, and it is not retried
+	// (credentials-and-lifecycle.md, step (9), check 3).
+	GatewayRejectionTokenReused GatewayRejection = "token_reused"
 	// GatewayRejectionDenied means 403 refusing the request before the
 	// gateway ran it: with error="insufficient_scope" (RFC 6750 §3.1), or,
 	// as ToolHive's vMCP answers, with a JSON-RPC error of code 403 answering
@@ -362,9 +369,12 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		GotConn: func(httptrace.GotConnInfo) { gotConn.Store(true) },
 	}))
 	resp, err := w.base.RoundTrip(traced)
-	// A 403's body is read before taking the lock, so a slow body never
-	// holds up the call's cancellation.
-	denied := err == nil && resp.StatusCode == http.StatusForbidden && deniedBefore(resp, msg.id)
+	// The answer, a 403's body included, is read before taking the lock, so a
+	// slow body never holds up the call's cancellation.
+	var answer gatewayAnswer
+	if err == nil {
+		answer = callAnswerOf(out, resp, msg.id)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err != nil {
@@ -372,10 +382,7 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	w.callWritten = true
-	w.call = answerOf(out, resp)
-	if w.call.rejection == "" && denied {
-		w.call.rejection = GatewayRejectionDenied
-	}
+	w.call = answer
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Body != nil {
 		resp.Body = &replyWatcher{
 			body: resp.Body, wire: w,
@@ -484,10 +491,15 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 		if a.Rejection == "" {
 			a.Rejection = w.handshake.rejection
 		}
+		if a.Rejection == GatewayRejectionTokenReused {
+			a.Outcome = GatewayAttemptUnknown
+		}
 		return a
 	}
 	a.HTTPStatus = w.call.status
 	switch {
+	case w.call.rejection == GatewayRejectionTokenReused:
+		a.Outcome, a.Rejection = GatewayAttemptUnknown, w.call.rejection
 	case w.call.rejection != "":
 		a.Outcome, a.Rejection = GatewayAttemptRefused, w.call.rejection
 	case w.reply != nil && w.reply.err != nil && w.reply.err.Code == mcpsdk.CodeURLElicitationRequired:
@@ -517,11 +529,13 @@ func notProcessed(code int64) bool {
 }
 
 // answerOf is the status of resp and, when it means the request never ran,
-// why: 401 invalid_token, 403 insufficient_scope, or 404 for a request
-// naming a session.
+// why: 401 invalid_token (token_reused apart), 403 insufficient_scope, or
+// 404 for a request naming a session.
 func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	a := gatewayAnswer{status: resp.StatusCode}
 	switch {
+	case resp.StatusCode == http.StatusUnauthorized && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isTokenReusedChallenge):
+		a.rejection = GatewayRejectionTokenReused
 	case resp.StatusCode == http.StatusUnauthorized && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInvalidTokenChallenge):
 		a.rejection = GatewayRejectionInvalidToken
 	case resp.StatusCode == http.StatusForbidden && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInsufficientScopeChallenge):
@@ -532,10 +546,37 @@ func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	return a
 }
 
+// callAnswerOf is answerOf for the tools/call with ID id, which also tells
+// a 403 that ToolHive's vMCP answered before running it (deniedBefore).
+func callAnswerOf(req *http.Request, resp *http.Response, id json.RawMessage) gatewayAnswer {
+	a := answerOf(req, resp)
+	if a.rejection == "" && resp.StatusCode == http.StatusForbidden && deniedBefore(resp, id) {
+		a.rejection = GatewayRejectionDenied
+	}
+	return a
+}
+
 // isInvalidTokenChallenge reports a WWW-Authenticate value carrying a Bearer
 // challenge with error="invalid_token" (RFC 6750 §3). A value that does not
 // parse is not one.
 func isInvalidTokenChallenge(header string) bool { return hasBearerError(header, "invalid_token") }
+
+// tokenReusedReason is how ToolHive's vMCP names a call-bound token that has
+// already started a call in an invalid_token challenge's error_description.
+const tokenReusedReason = "(token_reused)" // #nosec G101 -- a reason code, not a credential.
+
+// isTokenReusedChallenge reports a WWW-Authenticate value carrying a Bearer
+// invalid_token challenge whose error_description names token_reused.
+func isTokenReusedChallenge(header string) bool {
+	challenges, err := parseDirectChallenges(header)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(challenges, func(c directChallenge) bool {
+		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == "invalid_token" &&
+			strings.Contains(c.params["error_description"], tokenReusedReason)
+	})
+}
 
 // jsonRPCCodeDenied is the JSON-RPC error code ToolHive's vMCP answers a
 // request it refuses before dispatch with, alongside HTTP 403.

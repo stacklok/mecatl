@@ -145,10 +145,6 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return nil, err
 	}
-	expiredTokenGrace, err := config.expiredTokenGrace()
-	if err != nil {
-		return nil, err
-	}
 	diag := config.Diagnostics
 	if diag == nil {
 		diag = port.NopDiagnostics{}
@@ -335,7 +331,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if as2 {
 			// The token validator and the vMCP share one call binding, so the
 			// validator accepts a call's own messages after its token expires.
-			if callBinding, err = gatewayCallBinding(issuer, *config.BrokerClient, expiredTokenGrace, incomingConfig); err != nil {
+			if callBinding, err = gatewayCallBinding(issuer, *config.BrokerClient, config.AS2Trust.expiredTokenGrace(), incomingConfig); err != nil {
 				return rollback(err)
 			}
 			incomingOptions = append(incomingOptions, factory.WithCallBinding(callBinding))

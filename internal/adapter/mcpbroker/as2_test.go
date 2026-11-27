@@ -1377,9 +1377,8 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 }
 
 // TestAS2BindsGatewayTokensToTheirCall: AS-2 issues the broker client's
-// gateway tokens for the configured lifetime, copies the ID-JAG's call entry
-// into them, and the vMCP refuses a token of the broker client without a
-// call entry, and its listing token on a tools/call
+// gateway tokens for the configured lifetime, and the vMCP accepts a
+// call-bound one and refuses one of the broker client without a call entry
 // (credentials-and-lifecycle.md, steps (8) and (9)).
 func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 	as1 := startTrustedAS1(t)
@@ -1416,21 +1415,86 @@ func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 }
 
 // TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange: the gateway token
-// lifetime is whole seconds from 2s to 5m, and the grace after its expiry
-// positive and at most the maximum call duration.
+// lifetime is whole seconds from 2s to 5m, and needs AS-2 to trust an ID-JAG
+// issuer, since ToolHive applies it only to redeemed tokens.
 func TestToolHiveProcessRefusesGatewayTokenBoundsOutOfRange(t *testing.T) {
-	for name, edit := range map[string]func(*ToolHiveConfig){
-		"a lifetime under 2s":         func(c *ToolHiveConfig) { c.GatewayTokenLifetime = time.Second },
-		"a lifetime over 5m":          func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 6 * time.Minute },
-		"a lifetime of part a second": func(c *ToolHiveConfig) { c.GatewayTokenLifetime = 2500 * time.Millisecond },
-		"a negative grace":            func(c *ToolHiveConfig) { c.ExpiredTokenGrace = -time.Second },
-		"a grace over the maximum":    func(c *ToolHiveConfig) { c.ExpiredTokenGrace = gatewayMaxCallDuration + time.Second },
+	trust := NewAS2Trust(as2trust.Trust{Issuer: "https://as1.example"})
+	for name, c := range map[string]struct {
+		lifetime time.Duration
+		trust    AS2Trust
+		want     string
+	}{
+		"a lifetime under 2s":          {time.Second, trust, "whole seconds from 2s to 5m0s"},
+		"a lifetime over 5m":           {6 * time.Minute, trust, "whole seconds from 2s to 5m0s"},
+		"a lifetime of part a second":  {2500 * time.Millisecond, trust, "whole seconds from 2s to 5m0s"},
+		"a lifetime AS-2 cannot apply": {30 * time.Second, AS2Trust{}, "needs AS-2 to trust an ID-JAG issuer"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			config := ToolHiveConfig{CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}}
-			edit(&config)
-			if _, err := NewToolHiveProcess(t.Context(), config); !errors.Is(err, ErrInvalidCatalogue) {
-				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue", err)
+			config := ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")},
+				GatewayTokenLifetime: c.lifetime, AS2Trust: c.trust,
+			}
+			if _, err := NewToolHiveProcess(t.Context(), config); !errors.Is(err, ErrInvalidCatalogue) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue: %s", err, c.want)
+			}
+		})
+	}
+}
+
+// TestGatewayCallBindingDefaults pins the vMCP's call binding in production:
+// every token of the broker client must carry a call entry, a call stays
+// open for at most 30 minutes, and only that client's tokens from AS-2 may
+// send their call's messages for five minutes after exp.
+func TestGatewayCallBindingDefaults(t *testing.T) {
+	const issuer = as2TestIssuer
+	binding, err := gatewayCallBinding(issuer, ToolHiveBrokerClient{ID: identitybroker.BrokerClientID}, AS2Trust{}.expiredTokenGrace(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !binding.ClientsListed() || binding.MaxCallDuration() != 30*time.Minute || !binding.AdmitsExpiredTokens() {
+		t.Fatalf("binding lists clients %v, max call %v, admits expired tokens %v", binding.ClientsListed(), binding.MaxCallDuration(), binding.AdmitsExpiredTokens())
+	}
+	exp := time.Now()
+	for _, c := range []struct {
+		name   string
+		claims map[string]any
+		at     time.Time
+		want   bool
+	}{
+		{"the broker client within five minutes", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(5*time.Minute - time.Second), true},
+		{"the broker client after five minutes", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(5*time.Minute + time.Second), false},
+		{"another client", map[string]any{"iss": issuer, "client_id": "other"}, exp.Add(time.Second), false},
+		{"another issuer", map[string]any{"iss": "https://other.example", "client_id": identitybroker.BrokerClientID}, exp.Add(time.Second), false},
+	} {
+		if got := binding.WithinExpiredTokenGrace(c.claims, exp, c.at); got != c.want {
+			t.Errorf("%s: within the grace = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAS2RefusesClaimsOutsideTheCallType: AS-2 registers ToolHive's call
+// type and nothing else, so it refuses an ID-JAG whose authorization_details
+// names another type, holds a second call entry, or is not an array
+// (credentials-and-lifecycle.md, step (8), check 8).
+func TestAS2RefusesClaimsOutsideTheCallType(t *testing.T) {
+	as1, broker, process := newTrustingAS2(t)
+	as2 := process.AS2
+	vmcp := as2.Resource
+	entry := testCallDetails()[0]
+	for name, c := range map[string]struct {
+		claim        any
+		code, reason string
+	}{
+		"another type":       {[]any{map[string]any{"type": "https://example.com/other"}}, "invalid_authorization_details", "unknown_type"},
+		"a second entry":     {[]any{entry, entry}, "invalid_authorization_details", "single_entry_required"},
+		"an entry, no array": {entry, "invalid_grant", "invalid_assertion"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			idJAG := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{"resource": as2.Resource, "act": as1.act(), "authorization_details": c.claim})
+			status, body := as2Redemption(t, as2, broker, idJAG, &vmcp, true)
+			description, _ := body["error_description"].(string)
+			if status != http.StatusBadRequest || body["error"] != c.code || !strings.HasPrefix(description, c.reason) || body["access_token"] != nil {
+				t.Fatalf("redemption = %d %v, want 400 %s %s", status, body, c.code, c.reason)
 			}
 		})
 	}

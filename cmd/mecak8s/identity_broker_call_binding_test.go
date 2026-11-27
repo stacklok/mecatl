@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -81,66 +79,22 @@ func TestIdentityBrokerBindsEachGatewayTokenToItsCall(t *testing.T) {
 	}
 
 	// The listing token opens a session but cannot start a tools/call.
-	session, status, body := servedVMCP(t, gw.api, listing.GatewayToken.Value(), "", mcpInitialize)
+	session, status, body := servedVMCP(t, http.MethodPost, gw.api, listing.GatewayToken.Value(), "", mcpInitialize)
 	if status != http.StatusOK || session == "" {
 		t.Fatalf("initialize with the listing token: %d %s", status, body)
 	}
-	_, status, body = servedVMCP(t, gw.api, listing.GatewayToken.Value(), session, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"calendar.echo","arguments":{}}}`)
+	_, status, body = servedVMCP(t, http.MethodPost, gw.api, listing.GatewayToken.Value(), session, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"calendar.echo","arguments":{}}}`)
 	if status != http.StatusForbidden || !strings.Contains(body, "method_mismatch") {
 		t.Fatalf("tools/call with the listing token: %d %s, want 403 method_mismatch", status, body)
 	}
 	// The refusal did not spend the listing token, which ends its session.
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, gw.api+gatewayVMCPPath, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+listing.GatewayToken.Value())
-	req.Header.Set("Mcp-Session-Id", session)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		t.Fatalf("DELETE of the listing token's session: %d", resp.StatusCode)
+	if _, status, body := servedVMCP(t, http.MethodDelete, gw.api, listing.GatewayToken.Value(), session, ""); status >= 300 {
+		t.Fatalf("DELETE of the listing token's session: %d %s", status, body)
 	}
 
 	// Past its exp, a token that started no call is refused.
 	time.Sleep(time.Until(call.ExpiresAt.Add(time.Second)))
-	if _, status, body := servedVMCP(t, gw.api, call.GatewayToken.Value(), "", mcpInitialize); status != http.StatusUnauthorized {
+	if _, status, body := servedVMCP(t, http.MethodPost, gw.api, call.GatewayToken.Value(), "", mcpInitialize); status != http.StatusUnauthorized {
 		t.Fatalf("initialize with an expired gateway token: %d %s, want 401", status, body)
 	}
-}
-
-// mcpInitialize is an MCP initialize request.
-const mcpInitialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mecak8s-test","version":"1.0"}}}`
-
-// servedVMCP posts body to the served vMCP endpoint with token, in session
-// when set, and returns the session the answer names, its status, and its
-// body.
-func servedVMCP(t *testing.T, api, token, session, body string) (string, int, string) {
-	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, api+gatewayVMCPPath, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if session != "" {
-		req.Header.Set("Mcp-Session-Id", session)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("served vMCP: %v", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode == http.StatusOK && !json.Valid(raw) && !strings.Contains(string(raw), "data:") {
-		t.Fatalf("served vMCP answered 200 with %q", raw)
-	}
-	return resp.Header.Get("Mcp-Session-Id"), resp.StatusCode, string(raw)
 }

@@ -15,7 +15,9 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{
-		"internal/adapter/mcp/source/toolhive.go":                   true,
+		"internal/adapter/mcp/source/toolhive.go": true,
+		// The argument hash is the vMCP's own (callbinding.ArgumentsSHA256).
+		"internal/adapter/mcpbroker/argumenthash.go":                true,
 		"internal/adapter/mcpbroker/authenticated_discovery.go":     true,
 		"internal/adapter/mcpbroker/toolhive_construction.go":       true,
 		"internal/adapter/mcpbroker/toolhive_credential_custody.go": true,

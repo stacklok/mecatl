@@ -51,9 +51,9 @@ type AS2Options struct {
 	// Profiles are upstreams added after the static protected one, such as
 	// anonymous backends the vMCP routes.
 	Profiles []mcpbroker.ToolHiveProfile
-	// GatewayTokenLifetime and ExpiredTokenGrace set the
-	// mcpbroker.ToolHiveConfig fields of those names; zero keeps their
-	// defaults.
+	// GatewayTokenLifetime sets mcpbroker.ToolHiveConfig's field of that
+	// name, and ExpiredTokenGrace the vMCP's grace after a gateway token's
+	// exp, through the trust; zero keeps their defaults.
 	GatewayTokenLifetime, ExpiredTokenGrace time.Duration
 }
 
@@ -76,9 +76,8 @@ func StartAS2With(t testing.TB, brokerClientID string, brokerKeySet []byte, trus
 			Static: []mcpbroker.StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}},
 		}}, opts.Profiles...),
 		BrokerClient:         &mcpbroker.ToolHiveBrokerClient{ID: brokerClientID, KeySetFile: keySetFile},
-		AS2Trust:             TrustAS1(trust),
+		AS2Trust:             TrustAS1(withGrace(trust, opts.ExpiredTokenGrace)),
 		GatewayTokenLifetime: opts.GatewayTokenLifetime,
-		ExpiredTokenGrace:    opts.ExpiredTokenGrace,
 	}
 	process, err := mcpbroker.NewToolHiveProcess(t.Context(), cfg)
 	if err != nil {
@@ -89,4 +88,13 @@ func StartAS2With(t testing.TB, brokerClientID string, brokerKeySet []byte, trus
 		t.Fatal("mcpbrokertest: AS-2 is not set up")
 	}
 	return process
+}
+
+// withGrace returns trust with the vMCP's grace after a gateway token's exp
+// set to grace, when positive.
+func withGrace(trust AS1Trust, grace time.Duration) AS1Trust {
+	if grace > 0 {
+		trust.ExpiredTokenGrace = grace
+	}
+	return trust
 }

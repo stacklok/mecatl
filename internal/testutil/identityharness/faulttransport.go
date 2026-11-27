@@ -106,8 +106,9 @@ type GrantRequest struct {
 	// client_assertion, assertion, and actor_token; IssuedToken is the
 	// access_token of a success response, even a lost one.
 	ClientAssertion, Assertion, ActorToken, IssuedToken string
-	// Operation is the request's mecatl_operation, the call's operation ID
-	// an ID-JAG exchange names.
+	// Operation is the operation_id of the call entry an ID-JAG exchange
+	// carries in authorization_details, empty when it carries none or a
+	// list entry.
 	Operation string
 	// AuthorizationDetails is the request's authorization_details parameter,
 	// and HasAuthorizationDetails whether the request carried one.
@@ -209,7 +210,7 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	form, _ := url.ParseQuery(string(body))
 	rec := GrantRequest{
 		Kind: grantKind(form), ClientAssertion: form.Get("client_assertion"), Assertion: form.Get("assertion"),
-		ActorToken: form.Get("actor_token"), Operation: form.Get("mecatl_operation"),
+		ActorToken: form.Get("actor_token"), Operation: entryOperation(form.Get("authorization_details")),
 		AuthorizationDetails: form.Get("authorization_details"), HasAuthorizationDetails: form.Has("authorization_details"),
 	}
 	q := f.pop(rec.Kind)
@@ -225,6 +226,9 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case FaultOnNext:
 		q.fn()
 	}
+	// sent is the request as sent, before the answer fills rec in, so a
+	// duplicate carries every request field.
+	sent := rec
 	resp, err := f.forward(req, body, &rec)
 	f.record(rec)
 	if err != nil {
@@ -235,8 +239,8 @@ func (f *FaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		_ = resp.Body.Close()
 		return nil, errConnectionClosed
 	case FaultDuplicate:
-		dup := GrantRequest{Kind: rec.Kind, Fault: FaultDuplicate, ClientAssertion: rec.ClientAssertion, Assertion: rec.Assertion, ActorToken: rec.ActorToken, Operation: rec.Operation,
-			AuthorizationDetails: rec.AuthorizationDetails, HasAuthorizationDetails: rec.HasAuthorizationDetails}
+		dup := sent
+		dup.Fault = FaultDuplicate
 		if again, err := f.forward(req, body, &dup); err == nil {
 			_ = again.Body.Close()
 		}
@@ -303,4 +307,16 @@ func oauthErrorResponse(req *http.Request, answer Fault) *http.Response {
 	resp := rec.Result()
 	resp.Request = req
 	return resp
+}
+
+// entryOperation returns the operation_id of the first entry of an
+// authorization_details value, empty when it has none.
+func entryOperation(details string) string {
+	var entries []struct {
+		OperationID string `json:"operation_id"`
+	}
+	if json.Unmarshal([]byte(details), &entries) != nil || len(entries) == 0 {
+		return ""
+	}
+	return entries[0].OperationID
 }

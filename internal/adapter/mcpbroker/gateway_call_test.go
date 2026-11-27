@@ -793,6 +793,7 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{"connection required without link", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionURLElicitation}, false, outcomeConnectionRequired("github", "")},
 		{"session not found", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionSessionNotFound}, false, outcomeSessionNotFound},
 		{"denied before it ran", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionDenied}, false, outcomeGatewayRefused},
+		{"token reused", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptUnknown, Rejection: mcpadapter.GatewayRejectionTokenReused}, false, outcomeTokenReused},
 		{"token rejected twice", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionInvalidToken}, true, outcomeTokenRejected},
 		{"changed after authorization", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionChanged}, false, outcomeInternal},
 		{"authorization expired", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionExpired}, false, outcomeUnavailable},
@@ -1322,6 +1323,35 @@ func TestGatewayCallNamesItsRun(t *testing.T) {
 			}
 			if got := f.diag.String(); !strings.Contains(got, "causethe acting agent has no run") {
 				t.Fatalf("diagnostics = %s, want the missing run as the cause", got)
+			}
+		})
+	}
+}
+
+// TestGatewayCallTokenReusedIsNotRetried: a 401 whose invalid_token
+// challenge names token_reused means the token already started a call, so
+// the call it names may have run with it. Unlike any other invalid_token,
+// the call is not retried with a new token, and the claim is kept, on the
+// call and on the handshake (credentials-and-lifecycle.md, step (9)).
+func TestGatewayCallTokenReusedIsNotRetried(t *testing.T) {
+	const challenge = `Bearer realm="vmcp", error="invalid_token", error_description="the access token is not accepted (token_reused)"`
+	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
+	for _, method := range []string{"tools/call", "initialize"} {
+		t.Run("on "+method, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+				if bytes.Contains(body, []byte(`"method":"`+method+`"`)) {
+					return unauthorized(challenge)
+				}
+				return nil
+			}
+			res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+			wantRow(t, res, err, outcomeTokenReused)
+			if n := len(f.auth.calls()); n != 1 {
+				t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+			}
+			if err := f.claim(t, op); !errors.Is(err, ErrAlreadySent) {
+				t.Fatalf("Claim = %v, want the call kept as possibly run", err)
 			}
 		})
 	}

@@ -1093,39 +1093,46 @@ func (d *gatewayCallDiagnostics) operations(sessionID string) []string {
 // backend go.
 func vmcpInitialize(t *testing.T, api, token string) int {
 	t.Helper()
-	send := func(method, body, sessionID string) (*http.Response, []byte) {
-		req, err := http.NewRequestWithContext(t.Context(), method, api+gatewayVMCPPath, strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json, text/event-stream")
-		if sessionID != "" {
-			req.Header.Set("Mcp-Session-Id", sessionID)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("vMCP %s: %v", method, err)
-		}
-		defer resp.Body.Close()
-		raw, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("vMCP %s response: %v", method, err)
-		}
-		return resp, raw
+	sessionID, status, body := servedVMCP(t, http.MethodPost, api, token, "", mcpInitialize)
+	if sessionID != "" {
+		servedVMCP(t, http.MethodDelete, api, token, sessionID, "")
 	}
-	const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mecak8s-test","version":"1.0"}}}`
-	resp, raw := send(http.MethodPost, initialize, "")
-	if id := resp.Header.Get("Mcp-Session-Id"); id != "" {
-		send(http.MethodDelete, "", id)
-	}
-	if resp.StatusCode == http.StatusOK && !identityharness.HasJSONRPCResult(raw) {
+	if status == http.StatusOK && !identityharness.HasJSONRPCResult([]byte(body)) {
 		t.Fatal("served vMCP initialize answered 200 without a JSON-RPC result")
 	}
-	return resp.StatusCode
+	return status
+}
+
+// mcpInitialize is an MCP initialize request.
+const mcpInitialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mecak8s-test","version":"1.0"}}}`
+
+// servedVMCP sends a method request with body, if any, to the served vMCP
+// endpoint with token, when set, in session sessionID, when set, and
+// returns the session the answer names, its status, and its body.
+func servedVMCP(t *testing.T, method, api, token, sessionID, body string) (string, int, string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, api+gatewayVMCPPath, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("served vMCP %s: %v", method, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("served vMCP %s response: %v", method, err)
+	}
+	return resp.Header.Get("Mcp-Session-Id"), resp.StatusCode, string(raw)
 }
 
 // identityBrokerAS1Tokens is the AS-1 whose access tokens mecak8s accepts:

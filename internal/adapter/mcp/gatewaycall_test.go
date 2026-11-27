@@ -784,6 +784,21 @@ func TestSendGatewayCallClassifiesADenial(t *testing.T) {
 	}
 }
 
+func TestIsTokenReusedChallenge(t *testing.T) {
+	for challenge, want := range map[string]bool{
+		`Bearer error="invalid_token", error_description="the access token is not accepted (token_reused)"`: true,
+		`Bearer realm="vmcp", error="invalid_token", error_description="(token_reused)"`:                    true,
+		`Bearer error="invalid_token", error_description="token expired"`:                                   false,
+		`Bearer error="invalid_token"`:                                          false,
+		`Bearer error="insufficient_scope", error_description="(token_reused)"`: false,
+		`Basic error="invalid_token", error_description="(token_reused)"`:       false,
+	} {
+		if got := isTokenReusedChallenge(challenge); got != want {
+			t.Errorf("isTokenReusedChallenge(%q) = %v, want %v", challenge, got, want)
+		}
+	}
+}
+
 func TestIsInsufficientScopeChallenge(t *testing.T) {
 	for challenge, want := range map[string]bool{
 		`Bearer error="insufficient_scope"`:                  true,

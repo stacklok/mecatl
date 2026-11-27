@@ -39,8 +39,6 @@ type IDJAGRequest struct {
 	Audience string
 	// Resource is the vMCP resource the gateway token is for.
 	Resource string
-	// OperationID is the call's operation, sent as mecatl_operation.
-	OperationID string
 	// AuthorizationDetails is the call entry AS-1 signs into the ID-JAG, a
 	// JSON array of one entry of CallEntryType. The adapter omits the
 	// parameter when it is empty.

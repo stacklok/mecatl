@@ -39,6 +39,7 @@ var (
 	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys); change them and retry (code refused_arguments)."}
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
+	outcomeTokenReused         = gatewayOutcome{code: "token_reused", text: "MCP gateway call outcome unknown: the gateway says its authorization was already used for a call, which may have run; it is not retried automatically (code token_reused)."}
 	outcomeGatewayRefused      = gatewayOutcome{code: "gateway_refused", text: "MCP gateway call not run: the gateway refused it before running it; it is not retried (code gateway_refused)."}
 	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call is already claimed or was sent; automatic replay refused (code already_sent)."}
 	outcomeSendOnceFull        = gatewayOutcome{code: "send_once_full", text: "MCP gateway call refused: too many gateway calls are held for this session; the call was not sent (code send_once_full)."}
@@ -111,6 +112,10 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 // retried reports that it was the retry after a rejected token.
 func outcomeForAttempts(server string, last mcpadapter.GatewayAttempt, retried bool) gatewayOutcome {
 	switch {
+	case last.Rejection == mcpadapter.GatewayRejectionTokenReused:
+		// The token started a call before this one, so the call it names
+		// may have run: never retried with a new token (step (9), check 3).
+		return outcomeTokenReused
 	case last.Outcome == mcpadapter.GatewayAttemptUnknown:
 		return outcomeUnknown
 	case last.Rejection == mcpadapter.GatewayRejectionURLElicitation:

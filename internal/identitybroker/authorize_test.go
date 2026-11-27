@@ -407,7 +407,7 @@ func TestAuthorizeCallGetsOneGatewayTokenPerCall(t *testing.T) {
 		f.wantCounts(t, i+1, i+1)
 		r := f.issuer.requests()[i]
 		if r.SubjectToken.Value() != grant.RefreshToken.Value() || r.ActorToken.Value() != f.cred.Value() ||
-			r.Audience != as2Issuer || r.Resource != as2Resource || r.OperationID != req.OperationID {
+			r.Audience != as2Issuer || r.Resource != as2Resource || !strings.Contains(string(r.AuthorizationDetails), `"operation_id":"`+req.OperationID+`"`) {
 			t.Fatalf("ID-JAG request %d = %+v, want the session's grant, the credential, AS-2, and the operation", i, r)
 		}
 		assertion := f.as2.redeemed()[i]

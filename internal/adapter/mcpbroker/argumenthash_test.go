@@ -4,25 +4,20 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/json/jsontext"
 	"errors"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
 
 // hashVectors is the shared argument hash vectors file,
 // testdata/argumenthash/vectors.json: a byte-for-byte copy of ToolHive's
 // canonical copy (pkg/vmcp/callbinding/testdata/argumenthash/vectors.json),
-// which the vMCP tests against, so the MCP client and the vMCP compute the
-// same hash and refuse the same arguments. TestHashVectorsAreToolHives keeps
-// the two equal. The expected canonical strings come from RFC 8785 and
+// which the vMCP tests against. argumentsSHA256 delegates to the vMCP's own
+// hash; these tests pin its absent-is-{} rule and its refusals against them,
+// and TestHashVectorsAreToolHives notices when ToolHive changes its copy. The expected canonical strings come from RFC 8785 and
 // hand-checked cases; sha256 is computed over the expected string, not by
 // this package.
 type hashVectors struct {
@@ -123,52 +118,7 @@ func TestArgumentsSHA256Vectors(t *testing.T) {
 			if string(sent) != wantSent {
 				t.Errorf("sent = %s, want %s", sent, wantSent)
 			}
-			if _, canonical, err := canonicalArguments(v.Arguments); err != nil || canonical != v.Canonical {
-				t.Errorf("canonical = %s, %v; want %s", canonical, err, v.Canonical)
-			}
 		})
-	}
-}
-
-// TestCanonicalizeNumbersAppendixB checks the number formatting of
-// jsontext's Canonicalize, which canonicalArguments relies on, against every
-// sample in RFC 8785 Appendix B, including those argumentsSHA256 refuses
-// because they are integers beyond 2^53.
-func TestCanonicalizeNumbersAppendixB(t *testing.T) {
-	for _, c := range []struct{ ieee, want string }{
-		{"0000000000000000", "0"},
-		{"8000000000000000", "0"},
-		{"0000000000000001", "5e-324"},
-		{"8000000000000001", "-5e-324"},
-		{"7fefffffffffffff", "1.7976931348623157e+308"},
-		{"ffefffffffffffff", "-1.7976931348623157e+308"},
-		{"4340000000000000", "9007199254740992"},
-		{"c340000000000000", "-9007199254740992"},
-		{"4430000000000000", "295147905179352830000"},
-		{"44b52d02c7e14af5", "9.999999999999997e+22"},
-		{"44b52d02c7e14af6", "1e+23"},
-		{"44b52d02c7e14af7", "1.0000000000000001e+23"},
-		{"444b1ae4d6e2ef4e", "999999999999999700000"},
-		{"444b1ae4d6e2ef4f", "999999999999999900000"},
-		{"444b1ae4d6e2ef50", "1e+21"},
-		{"3eb0c6f7a0b5ed8c", "9.999999999999997e-7"},
-		{"3eb0c6f7a0b5ed8d", "0.000001"},
-		{"41b3de4355555553", "333333333.3333332"},
-		{"41b3de4355555554", "333333333.33333325"},
-		{"41b3de4355555555", "333333333.3333333"},
-		{"41b3de4355555556", "333333333.3333334"},
-		{"41b3de4355555557", "333333333.33333343"},
-		{"becbf647612f3696", "-0.0000033333333333333333"},
-		{"43143ff3c1cb0959", "1424953923781206.2"},
-	} {
-		bits, err := strconv.ParseUint(c.ieee, 16, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		v := jsontext.Value("[" + strconv.FormatFloat(math.Float64frombits(bits), 'g', -1, 64) + "]")
-		if err := v.Canonicalize(); err != nil || string(v) != "["+c.want+"]" {
-			t.Errorf("Canonicalize(%s) = %s, %v; want [%s]", c.ieee, v, err, c.want)
-		}
 	}
 }
 
@@ -189,37 +139,6 @@ func TestArgumentsSHA256RefusesOutsideIJSON(t *testing.T) {
 			}
 			if sent != nil || sum != "" {
 				t.Errorf("refusal returned sent %q, sum %q", sent, sum)
-			}
-		})
-	}
-}
-
-// TestArgumentsSHA256AgreesWithTheVMCP computes every shared vector and
-// refusal with Mecatl's hash and with the vMCP's own,
-// callbinding.ArgumentsSHA256 from the ToolHive module this build uses: the
-// two produce the same hash, and refuse the same arguments.
-func TestArgumentsSHA256AgreesWithTheVMCP(t *testing.T) {
-	file := readHashVectors(t)
-	for _, v := range file.Vectors {
-		t.Run(v.Name, func(t *testing.T) {
-			_, ours, err := argumentsSHA256(v.Arguments)
-			if err != nil {
-				t.Fatalf("Mecatl's hash refused %s: %v", v.Arguments, err)
-			}
-			theirs, err := callbinding.ArgumentsSHA256(v.Arguments)
-			if err != nil || theirs != ours {
-				t.Fatalf("the vMCP's hash = %s, %v; Mecatl's %s", theirs, err, ours)
-			}
-		})
-	}
-	for _, r := range file.Refusals {
-		t.Run(r.Name, func(t *testing.T) {
-			args := r.arguments(t)
-			if _, _, err := argumentsSHA256(args); err == nil {
-				t.Fatal("Mecatl's hash accepted arguments the vectors refuse")
-			}
-			if sum, err := callbinding.ArgumentsSHA256(args); err == nil {
-				t.Fatalf("the vMCP's hash accepted them: %s", sum)
 			}
 		})
 	}

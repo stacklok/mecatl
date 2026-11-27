@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/authorizationdetails"
+	"github.com/stacklok/toolhive/pkg/authserver/server"
 	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
 	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
@@ -29,6 +30,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
+	"github.com/stacklok/mecatl/internal/identitybroker"
 )
 
 const (
@@ -100,16 +102,11 @@ type ToolHiveConfig struct {
 	FallbackKeyFiles []string
 	// GatewayTokenLifetime, with AS-2 set up, is the lifetime of each
 	// gateway token AS-2 issues the broker client, in whole seconds between
-	// MinGatewayTokenLifetime and MaxGatewayTokenLifetime. AS-2 caps it at
-	// the ID-JAG's remaining validity. Zero selects
+	// minGatewayTokenLifetime and maxGatewayTokenLifetime. AS-2 caps it at
+	// the ID-JAG's remaining validity. It needs AS-2 to trust an ID-JAG
+	// issuer, since ToolHive applies it only to redeemed tokens. Zero selects
 	// DefaultGatewayTokenLifetime.
 	GatewayTokenLifetime time.Duration
-	// ExpiredTokenGrace, with AS-2 set up, is how long after a gateway
-	// token's exp the vMCP still accepts the messages of the call it started,
-	// such as its cancellation or an elicitation reply, at most
-	// gatewayMaxCallDuration. Zero selects defaultExpiredTokenGrace; only
-	// tests set it.
-	ExpiredTokenGrace time.Duration
 }
 
 // The gateway token's lifetime bounds (credentials-and-lifecycle.md, step
@@ -118,17 +115,17 @@ const (
 	// DefaultGatewayTokenLifetime is ToolHiveConfig.GatewayTokenLifetime's
 	// default.
 	DefaultGatewayTokenLifetime = 30 * time.Second
-	// MinGatewayTokenLifetime is ToolHive's smallest per-client lifetime.
-	MinGatewayTokenLifetime = 2 * time.Second
-	// MaxGatewayTokenLifetime is the identity broker's largest ID-JAG
+	// minGatewayTokenLifetime is ToolHive's smallest per-client lifetime.
+	minGatewayTokenLifetime = server.MinClientAccessTokenLifespan
+	// maxGatewayTokenLifetime is the identity broker's largest ID-JAG
 	// lifetime, which caps the gateway token anyway.
-	MaxGatewayTokenLifetime = 5 * time.Minute
+	maxGatewayTokenLifetime = identitybroker.MaxIDJAGLifetime
 )
 
 // gatewayMaxCallDuration is how long the vMCP keeps a gateway call open: it
 // accepts the call's messages, and keeps its token's single-use record, for
 // at most this long after the call starts. It does not stop a longer call.
-const gatewayMaxCallDuration = 30 * time.Minute
+const gatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
 
 // defaultExpiredTokenGrace is how long after a gateway token's exp the vMCP
 // accepts the messages of the call it started: long enough for a user to
@@ -136,32 +133,31 @@ const gatewayMaxCallDuration = 30 * time.Minute
 const defaultExpiredTokenGrace = 5 * time.Minute
 
 // gatewayTokenLifetime returns c's gateway token lifetime, the default for
-// zero, or an error when it is out of bounds or not whole seconds.
+// zero, or an error when it is out of bounds, not whole seconds, or set
+// while AS-2 trusts no ID-JAG issuer, so it would never apply.
 func (c ToolHiveConfig) gatewayTokenLifetime() (time.Duration, error) {
 	d := c.GatewayTokenLifetime
 	if d == 0 {
 		return DefaultGatewayTokenLifetime, nil
 	}
-	if d < MinGatewayTokenLifetime || d > MaxGatewayTokenLifetime || d%time.Second != 0 {
+	if !c.AS2Trust.TrustsAnIssuer() {
+		return 0, fmt.Errorf("%w: a gateway token lifetime needs AS-2 to trust an ID-JAG issuer", ErrInvalidCatalogue)
+	}
+	if d < minGatewayTokenLifetime || d > maxGatewayTokenLifetime || d%time.Second != 0 {
 		return 0, fmt.Errorf("%w: the gateway token lifetime %s must be whole seconds from %s to %s",
-			ErrInvalidCatalogue, d, MinGatewayTokenLifetime, MaxGatewayTokenLifetime)
+			ErrInvalidCatalogue, d, minGatewayTokenLifetime, maxGatewayTokenLifetime)
 	}
 	return d, nil
 }
 
-// expiredTokenGrace returns c's grace after a gateway token's exp, the
-// default for zero, or an error when it is not positive or exceeds
-// gatewayMaxCallDuration.
-func (c ToolHiveConfig) expiredTokenGrace() (time.Duration, error) {
-	d := c.ExpiredTokenGrace
-	if d == 0 {
-		return defaultExpiredTokenGrace, nil
+// expiredTokenGrace is how long after a gateway token's exp the vMCP
+// accepts the messages of the call it started: defaultExpiredTokenGrace,
+// unless a test's trust shortens it. callbinding.New checks it.
+func (t AS2Trust) expiredTokenGrace() time.Duration {
+	if t.t != nil && t.t.ExpiredTokenGrace > 0 {
+		return t.t.ExpiredTokenGrace
 	}
-	if d < 0 || d > gatewayMaxCallDuration {
-		return 0, fmt.Errorf("%w: the grace after a gateway token's expiry %s must be positive and at most %s",
-			ErrInvalidCatalogue, d, gatewayMaxCallDuration)
-	}
-	return d, nil
+	return defaultExpiredTokenGrace
 }
 
 // callEntryRegistry is AS-2's authorization_details registry: ToolHive's
@@ -185,7 +181,7 @@ func callEntryRegistry() (*authorizationdetails.Registry, error) {
 // for grace after the token's exp. The token validator in front of the vMCP
 // and the vMCP share it, so both answer with incoming's challenge.
 //
-// Shortcut: the single-use record is in this process's memory, so a gateway token replayed to another replica within its lifetime is accepted; removed by vMCP: one single-use record shared by all replicas for call-bound access tokens (stacklok/toolhive#7261).
+// Shortcut: the single-use record is in this process's memory, so a gateway token replayed to another replica within its lifetime is accepted; removed by #2805 (more than one replica), with the vMCP's single-use record shared by all replicas (stacklok/toolhive#7261).
 func gatewayCallBinding(issuer string, client ToolHiveBrokerClient, grace time.Duration, incoming *vmcpconfig.IncomingAuthConfig) (*callbinding.Binding, error) {
 	binding, err := callbinding.New(callbinding.Config{
 		Clients:         []string{client.ID},

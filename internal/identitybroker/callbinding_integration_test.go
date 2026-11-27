@@ -224,6 +224,27 @@ func (w *wireRecorder) last(kind string) (exchange, bool) {
 	return exchange{}, false
 }
 
+// reply posts a JSON-RPC response on the vMCP session, as a client answers a
+// request the vMCP sent it during a call, such as an elicitation, and
+// returns its status.
+func (w *wireRecorder) reply(t *testing.T, endpoint, session string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint,
+		strings.NewReader(`{"jsonrpc":"2.0","id":"el-1","result":{"action":"decline"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Session-Id", session)
+	resp, err := w.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("post a reply: %v", err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
 // connect opens a vMCP session with token through a new wireRecorder. A
 // refused initialize returns the error and the recorder.
 func (f *harnessFixture) connect(t *testing.T, token identitybroker.Token) (*mcpsdk.ClientSession, *wireRecorder, error) {
@@ -248,22 +269,6 @@ func (f *harnessFixture) connect(t *testing.T, token identitybroker.Token) (*mcp
 func gatewayTokenExp(t *testing.T, token identitybroker.Token) time.Time {
 	t.Helper()
 	return unixClaim(t, jwtPart(t, token.Value(), 1), "exp")
-}
-
-// waitUntil sleeps until at.
-func waitUntil(at time.Time) { time.Sleep(time.Until(at)) }
-
-// within fails t unless ch delivers within a few seconds.
-func within[T any](t *testing.T, ch <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-ch:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for %s", what)
-		var zero T
-		return zero
-	}
 }
 
 // TestAuthorizeCallBindsEachGatewayTokenToItsCallAtAS2: the broker sends
@@ -362,7 +367,7 @@ func TestRealVMCPRunsOnlyTheCallItsTokenNames(t *testing.T) {
 
 	// A listing token lists the calendar backend's tools alone.
 	list := f.mustAuthorize(t, f.calendarListing("op-list"))
-	cs, _, err := f.connect(t, list.GatewayToken)
+	cs, listRec, err := f.connect(t, list.GatewayToken)
 	if err != nil {
 		t.Fatalf("initialize with the listing token: %v", err)
 	}
@@ -381,18 +386,29 @@ func TestRealVMCPRunsOnlyTheCallItsTokenNames(t *testing.T) {
 	if _, err := cs.ListTools(ctx, nil); err == nil {
 		t.Fatal("the listing token listed twice")
 	}
+	if e, _ := listRec.last("tools/list"); e.status != http.StatusUnauthorized || !strings.Contains(e.body, "token_reused") {
+		t.Fatalf("a second listing: %d %s, want 401 token_reused", e.status, e.body)
+	}
 }
 
-// TestRetriedCallGetsANewTokenAtTheVMCP: a retried tools/call, after the
-// gateway rejected its token, gets a new gateway token, which the vMCP
-// accepts, while the first, spent token is refused (implementation.md, "Test
-// the per-call V").
+// TestRetriedCallGetsANewTokenAtTheVMCP: a call the vMCP refuses with 401
+// invalid_token before it ran is retried with a new gateway token, which the
+// vMCP accepts. A token that has already started a call, as a stolen one
+// replayed first would, gets 401 token_reused instead: the call it names may
+// have run, so Mecatl's MCP client reports an unknown outcome and the call is
+// not retried (implementation.md, "Test the per-call V";
+// credentials-and-lifecycle.md, step (9)).
 func TestRetriedCallGetsANewTokenAtTheVMCP(t *testing.T) {
 	f, _ := newBindingFixture(t)
 	req := f.calendarCall(t, "op-retry", "echo", `{"a":3}`)
 	first := f.mustAuthorize(t, req)
-	if a := f.send(t.Context(), first, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptCompleted {
-		t.Fatalf("the first attempt = %+v, want completed", a)
+	// The token expires before it is sent; the client's own send-by check is
+	// moved out of the way so the vMCP answers.
+	time.Sleep(time.Until(gatewayTokenExp(t, first.GatewayToken).Add(time.Second)))
+	late := first
+	late.ExpiresAt = time.Now().Add(time.Minute)
+	if a := f.send(t.Context(), late, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptNotSent || a.Rejection != mcpadapter.GatewayRejectionInvalidToken {
+		t.Fatalf("the expired token = %+v, want refused as invalid_token before the call", a)
 	}
 	req.RejectedAttemptID = first.AttemptID
 	retry := f.mustAuthorize(t, req)
@@ -400,11 +416,22 @@ func TestRetriedCallGetsANewTokenAtTheVMCP(t *testing.T) {
 	if retry.AttemptID == first.AttemptID || retryJTI == firstJTI {
 		t.Fatalf("the retry got attempt %s token %v, the first %s %v; want new ones", retry.AttemptID, retryJTI, first.AttemptID, firstJTI)
 	}
-	if a := f.send(t.Context(), first, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptNotSent || a.Rejection != mcpadapter.GatewayRejectionInvalidToken {
-		t.Fatalf("the first token sent again = %+v, want refused as invalid_token before the call", a)
-	}
 	if a := f.send(t.Context(), retry, req, `{"a":3}`); a.Outcome != mcpadapter.GatewayAttemptCompleted {
 		t.Fatalf("the retry = %+v, want completed with its new token", a)
+	}
+
+	// A token someone else spent first.
+	stolen := f.calendarCall(t, "op-stolen", "echo", `{"a":4}`)
+	auth := f.mustAuthorize(t, stolen)
+	cs, _, err := f.connect(t, auth.GatewayToken)
+	if err != nil {
+		t.Fatalf("the replay's initialize: %v", err)
+	}
+	if _, err := cs.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "calendar.echo", Arguments: map[string]any{"a": 4}}); err != nil {
+		t.Fatalf("the replayed call: %v", err)
+	}
+	if a := f.send(t.Context(), auth, stolen, `{"a":4}`); a.Outcome != mcpadapter.GatewayAttemptUnknown || a.Rejection != mcpadapter.GatewayRejectionTokenReused {
+		t.Fatalf("the call after its token was spent = %+v, want an unknown outcome for token_reused", a)
 	}
 }
 
@@ -420,24 +447,24 @@ func TestRealVMCPCancelsACallThatOutlivesItsToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan mcpadapter.GatewayAttempt, 1)
 	go func() { done <- f.send(ctx, auth, req, `{}`) }()
-	within(t, backend.slowStarted, "the slow tool to start")
-	waitUntil(exp.Add(500 * time.Millisecond))
+	receive(t, backend.slowStarted)
+	time.Sleep(time.Until(exp.Add(500 * time.Millisecond)))
 	cancel()
-	within(t, backend.slowCancelled, "the backend to see the cancellation sent after the token expired")
+	receive(t, backend.slowCancelled)
 	if time.Now().After(exp.Add(bindingGrace)) {
 		t.Fatal("the cancellation arrived after the grace; the test proves nothing")
 	}
-	if a := within(t, done, "the call to return"); a.Outcome != mcpadapter.GatewayAttemptUnknown {
+	if a := receive(t, done); a.Outcome != mcpadapter.GatewayAttemptUnknown {
 		t.Fatalf("the cancelled call = %+v, want an unknown outcome", a)
 	}
 }
 
 // TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace: once a call's
-// gateway token has expired, the vMCP accepts the call's cancellation for
-// the grace, and answers 401 after it. Replies to requests the vMCP sends
-// during a call are not tested: it answers a tools/call as one JSON
-// response, and Mecatl's MCP client opens no stream for them, so a
-// backend's request never reaches it.
+// gateway token has expired, the vMCP accepts the call's cancellation and a
+// reply on its session for the grace, and answers 401 after it. Mecatl's MCP
+// client sends no such reply today: the vMCP answers a tools/call as one
+// JSON response, and the client opens no stream for requests during a call,
+// so the reply is posted by hand.
 func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 	t.Run("a cancellation within the grace", func(t *testing.T) {
 		f, backend := newBindingFixture(t)
@@ -450,10 +477,13 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 		go func() {
 			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
 		}()
-		within(t, backend.slowStarted, "the slow tool to start")
-		waitUntil(gatewayTokenExp(t, auth.GatewayToken).Add(500 * time.Millisecond))
+		receive(t, backend.slowStarted)
+		time.Sleep(time.Until(gatewayTokenExp(t, auth.GatewayToken).Add(500 * time.Millisecond)))
+		if status := rec.reply(t, f.as2Resource, cs.ID()); status != http.StatusAccepted {
+			t.Fatalf("a reply within the grace got %d, want 202", status)
+		}
 		cancel()
-		within(t, backend.slowCancelled, "the backend to see the cancellation")
+		receive(t, backend.slowCancelled)
 		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusAccepted}) {
 			t.Fatalf("the cancellation got %v, want 202", got)
 		}
@@ -469,8 +499,11 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 		go func() {
 			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
 		}()
-		within(t, backend.slowStarted, "the slow tool to start")
-		waitUntil(gatewayTokenExp(t, auth.GatewayToken).Add(bindingGrace + time.Second))
+		receive(t, backend.slowStarted)
+		time.Sleep(time.Until(gatewayTokenExp(t, auth.GatewayToken).Add(bindingGrace + time.Second)))
+		if status := rec.reply(t, f.as2Resource, cs.ID()); status != http.StatusUnauthorized {
+			t.Fatalf("a reply after the grace got %d, want 401", status)
+		}
 		cancel()
 		deadline := time.Now().Add(5 * time.Second)
 		for len(rec.statuses("notifications/cancelled")) == 0 && time.Now().Before(deadline) {

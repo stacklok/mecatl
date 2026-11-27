@@ -160,8 +160,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 		}
 		res, err := b.idjag.IssueIDJAG(ctx, IDJAGRequest{
 			SubjectToken: g.refreshToken, ActorToken: req.Credential,
-			Audience: as2.Issuer, Resource: as2.Resource, OperationID: req.OperationID,
-			AuthorizationDetails: entry,
+			Audience: as2.Issuer, Resource: as2.Resource, AuthorizationDetails: entry,
 		})
 		if err != nil {
 			rule, retry, final := t.exchangeFailure(ctx, s, g, err)
