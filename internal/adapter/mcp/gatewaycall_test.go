@@ -395,6 +395,45 @@ func TestSendGatewayCallChecksSendByBeforeTheToolsCall(t *testing.T) {
 	}
 }
 
+// TestSendGatewayCallKeepsTheFirstHandshakeRejection: a handshake refused
+// with invalid_token keeps that rejection, and with it the caller's one
+// retry with a new token, even when the session's closing DELETE comes after
+// the send-by deadline and is refused there.
+func TestSendGatewayCallKeepsTheFirstHandshakeRejection(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.SendBy = time.Now().Add(gatewaySendMargin + 300*time.Millisecond)
+	var deletes atomic.Int64
+	req.HTTPClient = &http.Client{Transport: gatewayRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			deletes.Add(1)
+		}
+		if r.Method != http.MethodPost || r.Body == nil {
+			return f.wire.RoundTrip(r)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Contains(body, []byte(`"method":"notifications/initialized"`)) {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			return f.wire.RoundTrip(r)
+		}
+		// The rejection arrives after the send-by deadline, less the margin,
+		// so the closing DELETE that follows is refused by the deadline.
+		time.Sleep(time.Until(req.SendBy.Add(-gatewaySendMargin / 2)))
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+			Header: http.Header{"Www-Authenticate": {`Bearer error="invalid_token"`}},
+			Body:   io.NopCloser(strings.NewReader("")), Request: r,
+		}, nil
+	})}
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionInvalidToken, http.StatusUnauthorized)
+	if n := deletes.Load(); n != 0 {
+		t.Fatalf("%d DELETE written after the send-by deadline", n)
+	}
+}
+
 // TestSendGatewayCallKeepsTheMarginBeforeTheHandshake: an authorization
 // that lapses within gatewaySendMargin is not presented at all.
 func TestSendGatewayCallKeepsTheMarginBeforeTheHandshake(t *testing.T) {

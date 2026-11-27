@@ -454,22 +454,29 @@ func (w *gatewayWire) startCall(id json.RawMessage) error {
 	case w.callStarted:
 		return errGatewayRefused
 	case !time.Now().Before(w.sendBy):
-		if w.refusal == "" {
-			w.refusal = GatewayRejectionExpired
-		}
+		w.refuseLocked(GatewayRejectionExpired)
 		return errGatewayRefused
 	}
 	w.callStarted, w.callID = true, id
 	return nil
 }
 
+// refuse records r as why the attempt was not sent, unless an earlier
+// refusal or a refusing handshake answer already says why: the first one
+// wins. The SDK closes a failed handshake's session with a DELETE, which the
+// send-by deadline may refuse after the gateway answered, say, invalid_token.
 func (w *gatewayWire) refuse(r GatewayRejection) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.refusal == "" {
+	w.refuseLocked(r)
+	return errGatewayRefused
+}
+
+// refuseLocked is refuse with w.mu held.
+func (w *gatewayWire) refuseLocked(r GatewayRejection) {
+	if w.refusal == "" && w.handshake.status == 0 {
 		w.refusal = r
 	}
-	return errGatewayRefused
 }
 
 // sdkSentCancelled reports whether the SDK sent notifications/cancelled for
