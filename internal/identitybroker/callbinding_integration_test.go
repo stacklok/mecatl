@@ -33,12 +33,13 @@ import (
 // the real vMCP, routing a real backend. Like the rest of the harness, none
 // is parallel.
 
-// bindingIDJAGLifetime caps the gateway tokens' lifetime, and bindingGrace is
-// the grace after it in which the vMCP still accepts their call's messages:
-// short, so the tests can outlive them.
+// bindingIDJAGLifetime caps the gateway tokens' lifetime, and
+// bindingMaxCall is the vMCP's maximum call duration, which is also the
+// grace after a token's exp in which it accepts the token's call's messages,
+// as in production: short, so the tests can outlive them.
 const (
 	bindingIDJAGLifetime = 3 * time.Second
-	bindingGrace         = 4 * time.Second
+	bindingMaxCall       = 10 * time.Second
 )
 
 // calendarBackend is an anonymous MCP backend the vMCP routes as
@@ -84,7 +85,7 @@ func newBindingFixture(t *testing.T) (*harnessFixture, *calendarBackend) {
 	backend, profile := startCalendarBackend(t)
 	f := newHarnessFixtureWith(t, harnessOptions{
 		as2: mcpbrokertest.AS2Options{
-			Profiles: []mcpbroker.ToolHiveProfile{profile}, ExpiredTokenGrace: bindingGrace,
+			Profiles: []mcpbroker.ToolHiveProfile{profile}, MaxCallDuration: bindingMaxCall,
 		},
 		servers: []string{"calendar"}, idjagLifetime: bindingIDJAGLifetime,
 	})
@@ -467,8 +468,9 @@ func TestRetriedCallGetsANewTokenAtTheVMCP(t *testing.T) {
 }
 
 // TestRealVMCPCancelsACallThatOutlivesItsToken: Mecatl's MCP client cancels
-// a call after its gateway token expired, within the grace; the vMCP
-// accepts the cancellation and the backend's tool is cancelled
+// a call late in its maximum duration, long after its gateway token
+// expired; the vMCP accepts the cancellation and the backend's tool is
+// cancelled, since the grace after exp equals the maximum call duration
 // (implementation.md, "Test the binding at the vMCP").
 func TestRealVMCPCancelsACallThatOutlivesItsToken(t *testing.T) {
 	f, backend := newBindingFixture(t)
@@ -479,11 +481,19 @@ func TestRealVMCPCancelsACallThatOutlivesItsToken(t *testing.T) {
 	done := make(chan mcpadapter.GatewayAttempt, 1)
 	go func() { done <- f.send(ctx, auth, req, `{}`) }()
 	receive(t, backend.slowStarted)
-	time.Sleep(time.Until(exp.Add(500 * time.Millisecond)))
+	started := time.Now()
+	// Cancel late in the call: well past the point where a grace of a sixth
+	// of the maximum call duration (production's former five of 30 minutes)
+	// would have ended, and before the call's maximum.
+	late := started.Add(bindingMaxCall - 3*time.Second)
+	if !late.After(exp.Add(bindingMaxCall / 6)) {
+		t.Fatalf("the cancellation at %v is not past a sixth of the maximum after exp %v; the test proves nothing", late, exp)
+	}
+	time.Sleep(time.Until(late))
 	cancel()
 	receive(t, backend.slowCancelled)
-	if time.Now().After(exp.Add(bindingGrace)) {
-		t.Fatal("the cancellation arrived after the grace; the test proves nothing")
+	if time.Since(started) >= bindingMaxCall {
+		t.Fatal("the cancellation arrived after the call's maximum; the test proves nothing")
 	}
 	if a := receive(t, done); a.Outcome != mcpadapter.GatewayAttemptUnknown {
 		t.Fatalf("the cancelled call = %+v, want an unknown outcome", a)
@@ -516,7 +526,7 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 		}
 		cancel()
 		receive(t, backend.slowCancelled)
-		if e := rec.await(t, "notifications/cancelled"); e.status != http.StatusAccepted && e.sent.After(exp.Add(bindingGrace)) {
+		if e := rec.await(t, "notifications/cancelled"); e.status != http.StatusAccepted && e.sent.After(exp.Add(bindingMaxCall)) {
 			t.Fatalf("the cancellation was sent %v after exp, past the grace; the test proves nothing", e.sent.Sub(exp))
 		}
 		if got := rec.statuses("notifications/cancelled"); !slices.Equal(got, []int{http.StatusAccepted}) {
@@ -535,7 +545,7 @@ func TestRealVMCPAcceptsAnOpenCallsMessagesOnlyWithinTheGrace(t *testing.T) {
 			_, _ = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "calendar.slow", Arguments: map[string]any{}})
 		}()
 		receive(t, backend.slowStarted)
-		time.Sleep(time.Until(gatewayTokenExp(t, auth.GatewayToken).Add(bindingGrace + time.Second)))
+		time.Sleep(time.Until(gatewayTokenExp(t, auth.GatewayToken).Add(bindingMaxCall + time.Second)))
 		if status := rec.reply(t, f.as2Resource, cs.ID()); status != http.StatusUnauthorized {
 			t.Fatalf("a reply after the grace got %d, want 401", status)
 		}

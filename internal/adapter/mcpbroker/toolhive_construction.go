@@ -100,24 +100,20 @@ type ToolHiveConfig struct {
 	FallbackKeyFiles []string
 }
 
-// gatewayMaxCallDuration is how long the vMCP keeps a gateway call open: it
-// accepts the call's messages, and keeps its token's single-use record, for
-// at most this long after the call starts. It does not stop a longer call.
-const gatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
+// defaultGatewayMaxCallDuration is how long the vMCP keeps a gateway call
+// open: it accepts the call's messages, and keeps its token's single-use
+// record, for at most this long after the call starts. It does not stop a
+// longer call.
+const defaultGatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
 
-// defaultExpiredTokenGrace is how long after a gateway token's exp the vMCP
-// accepts the messages of the call it started: long enough for a user to
-// answer an elicitation, far shorter than gatewayMaxCallDuration.
-const defaultExpiredTokenGrace = 5 * time.Minute
-
-// expiredTokenGrace is how long after a gateway token's exp the vMCP
-// accepts the messages of the call it started: defaultExpiredTokenGrace,
-// unless a test's trust shortens it. callbinding.New checks it.
-func (t AS2Trust) expiredTokenGrace() time.Duration {
-	if t.t != nil && t.t.ExpiredTokenGrace > 0 {
-		return t.t.ExpiredTokenGrace
+// gatewayMaxCallDuration is the vMCP's maximum call duration:
+// defaultGatewayMaxCallDuration, unless a test's trust shortens it. It is
+// also the grace after a gateway token's exp (gatewayCallBinding).
+func (t AS2Trust) gatewayMaxCallDuration() time.Duration {
+	if t.t != nil && t.t.MaxCallDuration > 0 {
+		return t.t.MaxCallDuration
 	}
-	return defaultExpiredTokenGrace
+	return defaultGatewayMaxCallDuration
 }
 
 // callEntryRegistry is AS-2's authorization_details registry: ToolHive's
@@ -136,18 +132,28 @@ func callEntryRegistry() (*authorizationdetails.Registry, error) {
 
 // gatewayCallBinding is the vMCP's call binding with AS-2 set up at issuer
 // (credentials-and-lifecycle.md, step (9), check 3): every token of the
-// broker client must carry a call entry, and the call a token starts may
-// send its own messages, such as a cancellation or an elicitation reply,
-// for grace after the token's exp. The token validator in front of the vMCP
-// and the vMCP share it, so both answer with incoming's challenge.
+// broker client must carry a call entry, a call stays open for at most
+// maxCall, and the call a token starts may send its own messages after the
+// token's exp for as long as it is open. The token validator in front of the
+// vMCP and the vMCP share it, so both answer with incoming's challenge.
+//
+// The grace after exp equals maxCall because the message Mecatl sends after
+// exp is the call's cancellation, which can come at any point in the call. A
+// shorter grace would answer a later cancellation 401, and the backend's
+// tool would keep running until maxCall. No elicitation reply follows exp:
+// the vMCP answers a tools/call as one JSON response and Mecatl's client
+// opens no GET stream, so no elicitation reaches it (#2821). The vMCP admits
+// an expired token only for its open call's cancellation, reply, GET, or
+// DELETE on that call's session, and only for AS-2's tokens of client, so
+// the longer grace gives a stolen token little more.
 //
 // Shortcut: the single-use record is in this process's memory, so a gateway token replayed to another replica within its lifetime is accepted; removed by #2805 (more than one replica), with the vMCP's single-use record shared by all replicas (stacklok/toolhive#7261).
-func gatewayCallBinding(issuer string, client ToolHiveBrokerClient, grace time.Duration, incoming *vmcpconfig.IncomingAuthConfig) (*callbinding.Binding, error) {
+func gatewayCallBinding(issuer string, client ToolHiveBrokerClient, maxCall time.Duration, incoming *vmcpconfig.IncomingAuthConfig) (*callbinding.Binding, error) {
 	binding, err := callbinding.New(callbinding.Config{
 		Clients:         []string{client.ID},
-		MaxCallDuration: gatewayMaxCallDuration,
+		MaxCallDuration: maxCall,
 		ExpiredTokenAdmission: []callbinding.ExpiredTokenAdmission{{
-			Issuer: issuer, ClientID: client.ID, Grace: grace,
+			Issuer: issuer, ClientID: client.ID, Grace: maxCall,
 		}},
 		Challenge: factory.IncomingBearerChallenge(incoming),
 	})

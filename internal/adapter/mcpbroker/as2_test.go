@@ -1408,10 +1408,11 @@ func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 // TestGatewayCallBindingDefaults pins the vMCP's call binding in production:
 // every token of the broker client must carry a call entry, a call stays
 // open for at most 30 minutes, and only that client's tokens from AS-2 may
-// send their call's messages for five minutes after exp.
+// send their call's messages after exp, for the same 30 minutes, so a
+// cancellation reaches the backend for as long as the call can run.
 func TestGatewayCallBindingDefaults(t *testing.T) {
 	const issuer = as2TestIssuer
-	binding, err := gatewayCallBinding(issuer, ToolHiveBrokerClient{ID: identitybroker.BrokerClientID}, AS2Trust{}.expiredTokenGrace(), nil)
+	binding, err := gatewayCallBinding(issuer, ToolHiveBrokerClient{ID: identitybroker.BrokerClientID}, AS2Trust{}.gatewayMaxCallDuration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1425,8 +1426,9 @@ func TestGatewayCallBindingDefaults(t *testing.T) {
 		at     time.Time
 		want   bool
 	}{
-		{"the broker client within five minutes", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(5*time.Minute - time.Second), true},
-		{"the broker client after five minutes", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(5*time.Minute + time.Second), false},
+		{"the broker client after five minutes", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(5*time.Minute + time.Second), true},
+		{"the broker client within the maximum", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(30*time.Minute - time.Second), true},
+		{"the broker client after the maximum", map[string]any{"iss": issuer, "client_id": identitybroker.BrokerClientID}, exp.Add(30*time.Minute + time.Second), false},
 		{"another client", map[string]any{"iss": issuer, "client_id": "other"}, exp.Add(time.Second), false},
 		{"another issuer", map[string]any{"iss": "https://other.example", "client_id": identitybroker.BrokerClientID}, exp.Add(time.Second), false},
 	} {
