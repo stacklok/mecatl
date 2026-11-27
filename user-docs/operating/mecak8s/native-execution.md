@@ -206,6 +206,12 @@ identity rather than hashing YAML yourself. A default must name a selectable
 revision. Omit `default` only when all of that ID's retained revisions are
 deprecated or revoked.
 
+Revoking a revision takes effect through the quiesced
+[lifecycle procedure](execution-provider-lifecycle.md) that applies it, not at a
+policy recheck. Stopping the provider ends every command in progress, on every
+template. Once restarted, the provider deletes the executor Pods of the revoked
+revision's environments and refuses their file and command calls.
+
 For an update, generate to a fresh filename, then merge the new revision into
 your retained `template-values.yaml` and choose its `default`. Preserve every
 historical execution definition still required by the
@@ -330,7 +336,7 @@ provider:
 
 `provider.policyRecheckInterval` is how often the provider reauthorizes each
 file and command call it is forwarding, and closes the call once revocation, a
-lapsed run claim, a revoked template, or a client policy or TLS trust change
+lapsed run claim, or a client policy or TLS trust change
 refuses it. It accepts `1s` to `60s` or `1m`. Each recheck reads every
 environment with calls in progress and the security authority once, so a
 shorter interval costs more Kubernetes API reads.

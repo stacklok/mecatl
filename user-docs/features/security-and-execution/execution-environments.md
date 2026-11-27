@@ -319,13 +319,15 @@ after the old claim is released or fenced.
 
 The provider rechecks the authority of every file and command call it is
 forwarding at the policy recheck interval, 10 seconds by default. Once
-revocation, a lapsed run claim, a revoked template, or a client policy or TLS
-trust change ends that authority, the provider stops relaying the call and asks
-the executor to stop the command and every process it started. It waits up to
-30 seconds for the outcome before closing the call, and fences the environment
-if the executor doesn't confirm in that time that the command ended. Releasing the
+revocation, a lapsed run claim, or a client policy or TLS trust change ends
+that authority, the provider stops relaying the call and asks the executor to
+stop the command and every process it started. It waits up to 30 seconds for the
+outcome before closing the call, and fences the environment if the executor
+doesn't confirm in that time that the command ended. Releasing the
 environment's last reference, an unavailable executor, and lifecycle work don't
-close calls in progress. A call survives one recheck that can't confirm its
+close calls in progress. Revoking a template revision applies when the provider
+restarts with the new templates; stopping the provider ends every call in
+progress. A call survives one recheck that can't confirm its
 authority, for example because the Kubernetes API is briefly unavailable or this
 replica hasn't loaded a newer security policy yet, and closes if the next
 recheck can't confirm it either. The caller receives the same status a new call
