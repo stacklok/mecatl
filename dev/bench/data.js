@@ -459931,6 +459931,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795724226834,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3dd0ad9389e859bd6d18ec9fa01a93f5c27aeccc",
+          "message": "fix(guardrails): keep the reviewer tool schema stable for prompt caching (#3004)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-27T11:33:27+02:00",
+          "tree_id": "f76d9c80b65c695cfb733ecbfa5b47b60c68478c",
+          "url": "https://github.com/stacklok/mecatl/commit/3dd0ad9389e859bd6d18ec9fa01a93f5c27aeccc"
+        },
+        "date": 1795772781463,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13386,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12880,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -598593,6 +598632,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795772777522,
+  "lastUpdate": 1795772782627,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
