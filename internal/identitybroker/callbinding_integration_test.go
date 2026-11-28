@@ -59,8 +59,9 @@ func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHivePro
 	b := &calendarBackend{slowStarted: make(chan struct{}, 4), slowCancelled: make(chan struct{}, 4)}
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "calendar", Version: "v1"}, nil)
 	type args struct {
-		A   int    `json:"a,omitempty"`
-		Pad string `json:"pad,omitempty"`
+		A    int            `json:"a,omitempty"`
+		Pad  string         `json:"pad,omitempty"`
+		Nest map[string]any `json:"nest,omitempty"`
 	}
 	text := func(s string) *mcpsdk.CallToolResult {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: s}}}
@@ -472,6 +473,37 @@ func TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt(t *testing.T) {
 	}
 	if n := backend.echoRuns.Load(); n != 1 {
 		t.Fatalf("backend runs = %d, want the call over the limit not run", n)
+	}
+}
+
+// TestRealVMCPRefusesCaseCollidingArgumentsBeforeRunningThem: arguments
+// whose member names differ only by case, at the top level or nested, are
+// valid I-JSON and get a gateway token, but the real vMCP refuses them as
+// ambiguous with 400 before running them (stacklok/mecatl#3009). The MCP
+// broker therefore refuses them as refused_arguments before authorizing
+// (TestGatewayCallRefusesArgumentsTheVMCPWouldRefuse). The same arguments
+// without the collision run once, as the control.
+func TestRealVMCPRefusesCaseCollidingArgumentsBeforeRunningThem(t *testing.T) {
+	f, backend := newBindingFixture(t)
+	ctx := t.Context()
+
+	control := `{"a":1,"nest":{"b":1,"c":2}}`
+	req := f.calendarCall(t, "op-no-collision", "echo", control)
+	if a := f.send(ctx, f.mustAuthorize(t, req), req, control); a.Outcome != mcpadapter.GatewayAttemptCompleted || backend.echoRuns.Load() != 1 {
+		t.Fatalf("the control call = %+v, backend runs %d; want completed once", a, backend.echoRuns.Load())
+	}
+
+	for name, args := range map[string]string{
+		"top level": `{"a":1,"A":2,"nest":{"b":1,"c":2}}`,
+		"nested":    `{"a":1,"nest":{"b":1,"B":2}}`,
+	} {
+		req := f.calendarCall(t, "op-collision-"+strings.ReplaceAll(name, " ", "-"), "echo", args)
+		if a := f.send(ctx, f.mustAuthorize(t, req), req, args); a.Outcome == mcpadapter.GatewayAttemptCompleted || a.HTTPStatus != http.StatusBadRequest {
+			t.Fatalf("%s collision = %+v, want the vMCP to refuse it with 400", name, a)
+		}
+	}
+	if n := backend.echoRuns.Load(); n != 1 {
+		t.Fatalf("backend runs = %d, want the colliding calls not run", n)
 	}
 }
 

@@ -722,21 +722,32 @@ func TestGatewayCallRefusesWhatTheGatewayRefuses(t *testing.T) {
 	}
 }
 
-// TestGatewayCallRefusesArgumentsOverTheGatewayLimit: arguments the vMCP
-// would refuse with 413 for their size are refused as refused_arguments
-// before anything is claimed or authorized.
-func TestGatewayCallRefusesArgumentsOverTheGatewayLimit(t *testing.T) {
-	f := newGatewayFixture(t, gatewayFixtureOptions{})
-	res, err := f.execute(mainAgent(t), t, "call-1", string(paddedArguments(MaxGatewayArgumentBytes+1)))
-	wantRow(t, res, err, outcomeRefusedArguments)
-	if n := len(f.auth.calls()); n != 0 {
-		t.Fatalf("AuthorizeCall called %d times, want none", n)
-	}
-	if calls := f.g.Calls(); len(calls) != 0 {
-		t.Fatalf("gateway received %d requests", len(calls))
-	}
-	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
-		t.Fatalf("Claim = %v, want the call never claimed", err)
+// TestGatewayCallRefusesArgumentsTheVMCPWouldRefuse: arguments the real vMCP
+// refuses before running them, with 413 for their size or with 400 for
+// member names that differ only by case at any depth
+// (TestRealVMCPRefusesCaseCollidingArgumentsBeforeRunningThem in
+// internal/identitybroker), are refused as refused_arguments before anything
+// is claimed or authorized.
+func TestGatewayCallRefusesArgumentsTheVMCPWouldRefuse(t *testing.T) {
+	for name, args := range map[string]string{
+		"over the size limit":      string(paddedArguments(MaxGatewayArgumentBytes + 1)),
+		"top-level case collision": `{"a":1,"A":2}`,
+		"nested case collision":    `{"nest":{"b":1,"B":2}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			res, err := f.execute(mainAgent(t), t, "call-1", args)
+			wantRow(t, res, err, outcomeRefusedArguments)
+			if n := len(f.auth.calls()); n != 0 {
+				t.Fatalf("AuthorizeCall called %d times, want none", n)
+			}
+			if calls := f.g.Calls(); len(calls) != 0 {
+				t.Fatalf("gateway received %d requests", len(calls))
+			}
+			if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+				t.Fatalf("Claim = %v, want the call never claimed", err)
+			}
+		})
 	}
 }
 
