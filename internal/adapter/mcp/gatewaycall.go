@@ -186,7 +186,9 @@ type GatewayAttempt struct {
 // was dispatched: a completed call with a result that is not a tool error
 // observed success, a refused one or any other completed one failure, and an
 // unknown one unknown. The report carries no token, arguments, or result
-// content.
+// content. A tool error counts as a completed call's failure under the #2822
+// shortcut on classify, though the vMCP may have sent the call to its
+// backend before failing it.
 func (a GatewayAttempt) Report() (dispatch, outcome identitybroker.DecisionOutcome, cause string) {
 	cause = string(a.Rejection)
 	switch a.Outcome {

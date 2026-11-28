@@ -9,20 +9,19 @@ import (
 
 // Recorder is the sink the broker's records go through: every open, close,
 // registration, delegation report, ID-JAG, call decision, and reported
-// dispatch and outcome. Record returns
-// nil once it accepts rec, and an error when it refuses it. A refusal is
-// handled per event: a successful open, registration, or delegation report
-// fails with ReasonRecordNotAccepted and changes nothing; an ID-JAG is not
-// redeemed and a success decision returns no gateway token, both failing
-// with ReasonRecordNotAccepted; refusals and closes take effect anyway. An
-// event undone after its record was sent is recorded again as refused,
-// superseding that record, since the sink may have kept it without
-// confirming it. Every refused
+// dispatch and outcome. Record returns nil once it accepts rec, and an error
+// when it refuses it. A refusal is handled per event: a successful open,
+// registration, or delegation report fails with ReasonRecordNotAccepted and
+// changes nothing; an ID-JAG is not redeemed and a success decision returns
+// no gateway token, both failing with ReasonRecordNotAccepted; refusals,
+// closes, and call reports take effect anyway. An event undone after its
+// record was sent is recorded again as refused, superseding that record,
+// since the sink may have kept it without confirming it. Every refused
 // record is reported through WithDeliveryFailures. Records are
 // *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
 // *DelegationRecord, *IDJAGRecord, *DecisionRecord, *DispatchRecord,
-// *OutcomeRecord, or *ReportRejectedRecord. The broker owns rec
-// and may reuse it after the call, so the sink copies what it keeps. An
+// *OutcomeRecord, or *ReportRejectedRecord. The broker owns rec and may
+// reuse it after the call, so the sink copies what it keeps. An
 // implementation is safe for concurrent use.
 type Recorder interface {
 	Record(ctx context.Context, rec Record) error

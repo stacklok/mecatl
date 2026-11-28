@@ -310,7 +310,11 @@ const (
 // report reports attempt a's dispatch and observed outcome to the identity
 // broker. It runs even when ctx is cancelled, retries a report that failed
 // for a reason that may pass, and never fails the call: a report still
-// failing is only logged. It carries references and fixed values only.
+// failing is only logged. It carries references and fixed values only. It
+// runs on the call's path, so a broker that hangs holds the call's result,
+// a cancelled call's included, for at most reportTries tries of
+// reportTryTimeout and the waits between them; the in-process broker
+// answers at once.
 //
 // Shortcut: a report still lost after its retries goes undetected until reconciliation compares reported dispatches with the vMCP's tool calls; removed by #2848.
 func (g *gatewayCall) report(ctx context.Context, a mcpadapter.GatewayAttempt) {

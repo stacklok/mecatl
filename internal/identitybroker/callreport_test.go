@@ -384,3 +384,88 @@ func TestReportCallRecordsCarryNoCredential(t *testing.T) {
 		}
 	}
 }
+
+// TestReportCallForgetsTheOldestAttemptPastTheBound: a session remembers at
+// most MaxAttemptsPerSession attempts; a report for one it forgot is a
+// mismatch.
+func TestReportCallForgetsTheOldestAttemptPastTheBound(t *testing.T) {
+	f := newReportFixture(t)
+	for i := range identitybroker.MaxAttemptsPerSession + 1 {
+		identitybroker.IssueReportedAttempt(f.b, f.s.ID, fmt.Sprintf("att_%d", i), "op-1", fmt.Sprintf("rec_%d", i))
+	}
+	for _, attempt := range []string{"att_0", "att_1", fmt.Sprintf("att_%d", identitybroker.MaxAttemptsPerSession)} {
+		if err := f.report(callReport(f.s.ID, "op-1", attempt, failure, "")); err != nil {
+			t.Fatalf("ReportCall %s: %v", attempt, err)
+		}
+	}
+	dispatches, _, _ := f.records()
+	if len(dispatches) != 3 {
+		t.Fatalf("recorded %d dispatches, want 3", len(dispatches))
+	}
+	if d := dispatches[0]; d.Mismatch != identitybroker.MismatchAttemptUnknown || d.DecisionRecord != "" {
+		t.Fatalf("the forgotten attempt's dispatch = %+v, want a mismatch", d)
+	}
+	for _, d := range dispatches[1:] {
+		if d.Mismatch != "" || d.DecisionRecord != "rec_"+strings.TrimPrefix(d.AttemptID, "att_") {
+			t.Fatalf("a remembered attempt's dispatch = %+v, want it joined", d)
+		}
+	}
+}
+
+// TestReportCallCloseForgetsOnlySettledAttempts: when a session closes, an
+// attempt still awaiting its report, or holding an unknown outcome, is kept
+// so a report or late result after the close is joined; a settled one is
+// forgotten.
+func TestReportCallCloseForgetsOnlySettledAttempts(t *testing.T) {
+	f := newReportFixture(t)
+	settled, _ := f.authorized(t, "op-settled")
+	pending, pendingDecision := f.authorized(t, "op-pending")
+	unknownAttempt, unknownDecision := f.authorized(t, "op-unknown")
+	for _, req := range []identitybroker.ReportCallRequest{
+		callReport(f.s.ID, "op-settled", settled, success, success),
+		callReport(f.s.ID, "op-unknown", unknownAttempt, success, unknown),
+	} {
+		if err := f.report(req); err != nil {
+			t.Fatalf("ReportCall: %v", err)
+		}
+	}
+	if err := f.b.CloseSession(context.Background(), testWorkload, identitybroker.CloseSessionRequest{SessionID: f.s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	late := callReport(f.s.ID, "op-unknown", unknownAttempt, success, success)
+	late.LateResult = true
+	for _, req := range []identitybroker.ReportCallRequest{
+		callReport(f.s.ID, "op-settled", settled, success, success),
+		callReport(f.s.ID, "op-pending", pending, success, failure),
+		late,
+	} {
+		if err := f.report(req); err != nil {
+			t.Fatalf("ReportCall after close: %v", err)
+		}
+	}
+	_, outcomes, _ := f.records()
+	if len(outcomes) != 5 {
+		t.Fatalf("recorded %d outcomes, want 5", len(outcomes))
+	}
+	if o := outcomes[2]; o.Mismatch != identitybroker.MismatchAttemptUnknown || o.AttemptID != settled {
+		t.Fatalf("the settled attempt's repeat after close = %+v, want a mismatch", o)
+	}
+	wantJoined(t, outcomes[3].CallReport, "op-pending", pending, pendingDecision, "")
+	wantJoined(t, outcomes[4].CallReport, "op-unknown", unknownAttempt, unknownDecision, "")
+	if !outcomes[4].LateResult || outcomes[4].Follows != outcomes[1].AuditID {
+		t.Fatalf("late result after close = %+v, want it following the unknown outcome", outcomes[4])
+	}
+}
+
+// TestReportCallRefusesAnUnnamedWorkloadAsInvalid: a report from a workload
+// with no name is refused before its values are judged, so its record does
+// not blame an outcome outside its set.
+func TestReportCallRefusesAnUnnamedWorkloadAsInvalid(t *testing.T) {
+	f := newReportFixture(t)
+	err := f.b.ReportCall(context.Background(), identitybroker.Workload{}, callReport(f.s.ID, "op-1", "att_1", success, identitybroker.OutcomeDenied))
+	wantError(t, err, identitybroker.CodeUnauthenticated, "")
+	_, _, rejected := f.records()
+	if len(rejected) != 1 || rejected[0].Mismatch != identitybroker.MismatchInvalidReport || rejected[0].Code != identitybroker.CodeUnauthenticated {
+		t.Fatalf("rejected reports = %+v, want one invalid report refused as unauthenticated", rejected)
+	}
+}

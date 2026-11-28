@@ -175,9 +175,10 @@ type reportedAttempt struct {
 // reportLedger remembers, per session, the attempts the broker issued for
 // tools/calls and what has been reported of each, at most
 // maxAttemptsPerSession of them; the oldest is forgotten first, and a report
-// for it is recorded as MismatchAttemptUnknown. A session's attempts are kept
-// after it closes, so a report that arrives late is still joined. Its
-// methods are guarded by sessionTable.mu.
+// for it is recorded as MismatchAttemptUnknown. When a session closes it
+// forgets the attempts whose report is settled (closeLocked), keeping those
+// still awaiting a report, which may arrive after the close, or a late
+// result. Its methods are guarded by sessionTable.mu.
 //
 // Shortcut: reported attempts held in memory, forgetting a session's oldest beyond 1024; removed by #2563 (durable state).
 type reportLedger struct {
@@ -210,6 +211,29 @@ func (m *reportLedger) issueLocked(sessionID, attemptID, operationID, decision s
 	}
 	s.order = append(s.order, attemptID)
 	s.attempts[attemptID] = &reportedAttempt{operationID: operationID, decision: decision, subjects: subjects}
+}
+
+// closeLocked forgets sessionID's attempts whose report is settled: a
+// dispatch failure, or a dispatched attempt with a known outcome or a late
+// result. A repeat of such a report after the close is recorded as
+// MismatchAttemptUnknown.
+func (m *reportLedger) closeLocked(sessionID string) {
+	s, ok := m.bySession[sessionID]
+	if !ok {
+		return
+	}
+	s.order = slices.DeleteFunc(s.order, func(id string) bool {
+		a := s.attempts[id]
+		settled := a.reported != (ReportCallRequest{}) &&
+			(a.reported.Outcome != OutcomeUnknown || a.late != (ReportCallRequest{}))
+		if settled {
+			delete(s.attempts, id)
+		}
+		return settled
+	})
+	if len(s.order) == 0 {
+		delete(m.bySession, sessionID)
+	}
 }
 
 func (m *reportLedger) lookupLocked(sessionID, attemptID string) *reportedAttempt {
@@ -315,7 +339,9 @@ func (b *Broker) refuseReport(workload Workload, req ReportCallRequest, err erro
 	if requireIDs("broker session", req.SessionID, "operation", req.OperationID, "attempt", req.AttemptID) == nil {
 		rec.SessionID, rec.OperationID, rec.AttemptID = req.SessionID, req.OperationID, req.AttemptID
 	}
-	if !req.inSets() {
+	// The workload is checked first, so only a valid workload's refusal
+	// names the request's values as its cause.
+	if workload.Validate() == nil && !req.inSets() {
 		rec.Mismatch = MismatchOutcomeNotInSet
 	}
 	rec.refused(err)
