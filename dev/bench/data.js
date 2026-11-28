@@ -461519,6 +461519,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795859989188,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "047119e26e7dd582054d96c64782985ce92de638",
+          "message": "fix(mcpbroker): refuse gateway calls too large for the vMCP (#3013)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T13:42:41Z",
+          "tree_id": "4e07400a56e24210ea4b77680f60a9ece239986a",
+          "url": "https://github.com/stacklok/mecatl/commit/047119e26e7dd582054d96c64782985ce92de638"
+        },
+        "date": 1795874074466,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13403,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12897,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -600637,6 +600676,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795874070230,
+  "lastUpdate": 1795874075662,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
