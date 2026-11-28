@@ -11,27 +11,27 @@ require (
 	charm.land/lipgloss/v2 v2.1.1
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.41.0
-	github.com/anthropics/anthropic-sdk-go/v2 v2.8.0
+	github.com/anthropics/anthropic-sdk-go/v2 v2.15.0
 	github.com/blang/semver/v4 v4.0.0
-	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/cedar-policy/cedar-go v1.9.4
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/charmbracelet/ultraviolet v0.0.0-20261023060817-a45b7c86333f
+	github.com/charmbracelet/ultraviolet v0.0.0-20261125122737-8ed499892fb4
 	github.com/charmbracelet/x/ansi v0.12.0
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261101151554-27ecf3e4d454
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261126095604-0c8f306be07e
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/goccy/go-yaml v1.19.2
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/gofrs/flock v0.13.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
-	github.com/google/pprof v0.0.0-20261105003125-4bf881d7fb0b
+	github.com/google/pprof v0.0.0-20261118010117-084b33a85f63
 	github.com/google/uuid v1.6.0
 	github.com/itchyny/gojq v0.12.20
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
-	github.com/openai/openai-go/v3 v3.98.0
+	github.com/openai/openai-go/v3 v3.108.0
 	github.com/ory/fosite v0.49.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
@@ -73,7 +73,7 @@ require (
 	golang.org/x/term v0.48.0
 	golang.org/x/time v0.16.0
 	golang.org/x/tools v0.53.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261123191846-1e707ab9fbc2
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.3
@@ -332,9 +332,9 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/streaming v0.37.3 // indirect
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab // indirect
-	modernc.org/libc v1.80.2 // indirect
+	modernc.org/libc v1.82.14 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.12.1 // indirect
+	modernc.org/memory v1.13.0 // indirect
 	modernc.org/sqlite v1.63.0 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 	oras.land/oras-go/v2 v2.7.0 // indirect

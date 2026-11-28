@@ -4,8 +4,8 @@ cloud.google.com/go/auth/oauth2adapt v0.3.0 h1:FY8oSZpCYoUNv6QxVODuMjQz4IlSOVeiQ
 cloud.google.com/go/auth/oauth2adapt v0.3.0/go.mod h1:7+2uCm7++XFO+/lN06c2HXpDXb/NMNn2/UwyBPbTnkk=
 cloud.google.com/go/compute/metadata v0.10.0 h1:pyKMUQSwchgkIBBJGdILqQbs/BNJXqwSA7Ej6LAvvtY=
 cloud.google.com/go/compute/metadata v0.10.0/go.mod h1:rGFHRrIif570kSibjFTMbt6/4/tzgJWFGI/HVol4GIk=
-github.com/anthropics/anthropic-sdk-go/v2 v2.8.0 h1:rtxFOQBAnyFByVSwLHGw0/SNDJqT3z48slFAorp4+CQ=
-github.com/anthropics/anthropic-sdk-go/v2 v2.8.0/go.mod h1:LAOInMKgn6reTIrPvKXa5weyqzxsJkxSBuzhnxzukpQ=
+github.com/anthropics/anthropic-sdk-go/v2 v2.15.0 h1:f9mGPtrw4dLOdcBWU7J7VI+F0XNR45mpwxTwg2AVll4=
+github.com/anthropics/anthropic-sdk-go/v2 v2.15.0/go.mod h1:9MisVFnaVHMm4A8Pm1h75dsxyM3M8vv6NW9O5Tm2Q4k=
 github.com/aws/aws-sdk-go-v2 v1.48.2 h1:TDS0/5Z/UjdvmB0jg+8j6a80n5OCRyvrn3aOtZ6z0M4=
 github.com/aws/aws-sdk-go-v2 v1.48.2/go.mod h1:XwfdWCjuiyYPbYF4ObLoa5I25KjV0ry6d105smVjNKY=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.25 h1:MW0Iql1SOTgQPj8mCxrU/eH/K/AIDWi08ItOsXaWRLU=
