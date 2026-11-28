@@ -247,13 +247,11 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	}, nil
 }
 
-// Capabilities reports the provider's multimodal input support. STATIC: the Chat
-// Completions user-message content union supports text + image_url (so Image is
-// true, EmbeddedContext is true because inline text flattens into a text part);
-// audio (input_audio) is wired in the protocol but no target model consumes it,
-// so Audio is false.
+// Capabilities reports what the Chat Completions wire can carry: image_url and
+// input_audio user parts, and embedded context as text. Composition narrows this
+// per model from model metadata; otherwise the model's server decides.
 func (*Provider) Capabilities() port.ProviderCapabilities {
-	return port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}
+	return port.ProviderCapabilities{Image: true, Audio: true, EmbeddedContext: true}
 }
 
 // Compile-time assertion that Provider satisfies the port.

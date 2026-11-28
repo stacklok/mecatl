@@ -196,8 +196,7 @@ func TestModelCapability_LiveVisionAdapterNo(t *testing.T) {
 
 // TestModelCapability_LiveAudioModality exercises the LIVE audio path (hasAudioModality):
 // live modalities ["text","audio"] + adapter Audio:true ⇒ Audio:true; the same live
-// modalities with adapter Audio:false ⇒ Audio:false (the AND gate). Audio is dormant in
-// P0 adapters, so this is the only coverage of the live audio AND.
+// modalities with adapter Audio:false ⇒ Audio:false (the AND gate).
 func TestModelCapability_LiveAudioModality(t *testing.T) {
 	regYes := regWithMeta(providerOpenRouter, port.ProviderCapabilities{Image: true, Audio: true},
 		[]modelEntry{{ID: "some/audio-model", InputModalities: []string{"text", "audio"}}})

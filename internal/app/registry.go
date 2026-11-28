@@ -1068,9 +1068,9 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 // re-mint is construct(sessionEffort), so resilience wrapping cannot drift), SAME
 // providerConstructor test seam. It differs in two ways: the adapter is
 // openaichat.New (Chat Completions), and the remint's caps argument is IGNORED —
-// openaichat has no per-model modality gating (all its models are text+image via
-// static caps), so a caps-driven re-mint would rebuild an identical adapter; only
-// the reasoning-effort axis re-mints meaningfully.
+// openaichat reports one static capability set, so a caps-driven re-mint would
+// rebuild an identical adapter; only the reasoning-effort axis re-mints
+// meaningfully. Per-model modality gating comes from the entry's lister metadata.
 func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.Option) providerEntry {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "LLM provider available", "provider", id, "model", cfg.Model, "base_url", baseURL)
 	if cfg.providerConstructor != nil {
