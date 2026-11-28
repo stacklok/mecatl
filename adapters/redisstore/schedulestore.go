@@ -685,8 +685,8 @@ func (s *scheduleStore) List(ctx context.Context) ([]port.Schedule, error) {
 	defer release()
 	var out []port.Schedule
 	scan := client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
-	for scan.Next(ctx) {
-		fields, err := client.HGetAll(ctx, scan.Val()).Result()
+	for key := range scan.Vals(ctx) {
+		fields, err := client.HGetAll(ctx, key).Result()
 		if err != nil {
 			continue
 		}
@@ -719,8 +719,8 @@ func (s *scheduleStore) Due(ctx context.Context, now time.Time) ([]port.Schedule
 	nowNano := now.UnixNano()
 	out := make([]port.Schedule, 0)
 	scan := client.Scan(ctx, 0, scheduleKeyPrefix+"*", 0).Iterator()
-	for scan.Next(ctx) {
-		fields, err := client.HGetAll(ctx, scan.Val()).Result()
+	for key := range scan.Vals(ctx) {
+		fields, err := client.HGetAll(ctx, key).Result()
 		if err != nil {
 			continue
 		}
@@ -1174,8 +1174,8 @@ func (s *scheduleStore) ListFires(ctx context.Context, scheduleName string) ([]p
 	}
 	out := make([]port.ScheduleFire, 0)
 	scan := client.Scan(ctx, 0, scheduleFireKeyPrefix+"*", 0).Iterator()
-	for scan.Next(ctx) {
-		raw, err := client.Get(ctx, scan.Val()).Bytes()
+	for key := range scan.Vals(ctx) {
+		raw, err := client.Get(ctx, key).Bytes()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				continue // raced away between SCAN and GET — skip.
