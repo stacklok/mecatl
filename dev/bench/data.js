@@ -461122,6 +461122,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795821196367,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd406cc59cd78ebcd67bdd25cd49724b81b5e3e2",
+          "message": "feat(identitybroker): bind each gateway token to its call (#3008)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T04:47:32-05:00",
+          "tree_id": "fa63ad8983c563db6d5a8ac43668f897c7f95a9e",
+          "url": "https://github.com/stacklok/mecatl/commit/cd406cc59cd78ebcd67bdd25cd49724b81b5e3e2"
+        },
+        "date": 1795859989188,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13400,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12895,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -600126,6 +600165,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795859985904,
+  "lastUpdate": 1795859989907,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
