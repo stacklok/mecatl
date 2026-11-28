@@ -13,10 +13,10 @@ require (
 require (
 	cloud.google.com/go/auth v0.24.4 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.48.0 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.33.21 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.21.3 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.48.2 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.25 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.33.23 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.21.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.4 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
@@ -28,7 +28,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/tidwall/gjson v1.20.6 // indirect
+	github.com/tidwall/gjson v1.20.7 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.3.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect

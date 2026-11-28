@@ -525,8 +525,7 @@ func (st *Store) List(ctx context.Context) ([]port.StoredSession, error) {
 	defer release()
 	var out []port.StoredSession
 	scan := client.Scan(ctx, 0, sessionKeyPrefix+"*", 0).Iterator()
-	for scan.Next(ctx) {
-		key := scan.Val()
+	for key := range scan.Vals(ctx) {
 		id := strings.TrimPrefix(key, sessionKeyPrefix)
 		if id == "" {
 			continue
