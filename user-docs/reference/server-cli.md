@@ -574,7 +574,8 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default "<WORKSPACE>")
+        default session workspace root (default
+        "<WORKSPACE>")
   --yolo
         DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools
         server-wide and lets child command substitutions run automatically. Deny rules
@@ -730,6 +731,12 @@ Usage: mecak8s [flags]
   --identity-broker-as1-upstream-issuer string
         HTTPS issuer URL of the OIDC identity provider users sign in at through AS-1.
         Required with --identity-broker-as1-issuer
+  --identity-broker-audit-file string
+        File the identity broker's audit records and the embedded MCP gateway's audit
+        events are appended to, one toolhive-core audit event per line; each broker
+        record is synced to it before the broker acts on it. Point it at storage this
+        process cannot rewrite, such as a volume a collector ships from. Empty writes
+        them to standard output. Only allowed with --enable-identity-broker
   --identity-broker-config string
         JSON file the identity broker reads its configuration from: the agent trust
         domain, the broker audience, and the paths of its keys (the agent issuer key,

@@ -288,9 +288,8 @@ type identityBrokerParts struct {
 	// definitions are the definition records core loaded, or, for an
 	// injected core, the records this configuration loads.
 	definitions []identitybroker.DefinitionRecord
-	// recorder holds the core's decision and ID-JAG records; nil for an
-	// injected core.
-	recorder *identitybroker.MemoryRecorder
+	// audit closes the core's audit destination; nil for an injected core.
+	audit func()
 	// gatewayEntry is the configuration file's embedded gateway entry, which
 	// startup checked against the embedded gateway; nil without one, and then
 	// the MCP broker sets up no AS-2.
@@ -310,6 +309,14 @@ type identityBrokerParts struct {
 	as2RequestTimeout time.Duration
 	// release releases the broker and AS-1.
 	release func()
+}
+
+// closeAudit closes the core's audit destination, if it has one. Call it
+// after the core's Close, which sends the records still queued.
+func (p identityBrokerParts) closeAudit() {
+	if p.audit != nil {
+		p.audit()
+	}
 }
 
 // bindAS2 binds as2 as the core's gateway AS-2, authenticating there with
@@ -419,6 +426,7 @@ func buildIdentityBroker(ctx context.Context, cfg Config, embedded *embeddedGate
 		server, err := buildHostedAS1(ctx, as1, file, nil)
 		if err != nil {
 			parts.release()
+			parts.closeAudit()
 			return identityBrokerParts{}, err
 		}
 		parts.hosted = newHostedAS1Server(server)
@@ -437,6 +445,8 @@ func checkIdentityBrokerOff(cfg Config, as2Key as2SigningKey) error {
 		return errIdentityBrokerAS1WithoutBroker
 	case cfg.IdentityBrokerConfigFile != "":
 		return errIdentityBrokerConfigFileWithoutBroker
+	case cfg.IdentityBrokerAuditFile != "":
+		return errIdentityBrokerAuditFileWithoutBroker
 	case as2Key.file != "":
 		return errAS2SigningKeyWithoutEntry
 	}
@@ -566,7 +576,8 @@ type identityBroker struct {
 	client      *identitybroker.ClientAssertionSigner
 	// clientKeySetFile is the broker client's public key set file.
 	clientKeySetFile string
-	recorder         *identitybroker.MemoryRecorder
+	// closeAudit closes the core's audit destination.
+	closeAudit func()
 	// gatewayEntry is the configuration file's checked embedded gateway
 	// entry; nil without one.
 	gatewayEntry *identitybroker.GatewayEntry
@@ -582,7 +593,7 @@ type identityBroker struct {
 func (b identityBroker) parts() identityBrokerParts {
 	return identityBrokerParts{
 		client: b.client, clientKeySetFile: b.clientKeySetFile, core: b.core, definitions: b.definitions,
-		recorder: b.recorder, gatewayEntry: b.gatewayEntry, gateway: b.gateway, gatewayServers: b.gatewayServers,
+		audit: b.closeAudit, gatewayEntry: b.gatewayEntry, gateway: b.gateway, gatewayServers: b.gatewayServers,
 		as2RequestTimeout: b.as2RequestTimeout,
 	}
 }
@@ -654,11 +665,19 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, 
 			return identityBroker{}, err
 		}
 	}
-	// Records are kept in memory (the shortcut on identitybroker.MemoryRecorder).
-	recorder := identitybroker.NewMemoryRecorder()
+	sink, closeAudit, err := openIdentityBrokerAudit(cfg, config)
+	if err != nil {
+		return identityBroker{}, err
+	}
+	built := false
+	defer func() {
+		if !built {
+			closeAudit()
+		}
+	}()
 	diag := cfg.diag()
 	opts := []identitybroker.Option{
-		identitybroker.WithRecorder(loggedRecorder{recorder: recorder, diag: diag}),
+		identitybroker.WithRecorder(sink),
 		identitybroker.WithDeliveryFailures(func(f identitybroker.DeliveryFailure) {
 			diag.Log(context.Background(), port.LevelWarn, "identity broker record not accepted",
 				"audit_id", f.AuditID, "type", f.Type, "err", f.Err.Error())
@@ -692,9 +711,10 @@ func newIdentityBroker(ctx context.Context, cfg Config, file brokerconfig.File, 
 			return identityBroker{}, fmt.Errorf("bind AS-1's actor-token check: %w", err)
 		}
 	}
+	built = true
 	return identityBroker{
 		core: core, definitions: definitions, client: client, clientKeySetFile: file.BrokerClientKeySetFile,
-		recorder: recorder, gatewayEntry: entry, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
+		closeAudit: closeAudit, gatewayEntry: entry, gateway: gatewayServers != nil, gatewayServers: gatewayServers,
 		as2RequestTimeout: file.Limits.AS2RequestTimeout,
 	}, nil
 }
@@ -749,25 +769,4 @@ func definitionRefs(records []identitybroker.DefinitionRecord) []identitybroker.
 		refs[i] = rec.Ref
 	}
 	return refs
-}
-
-// loggedRecorder is the identity broker's record sink: recorder keeps each
-// record, and diag gets a one-line debug summary of it, with its type,
-// AuditID, outcome, and refusal, never its subjects or credential references.
-//
-// Shortcut: a diagnostics line repeats each broker record, the only way to see records outside the process while they are held in memory; removed by #2566 (records delivered in the AuditEvent profile).
-type loggedRecorder struct {
-	recorder identitybroker.Recorder
-	diag     port.Diagnostics
-}
-
-// Record implements identitybroker.Recorder.
-func (r loggedRecorder) Record(ctx context.Context, rec identitybroker.Record) error {
-	if err := r.recorder.Record(ctx, rec); err != nil {
-		return err
-	}
-	h := rec.Header()
-	r.diag.Log(context.WithoutCancel(ctx), port.LevelDebug, "identity broker record",
-		"type", h.Type, "audit_id", h.AuditID, "outcome", string(h.Outcome), "code", string(h.Code), "reason", string(h.Reason))
-	return nil
 }

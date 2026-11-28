@@ -98,7 +98,23 @@ type ToolHiveConfig struct {
 	// SigningKeyFile.
 	SigningKeyFile   string
 	FallbackKeyFiles []string
+	// Audit, with AS-2 set up, turns the vMCP's audit on: it records each
+	// MCP request it serves as a ToolHive audit event, with the acting agent
+	// from the access token's act claim (the delegation chain), and never
+	// the request or response content. Nil, or no AS-2, records nothing.
+	Audit *ToolHiveAudit
 }
+
+// ToolHiveAudit is where the vMCP's audit events go.
+type ToolHiveAudit struct {
+	// LogFile is the absolute path of the file events are appended to;
+	// empty writes them to standard output.
+	LogFile string
+}
+
+// toolHiveAuditComponent is the Component of the vMCP's audit events,
+// ToolHive's name for the vMCP.
+const toolHiveAuditComponent = "vmcp-server"
 
 // defaultGatewayMaxCallDuration is how long the vMCP keeps a gateway call
 // open: it accepts the call's messages, and keeps its token's single-use

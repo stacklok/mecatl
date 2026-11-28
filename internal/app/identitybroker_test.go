@@ -284,6 +284,17 @@ func TestIdentityBrokerConfigFileRequiresTheBroker(t *testing.T) {
 	}
 }
 
+func TestIdentityBrokerAuditFileRequiresTheBroker(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, IdentityBrokerAuditFile: filepath.Join(t.TempDir(), "audit.jsonl")})
+	if err == nil {
+		built.Close()
+		t.Fatal("Build accepted an identity broker audit file without the broker")
+	}
+	if !errors.Is(err, errIdentityBrokerAuditFileWithoutBroker) {
+		t.Fatalf("Build error = %v, want %v", err, errIdentityBrokerAuditFileWithoutBroker)
+	}
+}
+
 func TestIdentityBrokerDefaultWiringRegistersAgents(t *testing.T) {
 	built, err := buildIsolated(t, t.Context(), Config{UseMock: true, NoSoul: true, IdentityBroker: true, IdentityBrokerConfigFile: testBrokerConfigFile(t)})
 	if err != nil {

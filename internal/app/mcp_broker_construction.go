@@ -207,6 +207,9 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	config.SigningKeyFile, config.FallbackKeyFiles = declaration.SigningKeyFile, append([]string(nil), declaration.FallbackKeyFiles...)
 	if identity.entry != nil && identity.clientKeySetFile != "" {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: identity.clientKeySetFile}
+		// The embedded gateway records each call it serves beside the
+		// identity broker's records.
+		config.Audit = &mcpbroker.ToolHiveAudit{LogFile: cfg.IdentityBrokerAuditFile}
 	}
 	config.AS2Trust = cfg.IdentityBrokerAS2Trust
 	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {

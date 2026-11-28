@@ -503,6 +503,30 @@ then file-less. To give them files, use the
 (`redis.filesystem.enabled`) or [Kubernetes execution](native-execution.md)
 (`execution.enabled`); both keep session files outside the pod's filesystem.
 
+### Collect the broker's audit records
+
+`mecak8s` writes the identity broker's audit records to standard output, one
+JSON audit event per line in the toolhive-core audit format, which your log
+collector picks up with the pod's other output. Each records who acted and for
+whom: session opens and closes, agent registrations, delegations from one
+agent to another, ID-JAG issuance, and each gateway call's decision. With an
+embedded gateway entry, the MCP gateway adds an event for each request it
+serves, naming the acting agent. Records carry credentials only by issuer and
+token ID, never their values.
+
+The broker waits for a record before it acts on some events: it issues no
+gateway token until the call's decision is written, and opens no session until
+its open is written. When the destination fails or takes longer than 10
+seconds to accept a record, the operation fails as unavailable. Closes and
+refusals take effect without waiting; the broker sends their records in the
+background.
+
+To write the records to a file instead, pass
+`--identity-broker-audit-file=<PATH>` in `extraArgs` and mount a volume at
+that path. The broker syncs each record it waits for to the file before it
+acts, so a decision is on disk before its call is sent. Point the path at
+storage a collector ships from and `mecak8s` cannot rewrite.
+
 ### Rotate keys with the chart
 
 `mecak8s` reads every key only at startup, so each rotation step ends with a

@@ -30,6 +30,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
+	"github.com/stacklok/mecatl/internal/identitybroker/adapter/auditsink"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
 	"github.com/stacklok/mecatl/internal/testutil/identityharness"
@@ -48,6 +49,8 @@ type gatewayBuild struct {
 	as1   *identityharness.FaultTransport
 	// access is Alice's access token from her sign-in before the build.
 	access identitybroker.Token
+	// auditFile is where the broker's and the gateway's audit events go.
+	auditFile string
 }
 
 // gatewayTestServer is the protected route the gateway routes.
@@ -96,7 +99,8 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.Gat
 	if edit != nil {
 		edit(&cfg)
 	}
-	built, err := buildIsolated(t, t.Context(), cfg)
+	cfg = isolateConfig(t, cfg)
+	built, err := Build(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.Gat
 	if built.identityBrokerCore == nil {
 		t.Fatal("startup built no real identity broker core")
 	}
-	return &gatewayBuild{h: h, built: built, as1: faults, access: access}
+	return &gatewayBuild{h: h, built: built, as1: faults, access: access, auditFile: cfg.IdentityBrokerAuditFile}
 }
 
 func (g *gatewayBuild) owner() identitybroker.Owner {
@@ -195,15 +199,16 @@ func TestBuildBindsAS2ToTheIdentityBrokerGateway(t *testing.T) {
 	if n := g.as1.Count(identityharness.KindIDJAG); n != 1 {
 		t.Fatalf("sent %d ID-JAG exchanges, want 1", n)
 	}
-	jags := g.built.identityBrokerRecorder.IDJAGs()
-	if len(jags) != 1 || !strings.HasPrefix(jags[0].AgentID, "ag_") {
-		t.Fatalf("ID-JAG records = %+v, want one naming an ag_ agent", jags)
+	jags := readAudit(t, g.auditFile, identitybroker.TypeIDJAG)
+	if len(jags) != 1 || !strings.HasPrefix(jags[0].subject(identitybroker.SubjectAgentActorID), "ag_") {
+		t.Fatalf("ID-JAG events = %v, want one naming an ag_ agent", jags)
 	}
+	agentID := jags[0].subject(identitybroker.SubjectAgentActorID)
 	v := jwtClaims(t, auth.GatewayToken.Value())
 	if v["client_id"] != identitybroker.BrokerClientID ||
-		!reflect.DeepEqual(v["act"], wantAct(jags[0].AgentID)) ||
+		!reflect.DeepEqual(v["act"], wantAct(agentID)) ||
 		!reflect.DeepEqual(v["aud"], []any{as2TestIssuer + "/mcp"}) {
-		t.Fatalf("gateway token claims = %v, want act %v, client_id %s, and aud the vMCP", v, wantAct(jags[0].AgentID), identitybroker.BrokerClientID)
+		t.Fatalf("gateway token claims = %v, want act %v, client_id %s, and aud the vMCP", v, wantAct(agentID), identitybroker.BrokerClientID)
 	}
 }
 
@@ -279,17 +284,17 @@ func TestBuildCloseFinishesACallInFlightBeforeTheMCPBroker(t *testing.T) {
 		probe.OperationID = fmt.Sprintf("probe-%d", i)
 		_, err := g.built.IdentityBroker.AuthorizeCall(cancelled, probe)
 		// The probe's refusal is queued, so wait for its record.
-		var last identitybroker.DecisionRecord
-		for last.OperationID != probe.OperationID {
+		var last auditEvent
+		for last.extra(auditsink.ExtraOperationID) != probe.OperationID {
 			if time.Now().After(deadline) {
 				t.Fatal("the probe's refusal was never recorded")
 			}
-			if d := g.built.identityBrokerRecorder.Decisions(); len(d) > 0 {
+			if d := readAudit(t, g.auditFile, identitybroker.TypeToolDecision); len(d) > 0 {
 				last = d[len(d)-1]
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if err != nil && last.AttemptID == "" {
+		if err != nil && last.extra(auditsink.ExtraAttemptID) == "" {
 			wantBrokerError(t, err, identitybroker.CodeUnavailable, "")
 			break
 		}
@@ -438,14 +443,17 @@ func TestIdentityBrokerTokensStayOutOfSessionsAndLogs(t *testing.T) {
 		fmt.Fprintf(&out, "%v %+v\n", err, err)
 	}
 	fmt.Fprintf(&out, "%v %+v %#v\n", auth, auth, auth)
-	rec := g.built.identityBrokerRecorder
-	for _, records := range []any{rec.IDJAGs(), rec.Decisions()} {
-		raw, err := json.Marshal(records)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fmt.Fprintf(&out, "%+v %s\n", records, raw)
+	// Every audit event the broker and the embedded gateway wrote, after
+	// Close sends the queued ones.
+	g.built.Close()
+	if len(readAudit(t, g.auditFile, identitybroker.TypeIDJAG)) == 0 || len(readAudit(t, g.auditFile, identitybroker.TypeToolDecision)) < 2 {
+		t.Fatal("the audit file lacks the ID-JAG and the two decisions")
 	}
+	auditRaw, err := os.ReadFile(g.auditFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Write(auditRaw)
 	msgs, attrs := diag.snapshot()
 	if len(msgs) == 0 {
 		t.Fatal("captured no diagnostics")
@@ -569,7 +577,7 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	// Config.IdentityBrokerAS2Trust) answers invalid_grant with
 	// invalid_assertion, which the broker does not retry with a new ID-JAG.
 	wantBrokerError(t, err, identitybroker.CodeInternal, "")
-	jags := g.built.identityBrokerRecorder.IDJAGs()
+	jags := readAudit(t, g.auditFile, identitybroker.TypeIDJAG)
 	redeemed := hb.as2.Requests()
 	if len(jags) != 1 || len(redeemed) != 1 {
 		t.Fatalf("%d ID-JAG records and %d redemptions, want one of each", len(jags), len(redeemed))
@@ -586,8 +594,8 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 		}
 		claims := jwtClaims(t, r.Assertion)
 		if claims["iss"] != issuer || claims["aud"] != as2TestIssuer || claims["resource"] != as2TestIssuer+"/mcp" ||
-			claims["client_id"] != identitybroker.BrokerClientID || !reflect.DeepEqual(claims["act"], wantAct(jags[i].AgentID)) {
-			t.Fatalf("ID-JAG %d claims = %v, want the hosted AS-1's for AS-2 naming %v", i, claims, wantAct(jags[i].AgentID))
+			claims["client_id"] != identitybroker.BrokerClientID || !reflect.DeepEqual(claims["act"], wantAct(jags[i].subject(identitybroker.SubjectAgentActorID))) {
+			t.Fatalf("ID-JAG %d claims = %v, want the hosted AS-1's for AS-2 naming %v", i, claims, wantAct(jags[i].subject(identitybroker.SubjectAgentActorID)))
 		}
 		// AS-1 caps the ID-JAG at the agent credential's expiry.
 		jagExp, okJAG := claims["exp"].(float64)
@@ -778,7 +786,8 @@ func buildWithHostedAS1Durations(t *testing.T, gateways []identitybroker.Gateway
 			})
 		}
 	}
-	hb.built, err = buildIsolated(t, t.Context(), hb.cfg)
+	hb.cfg = isolateConfig(t, hb.cfg)
+	hb.built, err = Build(t.Context(), hb.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -800,7 +809,7 @@ func (hb *hostedBuild) signIn(t *testing.T) *gatewayBuild {
 		User:   identityharness.Alice,
 		Client: as1server.PublicClient{ID: identityharness.DefaultClientID, RedirectURIs: []string{identityharness.DefaultRedirectURI}},
 	})
-	return &gatewayBuild{h: hb.h, built: hb.built, access: access}
+	return &gatewayBuild{h: hb.h, built: hb.built, access: access, auditFile: hb.cfg.IdentityBrokerAuditFile}
 }
 
 // TestHostedAS1IssuesNoIDJAGsInProduction builds the hosted AS-1 path as
@@ -821,8 +830,8 @@ func TestHostedAS1IssuesNoIDJAGsInProduction(t *testing.T) {
 			s, cred, _ := g.open(t)
 			_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
 			wantBrokerError(t, err, identitybroker.CodePermissionDenied, identitybroker.ReasonDenied)
-			if jags := g.built.identityBrokerRecorder.IDJAGs(); len(jags) != 0 {
-				t.Fatalf("ID-JAG records = %+v, want none", jags)
+			if jags := readAudit(t, g.auditFile, identitybroker.TypeIDJAG); len(jags) != 0 {
+				t.Fatalf("ID-JAG events = %v, want none", jags)
 			}
 		})
 	}

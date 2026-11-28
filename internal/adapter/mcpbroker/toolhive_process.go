@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stacklok/toolhive/pkg/audit"
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
@@ -353,6 +354,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
 		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
 		CallBinding: callBinding,
+	}
+	if as2 && config.Audit != nil {
+		// Request and response content stays out of the records (audit.md,
+		// "Redaction").
+		serverConfig.AuditConfig = &audit.Config{
+			Enabled: true, Component: toolHiveAuditComponent, LogFile: config.Audit.LogFile,
+		}
 	}
 	backendRegistry := vmcp.NewImmutableRegistry(construction.backends)
 	server, err := vmcpserver.New(processCtx, serverConfig, router.NewSessionRouter(&vmcp.RoutingTable{}), backendClient, backendRegistry, nil)
