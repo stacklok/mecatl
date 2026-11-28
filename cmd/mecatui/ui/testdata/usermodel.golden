@@ -12,10 +12,10 @@
 ┃    │ the operator's name                                                                         ┃
 ┃    stack                                                                                         ┃
 ┃    │ prefers Go + hexagonal architecture                                                         ┃
-┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close                ┃
+┃  [enter Inspect] [esc Close]                                                                     ┃
+┃  ↑/↓ select · the agent saves and updates these facts                                            ┃
 ┃                                                                                                  ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
 
 
 

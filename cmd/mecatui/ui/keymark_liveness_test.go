@@ -826,15 +826,15 @@ func TestSoulAndUserModelOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("user model", func(t *testing.T) {
-		st := &userModelState{deps: surfaceDeps{theme: th, marks: hk, caps: client.Capabilities{UserModel: true}}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+		st := &userModelState{deps: surfaceDeps{theme: th, marks: hk, keys: applyKeyOverrides(defaultKeys(), overrideAll()), caps: client.Capabilities{UserModel: true}}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
 		st.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: "k"}}})
 		body, _ := st.Render(100, 30)
 		got := stripANSIstr(body)
-		if !strings.Contains(got, "ctrl+f16 close") {
-			t.Errorf("user-model hint should carry live close: %q", got)
+		if !strings.Contains(got, "[ctrl+f16 Close]") {
+			t.Errorf("user-model control should carry captured close: %q", got)
 		}
-		if strings.Contains(got, "esc close") {
-			t.Errorf("user-model hint still shows default close: %q", got)
+		if strings.Contains(got, "[esc Close]") {
+			t.Errorf("user-model control still shows default close: %q", got)
 		}
 	})
 }

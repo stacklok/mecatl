@@ -39,7 +39,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 		if width == 140 {
 			s := m.modal.(*userModelState)
 			content := m.metrics.contentBounds
-			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "Saved memory", content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), renderUserModelMeta(s.model), content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), "↑/↓ select · enter inspect · the agent saves and updates these facts · "+s.deps.marks.closeOnly+" close", content.x1-content.x0))
+			controls, _ := renderFooterControls(m.deps.Theme, content.x1-content.x0, []footerControlSpec{
+				{hint: s.deps.marks.choose, label: "Inspect", enabled: s.inspectAvailable()},
+				{hint: s.deps.marks.closeOnly, label: footerCloseLabel, enabled: s.deps.keys.Close.Enabled()},
+			})
+			footer := append(controls, skillsTextLines(m.deps.Theme.Style("muted"), "↑/↓ select · the agent saves and updates these facts", content.x1-content.x0)...)
+			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "Saved memory", content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), renderUserModelMeta(s.model), content.x1-content.x0)) - len(footer)
 			view := s.list.View()
 			indicators := 0
 			if view.Above > 0 {
@@ -71,7 +76,9 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 		if width == 140 {
 			s := m.modal.(*userModelState)
 			content := m.metrics.contentBounds
-			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "User model detail", content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), s.deps.marks.scroll+" scroll · read-only · ask the agent to remove or restore this saved fact · "+s.deps.marks.closeOnly+" back", content.x1-content.x0))
+			controls, _ := renderFooterControls(m.deps.Theme, content.x1-content.x0, []footerControlSpec{{hint: s.deps.marks.closeOnly, label: "Back", enabled: s.deps.keys.Close.Enabled()}})
+			footer := append(controls, skillsTextLines(m.deps.Theme.Style("muted"), s.deps.marks.scroll+" scroll · read-only · ask the agent to remove or restore this saved fact", content.x1-content.x0)...)
+			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "User model detail", content.x1-content.x0)) - len(footer)
 			if got := s.viewport.Height(); got != budget || len(s.viewport.View(s.detailLines).Rows) != budget || budget <= 15 {
 				t.Fatalf("detail usable rows=%d, offered content budget=%d, visible=%d", got, budget, len(s.viewport.View(s.detailLines).Rows))
 			}

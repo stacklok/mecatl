@@ -166,12 +166,12 @@ func TestUserModelDetailHistoryScrollKeepsExactData(t *testing.T) {
 	for i := range history {
 		history[i] = client.UserModelRevision{Version: fmt.Sprintf("v%02d", i), Status: "active"}
 	}
-	s := &userModelState{view: userModelDetail, viewport: &bounded.Viewport{}, deps: surfaceDeps{theme: theme.New("aztec", theme.AztecPalette()), marks: defaultHelpKeys()}, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: "user/exact", Value: "full exact value"}, HistoryAvailable: true, History: history}}
+	s := &userModelState{view: userModelDetail, viewport: &bounded.Viewport{}, deps: surfaceDeps{theme: theme.New("aztec", theme.AztecPalette()), keys: defaultKeys(), marks: defaultHelpKeys()}, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: "user/exact", Value: "full exact value"}, HistoryAvailable: true, History: history}}
 	s.Render(70, 12)
 	s.viewport.Move(bounded.End, len(s.detailLines))
 	out, _ := s.Render(70, 12)
 	plain := stripANSIstr(out)
-	if len(strings.Split(plain, "\n")) > 12 || !strings.Contains(plain, "v") || !strings.Contains(plain, "back") || s.detail.Current.Value != "full exact value" {
+	if len(strings.Split(plain, "\n")) > 12 || !strings.Contains(plain, "v") || !strings.Contains(plain, "Back") || s.detail.Current.Value != "full exact value" {
 		t.Fatalf("history not reachable: %q", plain)
 	}
 }
@@ -181,6 +181,22 @@ func TestUserModelPanelGolden(t *testing.T) {
 	m = goldenStatusFrame(t, m)
 	compareGolden(t, "usermodel.golden", stripANSI([]byte(m.View().Content)))
 }
+func TestUserModelDetailGolden(t *testing.T) {
+	memory := sampleUserModel()
+	memory.model.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: "name", Value: "Alice"}, HistoryAvailable: true, History: []client.UserModelRevision{{Version: "v1", Status: "active"}}}
+	m, _ := openedUserModel(t, newUserModelModel(t, memory, client.Capabilities{UserModel: true}))
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = feedCmd(t, updated.(Model), cmd)
+	m = goldenStatusFrame(t, m)
+	compareGolden(t, "usermodel_detail.golden", stripANSI([]byte(m.View().Content)))
+}
+
+func TestUserModelConstrainedFooterGolden(t *testing.T) {
+	m, _ := openedUserModel(t, newUserModelModel(t, sampleUserModel(), client.Capabilities{UserModel: true}))
+	m = offerCardBody(m, 18, 12)
+	compareGolden(t, "usermodel_constrained.golden", stripANSI([]byte(m.View().Content)))
+}
+
 func TestUserModelPanelEmptyDisabledGolden(t *testing.T) {
 	m := newUserModelModel(t, &fakeUserModel{}, client.Capabilities{})
 	s := &userModelState{deps: (&m).surfaceDeps(), list: &bounded.List{}, viewport: &bounded.Viewport{}}
@@ -270,20 +286,7 @@ func TestUserModelDescriptionRailWideGraphemesFitOrCompact(t *testing.T) {
 	}
 
 	out, _ = s.Render(6, 80)
-	if s.compact || strings.Contains(out, userModelDescriptionMarker) {
-		t.Fatalf("width 6 must render rails without the sentinel: compact=%t output=%q", s.compact, out)
-	}
-	rows := s.list.View().Rows
-	haveRail := false
-	for _, row := range rows {
-		if strings.HasPrefix(row.Text, userModelDescriptionMarker+userModelDescriptionRail) {
-			haveRail = true
-		}
-		if got := ansi.StringWidth(s.renderListRow(row)); got > 6 {
-			t.Fatalf("width 6 row overflows (%d): %#v", got, row)
-		}
-	}
-	if !haveRail || s.list.CursorID() != entries[0].Key {
-		t.Fatalf("width 6 lost rail or selected key: rail=%t selected=%q rows=%#v", haveRail, s.list.CursorID(), rows)
+	if !s.compact || strings.Contains(out, userModelDescriptionMarker) || s.list.CursorID() != entries[0].Key {
+		t.Fatalf("width 6 must use close-only compact output without changing selection: compact=%t output=%q", s.compact, out)
 	}
 }
