@@ -49,9 +49,13 @@ func (c ConfiguredMCPBroker) selectsConfiguredMCPBroker() bool {
 		len(c.MCPBrokerDiscovered) != 0 || len(c.MCPBrokerOptions) != 0
 }
 
-// as2Trust names the MCP broker adapter's AS-2 trust for
+// as1Trust names the MCP broker adapter's AS-2 trust in AS-1 for
 // Config.IdentityBrokerAS2Trust, so only this file imports the adapter.
-type as2Trust = mcpbroker.AS2Trust
+type as1Trust = mcpbroker.AS1Trust
+
+// mcpBrokerTestSeam names the MCP broker adapter's test seam for
+// Config.MCPBrokerTestSeam, so only this file imports the adapter.
+type mcpBrokerTestSeam = mcpbroker.TestSeam
 
 // mcpBrokerParts is a constructed MCP broker seen only through its contract.
 // The zero value is no broker; close is then a no-op.
@@ -208,7 +212,8 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 	if identity.entry != nil && identity.clientKeySetFile != "" {
 		config.BrokerClient = &mcpbroker.ToolHiveBrokerClient{ID: identitybroker.BrokerClientID, KeySetFile: identity.clientKeySetFile}
 	}
-	config.AS2Trust = cfg.IdentityBrokerAS2Trust
+	config.AS1Trust = cfg.IdentityBrokerAS2Trust
+	config.TestSeam = cfg.MCPBrokerTestSeam
 	if calls := identity.gatewayCalls; calls != nil && config.BrokerClient != nil {
 		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production's routes none until AS-2 trusts AS-1, so production is unchanged; removed by #2533.
 		config.GatewayCalls = &mcpbroker.GatewayCalls{

@@ -28,12 +28,14 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ory/fosite"
+	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/testseam"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest/as2signin"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
@@ -48,7 +50,11 @@ const (
 	as2TestResource    = as2TestIssuer + "/mcp"
 	clientAssertionTyp = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 	idJAGType          = "oauth-id-jag+jwt"
-	mcpInitializeBody  = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"as2-test","version":"1.0"}}}`
+	// delegatedAccessClaim marks the gateway tokens AS-2 redeems ID-JAGs
+	// for, which ToolHive refuses at token exchange.
+	delegatedAccessClaim = "https://toolhive.dev/claims/delegated_access"
+	upstreamSubjectClaim = "https://toolhive.dev/upstream_subject"
+	mcpInitializeBody    = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"as2-test","version":"1.0"}}}`
 )
 
 // as2BrokerClient is the identity broker's client key, its assertion signer,
@@ -160,9 +166,15 @@ func refusalReason(body map[string]any) string {
 	return identitybroker.NewServerRefusal(0, code, description).Reason
 }
 
+// as2TestActorIssuer is the agent trust domain AS-2's trust in AS-1 names
+// as the actor issuer, and the act.iss of the tests' ID-JAGs.
+var as2TestActorIssuer = identitybroker.ActorIssuer("agents.test")
+
 // trustedAS1 is the real AS-1, with the harness IdP as its upstream, and
 // Alice's and Bob's access tokens from it. The tests forge their assertions
-// from Alice's token and sign them with AS-1's key.
+// from Alice's token and sign them with AS-1's key; they keep the token's
+// sub_id and upstream_subject, which name Alice at the IdP, as the ID-JAGs
+// AS-1 issues do.
 type trustedAS1 struct {
 	a          *as1servertest.AS1
 	alice, bob identitybroker.Token
@@ -181,15 +193,22 @@ func startTrustedAS1(t *testing.T) trustedAS1 {
 
 // act is the act claim of the ID-JAGs the tests mint, in the design's shape
 // (credentials-and-lifecycle.md, step (7)): the instance's ag_ identifier,
-// and AS-1, which minted act, as its issuer.
-func (s trustedAS1) act() map[string]any {
-	return map[string]any{"iss": s.a.Issuer(), "sub": "ag_7hq2x9"}
+// in the agent trust domain AS-1 names as act.iss.
+func (trustedAS1) act() map[string]any {
+	return map[string]any{"iss": as2TestActorIssuer, "sub": "ag_7hq2x9"}
+}
+
+// upstreamSubject is the upstream_subject claim naming user at the harness
+// IdP by its sub claim, as AS-1's tokens carry it.
+func (s trustedAS1) upstreamSubject(user string) map[string]any {
+	return map[string]any{"iss": s.a.Harness.IdP.Issuer(), "claim": "sub", "value": user}
 }
 
 // jwt is Alice's access token turned into a JWT AS-1 signs for the broker
 // client: aud audience, typ typ (none when empty), a fresh jti, five
 // minutes to live, and an ID-JAG's resource, act, and call entry
-// (testCallDetails) for as2 unless claims replaces them.
+// (testCallDetails) for as2 unless claims replaces them. A nil value in
+// claims removes that claim.
 func (s trustedAS1) jwt(t *testing.T, as2 *AS2, audience, typ string, claims map[string]any) string {
 	t.Helper()
 	if claims == nil {
@@ -200,7 +219,13 @@ func (s trustedAS1) jwt(t *testing.T, as2 *AS2, audience, typ string, claims map
 		Claims: func(c jwt.MapClaims) {
 			c["aud"], c["client_id"], c["jti"] = audience, identitybroker.BrokerClientID, rand.Text()
 			c["iat"], c["exp"] = now.Unix(), now.Add(5*time.Minute).Unix()
-			maps.Copy(c, claims)
+			for name, value := range claims {
+				if value == nil {
+					delete(c, name)
+					continue
+				}
+				c[name] = value
+			}
 		},
 		Header: func(h map[string]any) {
 			if typ == "" {
@@ -274,6 +299,89 @@ func TestEmbeddedAuthServerIsUnchangedWithoutBrokerClient(t *testing.T) {
 	}
 	if _, err := spy.GetClient(t.Context(), identitybroker.BrokerClientID); err == nil {
 		t.Fatal("the broker client is registered without a broker client configured")
+	}
+}
+
+// TestAS1TrustIsIgnoredWithoutAS2: AS1Trust takes effect only with AS-2 set
+// up, so without a broker client, or without a protected upstream, the
+// embedded server's upstreams stay as they are, with no company IdP.
+func TestAS1TrustIsIgnoredWithoutAS2(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	// A complete trust naming servers that do not exist: AS-2 built with it
+	// would fail to reach them.
+	trust := &AS1Trust{
+		Issuer: "https://as1.example", JWKSURL: "https://as1.example/jwks", ActorIssuer: as2TestActorIssuer,
+		CompanyIdP: AS2CompanyIdP{Issuer: "https://idp.example", ClientID: "as2"},
+	}
+	var requests atomic.Int32
+	anonymous := toolHiveDiscoveryServer(t, "get_status", &requests)
+	for name, c := range map[string]struct {
+		profile ToolHiveProfile
+		client  *ToolHiveBrokerClient
+		want    []string
+	}{
+		"no broker client":      {profile: staticProtectedProfile("private"), want: []string{"private"}},
+		"no protected upstream": {profile: ToolHiveProfile{Name: "status", URL: anonymous.URL, Auth: authNone}, client: newAS2BrokerClient(t).config, want: []string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{c.profile}, BrokerClient: c.client, AS1Trust: trust,
+			})
+			if err != nil {
+				t.Fatalf("NewToolHiveProcess: %v", err)
+			}
+			t.Cleanup(func() { _ = process.Close() })
+			if process.AS2 != nil {
+				t.Fatalf("AS-2 = %+v", process.AS2)
+			}
+			if got := upstreamNames(process); !slices.Equal(got, c.want) {
+				t.Fatalf("upstreams = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestAS2RegistersTheTestSignInClientOnlyFromTheSeam: only a test seam's
+// sign-in client, and only with AS-2 set up, becomes a public client at AS-2;
+// production's zero seam registers none.
+func TestAS2RegistersTheTestSignInClientOnlyFromTheSeam(t *testing.T) {
+	signIn := NewTestSeam(testseam.Seam{SignInClient: &testseam.Client{ID: as2signin.ClientID, RedirectURI: as2signin.RedirectURI}})
+	for name, tc := range map[string]struct {
+		seam TestSeam
+		as2  bool
+		want bool
+	}{
+		"production's zero seam": {TestSeam{}, true, false},
+		"the seam without AS-2":  {signIn, false, false},
+		"the seam with AS-2":     {signIn, true, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+			store := storage.NewMemoryStorage()
+			config := ToolHiveConfig{CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: store, TestSeam: tc.seam}
+			if tc.as2 {
+				config.BrokerClient = newAS2BrokerClient(t).config
+			}
+			process, err := NewToolHiveProcess(t.Context(), config)
+			if err != nil {
+				t.Fatalf("NewToolHiveProcess: %v", err)
+			}
+			t.Cleanup(func() { _ = process.Close() })
+			client, err := store.GetClient(t.Context(), as2signin.ClientID)
+			if !tc.want {
+				if err == nil {
+					t.Fatal("the test sign-in client is registered")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the test sign-in client is not registered: %v", err)
+			}
+			if !client.IsPublic() || !reflect.DeepEqual([]string(client.GetAudience()), []string{as2TestResource}) ||
+				!reflect.DeepEqual(client.GetRedirectURIs(), []string{as2signin.RedirectURI}) {
+				t.Fatalf("sign-in client public %v, audience %v, redirect URIs %v; want public for the vMCP resource", client.IsPublic(), client.GetAudience(), client.GetRedirectURIs())
+			}
+		})
 	}
 }
 
@@ -428,17 +536,19 @@ func TestAS2ClosesTheAuthStorageWhenConstructionFails(t *testing.T) {
 	valid := newAS2BrokerClient(t).config
 	for name, test := range map[string]struct {
 		client *ToolHiveBrokerClient
-		trust  AS2Trust
+		trust  *AS1Trust
 	}{
 		"key set ToolHive rejects": {client: &ToolHiveBrokerClient{ID: valid.ID, KeySetFile: writeKeySetFile(t, []byte(`{"keys":[{"kty":"none"}]}`))}},
-		"invalid ID-JAG trust":     {client: valid, trust: NewAS2Trust(as2trust.Trust{})},
+		// Complete, so AS1Trust.check passes it, but its key set URL is on
+		// loopback without private addresses allowed.
+		"AS-1 trust ToolHive rejects": {client: valid, trust: loopbackKeysDisallowed(t)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			keySet := readFile(t, test.client.KeySetFile)
 			spy := &closeSpy{registerClientSpy: newRegisterClientSpy()}
 			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, AuthStorage: spy,
-				BrokerClient: test.client, AS2Trust: test.trust,
+				BrokerClient: test.client, AS1Trust: test.trust,
 			})
 			if err == nil {
 				_ = process.Close()
@@ -605,6 +715,11 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
+	// Without AS1Trust the login is the provider alone, as before AS-2
+	// trusted AS-1.
+	if got := upstreamNames(process); !slices.Equal(got, []string{"private"}) {
+		t.Fatalf("AS-2's upstreams = %v, want the provider alone", got)
+	}
 	admitStaticForGenericAuthorizationTest(t, process)
 	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
 		t.Fatalf("mount handlers: %v", err)
@@ -728,11 +843,11 @@ func TestAS2GatewayLoginUsesTheVMCPResource(t *testing.T) {
 	}
 }
 
-// newTrustingAS2 is AS-2 configured to trust the real AS-1, for Alice and
-// Bob, through the test-only seam, ToolHiveConfig.AS2Trust. It is this
-// package's counterpart of mcpbrokertest.StartAS2, which these tests cannot
-// call: mcpbrokertest imports this package, and the tests here use its
-// unexported helpers. Both build the trust with as2trust.Trust.WithDefaults.
+// newTrustingAS2 is AS-2 trusting the real AS-1 as production does
+// (ToolHiveConfig.AS1Trust), with Alice signed in at AS-2, so it redeems her
+// ID-JAGs. It is this package's counterpart of mcpbrokertest.StartAS2, which
+// these tests cannot call: mcpbrokertest imports this package, and the tests
+// here use its unexported helpers. Both sign users in with as2signin.
 func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 	t.Helper()
 	as1 := startTrustedAS1(t)
@@ -741,7 +856,7 @@ func newTrustingAS2(t *testing.T) (trustedAS1, as2BrokerClient, *Process) {
 }
 
 // startTrustingAS2 sets AS-2 up trusting as1, with client as its broker
-// client.
+// client, and signs Alice in at it.
 func startTrustingAS2(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient) *Process {
 	t.Helper()
 	return startTrustingAS2With(t, as1, client, nil)
@@ -754,28 +869,69 @@ func startTrustingAS2With(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerCl
 	return startTrustingAS2WithOptions(t, as1, client, edit, toolHiveProcessOptions{})
 }
 
-// trustingAS2Config is the configuration of AS-2 trusting as1, for Alice
-// and Bob, with client as its broker client. It sets an environment
+// trustingAS2Config is the configuration of AS-2 trusting as1, with client
+// as its broker client, a protected upstream whose provider signs users in
+// at once, and the test seam registering as2signin's client, so as2signin
+// signs users in through production's registration. It sets an environment
 // variable, so t must not be parallel.
 func trustingAS2Config(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient) ToolHiveConfig {
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := staticProtectedProfile("private")
+	profile.OAuth.AuthorizationEndpoint, profile.OAuth.TokenEndpoint = as2signin.Provider(t)
+	clientID, secretFile, caFile := as2signin.RegisterAtIdP(t, as1.a.Harness, as2TestIssuer)
 	return ToolHiveConfig{
-		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")}, BrokerClient: client,
-		AS2Trust: NewAS2Trust(as2trust.Trust{
-			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: as1.a.Harness.WriteCACert(t, t.TempDir()),
-			AllowPrivateAddresses: true,
-			Subjects:              []string{as1servertest.Subject(t, as1.alice), as1servertest.Subject(t, as1.bob)},
-		}.WithDefaults()),
+		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{profile}, BrokerClient: client,
+		AS1Trust: &AS1Trust{
+			Issuer: as1.a.Issuer(), JWKSURL: as1.a.JWKSURL(), CAFile: caFile, AllowPrivateAddresses: true,
+			ActorIssuer: as2TestActorIssuer,
+			CompanyIdP: AS2CompanyIdP{
+				Issuer: as1.a.Harness.IdP.Issuer(), ClientID: clientID, ClientSecretFile: secretFile,
+				CAFile: caFile, AllowPrivateAddresses: true,
+			},
+		},
+		TestSeam: NewTestSeam(testseam.Seam{SignInClient: &testseam.Client{ID: as2signin.ClientID, RedirectURI: as2signin.RedirectURI}}),
 	}
 }
 
 // startTrustingAS2WithOptions is startTrustingAS2With built with options.
 func startTrustingAS2WithOptions(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient, edit func(*ToolHiveConfig), options toolHiveProcessOptions) *Process {
 	t.Helper()
+	site := startAS2Site(t, as1, client, edit, options)
+	site.signIn(t, identityharness.Alice)
+	return site.Process
+}
+
+// as2Site is a process with AS-2 trusting as1, its handlers mounted, and
+// the in-memory store AS-2 keeps its users in.
+type as2Site struct {
+	*Process
+	as1   trustedAS1
+	mux   http.Handler
+	store *storage.MemoryStorage
+}
+
+// startAS2Site starts AS-2 as startTrustingAS2WithOptions does, without
+// signing anyone in. options.localAuthStoreForTest, when set, still wraps
+// the store.
+func startAS2Site(t *testing.T, as1 trustedAS1, client *ToolHiveBrokerClient, edit func(*ToolHiveConfig), options toolHiveProcessOptions) *as2Site {
+	t.Helper()
 	config := trustingAS2Config(t, as1, client)
 	if edit != nil {
 		edit(&config)
+	}
+	site := &as2Site{as1: as1}
+	wrap := options.localAuthStoreForTest
+	options.localAuthStoreForTest = func(store storage.Storage) storage.Storage {
+		memory, ok := store.(*storage.MemoryStorage)
+		if !ok {
+			t.Fatalf("auth store %T, want the in-memory store", store)
+		}
+		site.store = memory
+		if wrap != nil {
+			return wrap(store)
+		}
+		return store
 	}
 	process, err := newToolHiveProcess(t.Context(), config, options)
 	if err != nil {
@@ -785,7 +941,30 @@ func startTrustingAS2WithOptions(t *testing.T, as1 trustedAS1, client *ToolHiveB
 	if process.AS2 == nil {
 		t.Fatal("AS-2 is not set up")
 	}
-	return process
+	site.Process = process
+	site.mux = mountedProcess(t, process)
+	return site
+}
+
+// signIn signs user in at AS-2 through the company IdP and the provider,
+// and returns their AS-2 access token, the gateway login token.
+func (s *as2Site) signIn(t *testing.T, user string) string {
+	t.Helper()
+	return as2signin.SignIn(t, s.as1.a.Harness, s.mux, s.AS2.Issuer, s.AS2.Resource, user)
+}
+
+// userOf is AS-2's user for user at the company IdP, empty when AS-2 has
+// none.
+func (s *as2Site) userOf(t *testing.T, user string) string {
+	t.Helper()
+	identity, err := s.store.GetProviderIdentity(t.Context(), as2CompanyIdPUpstream, user)
+	if errors.Is(err, storage.ErrNotFound) {
+		return ""
+	}
+	if err != nil {
+		t.Fatalf("provider identity of %s: %v", user, err)
+	}
+	return identity.UserID
 }
 
 // TestAS2BrokerClientKeySetRotation: with the old and new broker client keys
@@ -832,12 +1011,19 @@ func TestAS2BrokerClientKeySetRotation(t *testing.T) {
 	}
 }
 
-// TestAS2RedeemsAnAS1IDJAG configures AS-2 to trust the real AS-1 through
-// the test-only seam and redeems ID-JAGs signed with AS-1's key, then checks
-// the broker client's assertions.
+// TestAS2RedeemsAnAS1IDJAG configures AS-2 to trust the real AS-1 as
+// production does and redeems ID-JAGs signed with AS-1's key, for Alice,
+// who signed in at AS-2, then checks the broker client's assertions.
 func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
-	as1, broker, process := newTrustingAS2(t)
-	as2 := process.AS2
+	as1 := startTrustedAS1(t)
+	broker := newAS2BrokerClient(t)
+	site := startAS2Site(t, as1, broker.config, nil, toolHiveProcessOptions{})
+	site.signIn(t, identityharness.Alice)
+	process, as2 := site.Process, site.AS2
+	aliceAtAS2 := site.userOf(t, identityharness.Alice)
+	if aliceAtAS2 == "" {
+		t.Fatal("AS-2 recorded no user for Alice's sign-in")
+	}
 	idJAG := func() string { return as1.idJAG(t, as2) }
 	redeem := func(assertion, clientAssertion string) (int, map[string]any) {
 		return postAS2Token(t, as2, url.Values{
@@ -872,11 +1058,36 @@ func TestAS2RedeemsAnAS1IDJAG(t *testing.T) {
 	if want := as1.act(); !reflect.DeepEqual(claims["act"], want) {
 		t.Errorf("gateway token act = %v, want %v", claims["act"], want)
 	}
-	if sub, _ := claims.GetSubject(); sub != as1.a.Issuer()+"#"+as1servertest.Subject(t, as1.alice) {
-		t.Errorf("gateway token sub = %q, want issuer#sub", sub)
+	// The gateway token names the user AS-2 resolved Alice's
+	// upstream_subject to, the one her sign-in at AS-2 recorded, not AS-1's
+	// subject for her, and carries the delegated-access marker that keeps it
+	// from being exchanged.
+	if sub, _ := claims.GetSubject(); sub != aliceAtAS2 {
+		t.Errorf("gateway token sub = %q, want AS-2's user for Alice, %q (AS-1's subject is %q)", sub, aliceAtAS2, as1servertest.Subject(t, as1.alice))
+	}
+	if claims[delegatedAccessClaim] != true {
+		t.Errorf("gateway token %s = %v, want true", delegatedAccessClaim, claims[delegatedAccessClaim])
 	}
 	if aud, _ := claims.GetAudience(); !slices.Equal([]string(aud), []string{as2.Resource}) {
 		t.Errorf("gateway token aud = %v, want [%s]", aud, as2.Resource)
+	}
+	// ToolHive caps a marked token's lifetime at five minutes, below AS-2's
+	// one-hour default, even when the ID-JAG, here living nine minutes, under
+	// AS-2's ten-minute maximum, would allow longer.
+	issued := time.Now()
+	long := as1.jwt(t, as2, as2.Issuer, idJAGType, map[string]any{
+		"resource": as2.Resource, "act": as1.act(), "iat": issued.Unix(), "exp": issued.Add(9 * time.Minute).Unix(),
+	})
+	if status, body := redeem(long, broker.assertion(t, as2.Issuer)); status != http.StatusOK {
+		t.Errorf("redemption of an ID-JAG living nine minutes: status %d, body %v; want 200", status, body)
+	} else {
+		capped, _ := body["access_token"].(string)
+		longClaims := unverifiedClaims(t, capped)
+		iat, iatErr := longClaims.GetIssuedAt()
+		exp, expErr := longClaims.GetExpirationTime()
+		if iatErr != nil || expErr != nil || iat == nil || exp == nil || exp.Sub(iat.Time) > 5*time.Minute {
+			t.Errorf("gateway token from an ID-JAG living nine minutes: iat %v, exp %v; want both, at most five minutes apart", iat, exp)
+		}
 	}
 	// AS-2 copies the ID-JAG's call entry into the gateway token and returns
 	// it in the token response (step (8)).
@@ -1035,10 +1246,12 @@ func as2Redemption(t *testing.T, as2 *AS2, broker as2BrokerClient, assertion str
 // TestAS2RefusesRedemptionsOutsideItsConfiguration shows that AS-2 refuses
 // what its configuration leaves out, not only that it redeems what it allows:
 // a resource, requested or named by the ID-JAG's claim, other than the
-// vMCP's, an ID-JAG addressed to anything but AS-2's
-// issuer, and an AS-1 access token presented as an assertion. These are the
-// checks that keep an AS-1 access token from being redeemed once #2533 trusts
-// AS-1 in production, and that a ToolHive bump must not loosen.
+// vMCP's, an ID-JAG addressed to anything but AS-2's issuer, one for a user
+// who never signed in at AS-2 or whose actor another issuer names, and an
+// AS-1 access token presented as an assertion. These are the checks that
+// keep an AS-1 access token from being redeemed now that AS-2 trusts AS-1
+// in production, and that a ToolHive bump must not loosen. Only Alice signed
+// in at AS-2; Bob signed in at AS-1 alone.
 func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 	as1, broker, process := newTrustingAS2(t)
 	as2 := process.AS2
@@ -1060,8 +1273,10 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 		return as1.jwt(t, as2, as2.Issuer, idJAGType, all)
 	}
 	now := time.Now()
-	unbound := withClaims(map[string]any{"sub": "not-a-bound-subject"})
-	// Plain RFC 7523 assertions from AS-1, for a bound subject: AS-2 trusts
+	// subjectOf is an ID-JAG for AS-2 whose upstream_subject is upstream,
+	// with Alice's sub and sub_id kept.
+	subjectOf := func(upstream any) string { return withClaims(map[string]any{upstreamSubjectClaim: upstream}) }
+	// Plain RFC 7523 assertions from AS-1, for Alice: AS-2 trusts
 	// AS-1 for ID-JAGs only, so it refuses them, and ToolHive's plain path,
 	// which would otherwise redeem them without client authentication, never
 	// sees them (credentials-and-lifecycle.md, step (8)).
@@ -1078,6 +1293,9 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 		hintOtherClient = "was not issued to the requesting client"
 		hintTyp         = "JOSE typ header is not supported"
 		hintPlain       = "issuer is not enabled for this grant"
+		hintForeign     = "does not name this server's sign-in identity provider and subject claim"
+		hintMalformed   = "missing or malformed upstream_subject claim"
+		hintNoResource  = "must carry a 'resource' claim"
 	)
 	// otherSignature is an ID-JAG that is valid but for its signature: AS-1's
 	// issuer and key ID, signed with another key.
@@ -1121,17 +1339,36 @@ func TestAS2RefusesRedemptionsOutsideItsConfiguration(t *testing.T) {
 		// ToolHive checks the claim itself before comparing it with the
 		// request or with policy (ID-JAG draft, section 4.4.1), so step (8)'s
 		// invalid_target and resource_denied rows apply only to a claim AS-2
-		// governs.
+		// governs. No case here is resource_denied: in subject mode resolve no
+		// subject binding narrows the resource, AS-2 governs the vMCP
+		// resource alone (AllowedAudiences), the broker client's audiences are
+		// exactly that resource, and no other client at AS-2, the test
+		// sign-in client included, may use the JWT-bearer grant, so
+		// ToolHive's client-audience check (checkClientAudience) cannot
+		// refuse a resource that got past the claim check.
 		{"resource left out, claim names another server", otherClaim, nil, true, "invalid_grant", "invalid_assertion", hintUngoverned},
 		{"resource is the vMCP, claim names another server", otherClaim, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUngoverned},
 		{"ID-JAG for the vMCP resource", idJAG(as2.Resource), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
 		{"ID-JAG for the token endpoint", idJAG(as2.TokenEndpoint), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
 		{"ID-JAG for AS-2's issuer and another audience", twoAudiences, resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOneAudience},
-		{"ID-JAG for a subject AS-2 cannot map", unbound, resource(as2.Resource), true, "access_denied", "subject_unknown", ""},
+		// AS-2 finds the user from upstream_subject alone, through the
+		// company IdP sign-in that recorded them; sub and sub_id do not
+		// select a user.
+		{"ID-JAG for a user who never signed in anywhere", subjectOf(as1.upstreamSubject("carol")), resource(as2.Resource), true, "access_denied", "subject_unknown", ""},
+		{"ID-JAG with Alice's sub_id for Bob, who never signed in at AS-2", subjectOf(as1.upstreamSubject(identityharness.Bob)), resource(as2.Resource), true, "access_denied", "subject_unknown", ""},
+		{"ID-JAG naming Alice at another IdP", subjectOf(map[string]any{"iss": "https://other-idp.example", "claim": "sub", "value": identityharness.Alice}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintForeign},
+		{"ID-JAG naming Alice by another claim", subjectOf(map[string]any{"iss": as1.a.Harness.IdP.Issuer(), "claim": "oid", "value": identityharness.OID(identityharness.Alice)}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintForeign},
+		{"ID-JAG without upstream_subject", subjectOf(nil), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintMalformed},
+		{"ID-JAG without a resource claim", withClaims(map[string]any{"resource": nil}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintNoResource},
+		// AS-2 accepts an actor only from the agent trust domain, or from
+		// the ID-JAG's issuer (ToolHive's rule, which AS-1 never uses).
+		{"ID-JAG whose actor another issuer names", withClaims(map[string]any{"act": map[string]any{"iss": "spiffe://other.test", "sub": "ag_7hq2x9"}}), resource(as2.Resource), true, "access_denied", "actor_denied", ""},
+		{"ID-JAG without an actor", withClaims(map[string]any{"act": nil}), resource(as2.Resource), true, "access_denied", "actor_denied", ""},
 		{"expired ID-JAG", withClaims(map[string]any{"iat": now.Add(-3 * time.Minute).Unix(), "exp": now.Add(-2 * time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
-		// AS-2 limits an ID-JAG's lifetime, exp - iat, not its age: it does
-		// not compare iat with the current time.
-		{"ID-JAG with a lifetime over the maximum", withClaims(map[string]any{"iat": now.Unix(), "exp": now.Add(as2trust.DefaultMaxAssertionAge + time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintLifetime},
+		// AS-2 limits an ID-JAG's lifetime, exp - iat, to ten minutes, not its
+		// age: it does not compare iat with the current time.
+		// TestAS2RedeemsAnAS1IDJAG redeems one living nine minutes.
+		{"ID-JAG living eleven minutes", withClaims(map[string]any{"iat": now.Unix(), "exp": now.Add(11 * time.Minute).Unix()}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintLifetime},
 		{"ID-JAG for another client", withClaims(map[string]any{"client_id": "other-client"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintOtherClient},
 		{"ID-JAG naming an issuer AS-2 does not trust", withClaims(map[string]any{"iss": "https://untrusted-as1.example"}), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
 		{"ID-JAG with AS-1's issuer and key ID, signed by another key", otherSignature(), resource(as2.Resource), true, "invalid_grant", "invalid_assertion", hintUnverified},
@@ -1219,13 +1456,23 @@ func TestAS2RedeemsAnIDJAGOnceUnderConcurrentRedemptions(t *testing.T) {
 	}
 }
 
+// loopbackKeysDisallowed is a trust in a real AS-1 on loopback that does not
+// allow private addresses for AS-1's keys; its company IdP, also on loopback,
+// is allowed, so AS-2 reaches nothing off the machine.
+func loopbackKeysDisallowed(t *testing.T) *AS1Trust {
+	t.Helper()
+	trust := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config).AS1Trust
+	trust.AllowPrivateAddresses = false
+	return trust
+}
+
 // TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed: a trust whose key
 // set URL names a loopback address is refused when AS-2 is built unless the
 // trust allows private addresses. The other AS-2 tests allow it for their
 // loopback AS-1.
 func TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed(t *testing.T) {
 	config := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config)
-	config.AS2Trust.t.AllowPrivateAddresses = false
+	config.AS1Trust.AllowPrivateAddresses = false
 	process, err := NewToolHiveProcess(t.Context(), config)
 	if err == nil {
 		_ = process.Close()
@@ -1303,42 +1550,75 @@ func TestAS2AnswersAReplayStoreOutageWithServerError(t *testing.T) {
 	}
 }
 
-// TestAS2LetsTheBrokerClientExchangeItsGatewayToken records the shortcut on
-// as2DelegateClient: the broker client exchanges a gateway token without a
-// call entry that AS-2 issued to it, which the design refuses. #2533 flips
-// that case to a refusal once AS-2 marks gateway tokens
-// (stacklok/toolhive#7247). A call-bound gateway token, the only kind the
-// broker obtains, is refused already (stacklok/toolhive#7282): exchanging it
-// would mint a fresh token with a new jti and get around its single use.
-func TestAS2LetsTheBrokerClientExchangeItsGatewayToken(t *testing.T) {
-	as1, broker, process := newTrustingAS2(t)
-	as2 := process.AS2
+// TestAS2RefusesToExchangeAGatewayToken: a gateway token AS-2 redeemed an
+// ID-JAG for carries the delegated-access marker, so ToolHive refuses it at
+// token exchange, as the subject token and as the actor token, whether or
+// not it carries a call entry (stacklok/toolhive#7247): exchanging it would
+// mint a fresh token with a new jti, getting around a call-bound token's
+// single use, or an unmarked one.
+func TestAS2RefusesToExchangeAGatewayToken(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	broker := newAS2BrokerClient(t)
+	site := startAS2Site(t, as1, broker.config, nil, toolHiveProcessOptions{})
+	login := site.signIn(t, identityharness.Alice)
+	as2 := site.AS2
 	vmcp := as2.Resource
-	exchange := func(idJAG string) (int, map[string]any) {
+	gatewayToken := func(idJAG string) string {
 		t.Helper()
 		status, body := as2Redemption(t, as2, broker, idJAG, &vmcp, true)
-		if status != http.StatusOK {
+		token, _ := body["access_token"].(string)
+		if status != http.StatusOK || token == "" {
 			t.Fatalf("ID-JAG redemption: status %d, body %v", status, body)
 		}
-		gatewayToken, _ := body["access_token"].(string)
-		return postAS2Token(t, as2, url.Values{
+		return token
+	}
+	exchange := func(subject, actor string) (int, map[string]any) {
+		t.Helper()
+		form := url.Values{
 			"grant_type":            {oauthproto.GrantTypeTokenExchange},
-			"subject_token":         {gatewayToken},
-			"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+			"subject_token":         {subject},
+			"subject_token_type":    {oauthproto.TokenTypeAccessToken},
 			"resource":              {as2.Resource},
 			"client_assertion_type": {clientAssertionTyp},
 			"client_assertion":      {broker.assertion(t, as2.Issuer)},
-		})
+		}
+		if actor != "" {
+			form.Set("actor_token", actor)
+			form.Set("actor_token_type", oauthproto.TokenTypeAccessToken)
+		}
+		return postAS2Token(t, as2, form)
 	}
-	if status, body := exchange(as1.idJAG(t, as2)); status != http.StatusBadRequest || body["access_token"] != nil {
-		t.Fatalf("broker client exchanging its call-bound gateway token: status %d, body %v; want a refusal", status, body)
+	const (
+		hintSubject = "The subject token is a delegated-access token and cannot be exchanged."
+		hintActor   = "The actor token is a delegated-access token and cannot be exchanged."
+	)
+	for _, c := range []struct {
+		name, subject, actor, hint string
+	}{
+		{"call-bound gateway token as the subject token", gatewayToken(as1.idJAG(t, as2)), "", hintSubject},
+		{"gateway token without a call entry as the subject token", gatewayToken(as1.unboundIDJAG(t, as2)), "", hintSubject},
+		// Alice's gateway login token, which carries no marker, gets as far
+		// as the actor token.
+		{"gateway token without a call entry as the actor token", login, gatewayToken(as1.unboundIDJAG(t, as2)), hintActor},
+	} {
+		status, body := exchange(c.subject, c.actor)
+		description, _ := body["error_description"].(string)
+		if _, issued := body["access_token"]; issued || status != http.StatusBadRequest || body["error"] != "invalid_request" || !strings.Contains(description, c.hint) {
+			t.Errorf("%s: status %d, body %v; want 400 invalid_request with %q and no token", c.name, status, body, c.hint)
+		}
 	}
-	if status, body := exchange(as1.unboundIDJAG(t, as2)); status != http.StatusOK {
-		t.Fatalf("broker client exchanging its gateway token without a call entry: status %d, body %v; if AS-2 now refuses it, make this a refusal and update #2533", status, body)
+	// Control: without the actor token, the login token reaches the check
+	// that refuses another client's token, so the refusal above is the
+	// actor token's.
+	if status, body := exchange(login, ""); status != http.StatusBadRequest || body["error"] != "invalid_grant" {
+		t.Errorf("exchanging the login token: status %d, body %v; want 400 invalid_grant", status, body)
 	}
 }
 
-func TestAS2TrustsNoIssuerWithoutTheTestSeam(t *testing.T) {
+// TestAS2TrustsNoIssuerWithoutAS1Trust: without AS1Trust, AS-2 redeems no
+// ID-JAG and its sign-in is the provider upstreams alone, with no company
+// IdP.
+func TestAS2TrustsNoIssuerWithoutAS1Trust(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	as1 := startTrustedAS1(t)
 	broker := newAS2BrokerClient(t)
@@ -1349,6 +1629,9 @@ func TestAS2TrustsNoIssuerWithoutTheTestSeam(t *testing.T) {
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
+	if got := upstreamNames(process); !slices.Equal(got, []string{"private"}) {
+		t.Fatalf("AS-2's upstreams = %v, want the provider alone", got)
+	}
 	status, body := postAS2Token(t, process.AS2, url.Values{
 		"grant_type":            {oauthproto.GrantTypeJWTBearer},
 		"assertion":             {as1.idJAG(t, process.AS2)},
@@ -1359,8 +1642,180 @@ func TestAS2TrustsNoIssuerWithoutTheTestSeam(t *testing.T) {
 	// With no JWT-bearer handler, no token endpoint handler takes the grant
 	// and fosite refuses the request as invalid_request.
 	if status != http.StatusBadRequest || body["error"] != "invalid_request" {
-		t.Fatalf("production AS-2 redeeming an ID-JAG: status %d, body %v; want 400 invalid_request", status, body)
+		t.Fatalf("AS-2 without AS1Trust redeeming an ID-JAG: status %d, body %v; want 400 invalid_request", status, body)
 	}
+}
+
+// upstreamNames are the names of the upstreams of process's embedded
+// authorization server, in sign-in order.
+func upstreamNames(process *Process) []string {
+	names := make([]string, len(process.construction.upstreams))
+	for i, upstream := range process.construction.upstreams {
+		names[i] = upstream.Name
+	}
+	return names
+}
+
+// TestAS2SignsInThroughTheCompanyIdPFirst: with AS1Trust, the company IdP is
+// AS-2's first upstream, configured from the trust at AS-2's issuer, and the
+// provider upstreams follow it; signing in at AS-2 records the user under it.
+func TestAS2SignsInThroughTheCompanyIdPFirst(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	site := startAS2Site(t, as1, newAS2BrokerClient(t).config, nil, toolHiveProcessOptions{})
+	if got := upstreamNames(site.Process); !slices.Equal(got, []string{as2CompanyIdPUpstream, "private"}) {
+		t.Fatalf("AS-2's upstreams = %v, want the company IdP, then the provider", got)
+	}
+	idp, issuer := site.construction.upstreams[0].OIDCConfig, as1.a.Harness.IdP.Issuer()
+	if idp == nil || idp.IssuerURL != issuer || idp.RedirectURI != as2TestIssuer+"/oauth/callback" || !idp.AllowPrivateIPs {
+		t.Fatalf("company IdP upstream = %+v, want the IdP at %s with AS-2's callback", idp, issuer)
+	}
+	if n := site.store.Stats().Users; n != 0 {
+		t.Fatalf("AS-2 has %d users before any sign-in, want 0", n)
+	}
+	site.signIn(t, identityharness.Alice)
+	site.signIn(t, identityharness.Alice)
+	if n := site.store.Stats().Users; n != 1 || site.userOf(t, identityharness.Alice) == "" {
+		t.Fatalf("after Alice signed in twice, AS-2 has %d users, Alice's %q; want 1, hers", n, site.userOf(t, identityharness.Alice))
+	}
+}
+
+// TestAS2PassesTheCompanyIdPConfigurationToToolHive: the trust's company IdP
+// reaches ToolHive's upstream configuration as it is, a non-default subject
+// claim included, with no forced prompt or max_age and ToolHive's default
+// scopes.
+func TestAS2PassesTheCompanyIdPConfigurationToToolHive(t *testing.T) {
+	config := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config)
+	idp := &config.AS1Trust.CompanyIdP
+	idp.SubjectClaim = "oid"
+	if _, err := os.Stat(idp.ClientSecretFile); err != nil {
+		t.Fatalf("client secret file: %v", err)
+	}
+	process, err := NewToolHiveProcess(t.Context(), config)
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	upstream := process.construction.upstreams[0]
+	want := &authserver.OIDCUpstreamRunConfig{
+		IssuerURL: idp.Issuer, ClientID: idp.ClientID, ClientSecretFile: idp.ClientSecretFile,
+		RedirectURI: as2TestIssuer + "/oauth/callback", SubjectClaim: "oid", CAFilePath: idp.CAFile, AllowPrivateIPs: true,
+	}
+	if upstream.Name != as2CompanyIdPUpstream || upstream.Type != authserver.UpstreamProviderTypeOIDC || !reflect.DeepEqual(upstream.OIDCConfig, want) {
+		t.Fatalf("company IdP upstream %q, type %q, OIDC %+v; want %q, OIDC, %+v", upstream.Name, upstream.Type, upstream.OIDCConfig, as2CompanyIdPUpstream, want)
+	}
+}
+
+// TestAS2ReachesTheCompanyIdPOnAPrivateAddressOnlyWhenAllowed: AS-2 refuses
+// to discover a company IdP on a private address when it is built unless the
+// trust allows private addresses, as for AS-1's key set URL
+// (TestAS2FetchesAS1KeysFromAPrivateAddressOnlyWhenAllowed). ToolHive lets a
+// loopback issuer through regardless (networking.NewHostScopedClientBuilder),
+// so the IdP here is the harness's, named by the IPv4-compatible form of its
+// loopback address, which ToolHive does not take for loopback but classifies
+// as private by the address it embeds. The other AS-2 tests allow private
+// addresses.
+func TestAS2ReachesTheCompanyIdPOnAPrivateAddressOnlyWhenAllowed(t *testing.T) {
+	config := trustingAS2Config(t, startTrustedAS1(t), newAS2BrokerClient(t).config)
+	idp := &config.AS1Trust.CompanyIdP
+	issuer := mustParseURL(t, idp.Issuer)
+	issuer.Host = "[::" + issuer.Hostname() + "]:" + issuer.Port()
+	idp.Issuer, idp.AllowPrivateAddresses = issuer.String(), false
+	process, err := NewToolHiveProcess(t.Context(), config)
+	if err == nil {
+		_ = process.Close()
+		t.Fatal("AS-2 with a company IdP on a private address without private addresses allowed was built")
+	}
+	if !strings.Contains(err.Error(), "private IP address, which is not allowed") {
+		t.Fatalf("NewToolHiveProcess: %v; want a refusal of the company IdP's private address", err)
+	}
+}
+
+// TestAS2RefusesAnIDJAGForAUserWhoNeverSignedInAtAS2: AS-2 refuses Alice's
+// ID-JAG as subject_unknown until she signs in at AS-2, creates no user for
+// it, and leaves it unconsumed, so the same ID-JAG redeems once she has.
+func TestAS2RefusesAnIDJAGForAUserWhoNeverSignedInAtAS2(t *testing.T) {
+	as1 := startTrustedAS1(t)
+	broker := newAS2BrokerClient(t)
+	site := startAS2Site(t, as1, broker.config, nil, toolHiveProcessOptions{})
+	as2 := site.AS2
+	vmcp := as2.Resource
+	idJAG := as1.idJAG(t, as2)
+	for range 2 {
+		status, body := as2Redemption(t, as2, broker, idJAG, &vmcp, true)
+		if _, issued := body["access_token"]; issued || status != http.StatusBadRequest || body["error"] != "access_denied" || refusalReason(body) != "subject_unknown" {
+			t.Fatalf("redemption for Alice before she signs in at AS-2: status %d, body %v; want 400 access_denied subject_unknown", status, body)
+		}
+		if stats := site.store.Stats(); stats.Users != 0 || stats.ProviderIdentities != 0 {
+			t.Fatalf("after a refused redemption AS-2 has %d users and %d provider identities, want none", stats.Users, stats.ProviderIdentities)
+		}
+	}
+	site.signIn(t, identityharness.Alice)
+	if n := site.store.Stats().Users; n != 1 {
+		t.Fatalf("after Alice signed in, AS-2 has %d users, want 1", n)
+	}
+	status, body := as2Redemption(t, as2, broker, idJAG, &vmcp, true)
+	token, _ := body["access_token"].(string)
+	if status != http.StatusOK || token == "" {
+		t.Fatalf("redemption of the refused ID-JAG after Alice signed in: status %d, body %v", status, body)
+	}
+	if sub, _ := unverifiedClaims(t, token).GetSubject(); sub != site.userOf(t, identityharness.Alice) {
+		t.Fatalf("gateway token sub = %q, want AS-2's user for Alice", sub)
+	}
+}
+
+// TestAS2RefusesAnIncompleteAS1Trust: AS-2 refuses a trust missing what it
+// needs, and one whose company IdP would take a protected upstream's
+// provider name, before building anything.
+func TestAS2RefusesAnIncompleteAS1Trust(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	complete := func() *AS1Trust {
+		return &AS1Trust{
+			Issuer: "https://as1.example", JWKSURL: "https://as1.example/jwks", ActorIssuer: as2TestActorIssuer,
+			CompanyIdP: AS2CompanyIdP{Issuer: "https://idp.example", ClientID: "as2"},
+		}
+	}
+	collision := staticProtectedProfile("MECATL_COMPANY_IDP")
+	for name, c := range map[string]struct {
+		edit    func(*AS1Trust)
+		profile ToolHiveProfile
+		want    string
+	}{
+		"no AS-1 issuer":                 {edit: func(tr *AS1Trust) { tr.Issuer = "" }, want: "needs the AS-1 issuer"},
+		"no key set URL":                 {edit: func(tr *AS1Trust) { tr.JWKSURL = "" }, want: "needs the AS-1 key set URL"},
+		"no actor issuer":                {edit: func(tr *AS1Trust) { tr.ActorIssuer = "" }, want: "needs the actor issuer"},
+		"no company IdP issuer":          {edit: func(tr *AS1Trust) { tr.CompanyIdP.Issuer = "" }, want: "needs the company IdP issuer"},
+		"no company IdP client ID":       {edit: func(tr *AS1Trust) { tr.CompanyIdP.ClientID = "" }, want: "needs the company IdP client ID"},
+		"relative client secret":         {edit: func(tr *AS1Trust) { tr.CompanyIdP.ClientSecretFile = "secret" }, want: "company IdP client secret file"},
+		"provider named the company IdP": {profile: collision, want: `upstream "MECATL_COMPANY_IDP" maps to provider "mecatl-company-idp"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			trust := complete()
+			if c.edit != nil {
+				c.edit(trust)
+			}
+			profile := c.profile
+			if profile.Name == "" {
+				profile = staticProtectedProfile("private")
+			}
+			spy := newRegisterClientSpy()
+			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{profile}, AuthStorage: spy,
+				BrokerClient: newAS2BrokerClient(t).config, AS1Trust: trust,
+			})
+			if err == nil {
+				_ = process.Close()
+			}
+			if !errors.Is(err, ErrInvalidCatalogue) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("NewToolHiveProcess = %v, want ErrInvalidCatalogue containing %q", err, c.want)
+			}
+			if spy.registered.Load() {
+				t.Error("construction wrote the auth store before refusing the trust")
+			}
+		})
+	}
+	// The complete trust passes these checks: AS-2 built with it reaches
+	// ToolHive, which TestAS2ClosesTheAuthStorageWhenConstructionFails
+	// shows; the tests that redeem ID-JAGs show a complete trust works.
 }
 
 func mustParseURL(t *testing.T, raw string) *url.URL {
@@ -1412,7 +1867,7 @@ func TestAS2BindsGatewayTokensToTheirCall(t *testing.T) {
 // cancellation reaches the backend for as long as the call can run.
 func TestGatewayCallBindingDefaults(t *testing.T) {
 	const issuer = as2TestIssuer
-	binding, err := gatewayCallBinding(issuer, ToolHiveBrokerClient{ID: identitybroker.BrokerClientID}, AS2Trust{}.gatewayMaxCallDuration(), nil)
+	binding, err := gatewayCallBinding(issuer, ToolHiveBrokerClient{ID: identitybroker.BrokerClientID}, TestSeam{}.gatewayMaxCallDuration(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

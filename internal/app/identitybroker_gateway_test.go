@@ -64,13 +64,11 @@ func wantAct(agentID string) map[string]any {
 // checking actor tokens with the built broker's verifier, a protected
 // calendar route with the embedded gateway's signing key, and gateways, the
 // broker's gateway entries, after edit changes the configuration. trustAS1
-// makes AS-2 trust AS-1 for Alice.
+// makes AS-2 trust AS-1 and signs Alice in at AS-2, so AS-2 resolves her.
 func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.GatewayEntry, edit func(*Config)) *gatewayBuild {
 	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
 	a := as1servertest.Start(t, h, as1servertest.IssueIDJAGs(brokerconfigtest.TrustDomain, as2TestIssuer, as2TestIssuer+"/mcp"))
-	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at
-	// her first sign-in, so she signs in before the build.
 	access := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
 	as1HTTP := a.HTTPClient()
 	faults := identityharness.NewFaultTransport(as1HTTP.Transport, a.Server.TokenEndpoint())
@@ -87,14 +85,14 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.Gat
 	if len(gateways) != 0 {
 		cfg.MCPAuthority = protectedBrokerAuthorityWithKey(t)
 	}
-	if trustAS1 {
-		cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-			Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
-			Subjects: []string{as1servertest.Subject(t, access)},
-		})
-	}
 	if edit != nil {
 		edit(&cfg)
+	}
+	if trustAS1 {
+		// After edit, so the provider replaces that of every route edit set.
+		trustAS1ForSignIn(t, &cfg, mcpbrokertest.AS1{
+			Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), ActorIssuer: identitybroker.ActorIssuer(brokerconfigtest.TrustDomain), Harness: h,
+		})
 	}
 	built, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
@@ -104,7 +102,50 @@ func buildWithRealAS1(t *testing.T, trustAS1 bool, gateways []identitybroker.Gat
 	if built.identityBrokerCore == nil {
 		t.Fatal("startup built no real identity broker core")
 	}
+	if trustAS1 {
+		signInAtAS2(t, h, built, identityharness.Alice)
+	}
 	return &gatewayBuild{h: h, built: built, as1: faults, access: access}
+}
+
+// trustAS1ForSignIn makes cfg's AS-2 trust as1 as production does, register
+// the sign-in client mcpbrokertest.SignIn uses, and have its OAuth routes'
+// provider sign users in at once, so signInAtAS2 can sign users in.
+func trustAS1ForSignIn(t *testing.T, cfg *Config, as1 mcpbrokertest.AS1) {
+	t.Helper()
+	cfg.IdentityBrokerAS2Trust = mcpbrokertest.Trust(t, as1, as2TestIssuer)
+	cfg.MCPBrokerTestSeam = mcpbrokertest.SignInSeam()
+	declaration, _ := cfg.MCPAuthority.Broker()
+	authorize, token := mcpbrokertest.Provider(t)
+	routes := slices.Clone(declaration.Routes)
+	for i, route := range routes {
+		oauth := route.Auth.OAuth
+		if oauth == nil || oauth.Upstream == nil || oauth.Upstream.OAuth2 == nil {
+			continue
+		}
+		o, upstream, oauth2 := *oauth, *oauth.Upstream, *oauth.Upstream.OAuth2
+		oauth2.AuthorizationEndpoint, oauth2.TokenEndpoint = authorize, token
+		upstream.OAuth2, o.Upstream = &oauth2, &upstream
+		routes[i].Auth.OAuth = &o
+	}
+	declaration.Routes = routes
+	cfg.MCPAuthority = mcpauthority.NewBroker(declaration)
+}
+
+// signInAtAS2 signs user in at built's AS-2, configured by
+// trustAS1ForSignIn with h's IdP as its company IdP, and returns AS-2's user
+// for them, the sub of the gateway tokens AS-2 issues for them.
+func signInAtAS2(t *testing.T, h *identityharness.Harness, built *Built, user string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	if err := built.MountMCPBrokerHandlers(mux); err != nil {
+		t.Fatalf("MountMCPBrokerHandlers: %v", err)
+	}
+	sub, _ := jwtClaims(t, mcpbrokertest.SignIn(t, h, mux, as2TestIssuer, as2TestIssuer+"/mcp", user))["sub"].(string)
+	if sub == "" {
+		t.Fatalf("%s's AS-2 access token names no user", user)
+	}
+	return sub
 }
 
 func (g *gatewayBuild) owner() identitybroker.Owner {
@@ -554,10 +595,8 @@ func TestGatewayInProcessClientRefusesOtherURLs(t *testing.T) {
 // protected route: the hosted AS-1 issues a call's ID-JAG for the entry's
 // AS-2, naming the agent in act with the broker's trust domain, and checks
 // the agent's credential with the broker's verifier, which startup bound.
-// AS-2 then refuses the ID-JAG: its test trust would have to list Alice's
-// AS-1 subject, which the hosted AS-1 assigns only at a sign-in after the
-// build, so it trusts another issuer, and the test reads the ID-JAG from the
-// redemption.
+// AS-2, trusting the hosted AS-1, refuses the ID-JAG as subject_unknown until
+// Alice signs in at AS-2, then redeems the next call's for her AS-2 user.
 func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	hb := buildWithHostedAS1(t, embeddedEntry(gatewayTestServer))
 	// The hosted AS-1 issues ID-JAGs, and startup bound its actor-token check.
@@ -565,20 +604,40 @@ func TestHostedAS1IssuesTheGatewaysIDJAGs(t *testing.T) {
 	g := hb.signIn(t)
 	s, cred, _ := g.open(t)
 	_, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
-	// An AS-2 trusting another issuer (the #2533 shortcut on
-	// Config.IdentityBrokerAS2Trust) answers invalid_grant with
-	// invalid_assertion, which the broker does not retry with a new ID-JAG.
+	// AS-2 cannot resolve a user not signed in at it: access_denied with
+	// subject_unknown, which the broker does not retry with a new ID-JAG.
 	wantBrokerError(t, err, identitybroker.CodeInternal, "")
+	if redeemed := hb.as2.Requests(); len(redeemed) != 1 {
+		t.Fatalf("%d redemptions before Alice signs in at AS-2, want 1", len(redeemed))
+	} else if r := redeemed[0]; r.Status != http.StatusBadRequest || r.Code != "access_denied" ||
+		identitybroker.NewServerRefusal(r.Status, r.Code, r.Reason).Reason != "subject_unknown" || r.IssuedToken != "" {
+		t.Fatalf("redemption before Alice signs in at AS-2 answered %d %q reason %q, want 400 access_denied with subject_unknown", r.Status, r.Code, r.Reason)
+	}
+
+	aliceAtAS2 := signInAtAS2(t, hb.h, hb.built, identityharness.Alice)
+	call := g.call(s, cred)
+	call.OperationID = "op-2"
+	auth, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), call)
+	if err != nil {
+		t.Fatalf("AuthorizeCall after Alice signed in at AS-2: %v", err)
+	}
 	jags := g.built.identityBrokerRecorder.IDJAGs()
 	redeemed := hb.as2.Requests()
-	if len(jags) != 1 || len(redeemed) != 1 {
-		t.Fatalf("%d ID-JAG records and %d redemptions, want one of each", len(jags), len(redeemed))
+	if len(jags) != 2 || len(redeemed) != 2 {
+		t.Fatalf("%d ID-JAG records and %d redemptions, want two of each", len(jags), len(redeemed))
+	}
+	if r := redeemed[1]; r.Status != http.StatusOK || r.IssuedToken != auth.GatewayToken.Value() {
+		t.Fatalf("redemption after Alice signed in at AS-2 answered %d %q, want the gateway token", r.Status, r.Code)
+	}
+	v := jwtClaims(t, auth.GatewayToken.Value())
+	if v["sub"] != aliceAtAS2 || v["client_id"] != identitybroker.BrokerClientID ||
+		!reflect.DeepEqual(v["act"], wantAct(jags[1].AgentID)) || !reflect.DeepEqual(v["aud"], []any{as2TestIssuer + "/mcp"}) {
+		t.Fatalf("gateway token claims = %v, want sub %s, AS-2's user for Alice, act %v, client_id %s, and aud the vMCP", v, aliceAtAS2, wantAct(jags[1].AgentID), identitybroker.BrokerClientID)
 	}
 	issuer := hb.issuer
 	for i, r := range redeemed {
-		reason := identitybroker.NewServerRefusal(r.Status, r.Code, r.Reason).Reason
-		if r.Kind != identityharness.KindRedemption || r.Code != "invalid_grant" || reason != "invalid_assertion" || r.IssuedToken != "" {
-			t.Fatalf("redemption %d = %s answered %q reason %q, want invalid_grant with invalid_assertion", i, r.Kind, r.Code, reason)
+		if r.Kind != identityharness.KindRedemption {
+			t.Fatalf("request %d to AS-2 is %s, want a redemption", i, r.Kind)
 		}
 		var header struct{ Typ string }
 		if err := json.Unmarshal([]byte(jwtSegmentText(t, r.Assertion, 0)), &header); err != nil || header.Typ != "oauth-id-jag+jwt" {
@@ -667,8 +726,8 @@ func TestHostedAS1AppliesTheConfiguredLifetimes(t *testing.T) {
 		time.Unix(int64(credExp), 0).Before(earliest) || time.Unix(int64(credExp), 0).After(latest) {
 		t.Fatalf("agent credential exp = %v, want 10m after its issue", credExp)
 	}
-	// AS-2 refuses the ID-JAG (see TestHostedAS1IssuesTheGatewaysIDJAGs), so
-	// only the redemptions are read.
+	// Alice is not signed in at AS-2, so AS-2 refuses the ID-JAG (see
+	// TestHostedAS1IssuesTheGatewaysIDJAGs); only the redemptions are read.
 	_, _ = g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
 	redeemed := hb.as2.Requests()
 	if len(redeemed) == 0 {
@@ -737,8 +796,8 @@ type hostedBuild struct {
 // buildWithHostedAS1 builds the production path, the identity broker beside
 // a hosted AS-1, with a protected calendar route and gateways, the broker's
 // gateway entries. With an entry, the embedded gateway has a signing key;
-// with one routing servers, AS-2 trusts an issuer other than AS-1, which an
-// entry routing servers requires and which refuses AS-1's ID-JAGs.
+// with one routing servers, AS-2 trusts the hosted AS-1 (trustAS1ForSignIn),
+// which an entry routing servers requires, and no one is signed in at AS-2.
 func buildWithHostedAS1(t *testing.T, gateways []identitybroker.GatewayEntry) *hostedBuild {
 	t.Helper()
 	return buildWithHostedAS1Durations(t, gateways, nil, nil)
@@ -772,9 +831,9 @@ func buildWithHostedAS1Durations(t *testing.T, gateways []identitybroker.Gateway
 	if len(gateways) != 0 {
 		hb.cfg.MCPAuthority = protectedBrokerAuthorityWithKey(t)
 		if len(gateways[0].Servers) != 0 {
-			hb.cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-				Issuer: "https://untrusted-as1.mecatl.test", JWKSURL: "https://untrusted-as1.mecatl.test/jwks",
-				CAFile: h.WriteCACert(t, t.TempDir()), Subjects: []string{"nobody"},
+			trustAS1ForSignIn(t, &hb.cfg, mcpbrokertest.AS1{
+				Issuer: hb.issuer, JWKSURL: hb.issuer + "/.well-known/jwks.json",
+				ActorIssuer: identitybroker.ActorIssuer(brokerconfigtest.TrustDomain), Harness: h,
 			})
 		}
 	}

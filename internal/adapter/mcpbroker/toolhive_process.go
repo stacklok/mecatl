@@ -168,8 +168,22 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 	as2 := config.BrokerClient != nil && len(construction.upstreams) != 0
 	resource := issuer
+	var trust *AS1Trust
 	if as2 {
 		resource = as2Resource(issuer)
+		trust = config.AS1Trust
+	}
+	if trust != nil {
+		if err := trust.check(); err != nil {
+			return nil, err
+		}
+		if backend, taken := construction.backendOfProvider(as2CompanyIdPUpstream); taken {
+			return nil, fmt.Errorf("%w: upstream %q maps to provider %q, which AS-2's company IdP sign-in uses", ErrInvalidCatalogue, backend, as2CompanyIdPUpstream)
+		}
+		// The company IdP is AS-2's first upstream: the one that signs users
+		// in and that AS-2 resolves ID-JAG users through. The provider
+		// upstreams follow it.
+		construction.upstreams = append([]authserver.UpstreamRunConfig{as2CompanyIdPRunConfig(trust.CompanyIdP, issuer)}, construction.upstreams...)
 	}
 	protectedTarget, err := newToolHiveProtectedTarget(issuer, resource, config.CallbackURL, len(construction.upstreams) != 0)
 	if err != nil {
@@ -249,7 +263,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			SigningKeyConfig: signingKeys,
 		}
 		if as2 {
-			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, config.AS2Trust)
+			runConfig.InboundGrants, runConfig.TrustedIssuers = as2RunConfig(*config.BrokerClient, issuer, resource, trust)
 		}
 		client, err := registration.New(registration.Config{
 			ID:                      protectedTarget.clientID,
@@ -293,6 +307,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			closeLocalStore()
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
+		if signIn := config.TestSeam.signInClient(); as2 && signIn != nil {
+			if err := registerSignInClient(processCtx, authStore, signIn.ID, signIn.RedirectURI, resource); err != nil {
+				closeLocalStore()
+				return rollback(err)
+			}
+		}
 		var authOptions []runner.EmbeddedAuthServerOption
 		if as2 {
 			// AS-2's gateway tokens are typed at+jwt (RFC 9068), as step (8)
@@ -327,7 +347,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if as2 {
 			// The token validator and the vMCP share one call binding, so the
 			// validator accepts a call's own messages after its token expires.
-			if callBinding, err = gatewayCallBinding(issuer, *config.BrokerClient, config.AS2Trust.gatewayMaxCallDuration(), incomingConfig); err != nil {
+			if callBinding, err = gatewayCallBinding(issuer, *config.BrokerClient, config.TestSeam.gatewayMaxCallDuration(), incomingConfig); err != nil {
 				return rollback(err)
 			}
 			incomingOptions = append(incomingOptions, factory.WithCallBinding(callBinding))
@@ -533,6 +553,27 @@ func toolHiveAdvertisedToolName(backend, modelVisibleName string) (string, error
 		return "", fmt.Errorf("%w: tool %q does not belong to backend %q", ErrInvalidCatalogue, modelVisibleName, backend)
 	}
 	return backend + "." + toolName, nil
+}
+
+// registerSignInClient registers a test's sign-in client (TestSeam) in store:
+// a public client for resource with the authorization code grant, scope
+// openid, and redirectURI as its only redirect URI.
+func registerSignInClient(ctx context.Context, store storage.Storage, id, redirectURI, resource string) error {
+	client, err := registration.New(registration.Config{
+		ID: id, RedirectURIs: []string{redirectURI},
+		TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodNone,
+		GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode},
+		ResponseTypes:           []string{oauthproto.ResponseTypeCode},
+		Scopes:                  []string{"openid"},
+		Audience:                []string{resource},
+	})
+	if err == nil {
+		err = store.RegisterClient(ctx, client)
+	}
+	if err != nil {
+		return fmt.Errorf("mcpbroker: register the test sign-in client: %w", err)
+	}
+	return nil
 }
 
 func newToolHiveProtectedTarget(issuer, resource, callbackURL string, required bool) (*oauthRoute, error) {

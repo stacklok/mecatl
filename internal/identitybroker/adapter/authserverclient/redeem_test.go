@@ -17,9 +17,9 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/identitybroker"
-	"github.com/stacklok/mecatl/internal/identitybroker/adapter/as1server/as1servertest"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/authserverclient"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp"
+	"github.com/stacklok/mecatl/internal/testutil/identityharness"
 )
 
 const grantJWTBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
@@ -38,10 +38,12 @@ func TestRedeemAtRealAS2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as2 := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: x.a.Issuer(), JWKSURL: x.a.JWKSURL(), CAFile: x.a.Harness.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
-		Subjects: []string{as1servertest.Subject(t, x.access)},
-	}).AS2
+	process := mcpbrokertest.StartAS2(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1{
+		Issuer: x.a.Issuer(), JWKSURL: x.a.JWKSURL(), ActorIssuer: identitybroker.ActorIssuer(testActTrustDomain), Harness: x.a.Harness,
+	})
+	// AS-2 resolves only a user signed in at it.
+	process.SignIn(t, identityharness.Alice)
+	as2 := process.AS2
 	jag, err := x.client.IssueIDJAG(t.Context(), x.request(as2.Issuer, as2.Resource))
 	if err != nil {
 		t.Fatalf("IssueIDJAG: %v", err)

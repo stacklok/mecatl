@@ -230,7 +230,7 @@ func checkGatewayEntry(cfg Config, file brokerconfig.File, embedded *embeddedGat
 		}
 	}
 	if len(entry.Servers) != 0 {
-		if !cfg.IdentityBrokerAS2Trust.TrustsAnIssuer() {
+		if cfg.IdentityBrokerAS2Trust == nil {
 			return nil, errGatewayServersBeforeAS2TrustsAS1
 		}
 		if cfg.IdentityBrokerHostedAS1 == nil && cfg.IdentityBrokerAS1 == nil {

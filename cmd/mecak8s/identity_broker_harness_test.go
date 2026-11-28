@@ -350,18 +350,23 @@ const gatewaySettings = `mcp:
 // TestIdentityBrokerSessionToolCallThroughGateway:
 //
 //	stand-in                                       retired by
-//	test-only AS-2 trust (IdentityBrokerAS2Trust),  #2533
-//	  which a gateway entry routing servers
-//	  requires; AS-2's test trust names Alice's
-//	  AS-1 subject, which exists only after her
-//	  sign-in, so these tests run the real AS-1
-//	  outside mecak8s rather than the one
-//	  mecak8s hosts
+//	AS-2's trust in AS-1, which a gateway entry    #2533
+//	  routing servers requires, is set on the
+//	  application configuration
+//	  (IdentityBrokerAS2Trust), not by flags,
+//	  for the real AS-1 run outside mecak8s
+//	  rather than the one mecak8s hosts
+//	Alice signs in at AS-2 in process, through     #2533
+//	  a sign-in client only tests register
+//	  (MCPBrokerTestSeam) and the company IdP
+//	  only, not through the gateway's login
 //	the embedded vMCP as the gateway, reached      #2812
 //	  in process
 //	no gateway stand-in: the vMCP is real, but     #2537
 //	  it finds no provider credential for the
-//	  caller, so initialize succeeds without
+//	  caller, who never completed the
+//	  calendar's sign-in at AS-2, so
+//	  initialize succeeds without
 //	  the backend and a call does not reach it:
 //	  the vMCP accepts the call-bound token and
 //	  refuses the call as tool_not_found
@@ -726,8 +731,9 @@ func gatewayTokenClaims(t *testing.T, got identitybroker.Authorization) jwt.MapC
 // broker on at the real AS-1, which issues ID-JAGs for AS-2 and checks actor
 // tokens with the broker's verifier, the calendar route of gatewaySettings
 // plus extraSettings, and a gateway entry routing calendar, whose AS-2 trusts
-// AS-1 for Alice. extraArgs are further flags, and edit, when set, changes the
-// application configuration after that.
+// AS-1 and has Alice signed in through the company IdP, so it resolves her.
+// extraArgs are further flags, and edit, when set, changes the application
+// configuration after that.
 func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []string, edit func(*app.Config)) *gatewayServe {
 	t.Helper()
 	h := identityharness.New(t, identityharness.Options{})
@@ -737,8 +743,6 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		d.IDJAGMaxLifetime = gatewayGrantLifetime
 	})
 	gw := &gatewayServe{h: h, as1Server: a, refusals: captureBindingRefusals(t)}
-	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at her
-	// first sign-in, so she signs in before the build.
 	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
 	as1HTTP := a.HTTPClient()
 	faults := identityharness.NewFaultTransport(as1HTTP.Transport, a.Server.TokenEndpoint())
@@ -762,15 +766,23 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		gateways:  []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(gatewayAS2Issuer, "calendar")},
 		args:      append([]string{"--permission-config", settings}, extraArgs...),
 		edit: func(cfg *app.Config) {
-			cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile, AllowPrivateAddresses: true,
-				Subjects: []string{as1servertest.Subject(t, alice)},
-			})
+			cfg.IdentityBrokerAS2Trust = mcpbrokertest.Trust(t, mcpbrokertest.AS1{
+				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), ActorIssuer: identitybroker.ActorIssuer(brokerTrustDomain), Harness: h,
+			}, gatewayAS2Issuer)
+			cfg.MCPBrokerTestSeam = mcpbrokertest.SignInSeam()
 			if edit != nil {
 				edit(cfg)
 			}
 		},
 	})
+	// AS-2 resolves only users signed in at it. Alice signs in through the
+	// company IdP only, so AS-2 holds no calendar credential for her (#2537's
+	// stand-in) and the calendar's provider is never contacted.
+	mux := http.NewServeMux()
+	if err := built.MountMCPBrokerHandlers(mux); err != nil {
+		t.Fatalf("MountMCPBrokerHandlers: %v", err)
+	}
+	mcpbrokertest.SignInAtCompanyIdP(t, h, mux, gatewayAS2Issuer, gatewayResource, identityharness.Alice)
 	gw.api, gw.built, gw.as1, gw.alice = api, built, faults, alice.Value()
 	return gw
 }

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/identitybroker"
 	"github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest"
@@ -30,14 +29,11 @@ func entryBuild(t *testing.T, opts brokerconfigtest.Options) Config {
 	}
 }
 
-// otherAS2Trust is an AS-2 trust in an issuer other than any AS-1 here, so a
-// gateway entry may route servers.
-func otherAS2Trust(t *testing.T) as2Trust {
-	t.Helper()
-	return mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
-		Issuer: "https://untrusted-as1.mecatl.test", JWKSURL: "https://untrusted-as1.mecatl.test/jwks",
-		CAFile: identityharness.New(t, identityharness.Options{}).WriteCACert(t, t.TempDir()), Subjects: []string{"nobody"},
-	})
+// otherAS2Trust is an AS-2 trust in an AS-1 other than any here, so a
+// gateway entry may route servers. Builds using it are refused before AS-2
+// is constructed, so nothing it names is reached.
+func otherAS2Trust() *as1Trust {
+	return &as1Trust{Issuer: "https://untrusted-as1.mecatl.test", JWKSURL: "https://untrusted-as1.mecatl.test/jwks"}
 }
 
 // wantBuildRefused fails t unless Build refuses cfg with an error wrapping
@@ -127,7 +123,7 @@ func TestBuildRefusesADisagreeingGatewayEntry(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := entryBuild(t, brokerconfigtest.Options{Gateways: tc.gateways})
 			cfg.IdentityBrokerAS1 = unusedAS1("https://as1.example")
-			cfg.IdentityBrokerAS2Trust = otherAS2Trust(t)
+			cfg.IdentityBrokerAS2Trust = otherAS2Trust()
 			if tc.edit != nil {
 				tc.edit(&cfg)
 			}
@@ -145,7 +141,7 @@ func TestBuildRefusesGatewayServersBeforeAS2TrustsAS1(t *testing.T) {
 	wantBuildRefused(t, cfg, errGatewayServersBeforeAS2TrustsAS1, "#2533")
 
 	cfg = entryBuild(t, brokerconfigtest.Options{Gateways: embeddedEntry(gatewayTestServer)})
-	cfg.IdentityBrokerAS2Trust = otherAS2Trust(t)
+	cfg.IdentityBrokerAS2Trust = otherAS2Trust()
 	wantBuildRefused(t, cfg, errGatewayServersWithoutAS1, "")
 }
 
