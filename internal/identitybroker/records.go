@@ -24,12 +24,15 @@ const (
 	TypeDelegation         = "mecatl_delegation"
 	TypeIDJAG              = "mecatl_id_jag"
 	TypeToolDecision       = "mecatl_tool_decision"
+	TypeToolDispatch       = "mecatl_tool_dispatch"
+	TypeToolOutcome        = "mecatl_tool_outcome"
+	TypeToolReportRejected = "mecatl_tool_report_rejected"
 	mecak8sComponent       = "mecak8s"
 )
 
 // Record is one of the broker's records: *SessionOpenRecord,
 // *SessionCloseRecord, *RegistrationRecord, *DelegationRecord, *IDJAGRecord,
-// or *DecisionRecord.
+// *DecisionRecord, *DispatchRecord, *OutcomeRecord, or *ReportRejectedRecord.
 type Record interface {
 	// Header returns what every record carries.
 	Header() RecordHeader

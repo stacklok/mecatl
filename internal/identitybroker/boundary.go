@@ -65,6 +65,7 @@ type Core interface {
 	RegisterAgent(ctx context.Context, workload Workload, req RegisterAgentRequest) (Registration, error)
 	AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error)
 	ReportDelegation(ctx context.Context, workload Workload, req ReportDelegationRequest) error
+	ReportCall(ctx context.Context, workload Workload, req ReportCallRequest) error
 }
 
 // CredentialVerifier checks agent credentials inside the broker, in two
@@ -189,4 +190,12 @@ func (p inProcess) ReportDelegation(ctx context.Context, req ReportDelegationReq
 		return err
 	}
 	return p.core.ReportDelegation(ctx, workload, req)
+}
+
+func (p inProcess) ReportCall(ctx context.Context, req ReportCallRequest) error {
+	workload, err := p.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+	return p.core.ReportCall(ctx, workload, req)
 }

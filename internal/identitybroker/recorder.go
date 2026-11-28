@@ -8,7 +8,8 @@ import (
 )
 
 // Recorder is the sink the broker's records go through: every open, close,
-// registration, delegation report, ID-JAG, and call decision. Record returns
+// registration, delegation report, ID-JAG, call decision, and reported
+// dispatch and outcome. Record returns
 // nil once it accepts rec, and an error when it refuses it. A refusal is
 // handled per event: a successful open, registration, or delegation report
 // fails with ReasonRecordNotAccepted and changes nothing; an ID-JAG is not
@@ -19,7 +20,8 @@ import (
 // confirming it. Every refused
 // record is reported through WithDeliveryFailures. Records are
 // *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
-// *DelegationRecord, *IDJAGRecord, or *DecisionRecord. The broker owns rec
+// *DelegationRecord, *IDJAGRecord, *DecisionRecord, *DispatchRecord,
+// *OutcomeRecord, or *ReportRejectedRecord. The broker owns rec
 // and may reuse it after the call, so the sink copies what it keeps. An
 // implementation is safe for concurrent use.
 type Recorder interface {
@@ -33,18 +35,23 @@ type CredentialRef struct {
 	ID     string
 }
 
-// DecisionOutcome is how an AuthorizeCall ended.
+// DecisionOutcome is a record's outcome: how an AuthorizeCall or another
+// event the broker records ended.
 type DecisionOutcome string
 
 // Outcomes: success when the event took effect, error for a CodeInternal
 // or CodeUnavailable failure or a record not accepted, and denied for any
 // other refusal (audit.md, "AuditEvent profile"). A refusal that supersedes
 // an earlier record therefore has error when that record was not accepted,
-// and denied when a close undid its event.
+// and denied when a close undid its event. A reported dispatch and observed
+// outcome use failure and unknown too, as their fixed sets allow (see
+// ReportCallRequest).
 const (
 	OutcomeSuccess DecisionOutcome = "success"
 	OutcomeDenied  DecisionOutcome = "denied"
 	OutcomeError   DecisionOutcome = "error"
+	OutcomeFailure DecisionOutcome = "failure"
+	OutcomeUnknown DecisionOutcome = "unknown"
 )
 
 // outcomeFor returns the outcome of a refusal with code and reason. A record
@@ -213,6 +220,9 @@ type MemoryRecorder struct {
 	delegations   []DelegationRecord
 	idjags        []IDJAGRecord
 	decisions     []DecisionRecord
+	dispatches    []DispatchRecord
+	outcomes      []OutcomeRecord
+	rejected      []ReportRejectedRecord
 }
 
 // NewMemoryRecorder returns an empty MemoryRecorder.
@@ -235,6 +245,12 @@ func (r *MemoryRecorder) Record(_ context.Context, rec Record) error {
 		r.idjags = appendBounded(r.idjags, *rec)
 	case *DecisionRecord:
 		r.decisions = appendBounded(r.decisions, *rec)
+	case *DispatchRecord:
+		r.dispatches = appendBounded(r.dispatches, rec.clone())
+	case *OutcomeRecord:
+		r.outcomes = appendBounded(r.outcomes, rec.clone())
+	case *ReportRejectedRecord:
+		r.rejected = appendBounded(r.rejected, *rec)
 	}
 	return nil
 }
@@ -280,6 +296,19 @@ func (r *MemoryRecorder) IDJAGs() []IDJAGRecord { return cloneLocked(&r.mu, &r.i
 
 // Decisions returns a copy of the decision records, oldest first.
 func (r *MemoryRecorder) Decisions() []DecisionRecord { return cloneLocked(&r.mu, &r.decisions) }
+
+// Dispatches returns a copy of the reported dispatch records, oldest first.
+func (r *MemoryRecorder) Dispatches() []DispatchRecord { return cloneLocked(&r.mu, &r.dispatches) }
+
+// Outcomes returns a copy of the reported observed-outcome records, oldest
+// first.
+func (r *MemoryRecorder) Outcomes() []OutcomeRecord { return cloneLocked(&r.mu, &r.outcomes) }
+
+// RejectedReports returns a copy of the rejected call report records,
+// oldest first.
+func (r *MemoryRecorder) RejectedReports() []ReportRejectedRecord {
+	return cloneLocked(&r.mu, &r.rejected)
+}
 
 // cloneLocked returns a copy of *list, read under mu. It takes a pointer so
 // that the slice header too is read with mu held.

@@ -109,6 +109,12 @@ type CallAuthorizer interface {
 	AuthorizeCall(context.Context, identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error)
 }
 
+// CallReporter reports each gateway call attempt's dispatch and observed
+// outcome to the identity broker; identitybroker.Service implements it.
+type CallReporter interface {
+	ReportCall(context.Context, identitybroker.ReportCallRequest) error
+}
+
 // AgentCredentials looks up the acting agent's credential and, for a helper,
 // its current delegation; *agentcredential.Holder implements it. renew asks
 // for a renewed credential after svid_expired.
@@ -119,7 +125,9 @@ type AgentCredentials interface {
 
 // GatewayCalls is what the gateway path needs besides the gateway.
 type GatewayCalls struct {
-	Authorizer  CallAuthorizer
+	Authorizer CallAuthorizer
+	// Reporter takes each attempt's dispatch and outcome report.
+	Reporter    CallReporter
 	Credentials AgentCredentials
 	// Servers are the backends whose calls take the gateway path, by backend
 	// name; the embedded gateway routes each backend under its own name.
@@ -157,8 +165,8 @@ func (r *Runtime) checkGateway() error {
 	if r.gateway == nil {
 		return nil
 	}
-	if r.gatewayCalls.Authorizer == nil || r.gatewayCalls.Credentials == nil || r.gateway.Endpoint() == "" || r.gateway.Resource() == "" || r.gateway.HTTPClient() == nil {
-		return fmt.Errorf("%w: gateway calls need an authorizer, agent credentials, an endpoint, a resource, and an HTTP client", ErrInvalidCatalogue)
+	if r.gatewayCalls.Authorizer == nil || r.gatewayCalls.Reporter == nil || r.gatewayCalls.Credentials == nil || r.gateway.Endpoint() == "" || r.gateway.Resource() == "" || r.gateway.HTTPClient() == nil {
+		return fmt.Errorf("%w: gateway calls need an authorizer, a reporter, agent credentials, an endpoint, a resource, and an HTTP client", ErrInvalidCatalogue)
 	}
 	return nil
 }

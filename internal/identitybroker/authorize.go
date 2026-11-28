@@ -326,7 +326,8 @@ func (t *sessionTable) stillOpen(s *brokerSession) error {
 
 // allow finishes a redeemed call: it drops v if s closed meanwhile, records
 // the success, and issues the attempt unless the call is itself a retry, so a
-// retry's token cannot be reported rejected again. A success that cannot be
+// retry's token cannot be reported rejected again. Every attempt of a
+// tools/call it issues awaits the MCP client's dispatch and outcome report. A success that cannot be
 // recorded returns no token, as does one whose session closed while it was
 // recorded. Either way the success is followed by a refusal for the same
 // attempt that supersedes it, so the records show that the token was
@@ -349,6 +350,10 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	closed := t.closedLocked(s)
 	if closed == nil && req.RejectedAttemptID == "" {
 		t.attempts.issueLocked(s.ID, rec.AttemptID, key)
+	}
+	if closed == nil && req.Method == MethodToolsCall {
+		// Every attempt of a tools/call is reported, a retry's included.
+		t.reports.issueLocked(s.ID, rec.AttemptID, req.OperationID, success.AuditID, success.Subjects())
 	}
 	t.mu.Unlock()
 	if closed != nil {

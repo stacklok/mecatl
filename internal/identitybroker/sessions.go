@@ -40,6 +40,10 @@ type sessionTable struct {
 	// attempts holds the attempts AuthorizeCall issued, per session, until
 	// the session closes.
 	attempts *attemptLedger
+	// reports holds the attempts AuthorizeCall issued for tools/calls, per
+	// session, and what the MCP client reported of each; kept after the
+	// session closes.
+	reports *reportLedger
 	// runs holds each session's run and delegation records until the session
 	// closes.
 	runs *runLedger
@@ -184,7 +188,7 @@ func newSessionTable(skew time.Duration) *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
 		incarnations: map[string]string{}, skew: skew,
-		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), now: time.Now,
+		converted: map[string]time.Time{}, attempts: newAttemptLedger(), reports: newReportLedger(), runs: newRunLedger(), now: time.Now,
 		opening: keyedLocks{locks: map[string]*keyedLock{}}, registering: keyedLocks{locks: map[string]*keyedLock{}}, reporting: keyedLocks{locks: map[string]*keyedLock{}},
 		newOpens: map[string]*brokerSession{},
 	}
