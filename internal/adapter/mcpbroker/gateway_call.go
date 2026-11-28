@@ -293,7 +293,7 @@ func failureCause(err error) string {
 	for _, known := range []error{
 		agentcredential.ErrNoCredential, agentcredential.ErrDropped,
 		agentcredential.ErrOtherAgent, agentcredential.ErrExpired,
-		ErrAlreadySent, errSendOnceFull, errNotIJSON,
+		ErrAlreadySent, errSendOnceFull, errNotIJSON, errCaseFoldedMembers,
 		context.DeadlineExceeded, context.Canceled,
 	} {
 		if errors.Is(err, known) {

@@ -244,15 +244,17 @@ func TestAuthorizeCallRecordsRefusals(t *testing.T) {
 	rec.b = f.b
 	ctx := context.Background()
 
-	// Neither an invalid request nor an unknown session is recorded.
+	// An invalid request is recorded as refused, naming no session; an
+	// unknown session is not recorded.
 	invalid := callRequest(f.s.ID, f.cred)
 	invalid.Method = ""
 	_, err := f.authorize(invalid)
 	wantError(t, err, identitybroker.CodeInvalidArgument, "", f.cred)
 	_, err = f.authorize(callRequest("bs_unknown", f.cred))
 	wantError(t, err, identitybroker.CodePermissionDenied, "", f.cred)
-	if got := rec.Decisions(); len(got) != 0 {
-		t.Fatalf("recorded %d decisions for refusals before the session lookup, want none", len(got))
+	before := rec.Decisions()
+	if len(before) != 1 || before[0].Code != identitybroker.CodeInvalidArgument || before[0].SessionID != "" || before[0].Workload != testWorkload {
+		t.Fatalf("recorded %+v for refusals before the session lookup, want only the invalid request's refusal, naming no session", before)
 	}
 
 	tokenless, err := f.b.OpenSession(ctx, testWorkload, identitybroker.OpenSessionRequest{
@@ -287,7 +289,7 @@ func TestAuthorizeCallRecordsRefusals(t *testing.T) {
 		wantError(t, err, step.code, step.reason, f.cred)
 	}
 
-	got := rec.Decisions()
+	got := rec.Decisions()[len(before):]
 	if len(got) != len(steps) {
 		t.Fatalf("recorded %d decisions, want %d", len(got), len(steps))
 	}

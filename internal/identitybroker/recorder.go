@@ -71,15 +71,13 @@ type IDJAGRecord struct {
 	DelegationID string
 	// RunOwner is the owner the run acts for, as reported.
 	RunOwner Owner
-	// User is the company identity (owner) of the grant the ID-JAG was
-	// exchanged from, and UserRecord the AuditID of the open that stored the
-	// grant, which verified the user: AS-1's subject and client, as
-	// UserSubjects holds. User keeps its earlier name and type until the
-	// per-call records change with #2727; in the other records, User is the
-	// verified user and Owner the company identity.
-	User         Owner
-	UserRecord   string
-	UserSubjects User
+	// Owner is the company identity of the grant the ID-JAG was exchanged
+	// from, User its verified user (AS-1's subject and client), and
+	// UserRecord the AuditID of the open that stored the grant and verified
+	// the user, as in the other records.
+	Owner      Owner
+	UserRecord string
+	User       User
 	// AgentInstance is the acting agent's incarnation, as mecak8s reported
 	// it at registration.
 	AgentInstance string
@@ -101,7 +99,7 @@ func (r *IDJAGRecord) Header() RecordHeader { return r.header(TypeIDJAG) }
 // stored it.
 func (r *IDJAGRecord) Subjects() Subjects {
 	s := Subjects{}
-	s.addUser(r.UserRecord != "", r.UserSubjects, ProvenanceFromRecord(r.UserRecord), r.User)
+	s.addUser(r.UserRecord != "", r.User, ProvenanceFromRecord(r.UserRecord), r.Owner)
 	s.addWorkload(r.Workload)
 	s.addAgent(r.Agent, r.AgentID, ProvenanceVerified, r.AgentInstance, ProvenanceCredentialVerified)
 	s.addRunOwner(r.RunOwner)
@@ -160,6 +158,9 @@ type DecisionRecord struct {
 	// it does not mean no token was issued.
 	GatewayToken             CredentialRef
 	GatewayTokenUnreferenced bool
+	// CallEntryCheck is the result of the output check on the gateway
+	// token's response (step (8a)); empty when no token was issued.
+	CallEntryCheck CallEntryCheck
 }
 
 // Header implements Record.

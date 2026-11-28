@@ -52,12 +52,14 @@ func TestIdentityBrokerHelperGatewayCallCarriesItsOwnIdentity(t *testing.T) {
 	if res := toolResult(child, "child-notes"); !res.IsError || !strings.Contains(res.Content, "currently unavailable") {
 		t.Fatalf("the helper's non-gateway broker call = %+v, want a tool missing from its catalog", res)
 	}
-	if res := toolResult(child, "child-call"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
-		t.Fatalf("the helper's gateway call was refused: %q", res.Content)
+	// Each gateway call reaches the vMCP, which accepts its call-bound token
+	// and refuses it only for the stand-in's missing provider credential.
+	if res := toolResult(child, "child-call"); res.Content != standInResult {
+		t.Fatalf("the helper's gateway call = %q, want the stand-in's refusal", res.Content)
 	}
 	promptApprovingAsks(t, api, alice, created, "call it yourself", nil)
-	if res := toolResult(session.SessionID(created), "main-call"); strings.HasPrefix(res.Content, "MCP gateway call") || strings.Contains(res.Content, "401") {
-		t.Fatalf("the main agent's gateway call was refused: %q", res.Content)
+	if res := toolResult(session.SessionID(created), "main-call"); res.Content != standInResult {
+		t.Fatalf("the main agent's gateway call = %q, want the stand-in's refusal", res.Content)
 	}
 
 	// Two ID-JAGs: the helper's, then the main agent's, each naming its own

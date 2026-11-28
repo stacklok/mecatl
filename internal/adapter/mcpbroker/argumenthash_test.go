@@ -1,40 +1,114 @@
 package mcpbroker
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
-	"encoding/json/jsontext"
 	"errors"
-	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"testing"
+
+	thvmcp "github.com/stacklok/toolhive/pkg/mcp"
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
 
-// The expected canonical strings in testdata/argumenthash/vectors.json come
-// from RFC 8785 and hand-checked cases, cross-checked against ECMAScript's
-// JSON.parse and JSON.stringify with sorted keys; sha256 is computed over the
-// expected string, not by this package.
-func TestArgumentsSHA256Vectors(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("testdata", "argumenthash", "vectors.json"))
+// hashVectors is the shared argument hash vectors file,
+// testdata/argumenthash/vectors.json: a byte-for-byte copy of ToolHive's
+// canonical copy (pkg/vmcp/callbinding/testdata/argumenthash/vectors.json),
+// which the vMCP tests against. argumentsSHA256 delegates to the vMCP's own
+// hash; these tests pin its absent-is-{} rule and its refusals against them,
+// and TestHashVectorsAreToolHives notices when ToolHive changes its copy. The expected canonical strings come from RFC 8785 and
+// hand-checked cases; sha256 is computed over the expected string, not by
+// this package.
+type hashVectors struct {
+	Vectors []struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+		Canonical string          `json:"canonical"`
+		SHA256    string          `json:"sha256"`
+		// GatewayRefuses marks arguments the vMCP refuses before hashing; the
+		// hash must agree anyway.
+		GatewayRefuses bool `json:"gateway_refuses"`
+	} `json:"vectors"`
+	Refusals []hashRefusal `json:"refusals"`
+}
+
+// hashRefusal is arguments the hash must refuse, as text or, when they are
+// not valid UTF-8, as base64.
+type hashRefusal struct {
+	Name   string  `json:"name"`
+	Text   *string `json:"arguments_text"`
+	Base64 *string `json:"arguments_base64"`
+}
+
+func (r hashRefusal) arguments(t *testing.T) json.RawMessage {
+	t.Helper()
+	switch {
+	case r.Text != nil && r.Base64 == nil:
+		return json.RawMessage(*r.Text)
+	case r.Base64 != nil && r.Text == nil:
+		raw, err := base64.StdEncoding.DecodeString(*r.Base64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	t.Fatalf("refusal %q holds neither or both of arguments_text and arguments_base64", r.Name)
+	return nil
+}
+
+const hashVectorsFile = "testdata/argumenthash/vectors.json"
+
+func readHashVectors(t *testing.T) hashVectors {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.FromSlash(hashVectorsFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var file struct {
-		Vectors []struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-			Canonical string          `json:"canonical"`
-			SHA256    string          `json:"sha256"`
-		} `json:"vectors"`
-	}
+	var file hashVectors
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
 	}
+	return file
+}
+
+// TestHashVectorsAreToolHives checks the vectors file is ToolHive's
+// canonical copy from the ToolHive module this build uses, byte for byte.
+// After a ToolHive bump that changes them, copy the file again.
+func TestHashVectorsAreToolHives(t *testing.T) {
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-m", "-f", "{{.Dir}}", "github.com/stacklok/toolhive").Output()
+	if err != nil {
+		t.Fatalf("locate the ToolHive module: %v", err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		t.Fatal("the ToolHive module has no directory in the module cache")
+	}
+	canonical, err := os.ReadFile(filepath.Join(dir, "pkg", "vmcp", "callbinding", "testdata", "argumenthash", "vectors.json"))
+	if err != nil {
+		t.Fatalf("read ToolHive's canonical vectors: %v", err)
+	}
+	ours, err := os.ReadFile(filepath.FromSlash(hashVectorsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ours, canonical) {
+		t.Fatalf("%s differs from ToolHive's canonical copy in %s; copy it again", hashVectorsFile, dir)
+	}
+}
+
+func TestArgumentsSHA256Vectors(t *testing.T) {
+	file := readHashVectors(t)
 	if len(file.Vectors) == 0 {
 		t.Fatal("no vectors")
 	}
 	for _, v := range file.Vectors {
+		if v.GatewayRefuses {
+			continue // TestArgumentsSHA256RefusesWhatTheGatewayRefuses
+		}
 		t.Run(v.Name, func(t *testing.T) {
 			sent, sum, err := argumentsSHA256(v.Arguments)
 			if err != nil {
@@ -50,95 +124,82 @@ func TestArgumentsSHA256Vectors(t *testing.T) {
 			if string(sent) != wantSent {
 				t.Errorf("sent = %s, want %s", sent, wantSent)
 			}
-			if _, canonical, err := canonicalArguments(v.Arguments); err != nil || canonical != v.Canonical {
-				t.Errorf("canonical = %s, %v; want %s", canonical, err, v.Canonical)
+		})
+	}
+}
+
+// TestArgumentsSHA256RefusesWhatTheGatewayRefuses: every shared vector the
+// vMCP refuses with -32600 before hashing (gateway_refuses: member names
+// equal under case folding) is refused here too, before anything is
+// authorized, although its hash still agrees with the vMCP's.
+func TestArgumentsSHA256RefusesWhatTheGatewayRefuses(t *testing.T) {
+	file := readHashVectors(t)
+	n := 0
+	for _, v := range file.Vectors {
+		if !v.GatewayRefuses {
+			continue
+		}
+		n++
+		t.Run(v.Name, func(t *testing.T) {
+			if sent, sum, err := argumentsSHA256(v.Arguments); !errors.Is(err, errCaseFoldedMembers) || sent != nil || sum != "" {
+				t.Fatalf("argumentsSHA256(%s) = %s, %q, %v; want errCaseFoldedMembers", v.Arguments, sent, sum, err)
+			}
+			if sum, err := callbinding.ArgumentsSHA256(v.Arguments); err != nil || sum != v.SHA256 {
+				t.Errorf("the vMCP's hash = %q, %v; want %s", sum, err, v.SHA256)
+			}
+		})
+	}
+	if n == 0 {
+		t.Fatal("no gateway_refuses vectors")
+	}
+}
+
+// TestHasCaseFoldedMembersMatchesTheVMCP checks hasCaseFoldedMembers
+// against the vMCP's own request parser, mcp.DecodeMessage, which refuses a
+// tools/call whose arguments it reports, and only those.
+func TestHasCaseFoldedMembersMatchesTheVMCP(t *testing.T) {
+	for _, c := range []struct {
+		args string
+		want bool
+	}{
+		{`{"a":1,"b":2}`, false},
+		{`{"a":1,"A":2}`, true},
+		{`{"x":{"k":1,"K":2}}`, true},
+		{`{"l":[{"a":1,"A":2}]}`, true},
+		{`{"a":{"A":1}}`, false},
+		{`{"l":[{"a":1},{"A":1}]}`, false},
+		{`{"k":1,"K":2}`, true},   // KELVIN SIGN folds to k
+		{`{"s":1,"ſ":2}`, true},   // LATIN SMALL LETTER LONG S folds to s
+		{`{"ß":1,"ẞ":2}`, true},   // sharp s and capital sharp s
+		{`{"ss":1,"ß":2}`, false}, // only full case folding maps ß to ss
+		{`{"σ":1,"ς":2}`, true},   // sigma and final sigma
+		{`{"ab":1,"aB":2,"c":[]}`, true},
+		{`{"":1,"e":{},"f":[1,{"g":{"h":2,"H":3}}]}`, true},
+	} {
+		t.Run(c.args, func(t *testing.T) {
+			if got := hasCaseFoldedMembers(json.RawMessage(c.args)); got != c.want {
+				t.Errorf("hasCaseFoldedMembers = %v, want %v", got, c.want)
+			}
+			_, err := thvmcp.DecodeMessage([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + c.args + `}}`))
+			if refused := err != nil; refused != c.want {
+				t.Errorf("the vMCP's parser refuses = %v (%v), want %v", refused, err, c.want)
 			}
 		})
 	}
 }
 
-// TestCanonicalizeNumbersAppendixB checks the number formatting of
-// jsontext's Canonicalize, which canonicalArguments relies on, against every
-// sample in RFC 8785 Appendix B, including those argumentsSHA256 refuses
-// because they are integers beyond 2^53.
-func TestCanonicalizeNumbersAppendixB(t *testing.T) {
-	for _, c := range []struct{ ieee, want string }{
-		{"0000000000000000", "0"},
-		{"8000000000000000", "0"},
-		{"0000000000000001", "5e-324"},
-		{"8000000000000001", "-5e-324"},
-		{"7fefffffffffffff", "1.7976931348623157e+308"},
-		{"ffefffffffffffff", "-1.7976931348623157e+308"},
-		{"4340000000000000", "9007199254740992"},
-		{"c340000000000000", "-9007199254740992"},
-		{"4430000000000000", "295147905179352830000"},
-		{"44b52d02c7e14af5", "9.999999999999997e+22"},
-		{"44b52d02c7e14af6", "1e+23"},
-		{"44b52d02c7e14af7", "1.0000000000000001e+23"},
-		{"444b1ae4d6e2ef4e", "999999999999999700000"},
-		{"444b1ae4d6e2ef4f", "999999999999999900000"},
-		{"444b1ae4d6e2ef50", "1e+21"},
-		{"3eb0c6f7a0b5ed8c", "9.999999999999997e-7"},
-		{"3eb0c6f7a0b5ed8d", "0.000001"},
-		{"41b3de4355555553", "333333333.3333332"},
-		{"41b3de4355555554", "333333333.33333325"},
-		{"41b3de4355555555", "333333333.3333333"},
-		{"41b3de4355555556", "333333333.3333334"},
-		{"41b3de4355555557", "333333333.33333343"},
-		{"becbf647612f3696", "-0.0000033333333333333333"},
-		{"43143ff3c1cb0959", "1424953923781206.2"},
-	} {
-		bits, err := strconv.ParseUint(c.ieee, 16, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		v := jsontext.Value("[" + strconv.FormatFloat(math.Float64frombits(bits), 'g', -1, 64) + "]")
-		if err := v.Canonicalize(); err != nil || string(v) != "["+c.want+"]" {
-			t.Errorf("Canonicalize(%s) = %s, %v; want [%s]", c.ieee, v, err, c.want)
-		}
-	}
-}
-
+// TestArgumentsSHA256RefusesOutsideIJSON refuses every refusal case of the
+// shared vectors: arguments that are not exactly one JSON object, or not
+// I-JSON, so the vMCP refuses them too rather than computing another hash.
 func TestArgumentsSHA256RefusesOutsideIJSON(t *testing.T) {
-	for name, args := range map[string]string{
-		"2^53+1":                           `{"n":9007199254740993}`,
-		"-(2^53+1)":                        `{"n":-9007199254740993}`,
-		"2^53+1 in exponent form":          `{"n":9.007199254740993e15}`,
-		"2^53+0.5 rounding to 2^53":        `{"n":9007199254740992.5}`,
-		"2^53+2":                           `{"n":9007199254740994}`,
-		"1e21 (Appendix B)":                `{"n":1e+21}`,
-		"1e23 (Appendix B)":                `{"n":1e+23}`,
-		"295147905179352830000":            `{"n":295147905179352830000}`,
-		"largest double (Appendix B)":      `{"n":1.7976931348623157e+308}`,
-		"nested beyond 2^53":               `{"a":[{"n":-1e300}]}`,
-		"1e400":                            `{"n":1e400}`,
-		"-1e400":                           `{"n":-1e400}`,
-		"RFC 8785 3.2.4 example with 1E30": `{"numbers":[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001],"literals":[null,true,false]}`,
-		"invalid UTF-8 in value":           "{\"s\":\"\xff\"}",
-		"invalid UTF-8 in key":             "{\"\xc3\x28\":1}",
-		"truncated UTF-8":                  "{\"s\":\"\xe2\x82\"}",
-		"UTF-8 encoded surrogate":          "{\"s\":\"\xed\xa0\x80\"}",
-		"lone \\ud800":                     `{"s":"\ud800"}`,
-		"lone \\udc00":                     `{"s":"\udc00"}`,
-		"lone \\ud800 in key":              `{"\ud800":1}`,
-		"\\ud800 then a letter":            `{"s":"\ud800A"}`,
-		"\\ud800 then \\u0041":             `{"s":"\ud800\u0041"}`,
-		"two high surrogates":              `{"s":"\ud800\ud800"}`,
-		"reversed pair":                    `{"s":"\ude00\ud83d"}`,
-		"\\ud800 after escaped backslash":  `{"s":"\\\ud800"}`,
-		"duplicate keys":                   `{"a":1,"a":2}`,
-		"duplicate keys by escape":         `{"a":1,"\u0061":2}`,
-		"nested duplicate keys":            `{"o":{"k":1,"k":1}}`,
-		"top-level array":                  `[1,2]`,
-		"top-level string":                 `"x"`,
-		"top-level number":                 `1`,
-		"top-level true":                   `true`,
-		"malformed":                        `{"a":1`,
-		"trailing value":                   `{}{}`,
-		"trailing garbage":                 `{} x`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			sent, sum, err := argumentsSHA256(json.RawMessage(args))
+	file := readHashVectors(t)
+	if len(file.Refusals) == 0 {
+		t.Fatal("no refusal vectors")
+	}
+	for _, r := range file.Refusals {
+		t.Run(r.Name, func(t *testing.T) {
+			args := r.arguments(t)
+			sent, sum, err := argumentsSHA256(args)
 			if !errors.Is(err, errNotIJSON) {
 				t.Fatalf("argumentsSHA256(%q) = %s, %q, %v; want errNotIJSON", args, sent, sum, err)
 			}

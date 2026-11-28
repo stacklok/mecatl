@@ -109,8 +109,9 @@ func post(t *testing.T, client *http.Client, endpoint string, form url.Values) (
 func idjagForm() url.Values {
 	return url.Values{
 		"grant_type": {grantTokenExchange}, "requested_token_type": {tokenTypeIDJAG},
-		"subject_token": {"grant"}, "actor_token": {"svid"}, "mecatl_operation": {"op-1"},
-		"client_assertion": {rand.Text()},
+		"subject_token": {"grant"}, "actor_token": {"svid"},
+		"authorization_details": {`[{"type":"https://toolhive.dev/mcp_tool_call","server":"s","tool":"s.t","arguments_sha256":"x","operation_id":"op-1"}]`},
+		"client_assertion":      {rand.Text()},
 	}
 }
 

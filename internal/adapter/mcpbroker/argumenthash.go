@@ -2,116 +2,113 @@ package mcpbroker
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/json/jsontext"
 	"errors"
-	"fmt"
-	"io"
-	"math"
-	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
 
+// errNotIJSON is the refusal of arguments that have no argument hash. Its
+// text is fixed, so it never quotes the arguments.
 var errNotIJSON = errors.New("mcpbroker: arguments are not I-JSON")
 
-// argumentsSHA256 returns the lowercase hex SHA-256 of the RFC 8785 form of
-// params.arguments as sent; absent (empty or JSON null) is {}. It refuses
-// anything that is not a JSON object, invalid UTF-8, lone surrogate escapes,
-// duplicate member names, non-finite numbers, and integer-valued numbers
-// with magnitude > 2^53. sent is the value to send: {} when absent, otherwise
-// args unchanged.
-//
-// This is the argument hash of docs/drafts/agent-identity/credentials-and-lifecycle.md,
-// step (8) "The argument hash"; the vMCP computes the same hash over what it
-// receives, so both sides must refuse rather than disagree.
-func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, err error) {
-	sent, canonical, err := canonicalArguments(args)
-	if err != nil {
-		return nil, "", err
-	}
-	h := sha256.Sum256([]byte(canonical))
-	return sent, hex.EncodeToString(h[:]), nil
-}
+// errCaseFoldedMembers is the refusal of arguments with an object whose
+// member names collide under case folding, which the vMCP refuses with
+// -32600 before it computes the hash. Its text is fixed, so it never quotes
+// the arguments.
+var errCaseFoldedMembers = errors.New("mcpbroker: arguments have member names that differ only by case")
 
-// canonicalArguments returns the value to send and its RFC 8785 form, with the
-// refusals of argumentsSHA256.
-func canonicalArguments(args json.RawMessage) (sent json.RawMessage, canonical string, err error) {
-	trimmed := bytes.TrimSpace(args)
-	if len(trimmed) == 0 || string(trimmed) == "null" {
-		args = json.RawMessage(`{}`)
+// jsonWhitespace is JSON's insignificant whitespace (RFC 8259 section 2).
+const jsonWhitespace = " \t\n\r"
+
+// argumentsSHA256 returns the arguments to send and their argument hash, as
+// docs/drafts/agent-identity/credentials-and-lifecycle.md step (8), "The
+// argument hash", defines it. sent is {} when args is absent (empty, or JSON
+// whitespace only) or JSON null, and args unchanged otherwise. The hash is
+// the vMCP's own, callbinding.ArgumentsSHA256 over sent, so the two sides
+// agree by construction; arguments it refuses (anything that is not exactly
+// one I-JSON object) fail with errNotIJSON, before anything is authorized.
+// Arguments the vMCP's request parser refuses although they have a hash, an
+// object with member names equal under case folding, fail with
+// errCaseFoldedMembers, also before anything is authorized.
+func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, err error) {
+	sent = args
+	// Only JSON's own whitespace is insignificant; bytes.TrimSpace would
+	// also drop Unicode spaces such as U+00A0, which the vMCP refuses.
+	if trimmed := bytes.Trim(args, jsonWhitespace); len(trimmed) == 0 || string(trimmed) == "null" {
+		sent = json.RawMessage(`{}`)
 	}
-	if err := checkIJSONObject(args); err != nil {
-		return nil, "", err
-	}
-	v := jsontext.Value(bytes.Clone(args))
-	if v.Canonicalize() != nil {
+	sum, err = callbinding.ArgumentsSHA256(sent)
+	if err != nil {
 		return nil, "", errNotIJSON
 	}
-	return args, string(v), nil
+	if hasCaseFoldedMembers(sent) {
+		return nil, "", errCaseFoldedMembers
+	}
+	return sent, sum, nil
 }
 
-// checkIJSONObject refuses raw unless it is exactly one JSON object that is
-// I-JSON (RFC 7493). jsontext's strict decoding refuses invalid UTF-8, lone
-// surrogate escapes, and duplicate member names; the number range, which
-// Canonicalize does not check, is checked here.
-func checkIJSONObject(raw []byte) error {
-	dec := jsontext.NewDecoder(bytes.NewReader(raw))
-	for first := true; first || dec.StackDepth() > 0; first = false {
-		tok, err := dec.ReadToken()
-		if err != nil {
-			return errNotIJSON
-		}
-		switch {
-		case first && tok.Kind() != '{':
-			return fmt.Errorf("%w: not a JSON object", errNotIJSON)
-		case tok.Kind() == '0':
-			if err := checkNumber(tok.String()); err != nil {
-				return err
-			}
-		}
+// hasCaseFoldedMembers reports whether an object anywhere in args, valid
+// JSON, has two member names equal under Unicode simple case folding, the
+// equivalence strings.EqualFold uses. It is the rule of ToolHive's vMCP
+// request parser (pkg/mcp, hasAmbiguousJSONMembers), which refuses such a
+// request with -32600 Invalid Request: names are compared within one object,
+// at any depth, after folding each rune to the smallest rune in its
+// unicode.SimpleFold orbit.
+func hasCaseFoldedMembers(args json.RawMessage) bool {
+	type container struct {
+		seen         map[string]struct{} // nil for an array
+		expectingKey bool
 	}
-	if _, err := dec.ReadToken(); err != io.EOF {
-		return errNotIJSON
-	}
-	return nil
-}
-
-// maxExactInteger is 2^53, the largest magnitude below which every integer is
-// an IEEE 754 double (RFC 7493 section 2.2).
-const maxExactInteger = 1 << 53
-
-// checkNumber refuses a JSON number literal that is not finite as an IEEE 754
-// double or is integer-valued with magnitude above 2^53; every double of
-// magnitude 2^53 or more is integer-valued.
-func checkNumber(lit string) error {
-	f, err := strconv.ParseFloat(lit, 64)
-	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
-		return fmt.Errorf("%w: number out of range", errNotIJSON)
-	}
-	if a := math.Abs(f); a > maxExactInteger || (a == maxExactInteger && !isExactly2To53(lit)) {
-		return fmt.Errorf("%w: integer beyond 2^53", errNotIJSON)
-	}
-	return nil
-}
-
-// isExactly2To53 reports whether the decimal literal lit, which rounds to
-// ±2^53, denotes exactly ±2^53 rather than a neighbour such as 2^53+1.
-func isExactly2To53(lit string) bool {
-	lit = strings.TrimPrefix(lit, "-")
-	mant, exp := lit, 0
-	if i := strings.IndexAny(lit, "eE"); i >= 0 {
-		e, err := strconv.Atoi(lit[i+1:])
+	dec := json.NewDecoder(bytes.NewReader(args))
+	dec.UseNumber()
+	var stack []container
+	for {
+		token, err := dec.Token()
 		if err != nil {
 			return false
 		}
-		mant, exp = lit[:i], e
+		if n := len(stack); n > 0 && stack[n-1].seen != nil {
+			top := &stack[n-1]
+			if top.expectingKey {
+				if key, ok := token.(string); ok {
+					folded := foldMemberName(key)
+					if _, dup := top.seen[folded]; dup {
+						return true
+					}
+					top.seen[folded] = struct{}{}
+					top.expectingKey = false
+					continue
+				}
+			} else {
+				top.expectingKey = true
+			}
+		}
+		switch token {
+		case json.Delim('{'):
+			stack = append(stack, container{seen: map[string]struct{}{}, expectingKey: true})
+		case json.Delim('['):
+			stack = append(stack, container{})
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+		}
 	}
-	intPart, frac, _ := strings.Cut(mant, ".")
-	digits := intPart + frac
-	point := len(intPart) + exp // digits[:point] is the integer part
-	trimmed := strings.TrimLeft(digits, "0")
-	point -= len(digits) - len(trimmed)
-	return strings.TrimRight(trimmed, "0") == "9007199254740992" && point == 16
+}
+
+// foldMemberName returns one representative of name's class under Unicode
+// simple case folding: each rune folded to the smallest rune in its
+// unicode.SimpleFold orbit, as ToolHive's vMCP folds member names.
+func foldMemberName(name string) string {
+	var folded strings.Builder
+	folded.Grow(len(name))
+	for _, r := range name {
+		canonical := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			canonical = min(canonical, next)
+		}
+		folded.WriteRune(canonical)
+	}
+	return folded.String()
 }

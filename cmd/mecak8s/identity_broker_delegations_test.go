@@ -102,16 +102,14 @@ func gatewayTurn(id string) string {
 	return fmt.Sprintf(`{"tool_calls":[{"id":%q,"name":"mcp__calendar__echo","args":{"a":1}}]}`, id)
 }
 
-// wantHelperGatewayCalls fails t unless every gateway call completed at the
-// vMCP with an ID-JAG, the first naming the main agent, and at least
-// minHelperCalls named another agent.
+// wantHelperGatewayCalls fails t unless every gateway call reached the vMCP
+// with an ID-JAG (wantStandInRefusal), the first naming the main agent, and
+// at least minHelperCalls named another agent.
 func (d *delegationServe) wantHelperGatewayCalls(t *testing.T, minHelperCalls int) {
 	t.Helper()
 	ops := d.diag.operations(d.session)
 	for _, op := range ops {
-		if got := d.diag.call(op); got["code"] != "completed" || got["outcome"] != "completed" {
-			t.Errorf("gateway call %s = %v, want completed at the vMCP", op, got)
-		}
+		d.wantStandInRefusal(t, op, d.diag.call(op))
 	}
 	issued := d.idjags(t)
 	if len(issued) != len(ops) || len(issued) == 0 {

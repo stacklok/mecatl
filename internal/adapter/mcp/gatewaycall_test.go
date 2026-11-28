@@ -349,31 +349,155 @@ func TestSendGatewayCallDropAfterWriteIsUnknown(t *testing.T) {
 }
 
 // hangingTransport never answers a request until its context ends.
-type hangingTransport struct{}
+// hangingTransport never answers: each request waits for its context to
+// end. entered counts the requests it received.
+type hangingTransport struct{ entered atomic.Int64 }
 
-func (hangingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (h *hangingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	h.entered.Add(1)
 	<-req.Context().Done()
 	return nil, req.Context().Err()
 }
 
+// TestSendGatewayCallHandshakeEndsAtSendBy: a handshake the gateway never
+// answers ends at the send-by deadline, less the margin, rather than hanging,
+// and the attempt is not sent. The window before the deadline is short, so a
+// slow runner may reach the deadline before the handshake starts; that
+// attempt must then be refused as authorization_expired without a request,
+// and the test runs again with a longer window, rather than reading a timing
+// race as a failure.
 func TestSendGatewayCallHandshakeEndsAtSendBy(t *testing.T) {
+	for window := 50 * time.Millisecond; window <= 3200*time.Millisecond; window *= 2 {
+		f := newGatewayFixture(t)
+		req := f.request("att_1")
+		hanging := &hangingTransport{}
+		req.HTTPClient = &http.Client{Transport: hanging}
+		req.SendBy = time.Now().Add(gatewaySendMargin + window)
+		done := make(chan GatewayAttempt, 1)
+		go func() { done <- SendGatewayCall(t.Context(), req) }()
+		var got GatewayAttempt
+		select {
+		case got = <-done:
+		case <-time.After(window + 5*time.Second):
+			t.Fatal("a hung handshake outlived the authorization's send deadline")
+		}
+		if hanging.entered.Load() > 0 {
+			wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
+			return
+		}
+		// The deadline passed before the handshake started.
+		wantAttempt(t, got, GatewayAttemptNotSent, GatewayRejectionExpired, 0)
+	}
+	t.Fatal("the handshake never started before the send-by deadline")
+}
+
+// TestSendGatewayCallChecksSendByBeforeTheToolsCall: a tools/call whose
+// handshake ends less than gatewaySendMargin before SendBy is not written,
+// so nothing is sent for the call with the token, and the attempt is not
+// sent as authorization_expired, never invalid_token. Past exp, ToolHive's
+// vMCP answers a token that already started a call with token_expired, which
+// a caller would retry with a new token, running a stolen token's call twice.
+func TestSendGatewayCallChecksSendByBeforeTheToolsCall(t *testing.T) {
 	f := newGatewayFixture(t)
 	req := f.request("att_1")
-	req.HTTPClient = &http.Client{Transport: hangingTransport{}}
-	req.SendBy = time.Now().Add(50 * time.Millisecond)
-	done := make(chan GatewayAttempt, 1)
-	go func() { done <- SendGatewayCall(t.Context(), req) }()
-	select {
-	case got := <-done:
-		wantAttempt(t, got, GatewayAttemptNotSent, "", 0)
-	case <-time.After(5 * time.Second):
-		t.Fatal("a hung handshake outlived the authorization's send deadline")
+	req.SendBy = time.Now().Add(gatewaySendMargin + 300*time.Millisecond)
+	// The handshake ends, and the tools/call is about to be written, after
+	// SendBy less the margin but before SendBy itself.
+	req.hooks.sending = onToolsCall(func(*mcpsdk.CallToolParams) {
+		time.Sleep(time.Until(req.SendBy.Add(-gatewaySendMargin / 2)))
+	})
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionExpired, 0)
+	if n := len(f.calls("att_1", "initialize")); n != 1 {
+		t.Fatalf("the gateway saw %d initialize, want the handshake sent", n)
+	}
+	if n := len(f.calls("att_1", gatewayToolsCall)); n != 0 {
+		t.Fatalf("the gateway saw %d tools/call, want none after SendBy less the margin", n)
+	}
+}
+
+// TestSendGatewayCallKeepsTheFirstHandshakeRejection: a handshake refused
+// with invalid_token keeps that rejection, and with it the caller's one
+// retry with a new token, even when the session's closing DELETE comes after
+// the send-by deadline and is refused there.
+func TestSendGatewayCallKeepsTheFirstHandshakeRejection(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.SendBy = time.Now().Add(gatewaySendMargin + 300*time.Millisecond)
+	var deletes atomic.Int64
+	req.HTTPClient = &http.Client{Transport: gatewayRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			deletes.Add(1)
+		}
+		if r.Method != http.MethodPost || r.Body == nil {
+			return f.wire.RoundTrip(r)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Contains(body, []byte(`"method":"notifications/initialized"`)) {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			return f.wire.RoundTrip(r)
+		}
+		// The rejection arrives after the send-by deadline, less the margin,
+		// so the closing DELETE that follows is refused by the deadline.
+		time.Sleep(time.Until(req.SendBy.Add(-gatewaySendMargin / 2)))
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+			Header: http.Header{"Www-Authenticate": {`Bearer error="invalid_token"`}},
+			Body:   io.NopCloser(strings.NewReader("")), Request: r,
+		}, nil
+	})}
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionInvalidToken, http.StatusUnauthorized)
+	if n := deletes.Load(); n != 0 {
+		t.Fatalf("%d DELETE written after the send-by deadline", n)
+	}
+}
+
+// TestSendGatewayCallKeepsTheMarginBeforeTheHandshake: an authorization
+// that lapses within gatewaySendMargin is not presented at all.
+func TestSendGatewayCallKeepsTheMarginBeforeTheHandshake(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	req.SendBy = time.Now().Add(gatewaySendMargin / 2)
+	wantAttempt(t, SendGatewayCall(t.Context(), req), GatewayAttemptNotSent, GatewayRejectionExpired, 0)
+	if n := len(f.g.Calls()); n != 0 {
+		t.Fatalf("the gateway saw %d requests, want none", n)
 	}
 }
 
 type gatewayRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f gatewayRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestGatewayHandshakeCancellationAfterSendByRecordsNoRefusal: when a hung
+// handshake reaches its deadline, the SDK sends notifications/cancelled for
+// the initialize from its own goroutine, which can reach the wire after
+// sendBy. The wire never writes a cancellation before the tools/call, so it
+// is not a request the deadline refused: the attempt keeps no rejection
+// rather than authorization_expired, whichever comes first.
+func TestGatewayHandshakeCancellationAfterSendByRecordsNoRefusal(t *testing.T) {
+	f := newGatewayFixture(t)
+	req := f.request("att_1")
+	var written atomic.Int64
+	req.HTTPClient = &http.Client{Transport: gatewayRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		written.Add(1)
+		return nil, errors.New("unreachable")
+	})}
+	wire := newGatewayWire(req, time.Now().Add(-time.Second))
+	cancel, err := http.NewRequestWithContext(t.Context(), http.MethodPost, req.Endpoint,
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.RoundTrip(cancel); !errors.Is(err, errGatewayRefused) {
+		t.Fatalf("RoundTrip = %v, want errGatewayRefused", err)
+	}
+	if n := written.Load(); n != 0 {
+		t.Fatalf("%d requests written", n)
+	}
+	wantAttempt(t, wire.classify(GatewayAttempt{AttemptID: "att_1"}, nil, nil), GatewayAttemptNotSent, "", 0)
+}
 
 func TestGatewayHandshakeCancellationDoesNotBlockClose(t *testing.T) {
 	f := newGatewayFixture(t)
@@ -399,7 +523,7 @@ func TestGatewayHandshakeCancellationDoesNotBlockClose(t *testing.T) {
 			return nil, context.Canceled
 		}
 	})}
-	wire := newGatewayWire(req)
+	wire := newGatewayWire(req, req.SendBy)
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, nil)
 	client.AddSendingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
@@ -707,6 +831,109 @@ func TestIsInvalidTokenChallenge(t *testing.T) {
 	} {
 		if got := isInvalidTokenChallenge(challenge); got != want {
 			t.Errorf("isInvalidTokenChallenge(%q) = %v, want %v", challenge, got, want)
+		}
+	}
+}
+
+// forbiddingTransport answers a tools/call with HTTP 403, the header, and
+// the body built from the call's JSON-RPC ID; it carries every other
+// request to base.
+type forbiddingTransport struct {
+	base   http.RoundTripper
+	header http.Header
+	body   func(id json.RawMessage) string
+}
+
+func (f forbiddingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body == nil {
+		return f.base.RoundTrip(req)
+	}
+	body, err := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	var msg struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if json.Unmarshal(body, &msg) != nil || msg.Method != gatewayToolsCall {
+		return f.base.RoundTrip(req)
+	}
+	header := f.header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	header.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode: http.StatusForbidden, Header: header, Request: req,
+		Body: io.NopCloser(strings.NewReader(f.body(msg.ID))),
+	}, nil
+}
+
+// TestSendGatewayCallClassifiesADenial: a 403 the gateway answers before
+// running the tools/call refuses it, as ToolHive's vMCP answers a call its
+// token's call entry does not name, or its policy denies: a JSON-RPC error
+// of code 403 for the call's own ID, or, from another gateway, an
+// insufficient_scope challenge (credentials-and-lifecycle.md, step (9)). Any
+// other 403 may come from after the call ran, so its outcome is unknown.
+func TestSendGatewayCallClassifiesADenial(t *testing.T) {
+	denied := func(id json.RawMessage) string {
+		return `{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":403,"message":"Forbidden: the access token does not permit this request (tool_mismatch)"}}`
+	}
+	for name, c := range map[string]struct {
+		header  http.Header
+		body    func(json.RawMessage) string
+		outcome GatewayAttemptOutcome
+		reject  GatewayRejection
+	}{
+		"ToolHive's denial": {nil, denied, GatewayAttemptRefused, GatewayRejectionDenied},
+		"an insufficient_scope challenge": {
+			http.Header{"Www-Authenticate": {`Bearer error="insufficient_scope", scope="tools"`}},
+			func(json.RawMessage) string { return "forbidden" }, GatewayAttemptRefused, GatewayRejectionDenied,
+		},
+		"another error code": {nil, func(id json.RawMessage) string {
+			return `{"jsonrpc":"2.0","id":` + string(id) + `,"error":{"code":-32603,"message":"internal"}}`
+		}, GatewayAttemptUnknown, ""},
+		"another request's ID": {nil, func(json.RawMessage) string { return denied(json.RawMessage(`"other"`)) }, GatewayAttemptUnknown, ""},
+		"not JSON-RPC":         {nil, func(json.RawMessage) string { return "<html>forbidden</html>" }, GatewayAttemptUnknown, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGatewayFixture(t)
+			req := f.request("att_1")
+			req.HTTPClient = &http.Client{Transport: forbiddingTransport{base: f.wire, header: c.header, body: c.body}, Timeout: 10 * time.Second}
+			wantAttempt(t, SendGatewayCall(t.Context(), req), c.outcome, c.reject, http.StatusForbidden)
+		})
+	}
+}
+
+func TestIsTokenReusedChallenge(t *testing.T) {
+	for challenge, want := range map[string]bool{
+		`Bearer error="invalid_token", error_description="the access token is not accepted (token_reused)"`: true,
+		`Bearer realm="vmcp", error="invalid_token", error_description="(token_reused)"`:                    true,
+		`Bearer error="invalid_token", error_description="token expired"`:                                   false,
+		`Bearer error="invalid_token"`:                                          false,
+		`Bearer error="insufficient_scope", error_description="(token_reused)"`: false,
+		`Basic error="invalid_token", error_description="(token_reused)"`:       false,
+	} {
+		if got := isTokenReusedChallenge(challenge); got != want {
+			t.Errorf("isTokenReusedChallenge(%q) = %v, want %v", challenge, got, want)
+		}
+	}
+}
+
+func TestIsInsufficientScopeChallenge(t *testing.T) {
+	for challenge, want := range map[string]bool{
+		`Bearer error="insufficient_scope"`:                  true,
+		`Bearer realm="vmcp", error="insufficient_scope"`:    true,
+		`Bearer error="invalid_token"`:                       false,
+		`Basic error="insufficient_scope"`:                   false,
+		`Bearer realm="a,error=insufficient_scope"`:          false,
+		`Basic realm="x", Bearer error="insufficient_scope"`: true,
+	} {
+		if got := isInsufficientScopeChallenge(challenge); got != want {
+			t.Errorf("isInsufficientScopeChallenge(%q) = %v, want %v", challenge, got, want)
 		}
 	}
 }

@@ -852,7 +852,7 @@ func TestHostedAS1IssuesIDJAGsOnlyForTheGatewayEntry(t *testing.T) {
 	}
 	issue := func(audience, resource string) error {
 		_, err := client.IssueIDJAG(t.Context(), identitybroker.IDJAGRequest{
-			SubjectToken: grant.RefreshToken, ActorToken: cred, Audience: audience, Resource: resource, OperationID: "op-target",
+			SubjectToken: grant.RefreshToken, ActorToken: cred, Audience: audience, Resource: resource,
 		})
 		return err
 	}

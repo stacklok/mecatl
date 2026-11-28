@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp/auth/factory"
 	"github.com/stacklok/toolhive/pkg/vmcp/auth/strategies"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 	vmcpclient "github.com/stacklok/toolhive/pkg/vmcp/client"
 	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
 	"github.com/stacklok/toolhive/pkg/vmcp/router"
@@ -235,6 +236,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 
 	var auth *runner.EmbeddedAuthServer
+	var callBinding *callbinding.Binding
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
@@ -296,6 +298,12 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			// AS-2's gateway tokens are typed at+jwt (RFC 9068), as step (8)
 			// requires; the vMCP is the only resource server they reach.
 			authOptions = append(authOptions, runner.WithAccessTokenType(as2AccessTokenType))
+			registry, err := callEntryRegistry()
+			if err != nil {
+				closeLocalStore()
+				return rollback(err)
+			}
+			authOptions = append(authOptions, runner.WithAuthorizationDetailsRegistry(registry))
 		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, runConfig, authStore, authOptions...)
 		if err != nil {
@@ -312,9 +320,20 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		// only at+jwt (RFC 9068 section 4); removed once Mecatl pins a
 		// ToolHive release with stacklok/toolhive#7345 and turns on its
 		// option to require at+jwt from AS-2 here.
-		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
+		incomingConfig := &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: resource, Resource: resource, JWKSURL: issuer + "/.well-known/jwks.json"},
-		}, "mecatl-broker", nil, reader, auth.KeyProvider(), issuer)
+		}
+		var incomingOptions []factory.IncomingAuthOption
+		if as2 {
+			// The token validator and the vMCP share one call binding, so the
+			// validator accepts a call's own messages after its token expires.
+			if callBinding, err = gatewayCallBinding(issuer, *config.BrokerClient, config.AS2Trust.gatewayMaxCallDuration(), incomingConfig); err != nil {
+				return rollback(err)
+			}
+			incomingOptions = append(incomingOptions, factory.WithCallBinding(callBinding))
+		}
+		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, incomingConfig,
+			"mecatl-broker", nil, reader, auth.KeyProvider(), issuer, incomingOptions...)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create incoming auth: %w", err))
 		}
@@ -333,6 +352,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	serverConfig := &vmcpserver.Config{Name: "mecatl-broker", Version: "v1", EndpointPath: toolHiveMCPPath,
 		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
 		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
+		CallBinding: callBinding,
 	}
 	backendRegistry := vmcp.NewImmutableRegistry(construction.backends)
 	server, err := vmcpserver.New(processCtx, serverConfig, router.NewSessionRouter(&vmcp.RoutingTable{}), backendClient, backendRegistry, nil)

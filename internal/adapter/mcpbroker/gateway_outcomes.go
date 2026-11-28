@@ -36,9 +36,11 @@ var (
 	outcomeSVIDExpired         = gatewayOutcome{code: "svid_expired", text: "MCP gateway call refused: the agent's identity could not be renewed (code svid_expired)."}
 	outcomeUnavailable         = gatewayOutcome{code: "unavailable", text: "MCP gateway call failed: authorization is unavailable; the call was not sent and can be retried (code unavailable)."}
 	outcomeInternal            = gatewayOutcome{code: "internal", text: "MCP gateway call failed: internal error; the call was not sent (code internal)."}
-	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys); change them and retry (code refused_arguments)."}
+	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys, including keys that differ only by case); change them and retry (code refused_arguments)."}
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
+	outcomeTokenReused         = gatewayOutcome{code: "token_reused", text: "MCP gateway call outcome unknown: the gateway says its authorization was already used for a call, which may have run; it is not retried automatically (code token_reused)."}
+	outcomeGatewayRefused      = gatewayOutcome{code: "gateway_refused", text: "MCP gateway call not run: the gateway refused it before running it; it is not retried (code gateway_refused)."}
 	outcomeAlreadySent         = gatewayOutcome{code: "already_sent", text: "MCP gateway call refused: this call is already claimed or was sent; automatic replay refused (code already_sent)."}
 	outcomeSendOnceFull        = gatewayOutcome{code: "send_once_full", text: "MCP gateway call refused: too many gateway calls are held for this session; the call was not sent (code send_once_full)."}
 	outcomeUnknown             = gatewayOutcome{code: "outcome_unknown", text: "MCP gateway call outcome unknown: the call was sent but the gateway's answer does not show whether it ran; it may have run and is not retried automatically (code outcome_unknown)."}
@@ -62,7 +64,7 @@ func outcomeConnectionRequired(server, link string) gatewayOutcome {
 func outcomeForAuthorization(err error) gatewayOutcome {
 	var brokerErr *identitybroker.Error
 	switch {
-	case errors.Is(err, errNotIJSON):
+	case errors.Is(err, errNotIJSON), errors.Is(err, errCaseFoldedMembers):
 		return outcomeRefusedArguments
 	case errors.Is(err, ErrAlreadySent):
 		return outcomeAlreadySent
@@ -110,6 +112,10 @@ func outcomeForAuthorization(err error) gatewayOutcome {
 // retried reports that it was the retry after a rejected token.
 func outcomeForAttempts(server string, last mcpadapter.GatewayAttempt, retried bool) gatewayOutcome {
 	switch {
+	case last.Rejection == mcpadapter.GatewayRejectionTokenReused:
+		// The token started a call before this one, so the call it names
+		// may have run: never retried with a new token (step (9), check 3).
+		return outcomeTokenReused
 	case last.Outcome == mcpadapter.GatewayAttemptUnknown:
 		return outcomeUnknown
 	case last.Rejection == mcpadapter.GatewayRejectionURLElicitation:
@@ -118,6 +124,12 @@ func outcomeForAttempts(server string, last mcpadapter.GatewayAttempt, retried b
 		return outcomeSessionNotFound
 	case last.Rejection == mcpadapter.GatewayRejectionInvalidToken && retried:
 		return outcomeTokenRejected
+	case last.Rejection == mcpadapter.GatewayRejectionDenied:
+		// The vMCP refused the call before running it: as one its token does
+		// not cover, a broker or MCP client fault, or a tool it does not
+		// route for this user (step (9), check 3), or by its own policy
+		// (check 4). Not retried.
+		return outcomeGatewayRefused
 	case last.Rejection == mcpadapter.GatewayRejectionChanged:
 		return outcomeInternal
 	default:

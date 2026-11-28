@@ -533,8 +533,6 @@ The broker takes `RT-A42` from `A42`'s record only after checks 3 to 5 have pass
 
 ### (7) ID-JAG from AS-1
 
-*Not yet enforced: the call entry is not yet signed into the ID-JAG; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 For each call, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-06](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)).
 
 **Input.** An RFC 8693 token exchange with `RT-A42` as subject token, `reviewerSVID` as actor token, AS-2 as audience, and the vMCP as `resource`. The call entry is an RFC 9396 `authorization_details` entry of type `https://toolhive.dev/mcp_tool_call`. It names the server, the tool, the argument hash, and the operation ID. A tool listing sends the list form, which names the server and the method. The broker sends one entry on every gateway call, tool calls and tool listings alike. The operation ID is carried only in the entry, so no other Mecatl parameter is sent to AS-1:
@@ -653,11 +651,9 @@ AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. Th
 
 ### (8) AS-2 access token
 
-*Not yet enforced: AS-2 does not yet process the signed claim; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), naming the vMCP with an RFC 8707 `resource`. The parameter comes from RFC 8707, not the ID-JAG profile; without it, AS-2 uses the ID-JAG's `resource` claim. The call is not named in this request. AS-2 takes the call entry from the `authorization_details` claim that AS-1 signed into the ID-JAG at step (7), and copies it into `V`. That restricts `V` to one call: the server, the tool, the argument hash, and the operation ID. Form encoding is shown decoded.
 
-**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
+**The argument hash** is the lowercase hex SHA-256 of the RFC 8785 (JCS) serialization of the `tools/call` request's `params.arguments` object, or of `{}` when `arguments` is absent or `null`. The `tool` is the name the vMCP routes by, as sent in `params.name`. The MCP client computes the hash over exactly the `arguments` value it sends, and the vMCP over the value it received, before any routing or rewriting. JCS needs I-JSON (RFC 7493), so the MCP client refuses, before asking for authorization, arguments it cannot represent that way, such as integers beyond ±2^53 or invalid Unicode, rather than letting the two sides disagree. It also refuses an object whose member names are equal under Unicode simple case folding, such as `{"a":1,"A":2}`, which the vMCP's request parser refuses with `-32600` although both sides would agree on its hash. Both sides are tested against one shared set of test vectors covering number formatting, large and negative numbers, Unicode escapes, key order, and nesting.
 
 ```text
 POST https://gateway.example.com/oauth/token
@@ -696,6 +692,8 @@ The redemption carries no `authorization_details` parameter. The entry comes onl
    "arguments_sha256": "<hash>", "operation_id": "op-pr42-001"}]}
 ```
 
+*Not yet enforced: until #2533, Mecatl does not set `V`'s lifetime, so a `V` gets AS-2's default of one hour, capped at the ID-JAG's remaining validity (`id_jag_lifetime`, 60 seconds by default).*
+
 `V-reviewer`, decoded:
 
 ```json
@@ -715,11 +713,11 @@ The redemption carries no `authorization_details` parameter. The entry comes onl
 }
 ```
 
-`V` is bound to one call: the entry AS-1 signed into the ID-JAG, which AS-2 copied. The vMCP accepts it for exactly one `tools/call` whose server, tool, and argument hash match the entry. Single use: the vMCP records the token's `jti` and refuses a second `tools/call` with it. `V`'s expiry limits only when the call can start. The session handshake before it is accepted during `V`'s lifetime, and messages that belong to the call, such as cancellation, progress, or an elicitation reply, are accepted for as long as the call is open, even after `V` expires, up to a configured maximum call duration. A user can take a minute to answer an elicitation, and a cancel can reach a long-running tool, without a new `V`. A `V` held by mecak8s can therefore make only the call the broker just approved, and only once. For why the binding lives in `V` rather than a second token, see [authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch).
+`V` is bound to one call: the entry AS-1 signed into the ID-JAG, which AS-2 copied. The vMCP accepts it for exactly one `tools/call` whose server, tool, and argument hash match the entry. Single use: the vMCP records the token's `jti` and refuses a second `tools/call` with it. `V`'s expiry limits only when the call can start. The session handshake before it is accepted during `V`'s lifetime, and messages that belong to the call, such as cancellation, progress, or an elicitation reply, are accepted while the call is open, and after `V` expires for a configured grace, within a configured maximum call duration. A cancel can reach a long-running tool without a new `V`. Mecatl sets the grace to the maximum call duration (30 minutes), because the message it sends after `exp` is the call's cancellation, which can come at any point in the call; its gateway client receives no elicitation today (#2821). A `V` held by mecak8s can therefore make only the call the broker just approved, and only once. For why the binding lives in `V` rather than a second token, see [authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch).
 
 `V` also carries a **delegated-access marker**. AS-2 emits this claim only after an approved redemption, on this grant or on RFC 8693 token exchange. A wildcard delegate client or `may_act` never earns it. `V` is terminal. In token exchange, AS-2 refuses a token that carries the marker, as subject token or as actor token. So `V` cannot be exchanged for a native-subject token, and it cannot act as native Alice for someone else. The vMCP reads provider credentials only for a token that carries the marker.
 
-`V`'s lifetime does not exceed the ID-JAG's. It also limits how stale an approval can be, because AS-2 checks the approval record only at redemption. Revoking an approval stops new `V`s at once. A `V` already issued keeps working until it expires. Keep `V` short. Disconnecting a provider takes effect at once, because the vMCP reads the credential on every call.
+`V`'s lifetime does not exceed the ID-JAG's. It also limits how stale an approval can be, because AS-2 checks the approval record only at redemption. Revoking an approval stops new `V`s at once. A `V` already issued keeps working until it expires. Keep `V` short. *Not yet enforced: until #2533, Mecatl does not set `V`'s lifetime, so a `V` gets AS-2's default of one hour, capped at the ID-JAG's remaining validity (`id_jag_lifetime`, 60 seconds by default).* Disconnecting a provider takes effect at once, because the vMCP reads the credential on every call.
 
 The approval-continuation profile is a convention that AS-2 advertises in its metadata. Under it, a refused redemption carries `access_denied` with `consent_required` and an `error_uri`. The `error_uri` names a pending approval that the user can open.
 
@@ -757,8 +755,6 @@ Until Mecatl pins ToolHive v0.67.0 or later (reason codes for ID-JAG redemption 
 
 ### (8a) Broker output check
 
-*Not yet enforced: the broker check is not yet built; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** The token response from step (8), including its `authorization_details` member, and the entry the broker sent in step (7) for the same attempt. The broker builds that entry from the request that step (6) checked, and dispatch uses that request ([authorization, credentials, and dispatch](mcp-authorization.md#authorization-credentials-and-dispatch)).
 
 **Checks, at the broker,** before it returns `V`:
@@ -785,13 +781,11 @@ A gateway call with no entry never reaches AS-1: the broker sends one on every g
 
 ### (9) vMCP decision and provider credential
 
-*Not yet enforced: the call-entry check and the single-use record are not yet enforced; see [the ToolHive work list](implementation.md#toolhive-work-list).*
-
 **Input.** From mecak8s's MCP client, `tools/call` with `Authorization: Bearer <V-reviewer>`, the vMCP session ID, and the operation and attempt IDs in the request's `_meta`, under the proposed keys `dev.mecatl/operation` and `dev.mecatl/attempt`. The same IDs go on every message of the call, including the session handshake, the cancellation, and replies to requests the vMCP sends; an error reply carries them in `error.data._meta`. The broker mints the attempt ID with each authorization and returns it with `V` ([audit](audit.md#delivery-protection-and-reconciliation)); the MCP client only passes it on. The run ID travels in trace headers.
 
 **Checks, at the vMCP:**
 
-1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707). A message that belongs to a call this `V` already started, such as a cancellation or an elicitation reply, is accepted after `exp` while the call is open, up to the configured maximum call duration. *The `typ` check is not yet enforced; see the [ToolHive work list](implementation.md#toolhive-work-list).*
+1. `V`'s `typ` is `at+jwt` or `application/at+jwt`, `iss` is AS-2, the signature verifies, `aud` is this vMCP, and `exp` has not passed (RFC 9068 §4); a request that names a `resource` is checked against it (RFC 8707). A message that belongs to a call this `V` already started, such as a cancellation or an elicitation reply, is accepted after `exp` while the call is open, for the configured grace within the maximum call duration. *The `typ` check is not yet enforced; see the [ToolHive work list](implementation.md#toolhive-work-list).*
 2. The session ID, if present, is bound to the same `iss`, `sub`, `client_id`, `act.iss`, and `act.sub`, and the delegated-access marker.
 3. The request matches `V`'s `authorization_details` entry. For a `tools/call`: the tool, the server the tool's route at this gateway resolves to, because a `tools/call` request carries no server field, and the [argument hash](#8-as-2-access-token), which the vMCP computes from the request it received before any routing or rewriting. For a `V` issued to list tools: the server and the list method, so a listing `V` cannot start a `tools/call`; because a list request carries no server field either, the vMCP answers it with only that server's tools. `V`'s `jti` has not served a call before; the vMCP records it, with the call it started, until `exp` plus the clock skew or the end of that call, whichever is later, in the memory of the replica that serves the call. The target is one record shared by all replicas. The first release keeps it per replica, a named shortcut in the [ToolHive work list](implementation.md#toolhive-work-list), so a `V` replayed to another replica within its lifetime is accepted until the shared record lands. That record is what lets a later message for the open call be accepted after `V` expires.
 4. Its own operation policy allows the tool.
@@ -804,16 +798,16 @@ A gateway call with no entry never reaches AS-1: the broker sends one on every g
 
 | Check | Response | mecak8s outcome and retry |
 | --- | --- | --- |
-| 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. |
+| 1 | 401 `invalid_token` | mecak8s reports the rejection; the broker issues a new `V`, and the call is retried once. A 401 naming `token_reused` (check 3) is not: the call `V` names may already have run with it, so its outcome is unknown. After `exp` the vMCP answers a spent `V` with `token_expired`, not `token_reused`, so the MCP client writes the `tools/call`, and every handshake request before it, a short margin before `V`'s use-before deadline or not at all; a call not written by then is not sent and not retried. |
 | 2 | 404 for the session | mecak8s opens a new vMCP session and retries once with a new `V`. |
-| 3 | 403 `insufficient_scope` | A broker or MCP client bug: fail the call, do not retry. |
+| 3 | 403, with `insufficient_scope` or, from ToolHive's vMCP, a JSON-RPC error of code 403 answering the call's request | A broker or MCP client bug: fail the call, do not retry. |
 | 4 | Tool error | Returned as a denial; not retried. |
 | 5 | Tool error | A broker or gateway bug: fail the call, do not retry. |
 | 6, access token expired | — | The gateway refreshes it with the stored refresh token and continues. |
 | 6, no row, or refresh no longer possible | An MCP URL-mode elicitation with the gateway's connect link | The existing `mcp_authorization_pending` outcome with that link. If the vMCP refused before running the call, the call was not sent; after Alice connects GitHub, it runs again with a new authorization and passes every check again. A row owned by another user is refused and recorded. |
 | 6, refresh or storage failure | 5xx | An unknown outcome: the MCP client cannot tell this 5xx from one returned after the call ran, so it is not retried automatically. A new tool call can be made. |
 
-The answers to checks 1, 2, 3, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, 403 `insufficient_scope`, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
+The answers to checks 1, 2, 3, and 6 (no row) refuse the call before the vMCP runs it, and come in reply to the call's own request: 401 `invalid_token`, 404 for the session, 403 with `insufficient_scope` or a JSON-RPC error of code 403 for that request, and the URL-mode elicitation as the MCP error -32042. Every gateway, embedded or external, answers these cases this way, so the MCP client treats the call as not sent. An elicitation *request* sent while the call is open is not one of these answers: the tool may already be running, so it does not make the call not sent. No answer after the request was written, such as a dropped connection, means the call may have run, and its outcome is unknown ([pauses and restart](#pauses-and-restart)).
 
 A JSON-RPC error that rejects the request itself (-32700, -32600, -32601, or -32602) means the tool did not run, and the call fails. Any other JSON-RPC error, such as -32603, or any other HTTP error status after the request was written, including a 5xx, is also an unknown outcome: the MCP client sees only the status and cannot tell a 5xx the vMCP returned before running the call from one returned after it ran, for example by a proxy or after a crash.
 
@@ -937,7 +931,8 @@ The failures each step can return: where each is detected, what the user sees, a
 | Gateway refuses the acting agent | AS-2 | `access_denied` with `actor_denied` | Call denied | Nothing |
 | ID-JAG reused where the issuer requires single use | AS-2 | `invalid_grant` with `invalid_assertion` | Call fails; a broker bug or a stolen ID-JAG | Nothing |
 | `V` rejected by vMCP | vMCP | 401 `invalid_token` | None: mecak8s reports it, and the call is retried once with a new `V` | Nothing |
-| Call does not match `V`'s binding, or `V` already used for a call | vMCP | 403 `insufficient_scope` | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
+| `V` already used for a call | vMCP | 401 `invalid_token` naming `token_reused` | Call fails as an unknown outcome and is not retried: the call `V` names may have run with it; a stolen `V` | Nothing |
+| Call does not match `V`'s binding | vMCP | 403, with `insufficient_scope` or a JSON-RPC error of code 403 | Call fails; a broker or MCP client bug, or a stolen `V` | Nothing |
 | `V` lacks the entry the broker sent, or its entry differs ([step (8a)](#8a-broker-output-check)) | Broker | `INTERNAL` with `call_entry_missing` or `call_entry_mismatch` | Call fails before the gateway; a broker, AS-1, or AS-2 fault | Nothing |
 | vMCP session rejected | vMCP | 404 | None: one retry with a new session | Stored session ID dropped |
 | vMCP policy denies the tool | vMCP | Tool error | Call denied | Nothing |
@@ -977,6 +972,7 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `subject_unknown` | AS-2 (`access_denied`) | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome, with a link that Mecatl builds to its embedded gateway's sign-in: the user must sign in at the gateway once. Not `mcp_owner_action_required`, which means signing in again at AS-1. Mecatl builds no link for an external gateway, so there the call fails. |
 | `actor_denied` | AS-2 (`access_denied`) | `PERMISSION_DENIED` | Deny the call, as for `denied`. |
 | `resource_denied` | AS-2 (`access_denied`) | `INTERNAL` | Fail the call; a configuration fault. |
+| `call_entry_missing`, `call_entry_mismatch` | Broker, [step (8a)](#8a-broker-output-check) | `INTERNAL` | Fail the call before it reaches the gateway; not retried. |
 | HTTP 503, or 429, 502, or 504 from a proxy or rate limiter, or the error code `server_error` or `temporarily_unavailable` | AS-1, AS-2 | `UNAVAILABLE` | Fail the call as a retryable infrastructure error, not a denial or a configuration fault. At session open, a 502 or 504 follows the lost-response rule of [step (3)](#3-session-open-and-the-broker-refresh-token). |
 | `invalid_client`, `unauthorized_client`, `invalid_target`, `access_denied` with no reason, or any other refusal with no reason | AS-1, AS-2 | `INTERNAL` | Fail the call; a configuration fault or broker bug. For an AS-2 `invalid_grant` with no reason code, see [step (8)](#8-as-2-access-token). |
 
@@ -997,7 +993,7 @@ An agent instance keeps its identity across runs. Each credential's lifetime is 
 | Schedule grant | Its horizon, schedule deletion, sign out everywhere, or the upstream re-check. | Never extended. Renewal sets up a new grant while Alice is present; the old one runs out. Alice is notified before the horizon. | Alice |
 | Upstream refresh token | IdP expiry or revocation. | At most once per re-check interval, at an ID-JAG exchange or scheduled-run open; one refresh per user at a time. | AS-1 |
 | ID-JAG | Short lifetime. | Never renewed or re-submitted; one per `V`. | Broker |
-| `V` | One call, a short lifetime of seconds, and single use: the vMCP records `jti` and refuses a second. | Never renewed; a new `V` for every call, and one more within the same call after a 401. | Broker, through steps (7) and (8) |
+| `V` | One call, a short lifetime of seconds, and single use: the vMCP records `jti` and refuses a second. Until #2533 the lifetime is not set: AS-2's default, capped at the ID-JAG's remaining validity. | Never renewed; a new `V` for every call, and one more within the same call after a 401. | Broker, through steps (7) and (8) |
 | Key sets: AS-1's, AS-2's, the agent trust bundle, and the cluster JWKS | Operator rotation. | On an unknown `kid`, rate-limited, and periodically. | Each verifier |
 | The broker client's configured key set (not `jwks_uri`) | Operator rotation. | Registered again at each server, which reads it only then; a hosted AS-1 registers it at process start. | Operator, or mecak8s at startup |
 | Consent link | Revocation in the gateway UI or by Mecatl. | The user links again. | Alice |
@@ -1095,7 +1091,7 @@ Every signing key, and every secret that protects an authorization server's opaq
 
 None of the values below is selected. Each bounds a risk the operator should know:
 
-- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable, the maximum call duration, which bounds how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
+- **Lifetimes:** AS-1's maximum for grants that issue ID-JAGs, which bounds `RT-A42`'s hard expiry, and for grants that issue refresh tokens, which bounds a schedule's horizon; the ID-JAG lifetime, the `V` lifetime, which bounds how long a `V` taken from mecak8s stays usable (not set until #2533, so capped only by the ID-JAG's remaining validity), the maximum call duration and the grace after a `V`'s expiry, which together bound how long the vMCP accepts messages for a call after its `V` expires, and the maximum SVID and workload-credential lifetimes. The broker's client-assertion lifetime is at most 60 seconds, and ToolHive's bound on it is fixed (step (5), check 5).
 - **Clock skew**, and the margins derived from it: how long used ID-JAG and `V` `jti` values are kept past `exp` (a `V`'s, at least until the call it started ends). ToolHive fixes the skew it allows on a client assertion at 60 seconds.
 - **Upstream re-check:** the re-check interval, the maximum upstream refresh-token lifetime per IdP when the IdP sends no `refresh_expires_in`, and the lease timeout for a refresh in flight.
 - **Key refresh:** the rate limit on refreshing a key set after an unknown `kid`.

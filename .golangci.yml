@@ -1066,6 +1066,11 @@ linters:
             - github.com/stacklok/toolhive/pkg/authserver/server/registration$
             - github.com/stacklok/toolhive/pkg/authserver/storage$
             - github.com/stacklok/toolhive/pkg/oauthproto$
+            # AS-1 signs the MCP call entry into the ID-JAGs it issues, so it
+            # registers ToolHive's call type in its authorization_details
+            # registry.
+            - github.com/stacklok/toolhive/pkg/authserver/authorizationdetails$
+            - github.com/stacklok/toolhive/pkg/mcp/toolcalldetails$
             - github.com/stacklok/mecatl/internal/identitybroker/adapter/inprocesshttp$
             # AS-1's actor-token validator implements ToolHive's interface by
             # calling the broker's CredentialVerifier.

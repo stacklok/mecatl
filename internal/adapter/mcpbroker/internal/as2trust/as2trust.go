@@ -16,6 +16,11 @@ type Trust struct {
 	AllowPrivateAddresses   bool
 	Subjects                []string
 	MaxAssertionAge         time.Duration
+	// MaxCallDuration, when positive, replaces the vMCP's maximum call
+	// duration, and with it the grace after a gateway token's exp, so a test
+	// can outlive both; it lives here, with the rest of the test-only trust,
+	// so production cannot set it.
+	MaxCallDuration time.Duration
 }
 
 // DefaultMaxAssertionAge is the oldest ID-JAG AS-2 accepts when a Trust

@@ -10,13 +10,13 @@ require (
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
 	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1
-	github.com/stacklok/toolhive-core/redisconn v0.0.60
+	github.com/stacklok/toolhive-core/redisconn v0.0.62
 	go.uber.org/goleak v1.3.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261110000943-09e21b237f2c
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/libc v1.80.2
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
@@ -36,11 +36,10 @@ require (
 	github.com/stacklok/mecatl/agentdef v0.1.0 // indirect
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	golang.org/x/mod v0.43.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a // indirect
+	golang.org/x/tools v0.53.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

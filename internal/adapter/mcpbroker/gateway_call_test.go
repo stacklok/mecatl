@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,9 +44,11 @@ const (
 // a nil entry, or one past the end, allows with a fresh token and attempt.
 type fakeAuthorizer struct {
 	tokenPrefix string
-	mu          sync.Mutex
-	script      []error
-	requests    []identitybroker.AuthorizeCallRequest
+	// lifetime is how long each token may be sent; zero means a minute.
+	lifetime time.Duration
+	mu       sync.Mutex
+	script   []error
+	requests []identitybroker.AuthorizeCallRequest
 }
 
 func (f *fakeAuthorizer) AuthorizeCall(_ context.Context, req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
@@ -58,7 +61,7 @@ func (f *fakeAuthorizer) AuthorizeCall(_ context.Context, req identitybroker.Aut
 	}
 	return identitybroker.Authorization{
 		GatewayToken: identitybroker.NewToken(f.tokenPrefix + strconv.Itoa(n)),
-		ExpiresAt:    time.Now().Add(time.Minute),
+		ExpiresAt:    time.Now().Add(cmp.Or(f.lifetime, time.Minute)),
 		AttemptID:    "att_" + strconv.Itoa(n),
 	}, nil
 }
@@ -696,6 +699,29 @@ func TestGatewayCallPassesResultThroughAfterDecliningARequest(t *testing.T) {
 	}
 }
 
+// TestGatewayCallRefusesWhatTheGatewayRefuses: arguments the vMCP's parser
+// refuses (each gateway_refuses vector of the shared argument hash vectors)
+// are refused as refused_arguments before anything is authorized, so no
+// gateway token is minted for a call that cannot run.
+func TestGatewayCallRefusesWhatTheGatewayRefuses(t *testing.T) {
+	for _, v := range readHashVectors(t).Vectors {
+		if !v.GatewayRefuses {
+			continue
+		}
+		t.Run(v.Name, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			res, err := f.execute(mainAgent(t), t, "call-1", string(v.Arguments))
+			wantRow(t, res, err, outcomeRefusedArguments)
+			if n := len(f.auth.calls()); n != 0 {
+				t.Fatalf("AuthorizeCall called %d times, want none", n)
+			}
+			if n := len(f.toolsCalls()); n != 0 {
+				t.Fatalf("%d tools/call sent", n)
+			}
+		})
+	}
+}
+
 func TestGatewayCallRefusesArgumentsOutsideIJSON(t *testing.T) {
 	f := newGatewayFixture(t, gatewayFixtureOptions{})
 	res, err := f.execute(mainAgent(t), t, "call-1", `{"a":9007199254740993}`)
@@ -765,11 +791,14 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{reason(identitybroker.ReasonConsentRequired), "consent_required"},
 		{reason(identitybroker.ReasonDenied), "denied"},
 		{reason(identitybroker.ReasonSVIDExpired), "svid_expired"},
+		{reason(identitybroker.ReasonCallEntryMissing), "internal"},
+		{reason(identitybroker.ReasonCallEntryMismatch), "internal"},
 		{identitybroker.NewError(identitybroker.CodeUnavailable, "", ""), "unavailable"},
 		{context.DeadlineExceeded, "unavailable"},
 		{identitybroker.NewError(identitybroker.CodeInternal, "", ""), "internal"},
 		{errors.New("unexpected"), "internal"},
 		{errNotIJSON, "refused_arguments"},
+		{errCaseFoldedMembers, "refused_arguments"},
 		{ErrAlreadySent, "already_sent"},
 		{errSendOnceFull, "send_once_full"},
 		{agentcredential.ErrNoCredential, "identity_unavailable"},
@@ -790,6 +819,8 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{"connection required with link", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionURLElicitation, ConnectURL: link}, false, outcomeConnectionRequired("github", link)},
 		{"connection required without link", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionURLElicitation}, false, outcomeConnectionRequired("github", "")},
 		{"session not found", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionSessionNotFound}, false, outcomeSessionNotFound},
+		{"denied before it ran", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionDenied}, false, outcomeGatewayRefused},
+		{"token reused", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptUnknown, Rejection: mcpadapter.GatewayRejectionTokenReused}, false, outcomeTokenReused},
 		{"token rejected twice", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionInvalidToken}, true, outcomeTokenRejected},
 		{"changed after authorization", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionChanged}, false, outcomeInternal},
 		{"authorization expired", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionExpired}, false, outcomeUnavailable},
@@ -1319,6 +1350,62 @@ func TestGatewayCallNamesItsRun(t *testing.T) {
 			}
 			if got := f.diag.String(); !strings.Contains(got, "causethe acting agent has no run") {
 				t.Fatalf("diagnostics = %s, want the missing run as the cause", got)
+			}
+		})
+	}
+}
+
+// TestGatewayCallTokenReusedIsNotRetried: a 401 whose invalid_token
+// challenge names token_reused means the token already started a call, so
+// the call it names may have run with it. Unlike any other invalid_token,
+// the call is not retried with a new token, and the claim is kept, on the
+// call and on the handshake (credentials-and-lifecycle.md, step (9)).
+// TestGatewayCallExpiredBeforeTheToolsCallIsNotRetried: a handshake that
+// ends after the token's send-by deadline, less the MCP client's margin,
+// leaves the tools/call unwritten. The call was not sent, so its claim is
+// released; and it is not retried with a new token, unlike an invalid_token,
+// since nothing tells whether someone else already spent this one.
+func TestGatewayCallExpiredBeforeTheToolsCallIsNotRetried(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.auth.lifetime = time.Second
+	f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+		if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			time.Sleep(900 * time.Millisecond)
+		}
+		return nil
+	}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeUnavailable)
+	if n := len(f.auth.calls()); n != 1 {
+		t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+	}
+	if n := len(f.toolsCalls()); n != 0 {
+		t.Fatalf("%d tools/call sent, want none after the send-by deadline", n)
+	}
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("Claim = %v, want the never-sent call released", err)
+	}
+}
+
+func TestGatewayCallTokenReusedIsNotRetried(t *testing.T) {
+	const challenge = `Bearer realm="vmcp", error="invalid_token", error_description="the access token is not accepted (token_reused)"`
+	op := operationID(gatewayTestSession, gatewayTestSession, "call-1")
+	for _, method := range []string{"tools/call", "initialize"} {
+		t.Run("on "+method, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+				if bytes.Contains(body, []byte(`"method":"`+method+`"`)) {
+					return unauthorized(challenge)
+				}
+				return nil
+			}
+			res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+			wantRow(t, res, err, outcomeTokenReused)
+			if n := len(f.auth.calls()); n != 1 {
+				t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+			}
+			if err := f.claim(t, op); !errors.Is(err, ErrAlreadySent) {
+				t.Fatalf("Claim = %v, want the call kept as possibly run", err)
 			}
 		})
 	}

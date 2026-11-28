@@ -11,10 +11,11 @@ import (
 )
 
 // AuthorizeCall implements Core, in the order Service.AuthorizeCall
-// documents. Every refusal after the session lookup is recorded.
+// documents. An invalid request is recorded as refused, naming only the
+// calling workload, as are refusals after the session lookup.
 func (b *Broker) AuthorizeCall(ctx context.Context, workload Workload, req AuthorizeCallRequest) (Authorization, error) {
 	if err := checkCall(workload, req); err != nil {
-		return Authorization{}, err
+		return Authorization{}, b.refuseInvalid(&DecisionRecord{RecordHeader: b.newHeader(TypeToolDecision), Workload: workload}, err)
 	}
 	t := b.sessions
 	t.mu.Lock()
@@ -122,12 +123,14 @@ func (u *retriesUsed) take(r retryRule) bool {
 	return true
 }
 
-// authorizeAtGateway runs design steps (7) and (8) for a call that passed
-// the checks before a grant: it consumes a reported rejected attempt,
-// exchanges the session's grant at AS-1 for an ID-JAG, records it, redeems
-// it at as2 for a gateway token, and records the decision. Each try gets a
-// new ID-JAG; one is never submitted twice. It fills rec with what it learns,
-// so a refusal it returns is recorded with it.
+// authorizeAtGateway runs design steps (7), (8), and (8a) for a call that
+// passed the checks before a grant: it consumes a reported rejected attempt,
+// exchanges the session's grant at AS-1 for an ID-JAG carrying the call's
+// entry, records it, redeems it at as2 for a gateway token, checks that the
+// token's response carries the entry sent, and records the decision. Each
+// try gets a new ID-JAG; one is never submitted twice. A token that fails
+// the output check is discarded and the call fails without a retry. It fills
+// rec with what it learns, so a refusal it returns is recorded with it.
 func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brokerSession, req AuthorizeCallRequest, rec *DecisionRecord) (Authorization, error) {
 	t := b.sessions
 	key := callKey{
@@ -143,6 +146,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 	rec.useGrant(g)
 	attemptID := "att_" + strings.ToLower(rand.Text())
 	rec.AttemptID = attemptID
+	entry := callEntryFor(req)
 
 	var used retriesUsed
 	for try := range maxGatewayTries {
@@ -156,7 +160,7 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 		}
 		res, err := b.idjag.IssueIDJAG(ctx, IDJAGRequest{
 			SubjectToken: g.refreshToken, ActorToken: req.Credential,
-			Audience: as2.Issuer, Resource: as2.Resource, OperationID: req.OperationID,
+			Audience: as2.Issuer, Resource: as2.Resource, AuthorizationDetails: entry,
 		})
 		if err != nil {
 			rule, retry, final := t.exchangeFailure(ctx, s, g, err)
@@ -177,8 +181,8 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 		jag := &IDJAGRecord{
 			RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeIDJAG, At: t.now(), Outcome: OutcomeSuccess},
 			SessionID:    s.ID, Workload: rec.Workload, Agent: rec.Agent, AgentID: rec.AgentID,
-			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, User: g.owner,
-			UserRecord: g.openRecord, UserSubjects: g.user, AgentInstance: rec.AgentInstance,
+			RunID: req.RunID, DelegationID: req.DelegationID, RunOwner: req.RunOwner, Owner: g.owner,
+			UserRecord: g.openRecord, User: g.user, AgentInstance: rec.AgentInstance,
 			RegistrationRecord: rec.RegistrationRecord, DelegationRecord: rec.DelegationRecord,
 			OperationID: req.OperationID, AttemptID: attemptID,
 			IDJAG: claims.ref, ExpiresAt: claims.exp,
@@ -201,6 +205,11 @@ func (b *Broker) authorizeAtGateway(ctx context.Context, as2 GatewayAS2, s *brok
 				return Authorization{}, retry
 			}
 			continue
+		}
+		rec.CallEntryCheck = checkCallEntry(entry, v.AuthorizationDetails)
+		if err := callEntryError(rec.CallEntryCheck); err != nil {
+			rec.nameGatewayToken(v.AccessToken)
+			return Authorization{}, err
 		}
 		return b.allow(ctx, s, req, rec, key, v, gatewayTokenExpiry(redeemedAt, claims.exp, v))
 	}
@@ -324,12 +333,7 @@ func (t *sessionTable) stillOpen(s *brokerSession) error {
 // withheld.
 func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallRequest, rec *DecisionRecord, key callKey, v GatewayTokenResult, expiresAt time.Time) (Authorization, error) {
 	t := b.sessions
-	if ref, ok := readJWTRef(v.AccessToken); ok {
-		rec.GatewayToken = ref.ref
-	} else {
-		// Shortcut: a gateway token that is not a JWT has no reference; removed by #2848 (references to AS-2's redemption events).
-		rec.GatewayTokenUnreferenced = true
-	}
+	rec.nameGatewayToken(v.AccessToken)
 	if err := t.stillOpen(s); err != nil {
 		return Authorization{}, err
 	}
@@ -355,11 +359,21 @@ func (b *Broker) allow(ctx context.Context, s *brokerSession, req AuthorizeCallR
 	return Authorization{GatewayToken: v.AccessToken, ExpiresAt: expiresAt, AttemptID: rec.AttemptID}, nil
 }
 
+// nameGatewayToken names token in r by its (iss, jti), or marks it
+// unreferenced when it is not a JWT with a jti.
+func (r *DecisionRecord) nameGatewayToken(token Token) {
+	if ref, ok := readJWTRef(token); ok {
+		r.GatewayToken = ref.ref
+		return
+	}
+	// Shortcut: a gateway token that is not a JWT has no reference; removed by #2848 (references to AS-2's redemption events).
+	r.GatewayTokenUnreferenced = true
+}
+
 // gatewayTokenExpiry returns when v expires: the earliest of its expires_in
 // counted from redeemedAt, when AS-2 sent one, the ID-JAG's exp, and v's own
-// exp, when v is a JWT with one.
-//
-// Shortcut: the gateway token is unbound and lives as long as AS-2 issues it; removed by #2727 (its own lifetime and binding, after stacklok/toolhive#7061).
+// exp, when v is a JWT with one. AS-2 issues the token for the lifetime its
+// client is configured with, capped at the ID-JAG's remaining validity.
 func gatewayTokenExpiry(redeemedAt, idjagExp time.Time, v GatewayTokenResult) time.Time {
 	exp := idjagExp
 	if v.ExpiresIn > 0 {

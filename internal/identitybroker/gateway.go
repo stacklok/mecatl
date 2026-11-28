@@ -2,6 +2,7 @@ package identitybroker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -38,8 +39,10 @@ type IDJAGRequest struct {
 	Audience string
 	// Resource is the vMCP resource the gateway token is for.
 	Resource string
-	// OperationID is the call's operation, sent as mecatl_operation.
-	OperationID string
+	// AuthorizationDetails is the call entry AS-1 signs into the ID-JAG, a
+	// JSON array of one entry of CallEntryType. The adapter omits the
+	// parameter when it is empty.
+	AuthorizationDetails json.RawMessage
 }
 
 // IDJAGResult is AS-1's answer to an ID-JAG exchange.
@@ -56,7 +59,8 @@ type GatewayAuthServer interface {
 }
 
 // Redemption is an ID-JAG redemption request. It carries no
-// authorization_details yet (#2727).
+// authorization_details: AS-2 takes the call entry only from the claim AS-1
+// signed into the ID-JAG, and refuses the parameter.
 type Redemption struct {
 	// Assertion is the ID-JAG.
 	Assertion Token
@@ -69,6 +73,10 @@ type GatewayTokenResult struct {
 	AccessToken Token
 	// ExpiresIn is AS-2's expires_in, zero when it sent none.
 	ExpiresIn time.Duration
+	// AuthorizationDetails is the response's authorization_details member as
+	// AS-2 sent it, nil when absent. The broker checks it against the call
+	// entry it sent (step (8a)).
+	AuthorizationDetails json.RawMessage
 }
 
 // Gateway is the MCP gateway the broker authorizes calls through, built from

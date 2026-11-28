@@ -46,6 +46,17 @@ const (
 	// cancelNotifyWait bounds the wait for the SDK's notifications/cancelled
 	// before the session closes; it matches the SDK's own bound.
 	cancelNotifyWait = 5 * time.Second
+	// gatewaySendMargin is how long before SendBy the token is last
+	// presented for the handshake and the tools/call. ToolHive's vMCP checks
+	// exp with no leeway, and once exp has passed it answers a token that
+	// already started a call with token_expired rather than token_reused,
+	// which reads as a plain invalid_token that a caller retries; so the
+	// tools/call must reach the vMCP before exp. The embedded vMCP shares
+	// Mecatl's clock and is reached in process, so the margin covers only the
+	// time from the check to the vMCP's own: well under a millisecond, more
+	// under load. 250ms covers that many times over and keeps three quarters
+	// of the shortest ID-JAG lifetime the broker accepts (one second).
+	gatewaySendMargin = 250 * time.Millisecond
 )
 
 // errGatewayRefused is the transport error for a request refused before it
@@ -70,8 +81,10 @@ type GatewayCallRequest struct {
 	// ArgumentsSHA256 is the authorized hash; the tools/call body is checked
 	// against it with HashArguments before it is written.
 	ArgumentsSHA256 string
-	// SendBy is when the authorization lapses; the first request must start
-	// before it.
+	// SendBy is when the authorization lapses. Every request before the
+	// tools/call, and the tools/call itself, is written at least
+	// gatewaySendMargin before it, or not at all; the messages of a call that
+	// has started are not limited by it.
 	SendBy time.Time
 	// HashArguments computes the argument hash the authorization was issued
 	// for.
@@ -110,6 +123,21 @@ const (
 	// GatewayRejectionInvalidToken means 401 with error="invalid_token", on the
 	// handshake or the tools/call.
 	GatewayRejectionInvalidToken GatewayRejection = "invalid_token"
+	// GatewayRejectionTokenReused means 401 with error="invalid_token"
+	// naming token_reused, as ToolHive's vMCP answers a call-bound token that
+	// has already started a call. This request did not run, but a token is
+	// issued for one call alone, so the call it names may already have run
+	// with it: the attempt's outcome is unknown, and it is not retried
+	// (credentials-and-lifecycle.md, step (9), check 3).
+	GatewayRejectionTokenReused GatewayRejection = "token_reused"
+	// GatewayRejectionDenied means 403 refusing the request before the
+	// gateway ran it: with error="insufficient_scope" (RFC 6750 §3.1), or,
+	// as ToolHive's vMCP answers, with a JSON-RPC error of code 403 answering
+	// the request's own ID. ToolHive's call binding answers so a tools/call
+	// other than the one its token's call entry names, and its
+	// authorization a call its policy denies
+	// (credentials-and-lifecycle.md, step (9), checks 3 and 4).
+	GatewayRejectionDenied GatewayRejection = "denied"
 	// GatewayRejectionSessionNotFound means 404 for a request naming a session.
 	GatewayRejectionSessionNotFound GatewayRejection = "session_not_found"
 	// GatewayRejectionURLElicitation means -32042 in reply to the tools/call.
@@ -117,7 +145,9 @@ const (
 	// GatewayRejectionChanged means the tools/call about to be written differs in
 	// name or argument hash from the authorized one.
 	GatewayRejectionChanged GatewayRejection = "changed_after_authorization"
-	// GatewayRejectionExpired means SendBy had passed before the first request.
+	// GatewayRejectionExpired means SendBy, less gatewaySendMargin, passed
+	// before the tools/call was written: the tools/call was not sent with the
+	// token, and neither was any later handshake request.
 	GatewayRejectionExpired GatewayRejection = "authorization_expired"
 )
 
@@ -151,11 +181,12 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 		req.AttemptID == "" || req.Tool == "" || req.ArgumentsSHA256 == "" || req.HashArguments == nil {
 		return attempt
 	}
-	if !time.Now().Before(req.SendBy) {
+	sendBy := req.SendBy.Add(-gatewaySendMargin)
+	if !time.Now().Before(sendBy) {
 		attempt.Rejection = GatewayRejectionExpired
 		return attempt
 	}
-	wire := newGatewayWire(req)
+	wire := newGatewayWire(req, sendBy)
 	var declined atomic.Int64
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: clientName, Version: clientVersion}, &mcpsdk.ClientOptions{
 		// URL elicitation only: no roots, no sampling, no form elicitation.
@@ -188,7 +219,7 @@ func SendGatewayCall(ctx context.Context, req GatewayCallRequest) GatewayAttempt
 	// Shortcut: each gateway call uses its own vMCP session, and a 404 for the session fails the call; removed by #2564 (vMCP session reuse and a new session on 404).
 	// The handshake must finish while the token can still be sent; the SDK
 	// detaches the session from this context once connected.
-	connectCtx, cancelConnect := context.WithDeadline(ctx, req.SendBy)
+	connectCtx, cancelConnect := context.WithDeadline(ctx, sendBy)
 	cs, err := client.Connect(connectCtx, transport, &mcpsdk.ClientSessionOptions{ProtocolVersion: gatewayProtocolVersion})
 	cancelConnect()
 	var res *mcpsdk.CallToolResult
@@ -263,13 +294,14 @@ type gatewayWire struct {
 	tool            string
 	argumentsSHA256 string
 	hash            func(json.RawMessage) (string, error)
-	sendBy          time.Time
+	// sendBy is SendBy less gatewaySendMargin: no request is written after it
+	// until the tools/call has started.
+	sendBy time.Time
 
 	cancelled  chan struct{}
 	cancelOnce sync.Once
 
 	mu          sync.Mutex
-	started     bool
 	refusal     GatewayRejection
 	handshake   gatewayAnswer // the first refusing answer before the tools/call
 	callStarted bool
@@ -286,7 +318,7 @@ type gatewayAnswer struct {
 
 type gatewayReply struct{ err *jsonrpc.Error }
 
-func newGatewayWire(req GatewayCallRequest) *gatewayWire {
+func newGatewayWire(req GatewayCallRequest, sendBy time.Time) *gatewayWire {
 	base := req.HTTPClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
@@ -299,7 +331,7 @@ func newGatewayWire(req GatewayCallRequest) *gatewayWire {
 		tool:            req.Tool,
 		argumentsSHA256: req.ArgumentsSHA256,
 		hash:            req.HashArguments,
-		sendBy:          req.SendBy,
+		sendBy:          sendBy,
 		cancelled:       make(chan struct{}),
 	}
 }
@@ -308,13 +340,10 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		defer func() { _ = req.Body.Close() }()
 	}
-	w.mu.Lock()
-	first := !w.started
-	w.started = true
-	w.mu.Unlock()
-	if first && !time.Now().Before(w.sendBy) {
-		return nil, w.refuse(GatewayRejectionExpired)
-	}
+	// Until the tools/call has started, the token is presented only before
+	// sendBy: roundTripOther checks a request other than the tools/call, and
+	// startCall the tools/call itself, just before it is written. Nothing is
+	// written before those checks.
 	out := req.Clone(req.Context())
 	out.Header.Set("Authorization", w.authorization)
 	var msg gatewayMessage
@@ -336,14 +365,8 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !w.authorized(msg.params) {
 		return nil, w.refuse(GatewayRejectionChanged)
 	}
-	w.mu.Lock()
-	second := w.callStarted
-	if !second {
-		w.callStarted, w.callID = true, msg.id
-	}
-	w.mu.Unlock()
-	if second {
-		return nil, errGatewayRefused
+	if err := w.startCall(msg.id); err != nil {
+		return nil, err
 	}
 
 	// Only a failure while net/http was still obtaining a connection proves
@@ -354,6 +377,12 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		GotConn: func(httptrace.GotConnInfo) { gotConn.Store(true) },
 	}))
 	resp, err := w.base.RoundTrip(traced)
+	// The answer, a 403's body included, is read before taking the lock, so a
+	// slow body never holds up the call's cancellation.
+	var answer gatewayAnswer
+	if err == nil {
+		answer = callAnswerOf(out, resp, msg.id)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err != nil {
@@ -361,7 +390,7 @@ func (w *gatewayWire) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	w.callWritten = true
-	w.call = answerOf(out, resp)
+	w.call = answer
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Body != nil {
 		resp.Body = &replyWatcher{
 			body: resp.Body, wire: w,
@@ -380,7 +409,15 @@ func (w *gatewayWire) roundTripOther(out *http.Request, method string) (*http.Re
 	if cancelHandshake {
 		// Initialize must not be cancelled. The SDK sends this notification
 		// on a detached context; waiting for it can stall failed-handshake cleanup.
+		// It is refused whatever the time, so it records no refusal: after a
+		// hung handshake it can arrive past sendBy.
 		return nil, errGatewayRefused
+	}
+	w.mu.Lock()
+	callStarted := w.callStarted
+	w.mu.Unlock()
+	if !callStarted && !time.Now().Before(w.sendBy) {
+		return nil, w.refuse(GatewayRejectionExpired)
 	}
 	resp, err := w.base.RoundTrip(out)
 	if method == "notifications/cancelled" {
@@ -408,13 +445,41 @@ func (w *gatewayWire) authorized(params map[string]json.RawMessage) bool {
 	return err == nil && sum == w.argumentsSHA256
 }
 
+// startCall marks the tools/call with id as started, just before it is
+// written, unless a tools/call has already started or sendBy has passed. The
+// deadline is checked here, after the argument hash and with nothing left
+// before the write: a tools/call refused here was not written, so nothing was
+// sent for this call with the token, and the attempt is not sent.
+func (w *gatewayWire) startCall(id json.RawMessage) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case w.callStarted:
+		return errGatewayRefused
+	case !time.Now().Before(w.sendBy):
+		w.refuseLocked(GatewayRejectionExpired)
+		return errGatewayRefused
+	}
+	w.callStarted, w.callID = true, id
+	return nil
+}
+
+// refuse records r as why the attempt was not sent, unless an earlier
+// refusal or a refusing handshake answer already says why: the first one
+// wins. The SDK closes a failed handshake's session with a DELETE, which the
+// send-by deadline may refuse after the gateway answered, say, invalid_token.
 func (w *gatewayWire) refuse(r GatewayRejection) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.refusal == "" {
+	w.refuseLocked(r)
+	return errGatewayRefused
+}
+
+// refuseLocked is refuse with w.mu held.
+func (w *gatewayWire) refuseLocked(r GatewayRejection) {
+	if w.refusal == "" && w.handshake.status == 0 {
 		w.refusal = r
 	}
-	return errGatewayRefused
 }
 
 // sdkSentCancelled reports whether the SDK sent notifications/cancelled for
@@ -470,10 +535,15 @@ func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, cal
 		if a.Rejection == "" {
 			a.Rejection = w.handshake.rejection
 		}
+		if a.Rejection == GatewayRejectionTokenReused {
+			a.Outcome = GatewayAttemptUnknown
+		}
 		return a
 	}
 	a.HTTPStatus = w.call.status
 	switch {
+	case w.call.rejection == GatewayRejectionTokenReused:
+		a.Outcome, a.Rejection = GatewayAttemptUnknown, w.call.rejection
 	case w.call.rejection != "":
 		a.Outcome, a.Rejection = GatewayAttemptRefused, w.call.rejection
 	case w.reply != nil && w.reply.err != nil && w.reply.err.Code == mcpsdk.CodeURLElicitationRequired:
@@ -503,14 +573,29 @@ func notProcessed(code int64) bool {
 }
 
 // answerOf is the status of resp and, when it means the request never ran,
-// why: 401 invalid_token, or 404 for a request naming a session.
+// why: 401 invalid_token (token_reused apart), 403 insufficient_scope, or
+// 404 for a request naming a session.
 func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	a := gatewayAnswer{status: resp.StatusCode}
 	switch {
+	case resp.StatusCode == http.StatusUnauthorized && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isTokenReusedChallenge):
+		a.rejection = GatewayRejectionTokenReused
 	case resp.StatusCode == http.StatusUnauthorized && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInvalidTokenChallenge):
 		a.rejection = GatewayRejectionInvalidToken
+	case resp.StatusCode == http.StatusForbidden && slices.ContainsFunc(resp.Header.Values("WWW-Authenticate"), isInsufficientScopeChallenge):
+		a.rejection = GatewayRejectionDenied
 	case resp.StatusCode == http.StatusNotFound && req.Header.Get("Mcp-Session-Id") != "":
 		a.rejection = GatewayRejectionSessionNotFound
+	}
+	return a
+}
+
+// callAnswerOf is answerOf for the tools/call with ID id, which also tells
+// a 403 that ToolHive's vMCP answered before running it (deniedBefore).
+func callAnswerOf(req *http.Request, resp *http.Response, id json.RawMessage) gatewayAnswer {
+	a := answerOf(req, resp)
+	if a.rejection == "" && resp.StatusCode == http.StatusForbidden && deniedBefore(resp, id) {
+		a.rejection = GatewayRejectionDenied
 	}
 	return a
 }
@@ -518,13 +603,84 @@ func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 // isInvalidTokenChallenge reports a WWW-Authenticate value carrying a Bearer
 // challenge with error="invalid_token" (RFC 6750 §3). A value that does not
 // parse is not one.
-func isInvalidTokenChallenge(header string) bool {
+func isInvalidTokenChallenge(header string) bool { return hasBearerError(header, "invalid_token") }
+
+// tokenReusedReason is how ToolHive's vMCP names a call-bound token that has
+// already started a call in an invalid_token challenge's error_description.
+// The match depends on ToolHive's description text, which is not a stable
+// contract: a machine-readable reason for call-binding refusals is requested
+// in stacklok/toolhive#7362. Until it exists, a change to that text would make a spent
+// token look like any rejected one and be retried with a new token.
+const tokenReusedReason = "(token_reused)" // #nosec G101 -- a reason code, not a credential.
+
+// isTokenReusedChallenge reports a WWW-Authenticate value carrying a Bearer
+// invalid_token challenge whose error_description names token_reused.
+func isTokenReusedChallenge(header string) bool {
 	challenges, err := parseDirectChallenges(header)
 	if err != nil {
 		return false
 	}
 	return slices.ContainsFunc(challenges, func(c directChallenge) bool {
-		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == "invalid_token"
+		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == "invalid_token" &&
+			strings.Contains(c.params["error_description"], tokenReusedReason)
+	})
+}
+
+// jsonRPCCodeDenied is the JSON-RPC error code ToolHive's vMCP answers a
+// request it refuses before dispatch with, alongside HTTP 403.
+const jsonRPCCodeDenied = 403
+
+// maxDenialBody bounds how much of a 403 answer deniedBefore reads.
+const maxDenialBody = 64 << 10
+
+// deniedBefore reports whether resp, a 403 answering the request with ID id,
+// carries a JSON-RPC error of code jsonRPCCodeDenied for that ID: ToolHive's
+// vMCP refused the request before running it. It restores the body it
+// reads, so the caller still sees all of it.
+func deniedBefore(resp *http.Response, id json.RawMessage) bool {
+	if resp.Body == nil || len(id) == 0 {
+		return false
+	}
+	head, err := io.ReadAll(io.LimitReader(resp.Body, maxDenialBody))
+	resp.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(head), resp.Body), Closer: resp.Body}
+	if err != nil {
+		return false
+	}
+	var reply struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   *struct {
+			Code int64 `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(head, &reply) != nil {
+		return false
+	}
+	return reply.JSONRPC == "2.0" && reply.Error != nil && reply.Error.Code == jsonRPCCodeDenied && sameID(reply.ID, id)
+}
+
+// readCloser reads from Reader and closes Closer.
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// isInsufficientScopeChallenge reports a WWW-Authenticate value carrying a
+// Bearer challenge with error="insufficient_scope" (RFC 6750 §3.1). A value
+// that does not parse is not one.
+func isInsufficientScopeChallenge(header string) bool {
+	return hasBearerError(header, "insufficient_scope")
+}
+
+// hasBearerError reports a WWW-Authenticate value carrying a Bearer
+// challenge whose error parameter is code.
+func hasBearerError(header, code string) bool {
+	challenges, err := parseDirectChallenges(header)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(challenges, func(c directChallenge) bool {
+		return strings.EqualFold(c.scheme, "Bearer") && c.params["error"] == code
 	})
 }
 

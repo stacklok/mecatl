@@ -10,15 +10,21 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
+	"github.com/stacklok/toolhive/pkg/authserver/authorizationdetails"
 	servercrypto "github.com/stacklok/toolhive/pkg/authserver/server/crypto"
 	"github.com/stacklok/toolhive/pkg/authserver/server/tokenexchange"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/mcp/toolcalldetails"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/vmcp"
+	"github.com/stacklok/toolhive/pkg/vmcp/auth/factory"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
+	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
+	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
@@ -92,6 +98,69 @@ type ToolHiveConfig struct {
 	// SigningKeyFile.
 	SigningKeyFile   string
 	FallbackKeyFiles []string
+}
+
+// defaultGatewayMaxCallDuration is how long the vMCP keeps a gateway call
+// open: it accepts the call's messages, and keeps its token's single-use
+// record, for at most this long after the call starts. It does not stop a
+// longer call.
+const defaultGatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
+
+// gatewayMaxCallDuration is the vMCP's maximum call duration:
+// defaultGatewayMaxCallDuration, unless a test's trust shortens it. It is
+// also the grace after a gateway token's exp (gatewayCallBinding).
+func (t AS2Trust) gatewayMaxCallDuration() time.Duration {
+	if t.t != nil && t.t.MaxCallDuration > 0 {
+		return t.t.MaxCallDuration
+	}
+	return defaultGatewayMaxCallDuration
+}
+
+// callEntryRegistry is AS-2's authorization_details registry: ToolHive's
+// MCP call type alone, which AS-2 processes in the ID-JAG's signed claim and
+// copies into the gateway token (credentials-and-lifecycle.md, step (8)).
+// ToolHive registers no type by default.
+func callEntryRegistry() (*authorizationdetails.Registry, error) {
+	types := map[string]authorizationdetails.Type{}
+	toolcalldetails.Register(types)
+	registry, err := authorizationdetails.New(types)
+	if err != nil {
+		return nil, fmt.Errorf("mcpbroker: register the MCP call type: %w", err)
+	}
+	return registry, nil
+}
+
+// gatewayCallBinding is the vMCP's call binding with AS-2 set up at issuer
+// (credentials-and-lifecycle.md, step (9), check 3): every token of the
+// broker client must carry a call entry, a call stays open for at most
+// maxCall, and the call a token starts may send its own messages after the
+// token's exp for as long as it is open. The token validator in front of the
+// vMCP and the vMCP share it, so both answer with incoming's challenge.
+//
+// The grace after exp equals maxCall because the message Mecatl sends after
+// exp is the call's cancellation, which can come at any point in the call. A
+// shorter grace would answer a later cancellation 401, and the backend's
+// tool would keep running until maxCall. No elicitation reply follows exp:
+// the vMCP answers a tools/call as one JSON response and Mecatl's client
+// opens no GET stream, so no elicitation reaches it (#2821). The vMCP admits
+// an expired token only for its open call's cancellation, reply, GET, or
+// DELETE on that call's session, and only for AS-2's tokens of client, so
+// the longer grace gives a stolen token little more.
+//
+// Shortcut: the single-use record is in this process's memory, so a gateway token replayed to another replica within its lifetime is accepted; removed by #2805 (more than one replica), with the vMCP's single-use record shared by all replicas (stacklok/toolhive#7261).
+func gatewayCallBinding(issuer string, client ToolHiveBrokerClient, maxCall time.Duration, incoming *vmcpconfig.IncomingAuthConfig) (*callbinding.Binding, error) {
+	binding, err := callbinding.New(callbinding.Config{
+		Clients:         []string{client.ID},
+		MaxCallDuration: maxCall,
+		ExpiredTokenAdmission: []callbinding.ExpiredTokenAdmission{{
+			Issuer: issuer, ClientID: client.ID, Grace: maxCall,
+		}},
+		Challenge: factory.IncomingBearerChallenge(incoming),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcpbroker: create the vMCP's call binding: %w", err)
+	}
+	return binding, nil
 }
 
 // signingKeyRunConfig is ToolHive's configuration of the embedded
@@ -188,14 +257,17 @@ type ToolHiveBrokerClient struct {
 }
 
 // as2DelegateClient is ToolHive's configuration of the broker client at AS-2
-// with the vMCP resource. Restricted with no source clients, it can exchange
-// only tokens issued to itself, never a user's gateway login token.
+// with the vMCP resource. Its gateway tokens get AS-2's default lifetime,
+// capped at the remaining validity of the ID-JAG they are redeemed from.
+// Restricted with no source clients, it can exchange only tokens issued to
+// itself, never a user's gateway login token. ToolHive refuses a subject
+// token that carries authorization_details (stacklok/toolhive#7282), so it
+// cannot exchange a call-bound gateway token, which would get around the
+// token's single use with a new jti.
 //
-// Shortcut: that includes a gateway token AS-2 issued it, which the design
-// refuses, and ToolHive requires the token-exchange grant on this client, so
-// each exchange mints another gateway token with a new jti, up to the
-// original's expiry; removed by #2533 (AS-2 marks gateway tokens, which
-// ToolHive refuses at token exchange, stacklok/toolhive#7247).
+// Shortcut: a gateway token gets AS-2's default lifetime (one hour), capped at the remaining validity of its ID-JAG (id_jag_lifetime), rather than a short lifetime of its own set for this client; removed by #2533 (AS-2 trusts AS-1 in production, where a per-client lifetime takes effect).
+//
+// Shortcut: ToolHive requires the token-exchange grant on this client, so a gateway token without a call entry, which the broker never obtains since it sends one on every call, could still be exchanged for another up to its expiry; removed by #2533 (AS-2 marks gateway tokens, which ToolHive refuses at token exchange, stacklok/toolhive#7247).
 func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,

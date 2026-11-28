@@ -132,7 +132,7 @@ func (x *idjagFixture) issue(t *testing.T, actor string) (identitybroker.IDJAGRe
 	t.Helper()
 	return x.client.IssueIDJAG(t.Context(), identitybroker.IDJAGRequest{
 		SubjectToken: x.grant, ActorToken: identitybroker.NewToken(actor),
-		Audience: testTargetIssuer, Resource: testTargetResource, OperationID: "op_1",
+		Audience: testTargetIssuer, Resource: testTargetResource,
 	})
 }
 

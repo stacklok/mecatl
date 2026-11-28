@@ -5,11 +5,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,9 +88,12 @@ func (x *idjagAS1) request(as2Issuer, as2Resource string) identitybroker.IDJAGRe
 func idjagRequest(grant identitybroker.Token, audience, resource string) identitybroker.IDJAGRequest {
 	return identitybroker.IDJAGRequest{
 		SubjectToken: grant, ActorToken: identitybroker.NewToken(testSVID),
-		Audience: audience, Resource: resource, OperationID: "op-pr42-001",
+		Audience: audience, Resource: resource, AuthorizationDetails: json.RawMessage(testCallEntry),
 	}
 }
+
+// testCallEntry is the call entry the tests' ID-JAG exchanges carry.
+var testCallEntry = `[{"type":"https://toolhive.dev/mcp_tool_call","server":"github","tool":"github.pull_request_read","arguments_sha256":"` + strings.Repeat("ab", 32) + `","operation_id":"op-pr42-001"}]`
 
 // realAS1Verifier accepts actor as Alice's agent testAgentID of trust domain
 // agents.test and denies everything else, standing in for the broker's
@@ -230,7 +235,7 @@ func TestIssueIDJAGSendsTheForm(t *testing.T) {
 		"requested_token_type":  tokenTypeJAG,
 		"audience":              testAS2Issuer,
 		"resource":              testVMCP,
-		"mecatl_operation":      "op-pr42-001",
+		"authorization_details": testCallEntry,
 		"client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
 	}
 	for name, value := range want {
@@ -297,6 +302,65 @@ func TestIssueIDJAGNeverPutsTokensInErrors(t *testing.T) {
 				t.Fatal("IssueIDJAG succeeded, want an error")
 			}
 			assertNoSecrets(t, err, secrets...)
+		})
+	}
+}
+
+// TestIssueIDJAGSendsTheCallEntry: the exchange sends the request's call
+// entry as authorization_details, byte for byte, for AS-1 to sign into the
+// ID-JAG, and omits the parameter when the request has none.
+func TestIssueIDJAGSendsTheCallEntry(t *testing.T) {
+	var form url.Values
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		form = r.PostForm
+		_, _ = w.Write([]byte(`{"access_token":"jag-secret-value","issued_token_type":"` + tokenTypeJAG + `","token_type":"N_A","expires_in":90}`))
+	}))
+	t.Cleanup(server.Close)
+	const entry = `[{"type":"https://toolhive.dev/mcp_tool_call","server":"github","method":"tools/list"}]`
+	req := idjagRequest(identitybroker.NewToken("rt-secret"), testAS2Issuer, testVMCP)
+	req.AuthorizationDetails = json.RawMessage(entry)
+	if _, err := newStubClient(t, server.URL, server.Client()).IssueIDJAG(t.Context(), req); err != nil {
+		t.Fatalf("IssueIDJAG: %v", err)
+	}
+	if got := form["authorization_details"]; len(got) != 1 || got[0] != entry {
+		t.Fatalf("authorization_details = %q, want %s", got, entry)
+	}
+	req.AuthorizationDetails = nil
+	if _, err := newStubClient(t, server.URL, server.Client()).IssueIDJAG(t.Context(), req); err != nil {
+		t.Fatalf("IssueIDJAG: %v", err)
+	}
+	if form.Has("authorization_details") {
+		t.Fatalf("authorization_details = %q, want the parameter omitted", form["authorization_details"])
+	}
+}
+
+// TestIssueIDJAGAgainstRealAS1RefusesOtherDetailTypes: AS-1 registers
+// ToolHive's call type and nothing else, so it refuses an exchange whose
+// authorization_details names another type, or holds a second call entry,
+// and issues no ID-JAG (credentials-and-lifecycle.md, step (7)).
+func TestIssueIDJAGAgainstRealAS1RefusesOtherDetailTypes(t *testing.T) {
+	entry := `{"type":"https://toolhive.dev/mcp_tool_call","server":"github","tool":"github.pull_request_read","arguments_sha256":"` + strings.Repeat("ab", 32) + `","operation_id":"op-1"}`
+	for name, details := range map[string]string{
+		"another type":   `[{"type":"https://example.com/other"}]`,
+		"a second entry": `[` + entry + `,` + entry + `]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := startIDJAGAS1(t, testAS2Issuer, testVMCP)
+			req := x.request(testAS2Issuer, testVMCP)
+			req.AuthorizationDetails = json.RawMessage(details)
+			_, err := x.client.IssueIDJAG(t.Context(), req)
+			var refusal *identitybroker.ServerRefusal
+			if !errors.As(err, &refusal) || refusal.Status != http.StatusBadRequest || refusal.Code != "invalid_authorization_details" {
+				t.Fatalf("IssueIDJAG = %v, want a 400 invalid_authorization_details refusal", err)
+			}
+			for _, r := range x.faults.Requests() {
+				if r.Kind == identityharness.KindIDJAG && r.IssuedToken != "" {
+					t.Fatal("AS-1 issued an ID-JAG")
+				}
+			}
 		})
 	}
 }

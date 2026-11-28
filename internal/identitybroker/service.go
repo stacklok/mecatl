@@ -122,7 +122,8 @@ type Service interface {
 	// an error, so a caller that ignores the result cannot dispatch.
 	//
 	// The checks run in order, each failing as shown:
-	//   - an invalid request: CodeInvalidArgument;
+	//   - an invalid request: CodeInvalidArgument, recorded naming only the
+	//     calling workload;
 	//   - an unknown session: as for any call;
 	//   - a closed session: its closing reason;
 	//   - a rejection report for an attempt never issued, or already
@@ -161,6 +162,10 @@ type Service interface {
 	//     ReasonSessionClosed, closing the session;
 	//   - consent the gateway requires: CodeFailedPrecondition,
 	//     ReasonConsentRequired;
+	//   - a gateway token whose response does not carry the call entry the
+	//     broker sent (step (8a)): CodeInternal, ReasonCallEntryMissing when
+	//     the response has none, ReasonCallEntryMismatch when it has another;
+	//     the token is discarded and the call not retried;
 	//   - any other failure: CodeInternal.
 	AuthorizeCall(ctx context.Context, req AuthorizeCallRequest) (Authorization, error)
 	// ReportDelegation reports that a run of one agent delegated work to a

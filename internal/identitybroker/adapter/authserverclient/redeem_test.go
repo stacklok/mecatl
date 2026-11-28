@@ -164,3 +164,22 @@ func TestRedeemMalformedResponses(t *testing.T) {
 		})
 	}
 }
+
+// TestRedeemReturnsTheResponsesCallEntry: the response's
+// authorization_details member comes back as AS-2 wrote it, for the broker's
+// output check; TestRedeemSendsTheForm shows it is nil when absent.
+func TestRedeemReturnsTheResponsesCallEntry(t *testing.T) {
+	for name, member := range map[string]string{
+		"an entry": `[ {"server":"github", "type":"https://toolhive.dev/mcp_tool_call","method":"tools/list"} ]`,
+		"null":     `null`,
+		"a string": `"x"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, err := stubAnswering(t, http.StatusOK, `{"access_token":"gw-secret-value","token_type":"Bearer","authorization_details":`+member+`}`).Redeem(t.Context(),
+				identitybroker.Redemption{Assertion: identitybroker.NewToken("jag"), Resource: testVMCP})
+			if err != nil || string(res.AuthorizationDetails) != member {
+				t.Fatalf("Redeem = %+v, %v; want authorization_details %s as sent", res, err, member)
+			}
+		})
+	}
+}
