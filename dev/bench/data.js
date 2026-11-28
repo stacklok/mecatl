@@ -416390,6 +416390,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795859985190,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "047119e26e7dd582054d96c64782985ce92de638",
+          "message": "fix(mcpbroker): refuse gateway calls too large for the vMCP (#3013)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-28T13:42:41Z",
+          "tree_id": "4e07400a56e24210ea4b77680f60a9ece239986a",
+          "url": "https://github.com/stacklok/mecatl/commit/047119e26e7dd582054d96c64782985ce92de638"
+        },
+        "date": 1795874069048,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -600603,6 +600637,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795874065366,
+  "lastUpdate": 1795874070230,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
