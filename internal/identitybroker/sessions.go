@@ -40,6 +40,10 @@ type sessionTable struct {
 	// attempts holds the attempts AuthorizeCall issued, per session, until
 	// the session closes.
 	attempts *attemptLedger
+	// reports holds the attempts AuthorizeCall issued for tools/calls, per
+	// session, and what the MCP client reported of each; those whose report
+	// is not settled are kept after the session closes.
+	reports *reportLedger
 	// runs holds each session's run and delegation records until the session
 	// closes.
 	runs *runLedger
@@ -184,7 +188,7 @@ func newSessionTable(skew time.Duration) *sessionTable {
 	return &sessionTable{
 		open: map[string]string{}, byID: map[string]*brokerSession{}, agents: map[string]*agentRecord{},
 		incarnations: map[string]string{}, skew: skew,
-		converted: map[string]time.Time{}, attempts: newAttemptLedger(), runs: newRunLedger(), now: time.Now,
+		converted: map[string]time.Time{}, attempts: newAttemptLedger(), reports: newReportLedger(), runs: newRunLedger(), now: time.Now,
 		opening: keyedLocks{locks: map[string]*keyedLock{}}, registering: keyedLocks{locks: map[string]*keyedLock{}}, reporting: keyedLocks{locks: map[string]*keyedLock{}},
 		newOpens: map[string]*brokerSession{},
 	}
@@ -439,7 +443,8 @@ func (t *sessionTable) viewLocked(s *brokerSession) Session {
 }
 
 // closeLocked closes s with reason for cause, unless it is already closed,
-// and discards its refresh token, issued attempts, and run records. The close
+// and discards its refresh token, issued attempts, settled call reports, and
+// run records. The close
 // takes effect whether or not its record is accepted; the record is queued on
 // t.queue. The caller holds t.mu.
 func (t *sessionTable) closeLocked(s *brokerSession, reason Reason, cause CloseCause) {
@@ -484,6 +489,7 @@ func (t *sessionTable) closeHeldLocked(s *brokerSession, reason Reason, cause Cl
 	s.closedAt = t.now()
 	s.grant = nil
 	t.attempts.dropLocked(s.ID)
+	t.reports.closeLocked(s.ID, s.closedAt)
 	t.runs.dropLocked(s.ID)
 	// A new session an open is still recording is not in the table.
 	if t.open[s.HostSessionID] == s.ID {

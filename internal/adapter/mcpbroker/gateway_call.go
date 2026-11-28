@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -17,7 +18,10 @@ import (
 
 const (
 	diagnosticEventGatewayCall = "gateway_call"
-	diagnosticCodeCompleted    = "completed"
+	// diagnosticEventGatewayCallReport is a dispatch and outcome report that
+	// failed.
+	diagnosticEventGatewayCallReport = "gateway_call_report"
+	diagnosticCodeCompleted          = "completed"
 )
 
 // gatewayScope is the session tree a gateway call belongs to, read from the
@@ -89,6 +93,9 @@ type gatewayCall struct {
 	cause   string
 	// attempts are the attempts sent so far, oldest first.
 	attempts []mcpadapter.GatewayAttempt
+	// brokerSession is the broker session the last authorization was
+	// issued in, which its attempt's report names.
+	brokerSession string
 }
 
 // executeGateway authorizes call with the identity broker and sends it to
@@ -96,8 +103,10 @@ type gatewayCall struct {
 // outcome is a tool error; only a cancelled context is a Go error.
 func (t *sessionTool) executeGateway(ctx context.Context, scope gatewayScope, call session.ToolCall) (session.ToolResult, error) {
 	g := &gatewayCall{t: t, r: t.attachment.runtime, call: call, scope: scope}
+	// Each attempt is reported to the identity broker as it ends (send), a
+	// cancelled one included: cancelled after its tools/call was written, it
+	// reports an unknown outcome; before, a dispatch failure.
 	result, code, err := g.run(ctx)
-	// Shortcut: the MCP client reports dispatch and outcome to the broker only as a diagnostic, and a call cancelled after its tools/call was written returns the cancellation instead of an unknown-outcome report; removed by #2731 (dispatch and outcome reports).
 	g.log(ctx, code)
 	if err != nil {
 		return session.ToolResult{}, err
@@ -215,6 +224,7 @@ func (g *gatewayCall) authorize(ctx context.Context, rejectedAttemptID string) (
 	if auth.GatewayToken.IsZero() || auth.AttemptID == "" {
 		return identitybroker.Authorization{}, errors.New("mcpbroker: authorization carries no gateway token or attempt")
 	}
+	g.brokerSession = cred.BrokerSessionID
 	return auth, nil
 }
 
@@ -283,7 +293,77 @@ func (g *gatewayCall) send(ctx context.Context, auth identitybroker.Authorizatio
 		HashArguments:   hashArguments,
 	})
 	g.attempts = append(g.attempts, a)
+	g.report(ctx, a)
 	return a
+}
+
+const (
+	// reportTries bounds the tries of one attempt's report, and
+	// reportTryTimeout each try.
+	reportTries      = 3
+	reportTryTimeout = 2 * time.Second
+	// reportRetryWait is the wait before the first retry; it doubles for
+	// each one after.
+	reportRetryWait = 50 * time.Millisecond
+)
+
+// report reports attempt a's dispatch and observed outcome to the identity
+// broker. It runs even when ctx is cancelled, retries a report that failed
+// for a reason that may pass, and never fails the call: a report still
+// failing is only logged. It carries references and fixed values only. It
+// runs on the call's path, so a broker that hangs holds the call's result,
+// a cancelled call's included, for at most reportTries tries of
+// reportTryTimeout and the waits between them; the in-process broker
+// answers at once.
+//
+// Shortcut: a report still lost after its retries goes undetected until reconciliation compares reported dispatches with the vMCP's tool calls; removed by #2848.
+func (g *gatewayCall) report(ctx context.Context, a mcpadapter.GatewayAttempt) {
+	ctx = context.WithoutCancel(ctx)
+	dispatch, outcome, cause := a.Report()
+	req := identitybroker.ReportCallRequest{
+		SessionID: g.brokerSession, OperationID: g.op, AttemptID: a.AttemptID,
+		Dispatch: dispatch, Outcome: outcome, Cause: cause,
+	}
+	var err error
+	wait := reportRetryWait
+	tries := 0
+	for tries < reportTries {
+		if tries > 0 {
+			time.Sleep(wait)
+			wait *= 2
+		}
+		tries++
+		tryCtx, cancel := context.WithTimeout(ctx, reportTryTimeout)
+		err = g.r.gatewayCalls.Reporter.ReportCall(tryCtx, req)
+		cancel()
+		if err == nil || !retryableReport(err) {
+			break
+		}
+	}
+	if err == nil {
+		return
+	}
+	args := []any{"event", diagnosticEventGatewayCallReport, "operation", g.op, "attempt", a.AttemptID,
+		"dispatch", string(dispatch), "outcome", string(outcome), "tries", tries,
+		"session", string(g.t.attachment.logical.ref.SessionID())}
+	var brokerErr *identitybroker.Error
+	if errors.As(err, &brokerErr) {
+		args = append(args, "broker_code", string(brokerErr.Code), "broker_reason", string(brokerErr.Reason))
+	} else {
+		args = append(args, "cause", failureCause(err))
+	}
+	g.r.diag.Log(ctx, port.LevelWarn, "mcp broker gateway call report failed", args...)
+}
+
+// retryableReport reports whether a failed report may succeed if sent
+// again: the broker was unavailable, the report lost a race, or a try ran
+// out of time.
+func retryableReport(err error) bool {
+	var brokerErr *identitybroker.Error
+	if errors.As(err, &brokerErr) {
+		return brokerErr.Code == identitybroker.CodeUnavailable || brokerErr.Code == identitybroker.CodeAborted
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 // failureCause names a failure before a send that is not the identity

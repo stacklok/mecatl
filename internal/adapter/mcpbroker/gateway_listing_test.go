@@ -55,7 +55,7 @@ func embeddedGatewayProcess(t *testing.T, limits mcpadapter.GatewayListLimits) *
 	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	t.Setenv("TMPDIR", t.TempDir())
-	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"notes", "other"}, ListLimits: limits}
+	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Reporter: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"notes", "other"}, ListLimits: limits}
 	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, BrokerClient: newAS2BrokerClient(t).config, GatewayCalls: &calls,
 		Profiles: []ToolHiveProfile{
@@ -168,7 +168,7 @@ func gatewayCatalogue(t *testing.T, list func(string, identitybroker.Token) ([]G
 	}}
 	testCatalogueProcess(runtime, queries, nil, "first", "second")
 	WithGatewayCalls(testGateway{endpoint: "https://gateway.example/mcp", resource: "https://gateway.example/mcp", client: &http.Client{}, list: list},
-		GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"second"}})(runtime)
+		GatewayCalls{Authorizer: &fakeAuthorizer{}, Reporter: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"second"}})(runtime)
 	return testAttachment(t, runtime), queries, diag
 }
 

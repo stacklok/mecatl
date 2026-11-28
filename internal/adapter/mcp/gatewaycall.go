@@ -179,6 +179,35 @@ type GatewayAttempt struct {
 	rpcErr *jsonrpc.Error
 }
 
+// Report is what attempt a reports of itself to the identity broker: its
+// dispatch, its observed outcome, and its rejection as the cause. A
+// tools/call never written is a dispatch failure, which proves it did not
+// run, with no outcome. Any other attempt was, or may have been, dispatched:
+// a completed call with a result that is not a tool error observed success,
+// a refused one or any other completed one failure, and an unknown one
+// unknown. A token_reused answer before the write counts as dispatched with
+// an unknown outcome: this attempt's tools/call was not written, but its
+// token may already have started the call. A tool error counts as a
+// completed call's failure under the #2822 shortcut on classify, though the
+// vMCP may have sent the call to its backend before failing it. The report
+// carries no token, arguments, or result content.
+func (a GatewayAttempt) Report() (dispatch identitybroker.DispatchOutcome, outcome identitybroker.ObservedOutcome, cause string) {
+	cause = string(a.Rejection)
+	switch a.Outcome {
+	case GatewayAttemptNotSent:
+		return identitybroker.DispatchFailure, "", cause
+	case GatewayAttemptCompleted:
+		if a.result != nil && !a.result.IsError {
+			return identitybroker.DispatchSuccess, identitybroker.ObservedSuccess, cause
+		}
+		return identitybroker.DispatchSuccess, identitybroker.ObservedFailure, cause
+	case GatewayAttemptRefused:
+		return identitybroker.DispatchSuccess, identitybroker.ObservedFailure, cause
+	default:
+		return identitybroker.DispatchSuccess, identitybroker.ObservedUnknown, cause
+	}
+}
+
 // SendGatewayCall sends req's tools/call at most once, over a vMCP session
 // of its own, and reports what is known about whether it ran. It never
 // sends the call again: a caller that retries makes a new attempt.

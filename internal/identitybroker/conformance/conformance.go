@@ -176,6 +176,15 @@ func childRequest(s identitybroker.Session, parent identitybroker.AgentRef, labe
 	return req
 }
 
+// callReportRequest is a well-formed report of a dispatched attempt in
+// session sessionID, which no implementation issued.
+func callReportRequest(sessionID string) identitybroker.ReportCallRequest {
+	return identitybroker.ReportCallRequest{
+		SessionID: sessionID, OperationID: "op-1", AttemptID: "att_conformance",
+		Dispatch: identitybroker.DispatchSuccess, Outcome: identitybroker.ObservedUnknown,
+	}
+}
+
 func authorizeRequest(sessionID string) identitybroker.AuthorizeCallRequest {
 	return identitybroker.AuthorizeCallRequest{
 		SessionID:       sessionID,

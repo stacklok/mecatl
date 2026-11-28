@@ -190,6 +190,24 @@ type Service interface {
 	//   - a receiving run already recorded: CodePermissionDenied,
 	//     ReasonDenied.
 	ReportDelegation(ctx context.Context, req ReportDelegationRequest) error
+	// ReportCall reports what the MCP client observed of one attempt of a
+	// tools/call the broker authorized: whether it dispatched the call and
+	// the outcome it observed. The broker records each report as reported
+	// by mecak8s, joined to the decision that issued the attempt, and never
+	// waits on its sink for it. A closed session still takes reports of the
+	// attempts it issued.
+	//
+	// Each report is handled as shown:
+	//   - an invalid request, including a dispatch or outcome outside its
+	//     fixed set: CodeInvalidArgument, recorded as a rejected report;
+	//   - an unknown session, an attempt the broker did not issue in the
+	//     session, or one it issued for another operation: recorded as a
+	//     mismatch, not dropped, and accepted;
+	//   - the same report again: accepted, and nothing more is recorded;
+	//   - a different report of an attempt already reported, or a late
+	//     result for an attempt whose outcome was not reported unknown:
+	//     recorded as a mismatch and accepted.
+	ReportCall(ctx context.Context, req ReportCallRequest) error
 }
 
 // Owner is a session owner: the user's company identity, such as issuer
@@ -568,6 +586,117 @@ func (r ReportDelegationRequest) Validate() error {
 		return invalid("the receiving run must differ from the delegating run")
 	}
 	return r.Owner.validate()
+}
+
+// DispatchOutcome is a reported attempt's dispatch, in audit.md's fixed set
+// for the Dispatch event. Its values are the matching DecisionOutcome
+// strings, which the broker's records carry.
+type DispatchOutcome string
+
+const (
+	// DispatchSuccess means the tools/call was, or may have been, sent: it
+	// may have run.
+	DispatchSuccess DispatchOutcome = "success"
+	// DispatchFailure means the tools/call was never sent, which proves it
+	// did not run.
+	DispatchFailure DispatchOutcome = "failure"
+)
+
+// ObservedOutcome is the outcome the MCP client observed of a dispatched
+// attempt, in audit.md's fixed set for the Observed outcome event. Its values
+// are the matching DecisionOutcome strings.
+type ObservedOutcome string
+
+// Observed outcomes; ObservedUnknown means the call may have run but no
+// completion was observed.
+const (
+	ObservedSuccess ObservedOutcome = "success"
+	ObservedFailure ObservedOutcome = "failure"
+	ObservedError   ObservedOutcome = "error"
+	ObservedUnknown ObservedOutcome = "unknown"
+)
+
+// ReportCallRequest reports one attempt of a tools/call the broker
+// authorized, as the MCP client that sent it observed it. It carries no
+// credential, arguments, or result content: only references and fixed
+// values.
+type ReportCallRequest struct {
+	// SessionID is the broker session the attempt was authorized in.
+	SessionID string
+	// OperationID and AttemptID name the call and the attempt, as
+	// AuthorizeCallRequest.OperationID and Authorization.AttemptID did.
+	OperationID string
+	AttemptID   string
+	// Dispatch is DispatchSuccess when the tools/call was, or may have been,
+	// sent, and DispatchFailure when it never was, which proves the call did
+	// not run (audit.md, "AuditEvent profile").
+	Dispatch DispatchOutcome
+	// Outcome is the outcome observed of a dispatched call. Empty when
+	// Dispatch is DispatchFailure.
+	Outcome ObservedOutcome
+	// LateResult reports a result observed after the attempt's outcome was
+	// reported unknown: a new observed outcome of the same attempt, never
+	// unknown.
+	LateResult bool
+	// Cause is the client's fixed code for why the attempt was not sent or
+	// was refused, such as invalid_token; empty when it has none. It is
+	// lowercase letters, digits, and underscores, at most maxCauseBytes.
+	Cause string
+}
+
+// maxCauseBytes bounds ReportCallRequest.Cause.
+const maxCauseBytes = 64
+
+// Validate reports whether r is well formed. The error is an *Error with
+// CodeInvalidArgument.
+func (r ReportCallRequest) Validate() error {
+	if err := requireIDs("broker session", r.SessionID, "operation", r.OperationID, "attempt", r.AttemptID); err != nil {
+		return err
+	}
+	if !r.inSets() {
+		return invalid("dispatch must be success or failure, and the outcome of a dispatched call success, failure, error, or unknown")
+	}
+	switch {
+	case r.Dispatch == DispatchFailure && (r.Outcome != "" || r.LateResult):
+		return invalid("an attempt that was not dispatched has no outcome")
+	case r.Dispatch == DispatchSuccess && r.Outcome == "":
+		return invalid("a dispatched attempt must report its outcome")
+	case r.LateResult && r.Outcome == ObservedUnknown:
+		return invalid("a late result is never unknown")
+	case !isCause(r.Cause):
+		return invalid(fmt.Sprintf("a cause must be at most %d lowercase letters, digits, and underscores", maxCauseBytes))
+	}
+	return nil
+}
+
+// inSets reports whether r's dispatch and outcome are values of their fixed
+// sets (audit.md, "AuditEvent profile"); an empty outcome is checked by
+// Validate.
+func (r ReportCallRequest) inSets() bool {
+	switch r.Dispatch {
+	case DispatchSuccess, DispatchFailure:
+	default:
+		return false
+	}
+	switch r.Outcome {
+	case "", ObservedSuccess, ObservedFailure, ObservedError, ObservedUnknown:
+		return true
+	}
+	return false
+}
+
+// isCause reports whether s is empty or a fixed code: lowercase letters,
+// digits, and underscores, at most maxCauseBytes.
+func isCause(s string) bool {
+	if len(s) > maxCauseBytes {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // isSHA256Hex reports whether s is 64 lowercase hex characters.

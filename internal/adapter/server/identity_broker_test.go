@@ -217,6 +217,10 @@ func (b *recordingBroker) AuthorizeCall(ctx context.Context, req identitybroker.
 	return b.inner.AuthorizeCall(ctx, req)
 }
 
+func (b *recordingBroker) ReportCall(ctx context.Context, req identitybroker.ReportCallRequest) error {
+	return b.inner.ReportCall(ctx, req)
+}
+
 func (b *recordingBroker) ReportDelegation(ctx context.Context, req identitybroker.ReportDelegationRequest) error {
 	if err := b.down(); err != nil {
 		return err

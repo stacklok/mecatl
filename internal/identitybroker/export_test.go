@@ -132,3 +132,16 @@ func WaitRecords(b *Broker) { _ = b.sessions.queue.wait(context.Background()) }
 
 // SetRecorder replaces b's record sink. Call it while no call is running.
 func SetRecorder(b *Broker, r Recorder) { b.recorder = r }
+
+// MaxAttemptsPerSession bounds a session's issued and reported attempts.
+const MaxAttemptsPerSession = maxAttemptsPerSession
+
+// IssueReportedAttempt has b remember attemptID, issued in session id for
+// operation op by a decision recorded as decision, as AuthorizeCall does for
+// an allowed tools/call.
+func IssueReportedAttempt(b *Broker, id, attemptID, op, decision string) {
+	t := b.sessions
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.reports.issueLocked(id, attemptID, op, decision, Subjects{})
+}

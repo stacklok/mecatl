@@ -69,6 +69,12 @@ func runWorkloads(t *testing.T, factory coreFactory) {
 		theirs = core.ReportDelegation(ctx, workloadB, delegationRequest(s.ID))
 		missing = core.ReportDelegation(ctx, workloadB, delegationRequest(unknown.ID))
 		sameError(t, "ReportDelegation", theirs, missing)
+		// A call report is accepted either way, recorded as a mismatch.
+		theirs = core.ReportCall(ctx, workloadB, callReportRequest(s.ID))
+		missing = core.ReportCall(ctx, workloadB, callReportRequest(unknown.ID))
+		if theirs != nil || missing != nil {
+			t.Fatalf("ReportCall in another workload's session = %v, in an unknown one = %v; want both accepted", theirs, missing)
+		}
 		theirs = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: s.ID, Reason: identitybroker.ReasonSessionClosed})
 		missing = core.CloseSession(ctx, workloadB, identitybroker.CloseSessionRequest{SessionID: unknown.ID, Reason: identitybroker.ReasonSessionClosed})
 		sameError(t, "CloseSession", theirs, missing)
@@ -110,6 +116,8 @@ func runWorkloads(t *testing.T, factory coreFactory) {
 			wantError(t, "RegisterAgent with "+name, err, identitybroker.CodeUnauthenticated, "")
 			_, err = core.AuthorizeCall(ctx, workload, authorizeRequest(s.ID))
 			wantError(t, "AuthorizeCall with "+name, err, identitybroker.CodeUnauthenticated, "")
+			err = core.ReportCall(ctx, workload, callReportRequest(s.ID))
+			wantError(t, "ReportCall with "+name, err, identitybroker.CodeUnauthenticated, "")
 		}
 	})
 }

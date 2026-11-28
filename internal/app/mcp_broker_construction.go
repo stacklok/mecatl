@@ -213,6 +213,7 @@ func buildBundledMCPBroker(ctx context.Context, cfg Config, declaration mcpautho
 		// Shortcut: only servers the identity broker's gateway entry routes use the gateway path, and production's routes none until AS-2 trusts AS-1, so production is unchanged; removed by #2533.
 		config.GatewayCalls = &mcpbroker.GatewayCalls{
 			Authorizer:  calls.service,
+			Reporter:    calls.service,
 			Credentials: calls.credentials,
 			Servers:     append([]string(nil), calls.servers...),
 		}

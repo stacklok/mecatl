@@ -667,6 +667,57 @@ func (gw *gatewayServe) wantStandInRefusal(t *testing.T, op string, got map[stri
 	}
 }
 
+// wantReportedAttempt waits for the broker's records of op's one attempt,
+// which reports are queued for, and fails t unless the allowing decision
+// has a dispatch and an observed outcome joined to it, with outcome and
+// cause, marked as reported by mecak8s.
+func wantReportedAttempt(t *testing.T, built *app.Built, op string, outcome identitybroker.DecisionOutcome, cause string) {
+	t.Helper()
+	sink := built.IdentityBrokerRecords()
+	if sink == nil {
+		t.Fatal("mecak8s built no identity broker record sink")
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var decision identitybroker.DecisionRecord
+		for _, d := range sink.Decisions() {
+			if d.OperationID == op && d.Outcome == identitybroker.OutcomeSuccess {
+				decision = d
+			}
+		}
+		var dispatches []identitybroker.DispatchRecord
+		var outcomes []identitybroker.OutcomeRecord
+		for _, r := range sink.Dispatches() {
+			if r.OperationID == op {
+				dispatches = append(dispatches, r)
+			}
+		}
+		for _, r := range sink.Outcomes() {
+			if r.OperationID == op {
+				outcomes = append(outcomes, r)
+			}
+		}
+		if decision.AuditID != "" && len(dispatches) == 1 && len(outcomes) == 1 {
+			d, o := dispatches[0], outcomes[0]
+			for _, r := range []identitybroker.CallReport{d.CallReport, o.CallReport} {
+				if r.DecisionRecord != decision.AuditID || r.AttemptID != decision.AttemptID || r.Mismatch != "" ||
+					r.Cause != cause || r.ReportProvenance != identitybroker.ProvenanceReportedByMecak8s {
+					t.Fatalf("report %+v, want joined to decision %s for attempt %s with cause %q", r, decision.AuditID, decision.AttemptID, cause)
+				}
+			}
+			if d.Outcome != identitybroker.OutcomeSuccess || o.Outcome != outcome || decision.GatewayToken.ID == "" {
+				t.Fatalf("dispatch %s and outcome %s for decision naming %+v; want success, %s, and the gateway token's jti",
+					d.Outcome, o.Outcome, decision.GatewayToken, outcome)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("for operation %s: decision %q, %d dispatches, %d outcomes; want one of each", op, decision.AuditID, len(dispatches), len(outcomes))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // standInResult is the tool result of a gateway call wantStandInRefusal
 // accepts.
 const standInResult = "MCP gateway call not run: the gateway refused it before running it; it is not retried (code gateway_refused)."
@@ -904,6 +955,10 @@ func TestIdentityBrokerSessionToolCallThroughGateway(t *testing.T) {
 	if res := toolResult("call-open"); !res.IsError || res.Content != standInResult {
 		t.Fatalf("the call's result = %q, want the stand-in's refusal", res.Content)
 	}
+	// The MCP client reported the attempt, and the broker joined its
+	// dispatch and observed outcome to the decision: dispatched, and
+	// refused before running.
+	wantReportedAttempt(t, built, operation("call-open"), identitybroker.OutcomeFailure, "denied")
 
 	// The broker session closes while the next call waits for approval.
 	closeBroker := func() {

@@ -49,6 +49,31 @@ type fakeAuthorizer struct {
 	mu       sync.Mutex
 	script   []error
 	requests []identitybroker.AuthorizeCallRequest
+	// reportScript answers ReportCall tries in order as script does
+	// AuthorizeCall; reports are every try.
+	reportScript []error
+	reports      []identitybroker.ReportCallRequest
+}
+
+// ReportCall records req unless ctx is done, as a remote broker would not
+// receive a report sent on a cancelled context.
+func (f *fakeAuthorizer) ReportCall(ctx context.Context, req identitybroker.ReportCallRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reports = append(f.reports, req)
+	if n := len(f.reports); n <= len(f.reportScript) {
+		return f.reportScript[n-1]
+	}
+	return nil
+}
+
+func (f *fakeAuthorizer) reported() []identitybroker.ReportCallRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reports)
 }
 
 func (f *fakeAuthorizer) AuthorizeCall(_ context.Context, req identitybroker.AuthorizeCallRequest) (identitybroker.Authorization, error) {
@@ -150,7 +175,8 @@ func (g testGateway) ListTools(ctx context.Context, server string, token identit
 func TestCheckGatewayRefusesAnIncompleteGateway(t *testing.T) {
 	const gatewayURL = "https://gateway.example/mcp"
 	complete := testGateway{endpoint: gatewayURL, resource: gatewayURL, client: http.DefaultClient}
-	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}}
+	auth := &fakeAuthorizer{}
+	calls := GatewayCalls{Authorizer: auth, Reporter: auth, Credentials: &fakeCredentials{}}
 	for name, tc := range map[string]struct {
 		gateway Gateway
 		calls   GatewayCalls
@@ -160,8 +186,9 @@ func TestCheckGatewayRefusesAnIncompleteGateway(t *testing.T) {
 		"no endpoint":    {testGateway{resource: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
 		"no resource":    {testGateway{endpoint: gatewayURL, client: http.DefaultClient}, calls, ErrInvalidCatalogue},
 		"no HTTP client": {testGateway{endpoint: gatewayURL, resource: gatewayURL}, calls, ErrInvalidCatalogue},
-		"no authorizer":  {complete, GatewayCalls{Credentials: calls.Credentials}, ErrInvalidCatalogue},
-		"no credentials": {complete, GatewayCalls{Authorizer: calls.Authorizer}, ErrInvalidCatalogue},
+		"no authorizer":  {complete, GatewayCalls{Reporter: calls.Reporter, Credentials: calls.Credentials}, ErrInvalidCatalogue},
+		"no credentials": {complete, GatewayCalls{Authorizer: calls.Authorizer, Reporter: calls.Reporter}, ErrInvalidCatalogue},
+		"no reporter":    {complete, GatewayCalls{Authorizer: calls.Authorizer, Credentials: calls.Credentials}, ErrInvalidCatalogue},
 	} {
 		r := &Runtime{}
 		r.setGateway(tc.gateway, tc.calls)
@@ -302,7 +329,7 @@ func newGatewayFixture(t *testing.T, opts gatewayFixtureOptions) *gatewayFixture
 	if !opts.noGateway {
 		WithGatewayCalls(
 			testGateway{endpoint: f.g.URL(), resource: f.g.URL(), client: &http.Client{Transport: f.wire, Timeout: 10 * time.Second}, server: opts.routeServer},
-			GatewayCalls{Authorizer: f.auth, Credentials: f.creds, Servers: opts.servers},
+			GatewayCalls{Authorizer: f.auth, Reporter: f.auth, Credentials: f.creds, Servers: opts.servers},
 		)(harness.runtime)
 	}
 	f.attachment, _ = attach(t, harness.runtime, gatewayTestSession)
@@ -1232,7 +1259,8 @@ func TestBrokerRoutesWithoutGatewayCallsUnchanged(t *testing.T) {
 func TestToolHiveProcessInstallsTheEmbeddedGateway(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	t.Setenv("TMPDIR", t.TempDir())
-	calls := GatewayCalls{Authorizer: &fakeAuthorizer{}, Credentials: &fakeCredentials{}, Servers: []string{"private"}}
+	auth := &fakeAuthorizer{}
+	calls := GatewayCalls{Authorizer: auth, Reporter: auth, Credentials: &fakeCredentials{}, Servers: []string{"private"}}
 	config := ToolHiveConfig{
 		CallbackURL: as2TestCallbackURL, Profiles: []ToolHiveProfile{staticProtectedProfile("private")},
 		BrokerClient: newAS2BrokerClient(t).config, GatewayCalls: &calls,
