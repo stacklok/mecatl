@@ -461916,6 +461916,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1795874074466,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29541485+ChrisJBurns@users.noreply.github.com",
+            "name": "Chris Burns",
+            "username": "ChrisJBurns"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc634e6d423a992be58f2b93de4dc77998e047ca",
+          "message": "chore(deps): bump toolhive to v0.70.1 (#3014)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-11-28T14:23:35Z",
+          "tree_id": "4a44304da884fc59584bb404787109d03c26c2d0",
+          "url": "https://github.com/stacklok/mecatl/commit/fc634e6d423a992be58f2b93de4dc77998e047ca"
+        },
+        "date": 1795876593226,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 13417,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 12911,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 680,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -601148,6 +601187,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1795876589720,
+  "lastUpdate": 1795876593821,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
