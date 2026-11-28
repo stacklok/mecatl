@@ -8,7 +8,7 @@
 # the digest still pins the build. Keep latest-dev for the builder and latest for
 # the runtime so updates cannot silently swap the development/runtime variants.
 # https://docs.renovatebot.com/docker/#digest-updating
-FROM cgr.dev/chainguard/node:latest-dev@sha256:ae340fe00130911512a268fe0c74ab75a710d67ae5c4b0e0e8a121eb36e915ad AS builder
+FROM cgr.dev/chainguard/node:latest-dev@sha256:7393e94262396c74c4101cb1578f666b1f76884f48082ab59beb5e171271af5c AS builder
 
 WORKDIR /home/node/src
 COPY --chown=65532:65532 . .
@@ -23,7 +23,7 @@ FROM builder AS production-dependencies
 RUN cd examples/slack-bot && corepack pnpm@12.23.0 prune --prod
 RUN corepack pnpm@12.23.0 prune --prod
 
-FROM cgr.dev/chainguard/node:latest@sha256:f93d51ac85f04aed13ade2d7864d014671023764e5e6e13564e5e767fbf77fa5
+FROM cgr.dev/chainguard/node:latest@sha256:86d7c621851bf0589807dcb060aea8295987464efd378cefd46e44f1f3b6ce73
 
 # The current runtime image includes BusyBox. Remove its single executable (all
 # applet links, including /bin/sh, then become inert) before dropping privileges.
