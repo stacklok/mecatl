@@ -8,7 +8,7 @@ import (
 
 	resourceid "github.com/stacklok/mecatl/engine/id"
 	"github.com/stacklok/mecatl/engine/kernel/codec"
-	groupid "github.com/stacklok/mecatl/engine/kernel/sessiongroup/id"
+	groupid "github.com/stacklok/mecatl/engine/kernel/resourcegroup/id"
 )
 
 func TestGroupID(t *testing.T) {

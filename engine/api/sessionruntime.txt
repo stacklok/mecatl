@@ -1,7 +1,20 @@
+    method func (*Factory).DecodeID(v id.ID) (id.SessionID, error)
+    method func (*Factory).Kind() id.Kind
+    method func (*Factory).Load(*resourcegroup.Scope, id.SessionID) (resourcegroup.Loaded[*SessionRuntime], error)
+    method func (*Factory).Policy() resourcegroup.FactoryPolicy
+    method func (*Factory).ResourceType() reflect.Type
     method func (*SessionRuntime).Cancel(context.Context) error
     method func (*SessionRuntime).GroupID() id.GroupID
+    method func (*SessionRuntime).ID() id.SessionID
     method func (*SessionRuntime).Run(context.Context, session.UserInput) error
     method func (*SessionRuntime).SessionID() id.SessionID
     method func (*SessionRuntime).Snapshot(context.Context) (session.Snapshot, error)
+    method func (FactoryConfig).Validate() error
+func Create(context.Context, *resourcegroup.Group) (*SessionRuntime, id.SessionID, error)
+func Load(ctx context.Context, group *resourcegroup.Group, sid id.SessionID) (*SessionRuntime, error)
+func NewFactory(FactoryConfig) (*Factory, error)
+type Factory struct{}
+type FactoryConfig struct{Session session.Config; Policy resourcegroup.FactoryPolicy}
 type SessionRuntime struct{}
+var ErrInvalidConfig error
 var ErrNotImplemented error

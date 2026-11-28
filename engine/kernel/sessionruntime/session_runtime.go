@@ -2,16 +2,17 @@ package sessionruntime
 
 import (
 	"context"
-	"errors"
 
+	"github.com/stacklok/mecatl/engine/kernel/resourcegroup"
+	groupid "github.com/stacklok/mecatl/engine/kernel/resourcegroup/id"
 	"github.com/stacklok/mecatl/engine/kernel/session"
 	sessionid "github.com/stacklok/mecatl/engine/kernel/session/id"
-	groupid "github.com/stacklok/mecatl/engine/kernel/sessiongroup/id"
 )
 
-// ErrNotImplemented identifies the nonoperational execution skeleton. It never
-// means that input was accepted, work ran, or cancellation reached an executor.
-var ErrNotImplemented = errors.New("session runtime is not implemented")
+// ErrNotImplemented is the shared resourcegroup.ErrNotImplemented sentinel for
+// this nonoperational skeleton. It never means that input was accepted, work ran,
+// or cancellation reached an executor.
+var ErrNotImplemented = resourcegroup.ErrNotImplemented
 
 // SessionRuntime is the live execution owner of one Session under a hosting
 // group. Zero is unusable; do not copy it after use. No usable runtime can yet
@@ -43,6 +44,34 @@ func (r *SessionRuntime) SessionID() sessionid.SessionID {
 		return sessionid.SessionID{}
 	}
 	return r.sessionID
+}
+
+// ID returns the same stable identity as SessionID, including on nil/zero runtimes.
+func (r *SessionRuntime) ID() sessionid.SessionID { return r.SessionID() }
+
+// Load delegates typed activation of an existing member to resourcegroup.Load.
+// ctx cancels only this caller's wait, not shared construction. Currently it
+// returns nil, ErrNotImplemented without lookup, callbacks, or input retention.
+func Load(ctx context.Context, group *resourcegroup.Group, sid sessionid.SessionID) (*SessionRuntime, error) {
+	return resourcegroup.Load[*SessionRuntime](ctx, group, sid)
+}
+
+// Create proposes validating creation inputs, allocating with sessionid.NewSessionID,
+// then passing a typed initializer closure to resourcegroup.Create, which resolves
+// the registered *Factory. No domain arguments are currently needed; the signature
+// may evolve when actual Session creation needs them, without a common input DTO.
+// ctx cancels only this caller's wait, not shared creation.
+//
+// The intended result retains an allocated ID even on later errors, and returns
+// zero only if allocation did not occur. An ID proves neither acceptance nor
+// membership. Accepted history is never rolled back; indeterminate creation can
+// orphan history if a caller abandons the ID and retries. A future janitor policy
+// may reclaim initialization-only unused histories, never delete real Session data
+// as creation rollback. These semantics need usage experience before implementation.
+// Currently Create allocates nothing, retains nothing, invokes no callbacks, and
+// always returns nil, zero ID, ErrNotImplemented, even for canceled or invalid input.
+func Create(context.Context, *resourcegroup.Group) (*SessionRuntime, sessionid.SessionID, error) {
+	return nil, sessionid.SessionID{}, ErrNotImplemented
 }
 
 // Snapshot proposes capturing accepted state through the runtime's serialized

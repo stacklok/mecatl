@@ -1,17 +1,22 @@
 // Package sessionruntime sketches the live execution owner for one isolated
 // kernel Session. A SessionRuntime runs the Session: loop sequencing, canonical
 // submission coordination, and supervised model/tool work belong here, not on
-// the passive session.Session aggregate or on SessionGroup.
+// the passive session.Session aggregate or on resourcegroup.Group.
 //
-// Only a hosting SessionGroup is intended to activate runtimes. This package has
-// no public constructor accepting a Session, backend, or ownership capability;
-// the group-to-runtime private construction seam is deferred until ownership and
-// storage composition are reviewed. Dependency direction is from sessiongroup
-// to sessionruntime, never back; group correlation uses the identity leaf.
+// A concrete handwritten Factory captures typed Session dependencies and supplies
+// resourcegroup.Loader metadata. Hosts register it with a resourcegroup.Manager;
+// package Load and Create are typed domain entry points, not Manager lookups.
+// Dependency direction is sessionruntime to resourcegroup, never the reverse.
+// Construction receives only a controlled resourcegroup.Scope, never a raw storage
+// backend or caller-owned construction context. No production wiring is changed.
 //
-// These are provisional declarations. Snapshot, Run, and Cancel always return
-// ErrNotImplemented, perform no I/O, retain no input, and execute nothing.
-// Identity accessors are safe on zero/nil runtimes and return unset identities.
+// These are provisional declarations. NewFactory, Factory.Load, package Load and
+// Create, Snapshot, Run, and Cancel return the shared ErrNotImplemented sentinel,
+// perform no I/O, retain no input, and execute nothing. Create allocates no ID.
+// Only configuration validation, metadata, ID decoding, and identity accessors are
+// operational. Identity accessors are safe on zero/nil runtimes and return unset
+// identities. No residency, ownership, or actual factory construction is implemented.
+//
 // A run is not started by construction, history replay, or an accepted request
 // commitment. Execution admission, cancellation, shutdown, and uncertainty reports
 // need a concrete first interaction consumer before these signatures are final.

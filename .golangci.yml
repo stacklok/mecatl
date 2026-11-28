@@ -271,24 +271,25 @@ linters:
           deny:
             - pkg: os
               desc: 'session identity values must not access host state'
-        core-kernel-sessiongroup:
+        core-kernel-resourcegroup:
           list-mode: strict
           files:
-            - '**/engine/kernel/sessiongroup/**.go'
-            - '!**/engine/kernel/sessiongroup/id/**.go'
+            - '**/engine/kernel/resourcegroup/**.go'
+            - '!**/engine/kernel/resourcegroup/id/**.go'
             - '!$test'
           allow:
             - $gostd
-            - github.com/stacklok/mecatl/engine/kernel/session/id$
-            - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
-            - github.com/stacklok/mecatl/engine/kernel/sessionruntime$
+            - github.com/stacklok/mecatl/engine/id$
+            - github.com/stacklok/mecatl/engine/kernel/resourcegroup/id$
+            - github.com/stacklok/mecatl/engine/kernel/history$
+            - github.com/stacklok/mecatl/engine/kernel/groupstorage$
           deny:
             - pkg: os
-              desc: 'session hosting must not access host state'
-        core-kernel-sessiongroup-id:
+              desc: 'resource residency must not access host state'
+        core-kernel-resourcegroup-id:
           list-mode: strict
           files:
-            - '**/engine/kernel/sessiongroup/id/**.go'
+            - '**/engine/kernel/resourcegroup/id/**.go'
             - '!$test'
           allow:
             - $gostd
@@ -297,6 +298,19 @@ linters:
           deny:
             - pkg: os
               desc: 'group identity values must not access host state'
+        core-kernel-groupstorage:
+          list-mode: strict
+          files:
+            - '**/engine/kernel/groupstorage/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/id$
+            - github.com/stacklok/mecatl/engine/kernel/resourcegroup/id$
+            - github.com/stacklok/mecatl/engine/kernel/history$
+          deny:
+            - pkg: os
+              desc: 'group storage contracts must not access host state'
         core-kernel-sessionruntime:
           list-mode: strict
           files:
@@ -306,7 +320,9 @@ linters:
             - $gostd
             - github.com/stacklok/mecatl/engine/kernel/session$
             - github.com/stacklok/mecatl/engine/kernel/session/id$
-            - github.com/stacklok/mecatl/engine/kernel/sessiongroup/id$
+            - github.com/stacklok/mecatl/engine/id$
+            - github.com/stacklok/mecatl/engine/kernel/resourcegroup$
+            - github.com/stacklok/mecatl/engine/kernel/resourcegroup/id$
           deny:
             - pkg: os
               desc: 'session runtime must not access host state'

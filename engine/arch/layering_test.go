@@ -109,7 +109,7 @@ var coreImportRules = []coreImportRule{
 		desc: "session identity values may import only resource ID values, the codec runtime, and stdlib, never history or formats",
 	},
 	{
-		pkg: modulePrefix + "engine/kernel/sessiongroup/id",
+		pkg: modulePrefix + "engine/kernel/resourcegroup/id",
 		allowedCore: map[string]bool{
 			modulePrefix + "engine/id":           true,
 			modulePrefix + "engine/kernel/codec": true,
@@ -117,22 +117,34 @@ var coreImportRules = []coreImportRule{
 		desc: "group identity values may import only resource identity, codec runtime, and stdlib",
 	},
 	{
-		pkg: modulePrefix + "engine/kernel/sessionruntime",
+		pkg: modulePrefix + "engine/kernel/groupstorage",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/session":         true,
-			modulePrefix + "engine/kernel/session/id":      true,
-			modulePrefix + "engine/kernel/sessiongroup/id": true,
+			modulePrefix + "engine/id":                      true,
+			modulePrefix + "engine/kernel/resourcegroup/id": true,
+			modulePrefix + "engine/kernel/history":          true,
 		},
-		desc: "session runtime may import passive Session and identity leaves, never the hosting group, adapters, or legacy aggregate",
+		desc: "group storage authority may import only generic identity, group identity, history contracts and stdlib, never resource runtimes",
 	},
 	{
-		pkg: modulePrefix + "engine/kernel/sessiongroup",
+		pkg: modulePrefix + "engine/kernel/resourcegroup",
 		allowedCore: map[string]bool{
-			modulePrefix + "engine/kernel/session/id":      true,
-			modulePrefix + "engine/kernel/sessiongroup/id": true,
-			modulePrefix + "engine/kernel/sessionruntime":  true,
+			modulePrefix + "engine/id":                      true,
+			modulePrefix + "engine/kernel/resourcegroup/id": true,
+			modulePrefix + "engine/kernel/groupstorage":     true,
+			modulePrefix + "engine/kernel/history":          true,
 		},
-		desc: "session group may import member runtimes and identity leaves, never adapters or the legacy aggregate",
+		desc: "resource residency may import generic identity, group storage and history, never concrete resource types or execution",
+	},
+	{
+		pkg: modulePrefix + "engine/kernel/sessionruntime",
+		allowedCore: map[string]bool{
+			modulePrefix + "engine/id":                      true,
+			modulePrefix + "engine/kernel/session":          true,
+			modulePrefix + "engine/kernel/session/id":       true,
+			modulePrefix + "engine/kernel/resourcegroup":    true,
+			modulePrefix + "engine/kernel/resourcegroup/id": true,
+		},
+		desc: "session runtime may import passive Session, generic residency and identity leaves, never adapters or legacy aggregate",
 	},
 	{
 		pkg: modulePrefix + "engine/kernel/history/format",

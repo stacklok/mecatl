@@ -1,4 +1,4 @@
-//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/sessiongroup/id -emit cbor,clone,equal -out zz_cbor_generated.go
+//go:generate go -C ../../../.. run ./internal/dtogen/cmd/dtogen -dir engine/kernel/resourcegroup/id -emit cbor,clone,equal -out zz_cbor_generated.go
 
 package id
 
@@ -8,10 +8,10 @@ import (
 	resourceid "github.com/stacklok/mecatl/engine/id"
 )
 
-// groupKind belongs to SessionGroup, not the generic resource identity utility.
+// groupKind belongs to resource group, not the generic resource identity utility.
 const groupKind resourceid.Kind = "GRP"
 
-// GroupID identifies a SessionGroup independently of its members and hosts.
+// GroupID identifies a resource group independently of its members and hosts.
 // Its zero value is unset and invalid. GroupIDs are comparable map keys with no
 // mutable storage. CBOR is the resource ID text without wrapping.
 // Reconstruction proves neither existence, membership, nor hosting authority.
@@ -26,7 +26,7 @@ type GroupID struct {
 // validateCBOR checks the domain kind after the child validates resource syntax.
 func (v GroupID) validateCBOR() error {
 	if v.value.Kind() != groupKind {
-		return errors.New("expected session group ID")
+		return errors.New("expected resource group ID")
 	}
 	return nil
 }
