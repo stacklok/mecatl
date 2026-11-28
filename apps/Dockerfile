@@ -96,7 +96,7 @@ RUN rm -rf node_modules contracts/node_modules server/node_modules web/node_modu
 # ---------------------------------------------------------------------------
 # Multi-arch index digest of `latest` (linux/amd64 + linux/arm64); the digest is
 # what is pulled. Its Node major is checked against `engines` in CI, not here.
-FROM cgr.dev/chainguard/node:latest@sha256:d5b583c60748012e09a4eb97befc0ce1342d9022d34aa65e605e2f3a6c33e9e9
+FROM cgr.dev/chainguard/node:latest@sha256:86d7c621851bf0589807dcb060aea8295987464efd378cefd46e44f1f3b6ce73
 
 # A fresh root-owned directory: the base image's /app is world-writable, which
 # would let the non-root server replace its own code. WORKDIR creates the
