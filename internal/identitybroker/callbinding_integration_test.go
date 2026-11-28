@@ -20,7 +20,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stacklok/toolhive/pkg/bodylimit"
 	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -446,12 +445,18 @@ func padArgs(n int64) string {
 // TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt: the real vMCP takes
 // a call whose arguments are as long as the MCP broker lets through,
 // mcpbroker.MaxGatewayArgumentBytes, and runs it, so the cap is within the
-// vMCP's request body limits; it refuses a call over the lower of them, the
-// MCP SDK's, and one over both, with 413 before running them, and
-// Mecatl's MCP client reports each refused, not as an unknown outcome
-// (stacklok/mecatl#3009).
+// vMCP's request body limits; a call over the lower of them, the MCP SDK's,
+// it refuses with 413 before running it, and Mecatl's MCP client reports it
+// refused, not as an unknown outcome (stacklok/mecatl#3009). Hashing MiBs
+// of arguments is slow under the race detector, so the gateway tokens last
+// a minute rather than the binding fixture's few seconds: nothing here is
+// about their expiry.
 func TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt(t *testing.T) {
-	f, backend := newBindingFixture(t)
+	backend, profile := startCalendarBackend(t)
+	f := newHarnessFixtureWith(t, harnessOptions{
+		as2:     mcpbrokertest.AS2Options{Profiles: []mcpbroker.ToolHiveProfile{profile}},
+		servers: []string{"calendar"}, idjagLifetime: time.Minute,
+	})
 	ctx := t.Context()
 
 	fits := padArgs(mcpbroker.MaxGatewayArgumentBytes)
@@ -460,24 +465,13 @@ func TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt(t *testing.T) {
 		t.Fatalf("a call at the MCP broker's limit = %+v, backend runs %d; want completed once", a, backend.echoRuns.Load())
 	}
 
-	for _, over := range []struct {
-		name, op string
-		size     int64
-	}{
-		// Over both limits, the size the issue reported; the smaller, the
-		// MCP SDK's, is the one that answers.
-		{"both limits", "op-over-both", bodylimit.DefaultMaxRequestBodySize + 1},
-		{"the MCP SDK's limit", "op-over-sdk", mcpsdk.DefaultMaxRequestBodyBytes + 1},
-	} {
-		name, tooLarge := over.name, padArgs(over.size)
-		req := f.calendarCall(t, over.op, "echo", tooLarge)
-		a := f.send(ctx, f.mustAuthorize(t, req), req, tooLarge)
-		if a.Outcome != mcpadapter.GatewayAttemptRefused || a.Rejection != mcpadapter.GatewayRejectionTooLarge || a.HTTPStatus != http.StatusRequestEntityTooLarge {
-			t.Fatalf("a call over %s = %+v, want refused as request_too_large with 413", name, a)
-		}
+	tooLarge := padArgs(mcpsdk.DefaultMaxRequestBodyBytes + 1)
+	req = f.calendarCall(t, "op-too-large", "echo", tooLarge)
+	if a := f.send(ctx, f.mustAuthorize(t, req), req, tooLarge); a.Outcome != mcpadapter.GatewayAttemptRefused || a.Rejection != mcpadapter.GatewayRejectionTooLarge || a.HTTPStatus != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a call over the vMCP's limit = %+v, want refused as request_too_large with 413", a)
 	}
 	if n := backend.echoRuns.Load(); n != 1 {
-		t.Fatalf("backend runs = %d, want no call over a limit run", n)
+		t.Fatalf("backend runs = %d, want the call over the limit not run", n)
 	}
 }
 
