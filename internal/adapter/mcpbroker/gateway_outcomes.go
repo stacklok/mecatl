@@ -3,6 +3,7 @@ package mcpbroker
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/stacklok/mecatl/engine/session"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -36,7 +37,7 @@ var (
 	outcomeSVIDExpired         = gatewayOutcome{code: "svid_expired", text: "MCP gateway call refused: the agent's identity could not be renewed (code svid_expired)."}
 	outcomeUnavailable         = gatewayOutcome{code: "unavailable", text: "MCP gateway call failed: authorization is unavailable; the call was not sent and can be retried (code unavailable)."}
 	outcomeInternal            = gatewayOutcome{code: "internal", text: "MCP gateway call failed: internal error; the call was not sent (code internal)."}
-	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: "MCP gateway call refused: the arguments must be a JSON object representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys, including keys that differ only by case); change them and retry (code refused_arguments)."}
+	outcomeRefusedArguments    = gatewayOutcome{code: "refused_arguments", text: fmt.Sprintf("MCP gateway call refused: the arguments must be a JSON object of at most %d KiB, representable exactly (no integers beyond ±2^53, invalid Unicode, or duplicate keys, including keys that differ only by case); change them and retry (code refused_arguments).", MaxGatewayArgumentBytes>>10)}
 	outcomeSessionNotFound     = gatewayOutcome{code: "gateway_session_not_found", text: "MCP gateway call not run: the gateway session ended before the call (code gateway_session_not_found)."}
 	outcomeTokenRejected       = gatewayOutcome{code: "token_rejected", text: "MCP gateway call not run: the gateway rejected the authorization twice (code token_rejected)."}
 	outcomeTokenReused         = gatewayOutcome{code: "token_reused", text: "MCP gateway call outcome unknown: the gateway says its authorization was already used for a call, which may have run; it is not retried automatically (code token_reused)."}
@@ -64,7 +65,7 @@ func outcomeConnectionRequired(server, link string) gatewayOutcome {
 func outcomeForAuthorization(err error) gatewayOutcome {
 	var brokerErr *identitybroker.Error
 	switch {
-	case errors.Is(err, errNotIJSON), errors.Is(err, errCaseFoldedMembers):
+	case errors.Is(err, errNotIJSON), errors.Is(err, errCaseFoldedMembers), errors.Is(err, errArgumentsTooLarge):
 		return outcomeRefusedArguments
 	case errors.Is(err, ErrAlreadySent):
 		return outcomeAlreadySent
@@ -130,6 +131,11 @@ func outcomeForAttempts(server string, last mcpadapter.GatewayAttempt, retried b
 		// route for this user (step (9), check 3), or by its own policy
 		// (check 4). Not retried.
 		return outcomeGatewayRefused
+	case last.Rejection == mcpadapter.GatewayRejectionTooLarge && last.Outcome == mcpadapter.GatewayAttemptRefused:
+		// A tools/call body the cap on the arguments let through, as with a
+		// very long tool name: the gateway refused it unread. A 413 to the
+		// handshake is not the arguments' doing, and falls to unavailable.
+		return outcomeRefusedArguments
 	case last.Rejection == mcpadapter.GatewayRejectionChanged:
 		return outcomeInternal
 	default:

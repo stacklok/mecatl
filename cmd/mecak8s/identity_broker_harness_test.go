@@ -993,7 +993,9 @@ func promptApprovingAsks(t *testing.T, api, token, id, text string, beforeApprov
 	}
 	asks := 0
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	// An event carries a tool call's arguments, up to a few MiB for a
+	// gateway call at the MCP broker's cap.
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	for scanner.Scan() {
 		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
 		if !ok {

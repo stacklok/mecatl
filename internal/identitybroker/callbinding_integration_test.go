@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stacklok/toolhive/pkg/bodylimit"
 	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -46,10 +48,11 @@ const (
 
 // calendarBackend is an anonymous MCP backend the vMCP routes as
 // "calendar": echo answers at once, counting its runs; slow runs until it is
-// cancelled.
+// cancelled; deny counts its runs and answers with a JSON-RPC error of code
+// 403, as a backend's own policy might after running.
 type calendarBackend struct {
 	slowStarted, slowCancelled chan struct{}
-	echoRuns                   atomic.Int64
+	echoRuns, denyRuns         atomic.Int64
 }
 
 func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHiveProfile) {
@@ -57,7 +60,8 @@ func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHivePro
 	b := &calendarBackend{slowStarted: make(chan struct{}, 4), slowCancelled: make(chan struct{}, 4)}
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "calendar", Version: "v1"}, nil)
 	type args struct {
-		A int `json:"a,omitempty"`
+		A   int    `json:"a,omitempty"`
+		Pad string `json:"pad,omitempty"`
 	}
 	text := func(s string) *mcpsdk.CallToolResult {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: s}}}
@@ -65,6 +69,10 @@ func startCalendarBackend(t *testing.T) (*calendarBackend, mcpbroker.ToolHivePro
 	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "echo"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, in args) (*mcpsdk.CallToolResult, any, error) {
 		b.echoRuns.Add(1)
 		return text(fmt.Sprintf("echo %d", in.A)), nil, nil
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "deny"}, func(context.Context, *mcpsdk.CallToolRequest, args) (*mcpsdk.CallToolResult, any, error) {
+		b.denyRuns.Add(1)
+		return nil, nil, &jsonrpc.Error{Code: 403, Message: "Forbidden: the backend's own policy"}
 	})
 	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "slow"}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ args) (*mcpsdk.CallToolResult, any, error) {
 		b.slowStarted <- struct{}{}
@@ -417,7 +425,7 @@ func TestRealVMCPRunsOnlyTheCallItsTokenNames(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	slices.Sort(names)
-	if !slices.Equal(names, []string{"calendar.echo", "calendar.slow"}) || listed.NextCursor != "" {
+	if !slices.Equal(names, []string{"calendar.deny", "calendar.echo", "calendar.slow"}) || listed.NextCursor != "" {
 		t.Fatalf("the listing = %v, cursor %q; want the calendar backend's tools alone and no cursor", names, listed.NextCursor)
 	}
 	if _, err := cs.ListTools(ctx, nil); err == nil {
@@ -425,6 +433,68 @@ func TestRealVMCPRunsOnlyTheCallItsTokenNames(t *testing.T) {
 	}
 	if e, _ := listRec.last("tools/list"); e.status != http.StatusUnauthorized || !strings.Contains(e.body, "token_reused") {
 		t.Fatalf("a second listing: %d %s, want 401 token_reused", e.status, e.body)
+	}
+}
+
+// padArgs is a calendar call's arguments of exactly n bytes, padded with
+// "<", which a JSON encoder that escapes HTML would make six times longer.
+func padArgs(n int64) string {
+	const open, closing = `{"pad":"`, `"}`
+	return open + strings.Repeat("<", int(n)-len(open)-len(closing)) + closing
+}
+
+// TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt: the real vMCP takes
+// a call whose arguments are as long as the MCP broker lets through,
+// mcpbroker.MaxGatewayArgumentBytes, and runs it, so the cap is within the
+// vMCP's request body limits; it refuses a call over the lower of them, the
+// MCP SDK's, and one over both, with 413 before running them, and
+// Mecatl's MCP client reports each refused, not as an unknown outcome
+// (stacklok/mecatl#3009).
+func TestRealVMCPRefusesACallTooLargeForItBeforeRunningIt(t *testing.T) {
+	f, backend := newBindingFixture(t)
+	ctx := t.Context()
+
+	fits := padArgs(mcpbroker.MaxGatewayArgumentBytes)
+	req := f.calendarCall(t, "op-fits", "echo", fits)
+	if a := f.send(ctx, f.mustAuthorize(t, req), req, fits); a.Outcome != mcpadapter.GatewayAttemptCompleted || backend.echoRuns.Load() != 1 {
+		t.Fatalf("a call at the MCP broker's limit = %+v, backend runs %d; want completed once", a, backend.echoRuns.Load())
+	}
+
+	for _, over := range []struct {
+		name, op string
+		size     int64
+	}{
+		// Over both limits, the size the issue reported; the smaller, the
+		// MCP SDK's, is the one that answers.
+		{"both limits", "op-over-both", bodylimit.DefaultMaxRequestBodySize + 1},
+		{"the MCP SDK's limit", "op-over-sdk", mcpsdk.DefaultMaxRequestBodyBytes + 1},
+	} {
+		name, tooLarge := over.name, padArgs(over.size)
+		req := f.calendarCall(t, over.op, "echo", tooLarge)
+		a := f.send(ctx, f.mustAuthorize(t, req), req, tooLarge)
+		if a.Outcome != mcpadapter.GatewayAttemptRefused || a.Rejection != mcpadapter.GatewayRejectionTooLarge || a.HTTPStatus != http.StatusRequestEntityTooLarge {
+			t.Fatalf("a call over %s = %+v, want refused as request_too_large with 413", name, a)
+		}
+	}
+	if n := backend.echoRuns.Load(); n != 1 {
+		t.Fatalf("backend runs = %d, want no call over a limit run", n)
+	}
+}
+
+// TestRealVMCPRelaysABackendErrorAfterItRan: a backend that runs the call
+// and answers with a JSON-RPC error of code 403, as its own policy might,
+// reaches Mecatl's MCP client as the vMCP relays it: a tool error result
+// over HTTP 200. The call is completed, never refused as one the vMCP
+// denied before running it, and its result carries the backend's message.
+func TestRealVMCPRelaysABackendErrorAfterItRan(t *testing.T) {
+	f, backend := newBindingFixture(t)
+	req := f.calendarCall(t, "op-deny", "deny", `{}`)
+	a := f.send(t.Context(), f.mustAuthorize(t, req), req, `{}`)
+	if a.Outcome != mcpadapter.GatewayAttemptCompleted || a.Rejection != "" || a.HTTPStatus != http.StatusOK || backend.denyRuns.Load() != 1 {
+		t.Fatalf("the backend's error after running = %+v, backend runs %d; want completed over HTTP 200, run once", a, backend.denyRuns.Load())
+	}
+	if res := mcpadapter.GatewayToolResult("c", "calendar", "mcp__calendar__deny", a); !res.IsError || !strings.Contains(res.Content, "the backend's own policy") {
+		t.Fatalf("the result = %+v, want a tool error carrying the backend's message", res)
 	}
 }
 

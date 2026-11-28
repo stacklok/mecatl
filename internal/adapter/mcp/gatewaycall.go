@@ -140,6 +140,13 @@ const (
 	GatewayRejectionDenied GatewayRejection = "denied"
 	// GatewayRejectionSessionNotFound means 404 for a request naming a session.
 	GatewayRejectionSessionNotFound GatewayRejection = "session_not_found"
+	// GatewayRejectionTooLarge means 413: the gateway refused the request
+	// because its body is larger than it accepts (RFC 9110 §15.5.14).
+	// ToolHive's vMCP answers so, before it parses the body, a request over
+	// its own body limit or that of the MCP SDK's handler serving it. Unlike
+	// a 403, the status alone suffices: 413 is by definition a refusal to
+	// process the request, and the vMCP never relays a backend's HTTP status.
+	GatewayRejectionTooLarge GatewayRejection = "request_too_large"
 	// GatewayRejectionURLElicitation means -32042 in reply to the tools/call.
 	GatewayRejectionURLElicitation GatewayRejection = "url_elicitation_required"
 	// GatewayRejectionChanged means the tools/call about to be written differs in
@@ -523,10 +530,10 @@ func (w *gatewayWire) observeReply(msg []byte) {
 	}
 }
 
-// classify decides the attempt's outcome. Only the three answers that mean
-// "never ran" refuse a written tools/call: 401 invalid_token, 404 for the
-// session, and -32042 in reply to the tools/call itself. A request the
-// gateway sent during the call does not.
+// classify decides the attempt's outcome. Only the answers that mean "never
+// ran" refuse a written tools/call: those answerOf and callAnswerOf name, and
+// -32042 in reply to the tools/call itself. A request the gateway sent during
+// the call does not.
 func (w *gatewayWire) classify(a GatewayAttempt, res *mcpsdk.CallToolResult, callErr error) GatewayAttempt {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -573,8 +580,8 @@ func notProcessed(code int64) bool {
 }
 
 // answerOf is the status of resp and, when it means the request never ran,
-// why: 401 invalid_token (token_reused apart), 403 insufficient_scope, or
-// 404 for a request naming a session.
+// why: 401 invalid_token (token_reused apart), 403 insufficient_scope, 404
+// for a request naming a session, or 413.
 func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 	a := gatewayAnswer{status: resp.StatusCode}
 	switch {
@@ -586,6 +593,8 @@ func answerOf(req *http.Request, resp *http.Response) gatewayAnswer {
 		a.rejection = GatewayRejectionDenied
 	case resp.StatusCode == http.StatusNotFound && req.Header.Get("Mcp-Session-Id") != "":
 		a.rejection = GatewayRejectionSessionNotFound
+	case resp.StatusCode == http.StatusRequestEntityTooLarge:
+		a.rejection = GatewayRejectionTooLarge
 	}
 	return a
 }

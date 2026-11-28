@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stacklok/toolhive/pkg/bodylimit"
 	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
 
@@ -20,6 +22,33 @@ var errNotIJSON = errors.New("mcpbroker: arguments are not I-JSON")
 // the arguments.
 var errCaseFoldedMembers = errors.New("mcpbroker: arguments have member names that differ only by case")
 
+// errArgumentsTooLarge is the refusal of arguments longer than
+// MaxGatewayArgumentBytes, which the vMCP would refuse with 413 before
+// reading them. Its text is fixed, so it never quotes the arguments.
+var errArgumentsTooLarge = errors.New("mcpbroker: arguments are too large for the gateway")
+
+// vmcpMaxRequestBodyBytes is the largest request body the embedded vMCP
+// reads. Two limits apply, and each answers a longer body with 413 before it
+// is parsed: ToolHive's own, bodylimit.DefaultMaxRequestBodySize, outermost;
+// and the MCP SDK's, mcpsdk.DefaultMaxRequestBodyBytes, in the SDK's
+// streamable HTTP handler that serves the vMCP's MCP endpoint, which leaves
+// it at its default. The SDK linked into the vMCP is the one this binary
+// links, so both constants are the vMCP's own.
+const vmcpMaxRequestBodyBytes = min(bodylimit.DefaultMaxRequestBodySize, mcpsdk.DefaultMaxRequestBodyBytes)
+
+// MaxGatewayArgumentBytes bounds the arguments of a gateway call: the vMCP's
+// request body limit less gatewayEnvelopeAllowance for the tools/call's
+// JSON-RPC envelope around them (its method, ID, tool name, and _meta). The
+// MCP client never makes the arguments longer (it compacts them and does not
+// escape HTML), so arguments within the bound fit with a tool name of up to
+// tens of KiB. A body that still exceeds the limit gets 413, which the MCP
+// client reports as refused.
+const MaxGatewayArgumentBytes = vmcpMaxRequestBodyBytes - gatewayEnvelopeAllowance
+
+// gatewayEnvelopeAllowance is the part of the vMCP's request body limit kept
+// for the tools/call's envelope around the arguments.
+const gatewayEnvelopeAllowance = 64 << 10
+
 // jsonWhitespace is JSON's insignificant whitespace (RFC 8259 section 2).
 const jsonWhitespace = " \t\n\r"
 
@@ -32,8 +61,13 @@ const jsonWhitespace = " \t\n\r"
 // one I-JSON object) fail with errNotIJSON, before anything is authorized.
 // Arguments the vMCP's request parser refuses although they have a hash, an
 // object with member names equal under case folding, fail with
-// errCaseFoldedMembers, also before anything is authorized.
+// errCaseFoldedMembers, and arguments longer than MaxGatewayArgumentBytes,
+// which the vMCP refuses before reading them, fail with errArgumentsTooLarge,
+// also before anything is authorized.
 func argumentsSHA256(args json.RawMessage) (sent json.RawMessage, sum string, err error) {
+	if int64(len(args)) > MaxGatewayArgumentBytes {
+		return nil, "", errArgumentsTooLarge
+	}
 	sent = args
 	// Only JSON's own whitespace is insignificant; bytes.TrimSpace would
 	// also drop Unicode spaces such as U+00A0, which the vMCP refuses.
