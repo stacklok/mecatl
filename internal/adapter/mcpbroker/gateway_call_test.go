@@ -722,6 +722,58 @@ func TestGatewayCallRefusesWhatTheGatewayRefuses(t *testing.T) {
 	}
 }
 
+// TestGatewayCallRefusesArgumentsTheVMCPWouldRefuse: arguments the real vMCP
+// refuses before running them, with 413 for their size or with 400 for
+// member names that differ only by case at any depth
+// (TestRealVMCPRefusesCaseCollidingArgumentsBeforeRunningThem in
+// internal/identitybroker), are refused as refused_arguments before anything
+// is claimed or authorized.
+func TestGatewayCallRefusesArgumentsTheVMCPWouldRefuse(t *testing.T) {
+	for name, args := range map[string]string{
+		"over the size limit":      string(paddedArguments(MaxGatewayArgumentBytes + 1)),
+		"top-level case collision": `{"a":1,"A":2}`,
+		"nested case collision":    `{"nest":{"b":1,"B":2}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newGatewayFixture(t, gatewayFixtureOptions{})
+			res, err := f.execute(mainAgent(t), t, "call-1", args)
+			wantRow(t, res, err, outcomeRefusedArguments)
+			if n := len(f.auth.calls()); n != 0 {
+				t.Fatalf("AuthorizeCall called %d times, want none", n)
+			}
+			if calls := f.g.Calls(); len(calls) != 0 {
+				t.Fatalf("gateway received %d requests", len(calls))
+			}
+			if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+				t.Fatalf("Claim = %v, want the call never claimed", err)
+			}
+		})
+	}
+}
+
+// TestGatewayCallTooLargeForTheGatewayIsRefusedAndReleased: a tools/call the
+// gateway answers with 413, which the cap on the arguments did not catch,
+// did not run: it is refused_arguments, not retried, and its claim is
+// released.
+func TestGatewayCallTooLargeForTheGatewayIsRefusedAndReleased(t *testing.T) {
+	f := newGatewayFixture(t, gatewayFixtureOptions{})
+	f.wire.respond = func(_ *http.Request, body []byte) *http.Response {
+		if bytes.Contains(body, []byte(`"method":"tools/call"`)) {
+			return &http.Response{StatusCode: http.StatusRequestEntityTooLarge, Status: "413 Request Entity Too Large", Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+				Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: io.NopCloser(strings.NewReader("Request Entity Too Large\n"))}
+		}
+		return nil
+	}
+	res, err := f.execute(mainAgent(t), t, "call-1", gatewayTestArgs)
+	wantRow(t, res, err, outcomeRefusedArguments)
+	if n := len(f.auth.calls()); n != 1 {
+		t.Fatalf("AuthorizeCall called %d times, want 1 (no retry)", n)
+	}
+	if err := f.claim(t, operationID(gatewayTestSession, gatewayTestSession, "call-1")); err != nil {
+		t.Fatalf("Claim = %v, want the refused call released", err)
+	}
+}
+
 func TestGatewayCallRefusesArgumentsOutsideIJSON(t *testing.T) {
 	f := newGatewayFixture(t, gatewayFixtureOptions{})
 	res, err := f.execute(mainAgent(t), t, "call-1", `{"a":9007199254740993}`)
@@ -799,6 +851,7 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{errors.New("unexpected"), "internal"},
 		{errNotIJSON, "refused_arguments"},
 		{errCaseFoldedMembers, "refused_arguments"},
+		{errArgumentsTooLarge, "refused_arguments"},
 		{ErrAlreadySent, "already_sent"},
 		{errSendOnceFull, "send_once_full"},
 		{agentcredential.ErrNoCredential, "identity_unavailable"},
@@ -822,6 +875,8 @@ func TestGatewayOutcomeRows(t *testing.T) {
 		{"denied before it ran", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionDenied}, false, outcomeGatewayRefused},
 		{"token reused", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptUnknown, Rejection: mcpadapter.GatewayRejectionTokenReused}, false, outcomeTokenReused},
 		{"token rejected twice", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionInvalidToken}, true, outcomeTokenRejected},
+		{"too large for the gateway", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptRefused, Rejection: mcpadapter.GatewayRejectionTooLarge}, false, outcomeRefusedArguments},
+		{"handshake too large for the gateway", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionTooLarge}, false, outcomeUnavailable},
 		{"changed after authorization", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionChanged}, false, outcomeInternal},
 		{"authorization expired", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent, Rejection: mcpadapter.GatewayRejectionExpired}, false, outcomeUnavailable},
 		{"handshake failed", mcpadapter.GatewayAttempt{Outcome: mcpadapter.GatewayAttemptNotSent}, false, outcomeUnavailable},

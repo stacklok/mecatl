@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stacklok/toolhive/pkg/bodylimit"
 	thvmcp "github.com/stacklok/toolhive/pkg/mcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/callbinding"
 )
@@ -207,5 +209,28 @@ func TestArgumentsSHA256RefusesOutsideIJSON(t *testing.T) {
 				t.Errorf("refusal returned sent %q, sum %q", sent, sum)
 			}
 		})
+	}
+}
+
+// paddedArguments is a JSON object of exactly n bytes: {"pad":"xx…"}.
+func paddedArguments(n int64) json.RawMessage {
+	const open, closing = `{"pad":"`, `"}`
+	return json.RawMessage(open + strings.Repeat("x", int(n)-len(open)-len(closing)) + closing)
+}
+
+// TestArgumentsSHA256RefusesArgumentsOverTheGatewayLimit: arguments longer
+// than MaxGatewayArgumentBytes, which leaves room for the tools/call's
+// envelope within the vMCP's request body limit, are refused before they
+// are hashed; arguments of exactly that length are not.
+func TestArgumentsSHA256RefusesArgumentsOverTheGatewayLimit(t *testing.T) {
+	if MaxGatewayArgumentBytes <= 0 || MaxGatewayArgumentBytes >= bodylimit.DefaultMaxRequestBodySize || MaxGatewayArgumentBytes >= mcpsdk.DefaultMaxRequestBodyBytes {
+		t.Fatalf("MaxGatewayArgumentBytes = %d, want within both of the vMCP's body limits", MaxGatewayArgumentBytes)
+	}
+	if _, sum, err := argumentsSHA256(paddedArguments(MaxGatewayArgumentBytes)); err != nil || sum == "" {
+		t.Fatalf("arguments at the limit = %q, %v; want hashed", sum, err)
+	}
+	sent, sum, err := argumentsSHA256(paddedArguments(MaxGatewayArgumentBytes + 1))
+	if !errors.Is(err, errArgumentsTooLarge) || sent != nil || sum != "" {
+		t.Fatalf("arguments over the limit = %d bytes, %q, %v; want errArgumentsTooLarge", len(sent), sum, err)
 	}
 }

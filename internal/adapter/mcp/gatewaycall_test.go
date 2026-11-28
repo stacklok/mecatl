@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -607,6 +608,9 @@ func TestSendGatewayCallJSONRPCErrorOutcome(t *testing.T) {
 		-32602: GatewayAttemptCompleted,
 		-32603: GatewayAttemptUnknown, // may have run
 		-32000: GatewayAttemptUnknown,
+		// A JSON-RPC 403 over HTTP 200, as from a backend after it ran, is
+		// not the vMCP's refusal before running it (HTTP 403).
+		403: GatewayAttemptUnknown,
 	} {
 		f := newGatewayFixture(t)
 		f.g.FailCalls("github", code)
@@ -835,16 +839,18 @@ func TestIsInvalidTokenChallenge(t *testing.T) {
 	}
 }
 
-// forbiddingTransport answers a tools/call with HTTP 403, the header, and
-// the body built from the call's JSON-RPC ID; it carries every other
-// request to base.
-type forbiddingTransport struct {
+// refusingTransport answers a request of method (tools/call when empty)
+// with status (403 when zero), the header, and the body built from the
+// request's JSON-RPC ID; it carries every other request to base.
+type refusingTransport struct {
 	base   http.RoundTripper
+	method string
+	status int
 	header http.Header
 	body   func(id json.RawMessage) string
 }
 
-func (f forbiddingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (f refusingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body == nil {
 		return f.base.RoundTrip(req)
 	}
@@ -858,7 +864,8 @@ func (f forbiddingTransport) RoundTrip(req *http.Request) (*http.Response, error
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 	}
-	if json.Unmarshal(body, &msg) != nil || msg.Method != gatewayToolsCall {
+	method := cmp.Or(f.method, gatewayToolsCall)
+	if json.Unmarshal(body, &msg) != nil || msg.Method != method {
 		return f.base.RoundTrip(req)
 	}
 	header := f.header.Clone()
@@ -866,8 +873,12 @@ func (f forbiddingTransport) RoundTrip(req *http.Request) (*http.Response, error
 		header = http.Header{}
 	}
 	header.Set("Content-Type", "application/json")
+	status := f.status
+	if status == 0 {
+		status = http.StatusForbidden
+	}
 	return &http.Response{
-		StatusCode: http.StatusForbidden, Header: header, Request: req,
+		StatusCode: status, Header: header, Request: req,
 		Body: io.NopCloser(strings.NewReader(f.body(msg.ID))),
 	}, nil
 }
@@ -902,10 +913,36 @@ func TestSendGatewayCallClassifiesADenial(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newGatewayFixture(t)
 			req := f.request("att_1")
-			req.HTTPClient = &http.Client{Transport: forbiddingTransport{base: f.wire, header: c.header, body: c.body}, Timeout: 10 * time.Second}
+			req.HTTPClient = &http.Client{Transport: refusingTransport{base: f.wire, header: c.header, body: c.body}, Timeout: 10 * time.Second}
 			wantAttempt(t, SendGatewayCall(t.Context(), req), c.outcome, c.reject, http.StatusForbidden)
 		})
 	}
+}
+
+// TestSendGatewayCallTooLargeIsRefused: a 413 to the tools/call refuses it.
+// The gateway refused the request for its size, before processing it, as
+// ToolHive's vMCP answers a body over its limit before reading it. A 413 to
+// the handshake leaves the tools/call not sent.
+func TestSendGatewayCallTooLargeIsRefused(t *testing.T) {
+	tooLarge := func(f *gatewayFixture, method string) GatewayCallRequest {
+		req := f.request("att_1")
+		req.HTTPClient = &http.Client{Transport: refusingTransport{
+			base: f.wire, method: method, status: http.StatusRequestEntityTooLarge,
+			body: func(json.RawMessage) string { return "Request Entity Too Large\n" },
+		}, Timeout: 10 * time.Second}
+		return req
+	}
+	t.Run("call", func(t *testing.T) {
+		f := newGatewayFixture(t)
+		wantAttempt(t, SendGatewayCall(t.Context(), tooLarge(f, "")), GatewayAttemptRefused, GatewayRejectionTooLarge, http.StatusRequestEntityTooLarge)
+	})
+	t.Run("handshake", func(t *testing.T) {
+		f := newGatewayFixture(t)
+		wantAttempt(t, SendGatewayCall(t.Context(), tooLarge(f, "initialize")), GatewayAttemptNotSent, GatewayRejectionTooLarge, http.StatusRequestEntityTooLarge)
+		if n := len(f.calls("att_1", gatewayToolsCall)); n != 0 {
+			t.Fatalf("%d tools/call sent after a refused handshake", n)
+		}
+	})
 }
 
 func TestIsTokenReusedChallenge(t *testing.T) {
