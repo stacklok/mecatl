@@ -27,7 +27,7 @@ import (
 	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/testseam"
 	"github.com/stacklok/mecatl/internal/adapter/mcpsecretfile"
 )
 
@@ -78,11 +78,13 @@ type ToolHiveConfig struct {
 	// endpoint instead of the issuer. Nil, or no protected upstream, leaves the
 	// embedded server as it is.
 	BrokerClient *ToolHiveBrokerClient
-	// AS2Trust, with AS-2 set up, makes AS-2 trust an ID-JAG issuer; see
-	// AS2Trust. The field is removed when #2533 makes AS-2 trust AS-1 in
-	// production from configuration (the shortcut is marked on
-	// app.Config.IdentityBrokerAS2Trust).
-	AS2Trust AS2Trust
+	// AS1Trust, with AS-2 set up, makes AS-2 trust AS-1's ID-JAGs and adds
+	// the company IdP as the first step of AS-2's sign-in; see AS1Trust. Nil
+	// trusts no ID-JAG issuer, so AS-2 redeems none, and leaves AS-2's
+	// sign-in as it is.
+	AS1Trust *AS1Trust
+	// TestSeam holds what only tests may set; its zero value is production's.
+	TestSeam TestSeam
 	// GatewayCalls, with AS-2 set up, sends tools/call on GatewayCalls.Servers'
 	// broker routes to the embedded vMCP as a gateway, authorized by the
 	// identity broker. EmbeddedGatewayClient is then required. Nil keeps
@@ -106,14 +108,32 @@ type ToolHiveConfig struct {
 // longer call.
 const defaultGatewayMaxCallDuration = callbinding.DefaultMaxCallDuration
 
+// TestSeam holds settings only tests may make. Building a non-zero one needs
+// a testseam.Seam; Go's internal-package rule keeps that type inside this
+// adapter, and a depguard rule lets only this file and mcpbrokertest import
+// it outside tests.
+type TestSeam struct{ s *testseam.Seam }
+
+// NewTestSeam returns a TestSeam holding s.
+func NewTestSeam(s testseam.Seam) TestSeam { return TestSeam{s: &s} }
+
 // gatewayMaxCallDuration is the vMCP's maximum call duration:
-// defaultGatewayMaxCallDuration, unless a test's trust shortens it. It is
-// also the grace after a gateway token's exp (gatewayCallBinding).
-func (t AS2Trust) gatewayMaxCallDuration() time.Duration {
-	if t.t != nil && t.t.MaxCallDuration > 0 {
-		return t.t.MaxCallDuration
+// defaultGatewayMaxCallDuration, unless a test shortens it. It is also the
+// grace after a gateway token's exp (gatewayCallBinding).
+func (t TestSeam) gatewayMaxCallDuration() time.Duration {
+	if t.s != nil && t.s.GatewayMaxCallDuration > 0 {
+		return t.s.GatewayMaxCallDuration
 	}
 	return defaultGatewayMaxCallDuration
+}
+
+// signInClient is the test's sign-in client to register at AS-2; nil, as in
+// production, registers none.
+func (t TestSeam) signInClient() *testseam.Client {
+	if t.s == nil {
+		return nil
+	}
+	return t.s.SignInClient
 }
 
 // callEntryRegistry is AS-2's authorization_details registry: ToolHive's
@@ -230,20 +250,89 @@ func checkSigningKeyType(pub crypto.PublicKey) error {
 	}
 }
 
-// AS2Trust is an ID-JAG issuer AS-2 trusts for the listed subjects only.
-// Its zero value trusts none, as production's does until #2533. Building one
-// that trusts an issuer needs an as2trust.Trust. Go's internal-package rule
-// keeps that type inside this adapter, and a depguard rule lets only this
-// file and mcpbrokertest import it outside tests; depguard also keeps
-// production code from importing mcpbrokertest.
-type AS2Trust struct{ t *as2trust.Trust }
+// AS1Trust is AS-1 as AS-2 trusts it in embedded mode
+// (mcp-gateway-modes.md, "Embedded mode" and "How AS-2 resolves the user").
+// AS-2 redeems AS-1's ID-JAGs for any user AS-1 names, finding the gateway
+// user from the ID-JAG's upstream_subject through the company IdP, which
+// AS-1 also signs users in through. A user AS-2 cannot find is refused as
+// subject_unknown.
+type AS1Trust struct {
+	// Issuer is AS-1's issuer, its ID-JAGs' iss.
+	Issuer string
+	// JWKSURL is where AS-2 fetches AS-1's signing keys, over HTTPS.
+	JWKSURL string
+	// CAFile is a PEM bundle trusted for JWKSURL's certificate beside the
+	// system roots; empty trusts the system roots only.
+	CAFile string
+	// AllowPrivateAddresses lets the key fetch reach a private or loopback
+	// address, such as an in-cluster AS-1; without it, ToolHive refuses a
+	// JWKSURL naming one.
+	AllowPrivateAddresses bool
+	// ActorIssuer is the agent trust domain as an ID-JAG's act.iss names it.
+	// AS-2 also accepts an act.iss equal to the ID-JAG's own iss, AS-1's
+	// issuer, and takes an act without iss as naming that issuer, as design
+	// check 9 does; AS-1 never stamps its own issuer as act.iss. Any other
+	// act.iss, or no act, is refused as actor_denied.
+	ActorIssuer string
+	// CompanyIdP is AS-2's registration at the company IdP.
+	CompanyIdP AS2CompanyIdP
+}
 
-// NewAS2Trust returns an AS2Trust trusting t.
-func NewAS2Trust(t as2trust.Trust) AS2Trust { return AS2Trust{t: &t} }
+// AS2CompanyIdP is AS-2's registration at the company IdP, which becomes the
+// first step of AS-2's sign-in and the identity AS-2 keys its users by.
+// Issuer and SubjectClaim must be AS-1's (credentials-and-lifecycle.md,
+// "Identifying claim"): AS-2 resolves an ID-JAG's upstream_subject only when
+// its issuer and claim are these.
+type AS2CompanyIdP struct {
+	// Issuer is the company IdP's OIDC issuer.
+	Issuer string
+	// ClientID and ClientSecretFile are AS-2's own client at the IdP; an
+	// empty secret file makes it a public client.
+	ClientID, ClientSecretFile string
+	// SubjectClaim names the ID-token claim identifying the user; empty
+	// selects "sub".
+	SubjectClaim string
+	// CAFile is a PEM bundle trusted for the IdP's certificate beside the
+	// system roots; empty trusts the system roots only.
+	CAFile string
+	// AllowPrivateAddresses lets AS-2 reach the IdP on a private or loopback
+	// address.
+	AllowPrivateAddresses bool
+}
 
-// TrustsAnIssuer reports whether t trusts an ID-JAG issuer; the zero value,
-// production's, trusts none.
-func (t AS2Trust) TrustsAnIssuer() bool { return t.t != nil }
+// check refuses a trust missing what AS-2 needs. ToolHive checks the rest,
+// such as a subject claim that is not stable per user.
+func (t *AS1Trust) check() error {
+	for _, f := range []struct{ name, value string }{
+		{"AS-1 issuer", t.Issuer}, {"AS-1 key set URL", t.JWKSURL}, {"actor issuer", t.ActorIssuer},
+		{"company IdP issuer", t.CompanyIdP.Issuer}, {"company IdP client ID", t.CompanyIdP.ClientID},
+	} {
+		if f.value == "" {
+			return fmt.Errorf("%w: AS-2's trust in AS-1 needs the %s", ErrInvalidCatalogue, f.name)
+		}
+	}
+	if path := t.CompanyIdP.ClientSecretFile; path != "" {
+		if err := validateClientSecretFile(path); err != nil {
+			return fmt.Errorf("%w: AS-2's company IdP client secret file: %v", ErrInvalidCatalogue, err)
+		}
+	}
+	return nil
+}
+
+// as2CompanyIdPUpstream names AS-2's company IdP upstream. A protected
+// upstream whose provider key is the same is refused.
+const as2CompanyIdPUpstream = "mecatl-company-idp"
+
+// as2CompanyIdPRunConfig is ToolHive's configuration of the company IdP as
+// AS-2's first upstream, at AS-2's issuer. It forces no prompt, so the step
+// is silent while the user's session at the IdP is live.
+func as2CompanyIdPRunConfig(idp AS2CompanyIdP, issuer string) authserver.UpstreamRunConfig {
+	return authserver.UpstreamRunConfig{Name: as2CompanyIdPUpstream, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
+		IssuerURL: idp.Issuer, ClientID: idp.ClientID, ClientSecretFile: idp.ClientSecretFile,
+		RedirectURI: issuer + "/oauth/callback", SubjectClaim: idp.SubjectClaim,
+		CAFilePath: idp.CAFile, AllowPrivateIPs: idp.AllowPrivateAddresses,
+	}}
+}
 
 // ToolHiveBrokerClient is the identity broker's client at AS-2.
 type ToolHiveBrokerClient struct {
@@ -257,17 +346,13 @@ type ToolHiveBrokerClient struct {
 }
 
 // as2DelegateClient is ToolHive's configuration of the broker client at AS-2
-// with the vMCP resource. Its gateway tokens get AS-2's default lifetime,
-// capped at the remaining validity of the ID-JAG they are redeemed from.
-// Restricted with no source clients, it can exchange only tokens issued to
-// itself, never a user's gateway login token. ToolHive refuses a subject
-// token that carries authorization_details (stacklok/toolhive#7282), so it
-// cannot exchange a call-bound gateway token, which would get around the
-// token's single use with a new jti.
-//
-// Shortcut: a gateway token gets AS-2's default lifetime (one hour), capped at the remaining validity of its ID-JAG (id_jag_lifetime), rather than a short lifetime of its own set for this client; removed by #2533 (AS-2 trusts AS-1 in production, where a per-client lifetime takes effect).
-//
-// Shortcut: ToolHive requires the token-exchange grant on this client, so a gateway token without a call entry, which the broker never obtains since it sends one on every call, could still be exchanged for another up to its expiry; removed by #2533 (AS-2 marks gateway tokens, which ToolHive refuses at token exchange, stacklok/toolhive#7247).
+// with the vMCP resource. Restricted with no source clients, it can exchange
+// only tokens issued to itself, never a user's gateway login token. ToolHive
+// requires the token-exchange grant on this client, but its gateway tokens
+// cannot be exchanged: they carry the delegated-access marker, and a call's
+// also its authorization_details, both of which ToolHive refuses at token
+// exchange. A gateway token lives at most five minutes, ToolHive's cap for
+// marked tokens, and no longer than the ID-JAG it is redeemed from.
 func as2DelegateClient(client ToolHiveBrokerClient, resource string) authserver.DelegateClientRunConfig {
 	return authserver.DelegateClientRunConfig{
 		ClientID:                client.ID,
@@ -308,16 +393,16 @@ func AS2Endpoints(callbackURL string) (issuer, tokenEndpoint, resource string, e
 }
 
 // as2RunConfig returns AS-2's additions to the embedded authorization
-// server's RunConfig. trust is zero in production.
-func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS2Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer) {
+// server's RunConfig. A nil trust trusts no ID-JAG issuer.
+func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust *AS1Trust) (*authserver.InboundGrantsRunConfig, []tokenexchange.TrustedIssuer) {
 	// Leaving JWTBearer unset keeps ToolHive's JWT-bearer grant, and so
 	// ID-JAG redemption, disabled.
 	grants := &authserver.InboundGrantsRunConfig{TokenExchange: &authserver.TokenExchangeInboundGrantRunConfig{
 		DelegateClients: []authserver.DelegateClientRunConfig{as2DelegateClient(client, resource)},
 	}}
 	var trusted []tokenexchange.TrustedIssuer
-	if trust.t != nil {
-		trusted, grants.JWTBearer = as2TrustRunConfig(trust.t, issuer, resource)
+	if trust != nil {
+		trusted, grants.JWTBearer = as2TrustRunConfig(trust, issuer)
 	}
 	return grants, trusted
 }
@@ -325,22 +410,27 @@ func as2RunConfig(client ToolHiveBrokerClient, issuer, resource string, trust AS
 // as2TrustRef names the trusted issuer for its JWT-bearer policy.
 const as2TrustRef = "as1"
 
-// as2TrustRunConfig is ToolHive's configuration of t at AS-2: ID-JAGs for
-// issuer that may obtain only resource. It accepts ID-JAGs only, never plain
-// RFC 7523 assertions, which ToolHive would otherwise redeem from a trusted
-// issuer without client authentication.
-func as2TrustRunConfig(t *as2trust.Trust, issuer, resource string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
-	bindings := make([]tokenexchange.JWTBearerSubjectBinding, len(t.Subjects))
-	for i, subject := range t.Subjects {
-		bindings[i] = tokenexchange.JWTBearerSubjectBinding{Subject: subject, AllowedResources: []string{resource}}
-	}
+// as2MaxAssertionAge is the longest lifetime, exp minus iat, of an ID-JAG
+// AS-2 redeems. ToolHive does not compare iat with the current time.
+const as2MaxAssertionAge = 10 * time.Minute
+
+// as2TrustRunConfig is ToolHive's configuration of t at AS-2 at issuer
+// (credentials-and-lifecycle.md, step (8)). It accepts ID-JAGs only, never
+// plain RFC 7523 assertions, which ToolHive would otherwise redeem from a
+// trusted issuer without client authentication. It resolves each ID-JAG's
+// user through the company IdP, with no list of subjects and no approval
+// record, and accepts only the agent trust domain as the actor's issuer.
+// Which client may redeem, for which resource, is the broker client's
+// configuration (as2DelegateClient).
+func as2TrustRunConfig(t *AS1Trust, issuer string) ([]tokenexchange.TrustedIssuer, *authserver.JWTBearerInboundGrantRunConfig) {
 	trusted := []tokenexchange.TrustedIssuer{{
 		Name: as2TrustRef, IssuerURL: t.Issuer, JWKSURL: t.JWKSURL, CAFilePath: t.CAFile, AllowPrivateIPs: t.AllowPrivateAddresses,
 	}}
 	return trusted, &authserver.JWTBearerInboundGrantRunConfig{IssuerPolicies: []authserver.JWTBearerIssuerPolicyRunConfig{{
-		IssuerRef: as2TrustRef, MaxAssertionAge: t.MaxAssertionAge.String(),
-		SubjectBindings: bindings, AcceptedAudiences: []string{issuer},
+		IssuerRef: as2TrustRef, MaxAssertionAge: as2MaxAssertionAge.String(), AcceptedAudiences: []string{issuer},
 		AcceptedAssertionTypes: []tokenexchange.JWTBearerAssertionType{tokenexchange.JWTBearerAssertionTypeIDJAG},
+		SubjectMode:            tokenexchange.SubjectModeResolve,
+		ActorIssuers:           []string{t.ActorIssuer},
 	}}}
 }
 
@@ -441,6 +531,17 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 		out.backends = append(out.backends, backend)
 	}
 	return out, nil
+}
+
+// backendOfProvider returns the protected upstream whose provider key is
+// provider, if any.
+func (c toolHiveConstruction) backendOfProvider(provider string) (string, bool) {
+	for backend, key := range c.providerByBackend {
+		if key == provider {
+			return backend, true
+		}
+	}
+	return "", false
 }
 
 func toolHiveProviderKey(name string) (string, error) {

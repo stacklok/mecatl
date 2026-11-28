@@ -24,7 +24,10 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		"internal/adapter/mcpbroker/sealedauthstorage/storage.go":   true,
 		"internal/adapter/mcpbroker/toolhive_process.go":            true,
 		"internal/adapter/mcpbroker/toolhive_protected_storage.go":  true,
-		"internal/adapter/toolhivellm/tokensource.go":               true,
+		// Test fixture: the sign-in client and store AS-2's tests build it
+		// with (#2533).
+		"internal/adapter/mcpbroker/mcpbrokertest/as2signin/as2signin.go": true,
+		"internal/adapter/toolhivellm/tokensource.go":                     true,
 		// RFC 9728 protected-resource discovery (#1055), a separate ToolHive
 		// import leaf unrelated to the MCP broker's own construction/discovery.
 		"cmd/mecatui/resource_discovery.go":           true,

@@ -60,10 +60,11 @@ type harnessFixture struct {
 	as2Issuer, as2Resource, as1Iss string
 	// vmcp is the real vMCP the MCP broker process serves at as2Resource.
 	vmcp http.Handler
-	// subjects are Alice's and Bob's AS-1 subjects; accessToken returns a
-	// fresh AS-1 access token for a user.
-	subjects    map[string]string
-	accessToken func(user string) string
+	// subjects are Alice's and Bob's AS-1 subjects, and as2Users the AS-2
+	// users AS-2 resolves them to, for those signed in at AS-2; accessToken
+	// returns a fresh AS-1 access token for a user.
+	subjects, as2Users map[string]string
+	accessToken        func(user string) string
 
 	s    identitybroker.Session
 	cred identitybroker.Token
@@ -76,8 +77,9 @@ func newHarnessFixture(t *testing.T) *harnessFixture {
 
 // harnessOptions vary a harnessFixture's AS-2.
 type harnessOptions struct {
-	// distrustAlice leaves Alice out of the AS-1 subjects AS-2 trusts.
-	distrustAlice bool
+	// aliceNotAtAS2 leaves Alice not signed in at AS-2, so AS-2 cannot
+	// resolve her; Bob signs in there either way.
+	aliceNotAtAS2 bool
 	// unknownAS2Key has the broker sign its AS-2 client assertions with a key
 	// AS-2 does not know.
 	unknownAS2Key bool
@@ -103,7 +105,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 		issueIDJAGs(c, d)
 		d.IDJAG.Targets[0].Lifetime = opts.idjagLifetime
 	})
-	// Alice and Bob sign in first, so AS-2's test trust can name their AS-1
+	// Alice and Bob sign in at AS-1 first, so tests can check the ID-JAGs'
 	// subjects.
 	accessToken := func(user string) string { return a.SignIn(t, as1servertest.SignIn{User: user}).Value() }
 	subjectOf := map[string]string{}
@@ -125,15 +127,23 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	subjects := []string{subjectOf[identityharness.Alice], subjectOf[identityharness.Bob]}
-	if opts.distrustAlice {
-		subjects = subjects[1:]
-	}
-	process := mcpbrokertest.StartAS2With(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1Trust{
-		Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: h.WriteCACert(t, t.TempDir()), AllowPrivateAddresses: true,
-		Subjects: subjects,
+	process := mcpbrokertest.StartAS2With(t, identitybroker.BrokerClientID, keySet, mcpbrokertest.AS1{
+		Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), ActorIssuer: identitybroker.ActorIssuer(testTrustDomain), Harness: h,
 	}, opts.as2)
 	as2 := process.AS2
+	// AS-2 resolves only users signed in at it; its user is a gateway token's
+	// sub.
+	as2Users := map[string]string{}
+	for _, user := range []string{identityharness.Alice, identityharness.Bob} {
+		if user == identityharness.Alice && opts.aliceNotAtAS2 {
+			continue
+		}
+		sub, _ := jwtPart(t, process.SignIn(t, user), 1)["sub"].(string)
+		if sub == "" {
+			t.Fatalf("%s's AS-2 access token names no user", user)
+		}
+		as2Users[user] = sub
+	}
 
 	as1HTTP := a.HTTPClient()
 	as1Faults := identityharness.NewFaultTransport(as1HTTP.Transport, a.Server.TokenEndpoint())
@@ -171,7 +181,7 @@ func newHarnessFixtureWith(t *testing.T, opts harnessOptions) *harnessFixture {
 	f := &harnessFixture{
 		h: h, as1Server: a.Server, b: b, rec: rec, as1: as1Faults, as2: as2Faults, as2Client: as2Client,
 		as2Issuer: as2.Issuer, as2Resource: as2.Resource, as1Iss: a.Issuer(), vmcp: process.Handlers.VMCP,
-		subjects: subjectOf, accessToken: accessToken,
+		subjects: subjectOf, as2Users: as2Users, accessToken: accessToken,
 	}
 	f.s, f.cred = f.open(t, openHost, identityharness.Alice)
 	return f
@@ -323,7 +333,7 @@ func TestAuthorizeCallGetsOneGatewayTokenPerCallAtAS2(t *testing.T) {
 		if v["client_id"] != identitybroker.BrokerClientID ||
 			!reflect.DeepEqual(v["act"], wantAct(agentID)) ||
 			!reflect.DeepEqual(v["aud"], []any{f.as2Resource}) ||
-			v["sub"] != f.as1Iss+"#"+f.subjects[identityharness.Alice] {
+			v["sub"] != f.as2Users[identityharness.Alice] {
 			t.Fatalf("call %d's gateway token claims = %v, want act %v, client_id %s, and aud the vMCP", i, v, wantAct(agentID), identitybroker.BrokerClientID)
 		}
 		if !strings.HasPrefix(agentID, "ag_") {
@@ -842,8 +852,8 @@ func TestRealVMCPAcceptsTheBrokersGatewayToken(t *testing.T) {
 
 // TestAuthorizeCallMapsRealAS2Refusals drives refusals from the real AS-2.
 func TestAuthorizeCallMapsRealAS2Refusals(t *testing.T) {
-	t.Run("a user AS-2 does not trust", func(t *testing.T) {
-		f := newHarnessFixtureWith(t, harnessOptions{distrustAlice: true})
+	t.Run("a user not signed in at AS-2", func(t *testing.T) {
+		f := newHarnessFixtureWith(t, harnessOptions{aliceNotAtAS2: true})
 		_, err := f.authorize(ownerCall(f.s, f.cred))
 		wantError(t, err, identitybroker.CodeInternal, "", f.cred)
 		// AS-2 refuses an unknown user with access_denied and subject_unknown,
@@ -884,7 +894,7 @@ func TestAuthorizeCallNeverSharesTokensAtAS2(t *testing.T) {
 		t.Fatalf("Bob's AuthorizeCall: %v", err)
 	}
 	aliceSub, bobSub := jwtPart(t, alice.GatewayToken.Value(), 1)["sub"], jwtPart(t, bob.GatewayToken.Value(), 1)["sub"]
-	if aliceSub != f.as1Iss+"#"+f.subjects[identityharness.Alice] || bobSub != f.as1Iss+"#"+f.subjects[identityharness.Bob] || aliceSub == bobSub {
+	if aliceSub != f.as2Users[identityharness.Alice] || bobSub != f.as2Users[identityharness.Bob] || aliceSub == bobSub {
 		t.Fatalf("gateway token subjects are %v and %v, want Alice's and Bob's", aliceSub, bobSub)
 	}
 	owner := func(jag map[string]any) any { subID, _ := jag["sub_id"].(map[string]any); return subID["sub"] }

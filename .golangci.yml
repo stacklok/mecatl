@@ -1148,8 +1148,8 @@ linters:
               desc: 'test fixture; production code never imports it'
             - pkg: github.com/stacklok/mecatl/internal/identitybroker/adapter/brokerconfig/brokerconfigtest
               desc: 'test fixture; production code never imports it'
-        # mcpbrokertest makes AS-2 trust AS-1 in tests; production code never
-        # imports it.
+        # mcpbrokertest starts AS-2 for tests and sets what only tests may;
+        # production code never imports it.
         internal-adapter-mcpbrokertest-importers:
           list-mode: lax
           files:
@@ -1158,11 +1158,11 @@ linters:
             - '!**/internal/adapter/mcpbroker/mcpbrokertest/**.go'
           deny:
             - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/mcpbrokertest
-              desc: 'AS-2 trust test seam; production code never imports it (#2533 trusts AS-1 in production)'
-        # Only the file that applies AS-2's trust and the test seam may name
-        # the trust value, so no other production code in the adapter can
-        # build a trusting mcpbroker.AS2Trust.
-        internal-adapter-mcpbroker-as2trust-importers:
+              desc: 'MCP broker test support; production code never imports it'
+        # Only the file that applies the test seam and mcpbrokertest may name
+        # its value, so no production code can build a non-zero
+        # mcpbroker.TestSeam.
+        internal-adapter-mcpbroker-testseam-importers:
           list-mode: lax
           files:
             - $all
@@ -1170,8 +1170,8 @@ linters:
             - '!**/internal/adapter/mcpbroker/toolhive_construction.go'
             - '!**/internal/adapter/mcpbroker/mcpbrokertest/**.go'
           deny:
-            - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/as2trust
-              desc: 'AS-2 trust is test-only until #2533; build it with mcpbrokertest.TrustAS1'
+            - pkg: github.com/stacklok/mecatl/internal/adapter/mcpbroker/internal/testseam
+              desc: 'test-only MCP broker settings; set them with mcpbrokertest'
         # Composition and the command roots use the MCP broker contract
         # (internal/mcpbroker); one file constructs the adapter.
         internal-adapter-mcpbroker-importers:

@@ -313,8 +313,9 @@ func SignedInUser(t testing.TB, accessToken identitybroker.Token) string {
 }
 
 // Subject returns the sub of accessToken, an access token AS-1 issued,
-// without verifying it: AS-1's subject for the user, which its ID-JAGs carry
-// and AS-2's test trust lists. AS-1 assigns it at the user's first sign-in.
+// without verifying it: AS-1's subject for the user, which its ID-JAGs carry.
+// AS-2 does not select its user by it but resolves the ID-JAG's
+// upstream_subject. AS-1 assigns it at the user's first sign-in.
 func Subject(t testing.TB, accessToken identitybroker.Token) string {
 	t.Helper()
 	sub, err := accessTokenClaims(t, accessToken).GetSubject()

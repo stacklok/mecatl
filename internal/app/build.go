@@ -1004,12 +1004,15 @@ type Config struct {
 	// expiry. It is test-only; nil selects time.Now.
 	identityBrokerNow func() time.Time
 	// IdentityBrokerAS2Trust makes the bundled MCP broker's AS-2 trust an
-	// ID-JAG issuer, such as a test's AS-1 from mcpbrokertest.TrustAS1. It is
-	// test-only: production leaves it zero, and cannot build another, so
+	// AS-1, such as a test's. No flag sets it: production leaves it nil, so
 	// AS-2 trusts no issuer and Build refuses a gateway entry that routes
 	// servers.
 	// Shortcut: AS-2 trusts AS-1 only in tests; removed by #2533 (AS-2 trusts AS-1 in production).
-	IdentityBrokerAS2Trust as2Trust
+	IdentityBrokerAS2Trust *as1Trust
+	// MCPBrokerTestSeam holds the bundled MCP broker's test-only settings,
+	// such as mcpbrokertest.SignInSeam. It is test-only: production leaves it
+	// zero and cannot build another.
+	MCPBrokerTestSeam mcpBrokerTestSeam
 	// IdentityBrokerAS1 connects the real identity broker's session open to an
 	// AS-1, where it converts users' access tokens. No flag sets it; with a
 	// hosted AS-1, Build fills it for that AS-1. Only tests set it directly,
