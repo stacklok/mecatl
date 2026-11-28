@@ -81,12 +81,34 @@ task mecak8s:kind-hosts-remove
 `kind-hosts-add` manages two entries in `/etc/hosts`:
 `127.0.0.1 keycloak.mecatl.svc.cluster.local` and
 `127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local`; `kind-hosts-remove` removes
-only those exact entries and leaves an `/etc/hosts.bak` backup. The Keycloak
+only those exact entries and leaves an `/etc/hosts.bak` backup. Both tasks read
+`/etc/hosts` without privileges first and call `sudo` only when an entry must
+change, so a run where nothing needs to change never asks for a password. The Keycloak
 NodePort is mapped by Kind only to `127.0.0.1:8443` on the host. Keycloak's
 alias preserves its configured issuer and certificate hostname while making the
 local browser leg reachable. The mecak8s alias exists for a different, less
 obvious reason -- see the footgun note below; it is not merely a second
 convenience name.
+
+### One-shot bring-up and teardown
+
+To run the whole journey in one command, use the two composed tasks:
+
+```sh
+task mecak8s:kind-up    # asks for confirmation; sudo only if an alias is missing
+task mecak8s:kind-down  # sudo only if an alias is present
+```
+
+`kind-up` runs `kind-keycloak-setup`, `task build`, `kind-hosts-add`, and
+`kind-keycloak-demo` in order. It is **destructive** because it deletes and
+recreates `mecatl-dev`, so it asks for confirmation first. Without a terminal,
+Task cancels it unless you pass `--yes`. `kind-down` runs `mecatui logout`
+against the fixture target, then `kind-hosts-remove` and `kind-destroy`. It
+ignores a missing binary or an absent login, and you can run it again safely.
+
+The aliases are the same for every cluster. After you run
+`task mecak8s:kind-hosts-add` once in a terminal, `task --yes mecak8s:kind-up`
+runs without any prompt, for example from a script.
 
 ### Direct remote-client quickstart
 

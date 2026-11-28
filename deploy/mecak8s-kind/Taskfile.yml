@@ -37,6 +37,34 @@ tasks:
       - task: kind-setup
       - task: kind-keycloak-apply
 
+  # kind-up and kind-down are one-shot compositions of the targets below. They
+  # run sequentially through cmds, never deps, which Task runs in parallel.
+  kind-up:
+    desc: >-
+      One-shot, DESTRUCTIVE bring-up: recreate mecatl-dev with the Keycloak
+      layer, build bin/mecatui, add any missing /etc/hosts aliases (sudo only then),
+      export the fixture CA, and print the login/connect commands. Pass --yes
+      to skip the confirmation.
+    prompt: This deletes and recreates the mecatl-dev Kind cluster and its local state. Continue?
+    cmds:
+      - task: kind-keycloak-setup
+      - task: :build
+      - task: kind-hosts-add
+      - task: kind-keycloak-demo
+
+  kind-down:
+    desc: >-
+      One-shot teardown: log mecatui out of the fixture target, remove any
+      present /etc/hosts aliases (sudo only then), and delete the cluster and its
+      local state. Safe to re-run.
+    cmds:
+      # Logout precedes cleanup so no stored token outlives the realm that
+      # issued it; a missing binary or absent login is not a teardown failure.
+      - cmd: test -x ./bin/mecatui && ./bin/mecatui logout mecak8s-mecak8s.mecatl.svc.cluster.local:18080
+        ignore_error: true
+      - task: kind-hosts-remove
+      - task: kind-destroy
+
   # kind-fixture-ca-refresh waits for the three direct loopback mappings and
   # (re)writes .scratch/kind/mecatl-dev/fixture-ca.crt from the cluster's
   # CURRENT fixture-ca Secret. cert-manager mints a fresh self-signed CA on
@@ -161,7 +189,7 @@ tasks:
           printf '%s\n' '127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local'
 
   kind-hosts-add:
-    desc: Add the temporary Keycloak issuer and mecak8s target aliases to /etc/hosts (loopback only)
+    desc: Add the temporary Keycloak issuer and mecak8s target aliases to /etc/hosts (loopback only; sudo only for a missing entry)
     cmds:
       - cmd: |
           set -eu
@@ -174,9 +202,17 @@ tasks:
           # that check, so the mecak8s alias below -- resolving to the SAME
           # 127.0.0.1 the Kind mapping already exposes -- is the fix, not a
           # cosmetic alternative to `localhost`.
+          #
+          # /etc/hosts is world-readable, so presence is checked unprivileged
+          # first: sudo (and its password prompt) is reached only for a missing
+          # entry, which lets kind-up run non-interactively once the aliases
+          # exist. The privileged re-check keeps the append idempotent.
           for entry in \
             '127.0.0.1 keycloak.mecatl.svc.cluster.local' \
             '127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local'; do
+            if grep -Fqx "$entry" /etc/hosts; then
+              continue
+            fi
             sudo sh -c 'grep -Fqx "$1" /etc/hosts || printf "%s\\n" "$1" >> /etc/hosts' sh "$entry"
           done
           echo 'Added (or already present):'
@@ -187,6 +223,13 @@ tasks:
     cmds:
       - cmd: |
           set -eu
+          # Checked unprivileged first, as in kind-hosts-add: with neither entry
+          # present there is nothing to remove, so sudo is never reached and
+          # /etc/hosts.bak is not overwritten.
+          if ! grep -Fqx -e '127.0.0.1 keycloak.mecatl.svc.cluster.local' -e '127.0.0.1 mecak8s-mecak8s.mecatl.svc.cluster.local' /etc/hosts; then
+            echo 'No temporary entries present; nothing to remove.'
+            exit 0
+          fi
           sudo sed -i.bak \
             -e '\|^127\.0\.0\.1 keycloak\.mecatl\.svc\.cluster\.local$|d' \
             -e '\|^127\.0\.0\.1 mecak8s-mecak8s\.mecatl\.svc\.cluster\.local$|d' \
