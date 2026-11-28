@@ -588,6 +588,34 @@ func (r ReportDelegationRequest) Validate() error {
 	return r.Owner.validate()
 }
 
+// DispatchOutcome is a reported attempt's dispatch, in audit.md's fixed set
+// for the Dispatch event. Its values are the matching DecisionOutcome
+// strings, which the broker's records carry.
+type DispatchOutcome string
+
+const (
+	// DispatchSuccess means the tools/call was, or may have been, sent: it
+	// may have run.
+	DispatchSuccess DispatchOutcome = "success"
+	// DispatchFailure means the tools/call was never sent, which proves it
+	// did not run.
+	DispatchFailure DispatchOutcome = "failure"
+)
+
+// ObservedOutcome is the outcome the MCP client observed of a dispatched
+// attempt, in audit.md's fixed set for the Observed outcome event. Its values
+// are the matching DecisionOutcome strings.
+type ObservedOutcome string
+
+// Observed outcomes; ObservedUnknown means the call may have run but no
+// completion was observed.
+const (
+	ObservedSuccess ObservedOutcome = "success"
+	ObservedFailure ObservedOutcome = "failure"
+	ObservedError   ObservedOutcome = "error"
+	ObservedUnknown ObservedOutcome = "unknown"
+)
+
 // ReportCallRequest reports one attempt of a tools/call the broker
 // authorized, as the MCP client that sent it observed it. It carries no
 // credential, arguments, or result content: only references and fixed
@@ -599,15 +627,13 @@ type ReportCallRequest struct {
 	// AuthorizeCallRequest.OperationID and Authorization.AttemptID did.
 	OperationID string
 	AttemptID   string
-	// Dispatch is OutcomeSuccess when the tools/call was, or may have been,
-	// written, and OutcomeFailure when it never was, which proves the call
-	// did not run (audit.md, "AuditEvent profile").
-	Dispatch DecisionOutcome
-	// Outcome is the outcome observed of a dispatched call: OutcomeSuccess,
-	// OutcomeFailure, OutcomeError, or OutcomeUnknown when the call may have
-	// run but no completion was observed. Empty when Dispatch is
-	// OutcomeFailure.
-	Outcome DecisionOutcome
+	// Dispatch is DispatchSuccess when the tools/call was, or may have been,
+	// sent, and DispatchFailure when it never was, which proves the call did
+	// not run (audit.md, "AuditEvent profile").
+	Dispatch DispatchOutcome
+	// Outcome is the outcome observed of a dispatched call. Empty when
+	// Dispatch is DispatchFailure.
+	Outcome ObservedOutcome
 	// LateResult reports a result observed after the attempt's outcome was
 	// reported unknown: a new observed outcome of the same attempt, never
 	// unknown.
@@ -631,11 +657,11 @@ func (r ReportCallRequest) Validate() error {
 		return invalid("dispatch must be success or failure, and the outcome of a dispatched call success, failure, error, or unknown")
 	}
 	switch {
-	case r.Dispatch == OutcomeFailure && (r.Outcome != "" || r.LateResult):
+	case r.Dispatch == DispatchFailure && (r.Outcome != "" || r.LateResult):
 		return invalid("an attempt that was not dispatched has no outcome")
-	case r.Dispatch == OutcomeSuccess && r.Outcome == "":
+	case r.Dispatch == DispatchSuccess && r.Outcome == "":
 		return invalid("a dispatched attempt must report its outcome")
-	case r.LateResult && r.Outcome == OutcomeUnknown:
+	case r.LateResult && r.Outcome == ObservedUnknown:
 		return invalid("a late result is never unknown")
 	case !isCause(r.Cause):
 		return invalid(fmt.Sprintf("a cause must be at most %d lowercase letters, digits, and underscores", maxCauseBytes))
@@ -648,12 +674,12 @@ func (r ReportCallRequest) Validate() error {
 // Validate.
 func (r ReportCallRequest) inSets() bool {
 	switch r.Dispatch {
-	case OutcomeSuccess, OutcomeFailure:
+	case DispatchSuccess, DispatchFailure:
 	default:
 		return false
 	}
 	switch r.Outcome {
-	case "", OutcomeSuccess, OutcomeFailure, OutcomeError, OutcomeUnknown:
+	case "", ObservedSuccess, ObservedFailure, ObservedError, ObservedUnknown:
 		return true
 	}
 	return false

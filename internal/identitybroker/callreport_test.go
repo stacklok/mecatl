@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/identitybroker"
 )
@@ -27,7 +28,7 @@ func (f reportFixture) report(req identitybroker.ReportCallRequest) error {
 
 func (f reportFixture) records() ([]identitybroker.DispatchRecord, []identitybroker.OutcomeRecord, []identitybroker.ReportRejectedRecord) {
 	identitybroker.WaitRecords(f.b)
-	return f.rec.Dispatches(), f.rec.Outcomes(), f.rec.RejectedReports()
+	return f.rec.Dispatches(), f.rec.Outcomes(), f.rec.ReportRejections()
 }
 
 // authorized authorizes a tools/call of operation op and returns its attempt
@@ -50,7 +51,10 @@ func (f reportFixture) authorized(t *testing.T, op string) (string, identitybrok
 }
 
 func callReport(session, op, attempt string, dispatch, outcome identitybroker.DecisionOutcome) identitybroker.ReportCallRequest {
-	return identitybroker.ReportCallRequest{SessionID: session, OperationID: op, AttemptID: attempt, Dispatch: dispatch, Outcome: outcome}
+	return identitybroker.ReportCallRequest{
+		SessionID: session, OperationID: op, AttemptID: attempt,
+		Dispatch: identitybroker.DispatchOutcome(dispatch), Outcome: identitybroker.ObservedOutcome(outcome),
+	}
 }
 
 // wantJoined fails t unless r is reported of attempt in op and joined to
@@ -146,23 +150,27 @@ func TestReportCallRecordsWhatItCannotJoinAsAMismatch(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			before, _, _ := f.records()
+			before, beforeOutcomes, _ := f.records()
 			if err := f.report(tc.req); err != nil {
 				t.Fatalf("ReportCall = %v, want the mismatch recorded and accepted", err)
 			}
 			dispatches, outcomes, _ := f.records()
-			if len(dispatches) != len(before)+1 {
-				t.Fatalf("recorded %d dispatches, want %d", len(dispatches), len(before)+1)
+			wantOutcomes := len(beforeOutcomes)
+			if tc.req.Dispatch == identitybroker.DispatchSuccess {
+				wantOutcomes++
+			}
+			if len(dispatches) != len(before)+1 || len(outcomes) != wantOutcomes {
+				t.Fatalf("recorded %d dispatches and %d outcomes, want %d and %d", len(dispatches), len(outcomes), len(before)+1, wantOutcomes)
 			}
 			d := dispatches[len(dispatches)-1]
 			if d.Mismatch != tc.want || d.DecisionRecord != "" || d.AttemptID != tc.req.AttemptID || d.OperationID != tc.req.OperationID ||
-				d.Outcome != tc.req.Dispatch {
+				d.Outcome != identitybroker.DecisionOutcome(tc.req.Dispatch) {
 				t.Fatalf("dispatch = %+v, want mismatch %q naming no decision", d, tc.want)
 			}
 			if got := d.Subjects()[identitybroker.SubjectAgentActorID]; got.Provenance != identitybroker.ProvenanceUnavailable {
 				t.Fatalf("agent_actor_id = %+v, want unavailable without a decision", got)
 			}
-			if tc.req.Dispatch == success && outcomes[len(outcomes)-1].Mismatch != tc.want {
+			if tc.req.Dispatch == identitybroker.DispatchSuccess && outcomes[len(outcomes)-1].Mismatch != tc.want {
 				t.Fatalf("outcome = %+v, want mismatch %q", outcomes[len(outcomes)-1], tc.want)
 			}
 		})
@@ -212,7 +220,7 @@ func TestReportCallUnknownOutcomeRetryAndLateResult(t *testing.T) {
 		t.Fatalf("late ReportCall again: %v", err)
 	}
 	second := late
-	second.Outcome = failure
+	second.Outcome = identitybroker.ObservedFailure
 	lateAfterKnown := late
 	lateAfterKnown.AttemptID = retry
 	for _, req := range []identitybroker.ReportCallRequest{second, lateAfterKnown} {
@@ -326,16 +334,22 @@ func TestReportCallRejectsOutcomesOutsideTheSets(t *testing.T) {
 func TestReportCallRequestValidate(t *testing.T) {
 	valid := callReport("bs_1", "op_1", "att_1", success, success)
 	tests := map[string]func(*identitybroker.ReportCallRequest){
-		"no session":                     func(r *identitybroker.ReportCallRequest) { r.SessionID = "" },
-		"no operation":                   func(r *identitybroker.ReportCallRequest) { r.OperationID = "" },
-		"no attempt":                     func(r *identitybroker.ReportCallRequest) { r.AttemptID = "" },
-		"no dispatch":                    func(r *identitybroker.ReportCallRequest) { r.Dispatch = "" },
-		"an error dispatch":              func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.OutcomeError },
-		"an unknown dispatch":            func(r *identitybroker.ReportCallRequest) { r.Dispatch = unknown },
-		"a dispatched call no outcome":   func(r *identitybroker.ReportCallRequest) { r.Outcome = "" },
-		"an undispatched call outcome":   func(r *identitybroker.ReportCallRequest) { r.Dispatch = failure },
-		"an undispatched late result":    func(r *identitybroker.ReportCallRequest) { r.Dispatch, r.Outcome, r.LateResult = failure, "", true },
-		"an unknown late result":         func(r *identitybroker.ReportCallRequest) { r.Outcome, r.LateResult = unknown, true },
+		"no session":   func(r *identitybroker.ReportCallRequest) { r.SessionID = "" },
+		"no operation": func(r *identitybroker.ReportCallRequest) { r.OperationID = "" },
+		"no attempt":   func(r *identitybroker.ReportCallRequest) { r.AttemptID = "" },
+		"no dispatch":  func(r *identitybroker.ReportCallRequest) { r.Dispatch = "" },
+		"an error dispatch": func(r *identitybroker.ReportCallRequest) {
+			r.Dispatch = identitybroker.DispatchOutcome(identitybroker.OutcomeError)
+		},
+		"an unknown dispatch":          func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.DispatchOutcome(unknown) },
+		"a dispatched call no outcome": func(r *identitybroker.ReportCallRequest) { r.Outcome = "" },
+		"an undispatched call outcome": func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.DispatchFailure },
+		"an undispatched late result": func(r *identitybroker.ReportCallRequest) {
+			r.Dispatch, r.Outcome, r.LateResult = identitybroker.DispatchFailure, "", true
+		},
+		"an unknown late result": func(r *identitybroker.ReportCallRequest) {
+			r.Outcome, r.LateResult = identitybroker.ObservedUnknown, true
+		},
 		"a cause with spaces":            func(r *identitybroker.ReportCallRequest) { r.Cause = "invalid token" },
 		"a cause in upper case":          func(r *identitybroker.ReportCallRequest) { r.Cause = "INVALID_TOKEN" },
 		"a cause past its bound":         func(r *identitybroker.ReportCallRequest) { r.Cause = strings.Repeat("a", 65) },
@@ -348,7 +362,7 @@ func TestReportCallRequestValidate(t *testing.T) {
 		callReport("bs_1", "op_1", "att_1", failure, ""),
 		callReport("bs_1", "op_1", "att_1", success, identitybroker.OutcomeError),
 		callReport("bs_1", "op_1", "att_1", success, unknown),
-		{SessionID: "bs_1", OperationID: "op_1", AttemptID: "att_1", Dispatch: success, Outcome: failure, LateResult: true, Cause: strings.Repeat("a", 64)},
+		{SessionID: "bs_1", OperationID: "op_1", AttemptID: "att_1", Dispatch: identitybroker.DispatchSuccess, Outcome: identitybroker.ObservedFailure, LateResult: true, Cause: strings.Repeat("a", 64)},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("Validate(%+v) = %v, want nil", ok, err)
@@ -467,5 +481,92 @@ func TestReportCallRefusesAnUnnamedWorkloadAsInvalid(t *testing.T) {
 	_, _, rejected := f.records()
 	if len(rejected) != 1 || rejected[0].Mismatch != identitybroker.MismatchInvalidReport || rejected[0].Code != identitybroker.CodeUnauthenticated {
 		t.Fatalf("rejected reports = %+v, want one invalid report refused as unauthenticated", rejected)
+	}
+}
+
+// TestReportCallJoinsTheRetryOfARejectedToken: the attempt a retry after a
+// rejected token is issued is reported and joined like the first.
+func TestReportCallJoinsTheRetryOfARejectedToken(t *testing.T) {
+	f := newReportFixture(t)
+	first, firstDecision := f.authorized(t, "op-1")
+	retryReq := callRequest(f.s.ID, f.cred)
+	retryReq.RejectedAttemptID = first
+	retry, err := f.authorize(retryReq)
+	if err != nil {
+		t.Fatalf("AuthorizeCall retry: %v", err)
+	}
+	var retryDecision identitybroker.DecisionRecord
+	for _, d := range f.rec.Decisions() {
+		if d.AttemptID == retry.AttemptID && d.Outcome == success {
+			retryDecision = d
+		}
+	}
+	if retryDecision.RejectedAttemptID != first {
+		t.Fatalf("retry decision = %+v, want one reporting %s rejected", retryDecision, first)
+	}
+	rejected := callReport(f.s.ID, "op-1", first, success, failure)
+	rejected.Cause = "invalid_token"
+	for _, req := range []identitybroker.ReportCallRequest{rejected, callReport(f.s.ID, "op-1", retry.AttemptID, success, success)} {
+		if err := f.report(req); err != nil {
+			t.Fatalf("ReportCall: %v", err)
+		}
+	}
+	_, outcomes, _ := f.records()
+	if len(outcomes) != 2 {
+		t.Fatalf("recorded %d outcomes, want 2", len(outcomes))
+	}
+	wantJoined(t, outcomes[0].CallReport, "op-1", first, firstDecision, "")
+	wantJoined(t, outcomes[1].CallReport, "op-1", retry.AttemptID, retryDecision, "")
+}
+
+// TestReportCallFromAnotherWorkloadJoinsNothing: another workload reporting
+// an attempt this session really issued is recorded as a mismatch naming no
+// decision, and leaves the attempt to its own workload's report.
+func TestReportCallFromAnotherWorkloadJoinsNothing(t *testing.T) {
+	f := newReportFixture(t)
+	attempt, decision := f.authorized(t, "op-1")
+	intruder := identitybroker.Workload{Name: "system:serviceaccount:other:intruder"}
+	if err := f.b.ReportCall(context.Background(), intruder, callReport(f.s.ID, "op-1", attempt, success, success)); err != nil {
+		t.Fatalf("ReportCall by another workload = %v, want accepted", err)
+	}
+	if err := f.report(callReport(f.s.ID, "op-1", attempt, success, unknown)); err != nil {
+		t.Fatalf("ReportCall: %v", err)
+	}
+	dispatches, _, _ := f.records()
+	if len(dispatches) != 2 {
+		t.Fatalf("recorded %d dispatches, want 2", len(dispatches))
+	}
+	if d := dispatches[0]; d.Mismatch != identitybroker.MismatchAttemptUnknown || d.DecisionRecord != "" || d.Workload != intruder ||
+		d.Owner != (identitybroker.Owner{}) {
+		t.Fatalf("the other workload's dispatch = %+v, want a mismatch naming no decision or owner", d)
+	}
+	wantJoined(t, dispatches[1].CallReport, "op-1", attempt, decision, "")
+}
+
+// TestReportCallForgetsAClosedSessionsAttemptsAfterTheRetention: a closed
+// session's unsettled attempts are joined for an hour after the close, and
+// then forgotten.
+func TestReportCallForgetsAClosedSessionsAttemptsAfterTheRetention(t *testing.T) {
+	f := newReportFixture(t)
+	early, earlyDecision := f.authorized(t, "op-early")
+	late, _ := f.authorized(t, "op-late")
+	if err := f.b.CloseSession(context.Background(), testWorkload, identitybroker.CloseSessionRequest{SessionID: f.s.ID, Reason: identitybroker.ReasonSessionClosed}); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	*f.clock = f.clock.Add(time.Hour - time.Second)
+	if err := f.report(callReport(f.s.ID, "op-early", early, success, unknown)); err != nil {
+		t.Fatalf("ReportCall before the retention ends: %v", err)
+	}
+	*f.clock = f.clock.Add(time.Second)
+	if err := f.report(callReport(f.s.ID, "op-late", late, success, unknown)); err != nil {
+		t.Fatalf("ReportCall once the retention ends: %v", err)
+	}
+	dispatches, _, _ := f.records()
+	if len(dispatches) != 2 {
+		t.Fatalf("recorded %d dispatches, want 2", len(dispatches))
+	}
+	wantJoined(t, dispatches[0].CallReport, "op-early", early, earlyDecision, "")
+	if d := dispatches[1]; d.Mismatch != identitybroker.MismatchAttemptUnknown || d.DecisionRecord != "" {
+		t.Fatalf("a report an hour after the close = %+v, want a mismatch", d)
 	}
 }

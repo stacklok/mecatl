@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"time"
 )
 
 // The MCP client that sends a gateway call reports each attempt's dispatch
@@ -157,6 +158,12 @@ func (r *ReportRejectedRecord) Subjects() Subjects { return r.subjects() }
 
 func (*ReportRejectedRecord) record() {}
 
+func (r *ReportRejectedRecord) clone() ReportRejectedRecord {
+	c := *r
+	c.CallReport = r.CallReport.clone()
+	return c
+}
+
 // reportedAttempt is an attempt the broker issued for a tools/call, and what
 // has been reported of it.
 type reportedAttempt struct {
@@ -172,17 +179,32 @@ type reportedAttempt struct {
 	late ReportCallRequest
 }
 
+// reportRetention is how long a closed session keeps its unsettled
+// attempts: those still awaiting a report, which a call that outlives the
+// close sends when it ends, and those whose outcome was reported unknown,
+// which a late result may follow. A report after it is recorded as
+// MismatchAttemptUnknown.
+const reportRetention = time.Hour
+
 // reportLedger remembers, per session, the attempts the broker issued for
 // tools/calls and what has been reported of each, at most
 // maxAttemptsPerSession of them; the oldest is forgotten first, and a report
 // for it is recorded as MismatchAttemptUnknown. When a session closes it
-// forgets the attempts whose report is settled (closeLocked), keeping those
-// still awaiting a report, which may arrive after the close, or a late
-// result. Its methods are guarded by sessionTable.mu.
+// forgets the attempts whose report is settled (closeLocked), and the rest
+// reportRetention after the close (purgeLocked). Its methods are guarded by
+// sessionTable.mu.
 //
-// Shortcut: reported attempts held in memory, forgetting a session's oldest beyond 1024; removed by #2563 (durable state).
+// Shortcut: reported attempts held in memory, forgetting a session's oldest beyond 1024 and a closed session's after an hour; removed by #2563 (durable state).
 type reportLedger struct {
 	bySession map[string]*sessionReports
+	// closed lists the closed sessions whose unsettled attempts are kept,
+	// oldest close first.
+	closed []closedReports
+}
+
+type closedReports struct {
+	sessionID string
+	at        time.Time
 }
 
 type sessionReports struct {
@@ -213,11 +235,13 @@ func (m *reportLedger) issueLocked(sessionID, attemptID, operationID, decision s
 	s.attempts[attemptID] = &reportedAttempt{operationID: operationID, decision: decision, subjects: subjects}
 }
 
-// closeLocked forgets sessionID's attempts whose report is settled: a
-// dispatch failure, or a dispatched attempt with a known outcome or a late
-// result. A repeat of such a report after the close is recorded as
-// MismatchAttemptUnknown.
-func (m *reportLedger) closeLocked(sessionID string) {
+// closeLocked forgets sessionID's attempts whose report is settled, as the
+// session closes at: a dispatch failure, or a dispatched attempt with a known
+// outcome or a late result. A repeat of such a report after the close is
+// recorded as MismatchAttemptUnknown. The rest are kept until
+// reportRetention after at.
+func (m *reportLedger) closeLocked(sessionID string, at time.Time) {
+	m.purgeLocked(at)
 	s, ok := m.bySession[sessionID]
 	if !ok {
 		return
@@ -225,7 +249,7 @@ func (m *reportLedger) closeLocked(sessionID string) {
 	s.order = slices.DeleteFunc(s.order, func(id string) bool {
 		a := s.attempts[id]
 		settled := a.reported != (ReportCallRequest{}) &&
-			(a.reported.Outcome != OutcomeUnknown || a.late != (ReportCallRequest{}))
+			(a.reported.Outcome != ObservedUnknown || a.late != (ReportCallRequest{}))
 		if settled {
 			delete(s.attempts, id)
 		}
@@ -233,6 +257,17 @@ func (m *reportLedger) closeLocked(sessionID string) {
 	})
 	if len(s.order) == 0 {
 		delete(m.bySession, sessionID)
+		return
+	}
+	m.closed = append(m.closed, closedReports{sessionID: sessionID, at: at})
+}
+
+// purgeLocked forgets the attempts of every session closed reportRetention
+// or more before now.
+func (m *reportLedger) purgeLocked(now time.Time) {
+	for len(m.closed) > 0 && now.Sub(m.closed[0].at) >= reportRetention {
+		delete(m.bySession, m.closed[0].sessionID)
+		m.closed = slices.Delete(m.closed, 0, 1)
 	}
 }
 
@@ -252,6 +287,7 @@ func (b *Broker) ReportCall(_ context.Context, workload Workload, req ReportCall
 	t := b.sessions
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.reports.purgeLocked(t.now())
 	report := CallReport{
 		Workload: workload, SessionID: req.SessionID, OperationID: req.OperationID, AttemptID: req.AttemptID,
 		Cause: req.Cause, ReportProvenance: ProvenanceReportedByMecak8s,
@@ -269,7 +305,8 @@ func (b *Broker) ReportCall(_ context.Context, workload Workload, req ReportCall
 	case a.operationID != req.OperationID:
 		report.Mismatch = MismatchOperation
 	default:
-		report.DecisionRecord, report.DecisionSubjects = a.decision, a.subjects
+		// Each record gets its own copy, so no two records share a map.
+		report.DecisionRecord, report.DecisionSubjects = a.decision, maps.Clone(a.subjects)
 		var repeat bool
 		if report.Mismatch, repeat = a.match(req); repeat {
 			return nil
@@ -289,7 +326,7 @@ func (a *reportedAttempt) match(req ReportCallRequest) (ReportMismatch, bool) {
 		return MismatchConflictingReport, a.reported == req
 	case a.late != (ReportCallRequest{}):
 		return MismatchUnexpectedLateResult, a.late == req
-	case a.reported.Outcome != OutcomeUnknown:
+	case a.reported.Outcome != ObservedUnknown:
 		return MismatchUnexpectedLateResult, false
 	}
 	return "", false
@@ -302,7 +339,7 @@ func (a *reportedAttempt) match(req ReportCallRequest) (ReportMismatch, bool) {
 func (b *Broker) reportRecords(report CallReport, req ReportCallRequest, a *reportedAttempt) []Record {
 	now := b.sessions.now()
 	outcome := &OutcomeRecord{
-		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeToolOutcome, At: now, Outcome: req.Outcome},
+		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeToolOutcome, At: now, Outcome: DecisionOutcome(req.Outcome)},
 		CallReport:   report, LateResult: req.LateResult,
 	}
 	if req.LateResult {
@@ -314,15 +351,15 @@ func (b *Broker) reportRecords(report CallReport, req ReportCallRequest, a *repo
 	}
 	if a != nil && report.Mismatch == "" {
 		a.reported = req
-		if req.Dispatch == OutcomeSuccess {
+		if req.Dispatch == DispatchSuccess {
 			a.outcomeRecord = outcome.AuditID
 		}
 	}
 	dispatch := &DispatchRecord{
-		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeToolDispatch, At: now, Outcome: req.Dispatch},
+		RecordHeader: RecordHeader{AuditID: newAuditID(), Type: TypeToolDispatch, At: now, Outcome: DecisionOutcome(req.Dispatch)},
 		CallReport:   report,
 	}
-	if req.Dispatch != OutcomeSuccess {
+	if req.Dispatch != DispatchSuccess {
 		return []Record{dispatch}
 	}
 	return []Record{dispatch, outcome}
@@ -344,7 +381,5 @@ func (b *Broker) refuseReport(workload Workload, req ReportCallRequest, err erro
 	if workload.Validate() == nil && !req.inSets() {
 		rec.Mismatch = MismatchOutcomeNotInSet
 	}
-	rec.refused(err)
-	b.recordAnyway(rec)
-	return err
+	return b.refuseInvalid(rec, err)
 }

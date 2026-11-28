@@ -489,7 +489,7 @@ func (t *sessionTable) closeHeldLocked(s *brokerSession, reason Reason, cause Cl
 	s.closedAt = t.now()
 	s.grant = nil
 	t.attempts.dropLocked(s.ID)
-	t.reports.closeLocked(s.ID)
+	t.reports.closeLocked(s.ID, s.closedAt)
 	t.runs.dropLocked(s.ID)
 	// A new session an open is still recording is not in the table.
 	if t.open[s.HostSessionID] == s.ID {

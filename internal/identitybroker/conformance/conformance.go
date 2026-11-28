@@ -181,7 +181,7 @@ func childRequest(s identitybroker.Session, parent identitybroker.AgentRef, labe
 func callReportRequest(sessionID string) identitybroker.ReportCallRequest {
 	return identitybroker.ReportCallRequest{
 		SessionID: sessionID, OperationID: "op-1", AttemptID: "att_conformance",
-		Dispatch: identitybroker.OutcomeSuccess, Outcome: identitybroker.OutcomeUnknown,
+		Dispatch: identitybroker.DispatchSuccess, Outcome: identitybroker.ObservedUnknown,
 	}
 }
 

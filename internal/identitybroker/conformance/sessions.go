@@ -281,11 +281,15 @@ func runInvalidRequests(t *testing.T, factory serviceFactory) {
 	}
 
 	reports := map[string]func(*identitybroker.ReportCallRequest){
-		"no broker session":              func(r *identitybroker.ReportCallRequest) { r.SessionID = "" },
-		"no attempt":                     func(r *identitybroker.ReportCallRequest) { r.AttemptID = "" },
-		"a dispatch outside its set":     func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.OutcomeDenied },
-		"an outcome outside its set":     func(r *identitybroker.ReportCallRequest) { r.Outcome = identitybroker.OutcomeDenied },
-		"an outcome of no dispatch":      func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.OutcomeFailure },
+		"no broker session": func(r *identitybroker.ReportCallRequest) { r.SessionID = "" },
+		"no attempt":        func(r *identitybroker.ReportCallRequest) { r.AttemptID = "" },
+		"a dispatch outside its set": func(r *identitybroker.ReportCallRequest) {
+			r.Dispatch = identitybroker.DispatchOutcome(identitybroker.OutcomeDenied)
+		},
+		"an outcome outside its set": func(r *identitybroker.ReportCallRequest) {
+			r.Outcome = identitybroker.ObservedOutcome(identitybroker.OutcomeDenied)
+		},
+		"an outcome of no dispatch":      func(r *identitybroker.ReportCallRequest) { r.Dispatch = identitybroker.DispatchFailure },
 		"an unknown late result":         func(r *identitybroker.ReportCallRequest) { r.LateResult = true },
 		"a cause that is not a code":     func(r *identitybroker.ReportCallRequest) { r.Cause = "Bearer x" },
 		"a dispatched call no outcome":   func(r *identitybroker.ReportCallRequest) { r.Outcome = "" },

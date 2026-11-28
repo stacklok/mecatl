@@ -55,7 +55,12 @@ type fakeAuthorizer struct {
 	reports      []identitybroker.ReportCallRequest
 }
 
-func (f *fakeAuthorizer) ReportCall(_ context.Context, req identitybroker.ReportCallRequest) error {
+// ReportCall records req unless ctx is done, as a remote broker would not
+// receive a report sent on a cancelled context.
+func (f *fakeAuthorizer) ReportCall(ctx context.Context, req identitybroker.ReportCallRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reports = append(f.reports, req)

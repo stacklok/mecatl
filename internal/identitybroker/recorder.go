@@ -21,7 +21,8 @@ import (
 // *SessionOpenRecord, *SessionCloseRecord, *RegistrationRecord,
 // *DelegationRecord, *IDJAGRecord, *DecisionRecord, *DispatchRecord,
 // *OutcomeRecord, or *ReportRejectedRecord. The broker owns rec and may
-// reuse it after the call, so the sink copies what it keeps. An
+// reuse it after the call, so the sink copies what it keeps, including the
+// maps a record holds, such as CallReport.DecisionSubjects. An
 // implementation is safe for concurrent use.
 type Recorder interface {
 	Record(ctx context.Context, rec Record) error
@@ -43,8 +44,8 @@ type DecisionOutcome string
 // other refusal (audit.md, "AuditEvent profile"). A refusal that supersedes
 // an earlier record therefore has error when that record was not accepted,
 // and denied when a close undid its event. A reported dispatch and observed
-// outcome use failure and unknown too, as their fixed sets allow (see
-// ReportCallRequest).
+// outcome use failure and unknown too, as their fixed sets allow
+// (DispatchOutcome and ObservedOutcome, whose values are these strings).
 const (
 	OutcomeSuccess DecisionOutcome = "success"
 	OutcomeDenied  DecisionOutcome = "denied"
@@ -249,7 +250,7 @@ func (r *MemoryRecorder) Record(_ context.Context, rec Record) error {
 	case *OutcomeRecord:
 		r.outcomes = appendBounded(r.outcomes, rec.clone())
 	case *ReportRejectedRecord:
-		r.rejected = appendBounded(r.rejected, *rec)
+		r.rejected = appendBounded(r.rejected, rec.clone())
 	}
 	return nil
 }
@@ -303,9 +304,9 @@ func (r *MemoryRecorder) Dispatches() []DispatchRecord { return cloneLocked(&r.m
 // first.
 func (r *MemoryRecorder) Outcomes() []OutcomeRecord { return cloneLocked(&r.mu, &r.outcomes) }
 
-// RejectedReports returns a copy of the rejected call report records,
+// ReportRejections returns a copy of the rejected call report records,
 // oldest first.
-func (r *MemoryRecorder) RejectedReports() []ReportRejectedRecord {
+func (r *MemoryRecorder) ReportRejections() []ReportRejectedRecord {
 	return cloneLocked(&r.mu, &r.rejected)
 }
 

@@ -2,9 +2,10 @@ package identitybroker
 
 import "slices"
 
-// maxAttemptsPerSession bounds how many issued attempts a session's ledger
-// keeps; the oldest is forgotten first, so a rejection report for it is
-// refused.
+// maxAttemptsPerSession bounds how many issued attempts each of a session's
+// ledgers keeps; the oldest is forgotten first, so a rejection report for it
+// is refused (attemptLedger), and a dispatch and outcome report for it is
+// recorded as a mismatch (reportLedger).
 const maxAttemptsPerSession = 1024
 
 // callKey is what an attempt was issued for. A rejection report must repeat

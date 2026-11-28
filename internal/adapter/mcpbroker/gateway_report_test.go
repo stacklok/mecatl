@@ -26,7 +26,7 @@ func wantReports(t *testing.T, f *gatewayFixture, want ...identitybroker.ReportC
 func report(attempt string, dispatch, outcome identitybroker.DecisionOutcome, cause string) identitybroker.ReportCallRequest {
 	return identitybroker.ReportCallRequest{
 		SessionID: "bs_test", OperationID: operationID(gatewayTestSession, gatewayTestSession, "call-1"),
-		AttemptID: attempt, Dispatch: dispatch, Outcome: outcome, Cause: cause,
+		AttemptID: attempt, Dispatch: identitybroker.DispatchOutcome(dispatch), Outcome: identitybroker.ObservedOutcome(outcome), Cause: cause,
 	}
 }
 
