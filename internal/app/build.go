@@ -2367,6 +2367,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	defer func() {
 		if !profilesTransferred {
 			ib.release()
+			// The broker sends its queued records before its audit
+			// destination closes, as at shutdown.
+			if ib.core != nil {
+				drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
+				_ = ib.core.Close(drainCtx)
+				cancel()
+			}
 			ib.closeAudit()
 		}
 	}()

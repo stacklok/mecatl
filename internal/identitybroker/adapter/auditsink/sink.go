@@ -88,6 +88,12 @@ func (s *Sink) Record(ctx context.Context, rec identitybroker.Record) error {
 	case <-ctx.Done():
 		return fmt.Errorf("%w: %w", ErrNotWritten, ctx.Err())
 	}
+	// select picks at random when both are ready, so a record whose context
+	// ended is not written: it would be reported as not written anyway.
+	if err := ctx.Err(); err != nil {
+		<-s.turn
+		return fmt.Errorf("%w: %w", ErrNotWritten, err)
+	}
 	done := make(chan error, 1)
 	go func() {
 		defer func() { <-s.turn }()

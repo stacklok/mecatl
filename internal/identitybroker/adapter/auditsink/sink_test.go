@@ -620,3 +620,35 @@ func TestConcurrentRecordsAreWholeLines(t *testing.T) {
 		t.Fatalf("wrote %d records, want 32", len(got))
 	}
 }
+
+// TestAToolListingTargetsItsServer pins that a tools/list decision targets
+// the server it lists, not a tool.
+func TestAToolListingTargetsItsServer(t *testing.T) {
+	rec := decision()
+	rec.Method, rec.Tool = ib.MethodToolsList, ""
+	ev, err := auditsink.Event(rec, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"type": "server", "method": "tools/list", "server": "github"}
+	if !maps.Equal(ev.Target, want) {
+		t.Fatalf("target %v, want %v", ev.Target, want)
+	}
+}
+
+// TestAnEndedContextWritesNothing pins that a record whose context already
+// ended is reported as not written and is not written.
+func TestAnEndedContextWritesNothing(t *testing.T) {
+	var buf bytes.Buffer
+	s := auditsink.New(&buf, origin)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for range 20 {
+		if err := s.Record(ctx, decision()); !errors.Is(err, context.Canceled) {
+			t.Fatalf("Record = %v, want the cancellation", err)
+		}
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("wrote %d bytes for records whose context had ended", buf.Len())
+	}
+}

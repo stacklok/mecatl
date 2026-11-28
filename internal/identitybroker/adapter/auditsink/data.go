@@ -232,10 +232,14 @@ func dataOf(rec ib.Record, version string) (eventData, error) {
 	return d, nil
 }
 
-// toolTarget returns a call's target in toolhive-core's keys, leaving out
-// what a refusal before validation did not record.
+// toolTarget returns a call's target in toolhive-core's keys: the tool, or
+// the server for a tool listing, leaving out what a refusal before
+// validation did not record.
 func toolTarget(method, server, tool string) map[string]string {
 	t := map[string]string{audit.TargetKeyType: audit.TargetTypeTool}
+	if method == string(ib.MethodToolsList) {
+		t[audit.TargetKeyType] = audit.TargetTypeServer
+	}
 	if method != "" {
 		t[audit.TargetKeyMethod] = method
 	}

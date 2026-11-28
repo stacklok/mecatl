@@ -509,9 +509,10 @@ then file-less. To give them files, use the
 JSON audit event per line in the toolhive-core audit format, which your log
 collector picks up with the pod's other output. Each records who acted and for
 whom: session opens and closes, agent registrations, delegations from one
-agent to another, ID-JAG issuance, and each gateway call's decision. With an
-embedded gateway entry, the MCP gateway adds an event for each request it
-serves, naming the acting agent. Records carry credentials only by issuer and
+agent to another, ID-JAG issuance, and each gateway call's decision. When
+protected MCP servers are served through the
+[embedded gateway entry](#declare-the-embedded-gateway), the MCP gateway adds
+an event for each request it serves, naming the acting agent. Records carry credentials only by issuer and
 token ID, never their values.
 
 The broker waits for a record before it acts on some events: it issues no
