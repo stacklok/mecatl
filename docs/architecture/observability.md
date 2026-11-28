@@ -38,6 +38,12 @@ run time. Recorders include the telemetry adapter, the anonymous product-metrics
 adapter (`internal/adapter/productmetrics`), and the JSONL and Redis stores, which
 keep a per-session tool sidecar.
 
+The identity broker keeps a separate audit stream of who acted, for whom, and
+what it decided. Its `identitybroker.Recorder` sink
+(`internal/identitybroker/adapter/auditsink`) writes each record as a
+toolhive-core audit event and reports a failed write back to the broker, which
+then withholds what the record covers, such as a call's gateway token.
+
 ### Live events and the durable log
 
 `port.EventSink` is a synchronous mirror: the run writes each sequenced event to

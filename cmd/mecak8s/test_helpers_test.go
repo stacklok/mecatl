@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -15,6 +16,11 @@ func buildIsolated(t testing.TB, ctx context.Context, cfg app.Config) (*app.Buil
 	t.Helper()
 	if cfg.UserModelDir == "" {
 		cfg.UserModelDir = t.TempDir()
+	}
+	// The identity broker's audit records would otherwise go to the test's
+	// standard output.
+	if cfg.IdentityBroker && cfg.IdentityBrokerAuditFile == "" {
+		cfg.IdentityBrokerAuditFile = filepath.Join(t.TempDir(), "audit.jsonl")
 	}
 	return app.Build(ctx, cfg)
 }

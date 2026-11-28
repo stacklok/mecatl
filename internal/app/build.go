@@ -990,6 +990,17 @@ type Config struct {
 	// is required with, and only allowed with, IdentityBroker, and only
 	// mecak8s sets it.
 	IdentityBrokerConfigFile string
+	// IdentityBrokerAuditFile is the absolute path of the file the identity
+	// broker's records and the embedded gateway's audit events are appended
+	// to, as toolhive-core audit events; empty writes them to standard
+	// output. Each broker record
+	// is synced to the file before the broker treats it as accepted. Only
+	// allowed with IdentityBroker.
+	IdentityBrokerAuditFile string
+	// identityBrokerAuditWriter replaces the identity broker's audit
+	// destination in tests, so they can make it fail or stall; the embedded
+	// gateway still writes to IdentityBrokerAuditFile.
+	identityBrokerAuditWriter auditWriter
 	// identityBrokerConfig replaces the configuration the real identity
 	// broker builds from IdentityBrokerConfigFile in tests; the file's keys
 	// stay.
@@ -1596,11 +1607,9 @@ type Built struct {
 	// identityBrokerClient signs the identity broker's client assertions at
 	// AS-1 and AS-2; nil without a real identity broker.
 	identityBrokerClient *identitybroker.ClientAssertionSigner
-	// identityBrokerCore and identityBrokerRecorder are the real identity
-	// broker's core and records, for tests; nil without a real identity
-	// broker.
-	identityBrokerCore     *identitybroker.Broker
-	identityBrokerRecorder *identitybroker.MemoryRecorder
+	// identityBrokerCore is the real identity broker's core, for tests; nil
+	// without a real identity broker.
+	identityBrokerCore *identitybroker.Broker
 	// identityBrokerHostedAS1Server is the hosted AS-1 the identity broker
 	// uses, for tests; nil without one.
 	identityBrokerHostedAS1Server *as1server.Server
@@ -1615,14 +1624,6 @@ type Built struct {
 	// sessions in the server's default mode (yolo); other modes keep it enforcing.
 	GuardrailsAdvisory bool
 	Close              func()
-}
-
-// IdentityBrokerRecords returns the records the real identity broker kept;
-// nil without one.
-//
-// Shortcut: the identity broker keeps its records in memory, where operators and tests read them; removed by #2566 (audit delivery).
-func (b *Built) IdentityBrokerRecords() *identitybroker.MemoryRecorder {
-	return b.identityBrokerRecorder
 }
 
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
@@ -2366,7 +2367,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	defer func() {
 		if !profilesTransferred {
-			ib.release()
+			ib.shutdown()
 		}
 	}()
 	// The server registers agents into the holder and closes it; the MCP
@@ -3158,15 +3159,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		childLiveness.Close()
 		closeBroker()
-		// AS-1 stops taking requests first, so no open or call queues a
-		// record after the drain; then the identity broker sends its queued
-		// close and refusal records, reporting any it cannot send in time.
-		ib.release()
-		if ib.core != nil {
-			drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
-			_ = ib.core.Close(drainCtx)
-			cancel()
-		}
+		ib.shutdown()
 		mcpClose()
 		closeProfiles()
 		agentClose()
@@ -3185,7 +3178,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
 	})
 	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerRecorder: ib.recorder, identityBrokerHostedAS1Server: ib.hostedServer, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: broker.service, MCPBrokerHandlers: broker.handlers, MCPBrokerCallbackPath: broker.callbackPath, IdentityBroker: ib.service, IdentityBrokerHostedAS1: ib.hosted, identityBrokerClient: ib.client, identityBrokerCore: ib.core, identityBrokerHostedAS1Server: ib.hostedServer, identityBrokerAS2: broker.as2, mcpBrokerGatewayServers: broker.gatewayServers, GuardrailsAdvisory: guardrailConfigured && guardrailsDemoted(cfg), Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the

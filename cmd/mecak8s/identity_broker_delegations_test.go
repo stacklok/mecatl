@@ -177,10 +177,14 @@ func TestIdentityBrokerResumedHelperGatewayCallAfterReopen(t *testing.T) {
 	}
 }
 
-// TestIdentityBrokerRecordsWhoActed pins that a real run records who acted:
-// the broker session's open, the registrations of the main agent and a
-// subagent, the subagent's delegation, and each gateway call's ID-JAG and
-// decision, all accepted by the broker's record sink, which the test reads.
+// TestIdentityBrokerRecordsWhoActed pins that a real run records who acted
+// in the audit file, through the toolhive-core logger: the broker session's
+// open, the registrations of the main agent and a subagent, the subagent's
+// delegation, and each gateway call's ID-JAG and decision, as profile
+// events; and the embedded gateway's own event of each call, naming the
+// acting agent from the token's act as toolhive-core's delegation chain. No
+// event carries a credential AS-1 issued or was sent, Alice's access token
+// from the session open included.
 func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
 	d := serveDelegations(t)
 	d.writeScript(t, gatewayTurn("main-call"),
@@ -188,38 +192,27 @@ func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
 		gatewayTurn("child-call"), scriptText, scriptText)
 	promptApprovingAsks(t, d.api, d.alice, d.session, "go", nil)
 	d.wantHelperGatewayCalls(t, 1)
+	// Close sends the records still queued.
+	d.built.Close()
 
-	sink := d.built.IdentityBrokerRecords()
-	if sink == nil {
-		t.Fatal("mecak8s built no identity broker record sink")
-	}
-	var accepted []identitybroker.Record
-	for _, r := range sink.Opens() {
-		accepted = append(accepted, &r)
-	}
-	for _, r := range sink.Registrations() {
-		accepted = append(accepted, &r)
-	}
-	for _, r := range sink.Delegations() {
-		accepted = append(accepted, &r)
-	}
-	for _, r := range sink.IDJAGs() {
-		accepted = append(accepted, &r)
-	}
-	for _, r := range sink.Decisions() {
-		accepted = append(accepted, &r)
-	}
+	events := readAuditFile(t, d.auditFile)
 	successes := map[string]int{}
 	ids := map[string]bool{}
-	for _, r := range accepted {
-		h := r.Header()
-		t.Logf("record %s %s %s", h.Type, h.AuditID, h.Outcome)
-		if ids[h.AuditID] || !strings.HasPrefix(h.AuditID, "rec_") {
-			t.Fatalf("record %+v repeats or lacks an AuditID", h)
+	registrations := map[string]auditLine{}
+	for _, ev := range events {
+		if ev.Component != "mecatl-broker" {
+			continue
 		}
-		ids[h.AuditID] = true
-		if h.Outcome == identitybroker.OutcomeSuccess {
-			successes[h.Type]++
+		t.Logf("record %s %s %s", ev.Type, ev.AuditID, ev.Outcome)
+		if ids[ev.AuditID] || !strings.HasPrefix(ev.AuditID, "rec_") {
+			t.Fatalf("record %s %s repeats or lacks an AuditID", ev.Type, ev.AuditID)
+		}
+		ids[ev.AuditID] = true
+		if ev.Outcome == "success" {
+			successes[ev.Type]++
+		}
+		if ev.Type == identitybroker.TypeInstanceRegistered && ev.Outcome == "success" {
+			registrations[ev.AuditID] = ev
 		}
 	}
 	for typ, want := range map[string]int{
@@ -232,5 +225,69 @@ func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
 		if successes[typ] < want {
 			t.Errorf("%d successful %s records, want at least %d", successes[typ], typ, want)
 		}
+	}
+	// The main agent's registration has no parent; the subagent's names the
+	// main agent's by AuditID and SPIFFE ID, and each names its own ag_
+	// identifier and the SPIFFE ID that ends in it.
+	var root, child auditLine
+	for _, reg := range registrations {
+		if reg.Data.Lineage.ParentRecord == "" {
+			root = reg
+		} else {
+			child = reg
+		}
+	}
+	for _, reg := range []auditLine{root, child} {
+		id := reg.Subjects[identitybroker.SubjectAgentActorID]
+		if !strings.HasPrefix(id, "ag_") || !strings.HasSuffix(reg.Subjects[identitybroker.SubjectAgentSPIFFEID], "/agent/"+id) {
+			t.Fatalf("registration %+v lacks its ag_ identifier or SPIFFE ID", reg)
+		}
+	}
+	if child.Data.Lineage.ParentRecord != root.AuditID || child.Data.Lineage.Parent != root.Subjects[identitybroker.SubjectAgentSPIFFEID] {
+		t.Fatalf("subagent registration names parent %q (%s), want the main agent's %q (%s)",
+			child.Data.Lineage.ParentRecord, child.Data.Lineage.Parent, root.AuditID, root.Subjects[identitybroker.SubjectAgentSPIFFEID])
+	}
+
+	// The gateway's events of the calls name the acting agent as
+	// toolhive-core's delegation chain of the token's act.
+	wantChains := map[string]bool{}
+	for _, claims := range d.idjags(t) {
+		wantChains[delegationChainJSON(t, claims["act"])] = true
+	}
+	gatewayCalls := 0
+	for _, ev := range events {
+		if ev.Component != "vmcp-server" || ev.Type != "mcp_tool_call" {
+			continue
+		}
+		gatewayCalls++
+		if !wantChains[string(ev.Delegation)] {
+			t.Errorf("gateway event delegation %s, want one of the ID-JAGs' act chains %v", ev.Delegation, wantChains)
+		}
+	}
+	if gatewayCalls < 2 {
+		t.Fatalf("%d gateway tool-call events, want one per call", gatewayCalls)
+	}
+
+	raw, err := os.ReadFile(d.auditFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := []string{d.alice}
+	for _, r := range d.as1.Requests() {
+		credentials = append(credentials, r.ClientAssertion, r.Assertion, r.ActorToken, r.IssuedToken)
+	}
+	for _, c := range credentials {
+		if c != "" && strings.Contains(string(raw), c) {
+			t.Fatal("an audit event carries a credential value")
+		}
+	}
+	// The gateway tokens AS-2 issued and the refresh tokens are never seen
+	// here, so look for any token by its shape. Positive control: Alice's
+	// access token, a JWT, has that shape.
+	if !credentialShape.MatchString(d.alice) {
+		t.Fatal("the token-shape scan misses a JWT")
+	}
+	if m := credentialShape.FindString(string(raw)); m != "" {
+		t.Fatalf("an audit event carries a token-shaped value starting %.12q", m)
 	}
 }

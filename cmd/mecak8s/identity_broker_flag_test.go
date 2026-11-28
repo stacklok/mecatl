@@ -318,3 +318,20 @@ func TestIdentityBrokerFlagMapsToConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestIdentityBrokerAuditFileFlag pins that --identity-broker-audit-file
+// reaches the application configuration, and that it needs the identity
+// broker.
+func TestIdentityBrokerAuditFileFlag(t *testing.T) {
+	const audit = "/var/log/mecatl/audit.jsonl"
+	cfg, err := parseFlags(append(slices.Clone(brokerArgs), "--mock", "--identity-broker-audit-file="+audit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := appConfig(cfg, nil, observability{}).IdentityBrokerAuditFile; got != audit {
+		t.Fatalf("IdentityBrokerAuditFile = %q, want %q", got, audit)
+	}
+	if _, err := parseFlags([]string{"--mock", "--identity-broker-audit-file=" + audit}); err == nil || !strings.Contains(err.Error(), "--identity-broker-audit-file requires --enable-identity-broker") {
+		t.Fatalf("parseFlags without the broker = %v, want the audit file refused", err)
+	}
+}

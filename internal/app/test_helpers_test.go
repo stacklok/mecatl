@@ -16,6 +16,11 @@ func isolateConfig(t testing.TB, cfg Config) Config {
 	if cfg.UserModelDir == "" {
 		cfg.UserModelDir = t.TempDir()
 	}
+	// The identity broker's audit records would otherwise go to the test's
+	// standard output.
+	if cfg.IdentityBroker && cfg.IdentityBrokerAuditFile == "" {
+		cfg.IdentityBrokerAuditFile = filepath.Join(t.TempDir(), "audit.jsonl")
+	}
 	return cfg
 }
 

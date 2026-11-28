@@ -581,6 +581,9 @@ type gatewayServe struct {
 	clockOffset atomic.Int64
 	// refusals are the call-binding refusals the vMCP logged.
 	refusals *bindingRefusals
+	// auditFile is where the identity broker's and the embedded gateway's
+	// audit events go.
+	auditFile string
 }
 
 // bindingRefusals is a slog handler that records the reason of each
@@ -736,7 +739,7 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		issueIDJAGs(c, d)
 		d.IDJAGMaxLifetime = gatewayGrantLifetime
 	})
-	gw := &gatewayServe{h: h, as1Server: a, refusals: captureBindingRefusals(t)}
+	gw := &gatewayServe{h: h, as1Server: a, refusals: captureBindingRefusals(t), auditFile: filepath.Join(t.TempDir(), "audit.jsonl")}
 	// AS-2's test trust names Alice's AS-1 subject, which AS-1 assigns at her
 	// first sign-in, so she signs in before the build.
 	alice := a.SignIn(t, as1servertest.SignIn{User: identityharness.Alice})
@@ -762,6 +765,7 @@ func serveGatewayIdentityBroker(t *testing.T, extraSettings string, extraArgs []
 		gateways:  []identitybroker.GatewayEntry{brokerconfigtest.EmbeddedGateway(gatewayAS2Issuer, "calendar")},
 		args:      append([]string{"--permission-config", settings}, extraArgs...),
 		edit: func(cfg *app.Config) {
+			cfg.IdentityBrokerAuditFile = gw.auditFile
 			cfg.IdentityBrokerAS2Trust = mcpbrokertest.TrustAS1(mcpbrokertest.AS1Trust{
 				Issuer: a.Issuer(), JWKSURL: a.JWKSURL(), CAFile: caFile, AllowPrivateAddresses: true,
 				Subjects: []string{as1servertest.Subject(t, alice)},

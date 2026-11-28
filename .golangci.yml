@@ -1034,11 +1034,24 @@ linters:
             - '**/internal/identitybroker/adapter/**.go'
             - '!**/internal/identitybroker/adapter/as1server/**.go'
             - '!**/internal/identitybroker/adapter/definitionloader/**.go'
+            - '!**/internal/identitybroker/adapter/auditsink/**.go'
             - '!$test'
           allow:
             - $gostd
             - github.com/stacklok/mecatl/internal/identitybroker$
             - github.com/golang-jwt/jwt/v5$
+        # The audit sink writes the broker's records through toolhive-core's
+        # audit logger, the format every component records in, so the broker
+        # still moves into its own service as one tree.
+        internal-identitybroker-adapter-auditsink:
+          list-mode: strict
+          files:
+            - '**/internal/identitybroker/adapter/auditsink/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/internal/identitybroker$
+            - github.com/stacklok/toolhive-core/audit$
         # The definition loader parses agent definitions with the shared
         # agentdef format module, which imports nothing from Mecatl, so the
         # broker still moves into its own service as one tree.

@@ -12,9 +12,8 @@ import (
 // profile": each is one event with its own AuditID, a mecatl_ type, an
 // outcome, the subjects who acted and for whom with how the broker knows each
 // (Subjects), and the event's own facts in its fields. Records name
-// credentials by reference, never by value.
-//
-// Shortcut: records are kept in memory behind the Recorder sink, not written in the AuditEvent profile or delivered; removed by #2566.
+// credentials by reference, never by value. The audit sink
+// (adapter/auditsink) writes them as toolhive-core audit events.
 
 // Record types, the AuditEvent Type of each record.
 const (

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stacklok/toolhive/pkg/audit"
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
@@ -353,6 +354,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
 		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
 		CallBinding: callBinding,
+	}
+	if as2 && config.Audit != nil {
+		serverConfig.AuditConfig = vmcpAuditConfig(*config.Audit)
 	}
 	backendRegistry := vmcp.NewImmutableRegistry(construction.backends)
 	server, err := vmcpserver.New(processCtx, serverConfig, router.NewSessionRouter(&vmcp.RoutingTable{}), backendClient, backendRegistry, nil)
@@ -731,4 +735,23 @@ func (p *Process) Close() error {
 		p.closeErr = errors.Join(p.closeErr, p.closeResources())
 	})
 	return p.closeErr
+}
+
+// vmcpAuditConfig is the vMCP's audit configuration for a: no request or
+// response content, and no JSON-RPC error text, which a backend can fill
+// with argument values or credentials (audit.md, "Redaction").
+//
+// Trade-off: ToolHive's one switch both marks a JSON-RPC error inside an
+// HTTP 200 as application_error and copies up to 256 bytes of its message
+// into the event, so with it off such a call is recorded as a success. The
+// call's observed outcome is still recorded on the client side, as mecak8s
+// reports it to the broker (#2731), and a call-binding refusal is still
+// recorded as denied. Recording the error code without the message needs a
+// ToolHive option.
+func vmcpAuditConfig(a ToolHiveAudit) *audit.Config {
+	detectErrors := false
+	return &audit.Config{
+		Enabled: true, Component: toolHiveAuditComponent, LogFile: a.LogFile,
+		DetectApplicationErrors: &detectErrors,
+	}
 }
