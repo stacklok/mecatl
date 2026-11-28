@@ -3,10 +3,10 @@ module github.com/stacklok/mecatl/adapters
 go 1.27.3
 
 require (
-	github.com/alicebob/miniredis/v2 v2.40.0
+	github.com/alicebob/miniredis/v2 v2.41.0
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/gofrs/flock v0.13.2
-	github.com/redis/go-redis/v9 v9.23.0
+	github.com/redis/go-redis/v9 v9.24.1
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
 	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1

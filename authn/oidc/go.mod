@@ -3,7 +3,7 @@ module github.com/stacklok/mecatl/authn/oidc
 go 1.27.3
 
 require (
-	github.com/lestrrat-go/jwx/v4 v4.6.0
+	github.com/lestrrat-go/jwx/v4 v4.7.0
 	github.com/stacklok/mecatl/engine v0.19.0
 	github.com/stacklok/toolhive-core v0.0.62
 )
