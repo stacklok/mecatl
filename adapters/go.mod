@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.41.0
-	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/gofrs/flock v0.13.2
 	github.com/redis/go-redis/v9 v9.24.1
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.1
@@ -12,10 +12,10 @@ require (
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.1
 	github.com/stacklok/toolhive-core/redisconn v0.0.62
 	go.uber.org/goleak v1.3.0
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261123191846-1e707ab9fbc2
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/libc v1.80.2
+	modernc.org/libc v1.82.14
 	modernc.org/sqlite v1.63.0
 )
 
