@@ -1,10 +1,14 @@
 package auditsink
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/stacklok/toolhive-core/audit"
@@ -29,9 +33,14 @@ const (
 // unavailable is the value of an origin fact the sink was not given.
 const unavailable = "unavailable"
 
-// Source of every broker event: mecak8s calls the broker in process, so the
-// origin is local.
-var brokerSource = audit.EventSource{Type: audit.SourceTypeLocal, Value: "mecak8s"}
+// sourceInProcess is the Source value of every broker event: the broker is
+// called in process, so no network origin exists. Who called is a subject,
+// never the source.
+const sourceInProcess = "in-process"
+
+// sourceExtraSessionID is the Source extra key of the broker session, for
+// joining records, as ToolHive's session_id.
+const sourceExtraSessionID = "session_id"
 
 // The Subjects keys each record type may carry.
 var (
@@ -103,8 +112,15 @@ func Event(rec ib.Record, origin Origin) (*audit.AuditEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkKeys(h.Type, "target", maps.Keys(d.target), p.target); err != nil {
+		return nil, err
+	}
 	raw := json.RawMessage(d.json)
-	ev := audit.NewAuditEventWithID(h.AuditID, h.Type, brokerSource, string(h.Outcome), subjects, Component)
+	source := audit.EventSource{Type: audit.SourceTypeLocal, Value: sourceInProcess}
+	if d.sessionID != "" {
+		source.Extra = map[string]any{sourceExtraSessionID: d.sessionID}
+	}
+	ev := audit.NewAuditEventWithID(h.AuditID, h.Type, source, string(h.Outcome), subjects, Component)
 	// LoggedAt is when the broker made the record, so a re-send keeps it.
 	ev.LoggedAt = h.At.UTC()
 	ev.Metadata.Extra = map[string]any{
@@ -112,9 +128,9 @@ func Event(rec ib.Record, origin Origin) (*audit.AuditEvent, error) {
 		ExtraProvenance:  provenance,
 		ExtraOccurredAt:  h.At.Format(time.RFC3339Nano),
 		ExtraClock:       Component,
-		ExtraReplica:     orUnavailable(origin.Replica),
-		ExtraDeployment:  orUnavailable(origin.Deployment),
-		ExtraTrustDomain: orUnavailable(origin.TrustDomain),
+		ExtraReplica:     cmp.Or(origin.Replica, unavailable),
+		ExtraDeployment:  cmp.Or(origin.Deployment, unavailable),
+		ExtraTrustDomain: cmp.Or(origin.TrustDomain, unavailable),
 	}
 	if h.Supersedes != "" {
 		ev.Metadata.Extra[ExtraSupersedes] = h.Supersedes
@@ -126,11 +142,6 @@ func Event(rec ib.Record, origin Origin) (*audit.AuditEvent, error) {
 		ev.Metadata.Extra[ExtraAttemptID] = d.attemptID
 	}
 	if d.target != nil {
-		for k := range d.target {
-			if !slices.Contains(p.target, k) {
-				return nil, fmt.Errorf("%w: %s target key %q", errProfile, h.Type, k)
-			}
-		}
 		ev.WithTarget(d.target)
 	}
 	ev.WithData(&raw)
@@ -139,24 +150,41 @@ func Event(rec ib.Record, origin Origin) (*audit.AuditEvent, error) {
 
 // subjectsOf returns rec's subjects with a value, and the provenance of
 // every subject, an unavailable one included, checking each key against p.
+// A user_id the broker did not verify, directly or from a retained record,
+// is refused: an unverified identity never appears as user_id.
 func subjectsOf(rec ib.Record, p profile) (map[string]string, map[string]string, error) {
+	typ := rec.Header().Type
+	all := rec.Subjects()
+	if err := checkKeys(typ, "subject", maps.Keys(all), p.subjects); err != nil {
+		return nil, nil, err
+	}
 	subjects := map[string]string{}
 	provenance := map[string]string{}
-	for k, s := range rec.Subjects() {
-		if !slices.Contains(p.subjects, k) {
-			return nil, nil, fmt.Errorf("%w: %s subject key %q", errProfile, rec.Header().Type, k)
-		}
+	for k, s := range all {
 		provenance[k] = string(s.Provenance)
 		if s.Value != "" {
 			subjects[k] = s.Value
 		}
 	}
+	if user, ok := subjects[ib.SubjectUserID]; ok && user != "" && !verifiedUser(all[ib.SubjectUserID].Provenance) {
+		return nil, nil, fmt.Errorf("%w: %s user_id marked %q", errProfile, typ, all[ib.SubjectUserID].Provenance)
+	}
 	return subjects, provenance, nil
 }
 
-func orUnavailable(s string) string {
-	if s == "" {
-		return unavailable
+// verifiedUser reports whether p marks a user the broker verified, itself
+// or in the retained record it names.
+func verifiedUser(p ib.SubjectProvenance) bool {
+	return p == ib.ProvenanceVerified || strings.HasPrefix(string(p), "record:")
+}
+
+// checkKeys refuses a key of typ's kind (subject or target) that allowed
+// does not hold.
+func checkKeys(typ, kind string, keys iter.Seq[string], allowed []string) error {
+	for k := range keys {
+		if !slices.Contains(allowed, k) {
+			return fmt.Errorf("%w: %s %s key %q", errProfile, typ, kind, k)
+		}
 	}
-	return s
+	return nil
 }

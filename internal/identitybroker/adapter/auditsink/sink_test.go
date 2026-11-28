@@ -393,6 +393,25 @@ var dataKeys = map[string][]string{
 	ib.TypeToolDecision:       {"version", "code", "reason", "session_id", "rejected_attempt_id", "arguments_sha256", "ceiling_evaluated", "ceiling", "id_jag", "gateway_token", "gateway_token_unreferenced", "call_entry_check", "lineage"},
 }
 
+// subjectKeys are the Subjects keys each type may carry, and lineageKeys
+// the keys of each type's Data.lineage.
+var (
+	userKeys        = []string{"owner_iss", "owner_id", "user_iss", "user_id", "user_client_id", "user_client_iss", "workload_iss", "workload_sub"}
+	agentKeys       = append(slices.Clone(userKeys), "agent_spiffe_id", "agent_actor_id", "agent_instance_ref")
+	runOwnerKeys    = append(slices.Clone(agentKeys), "run_owner_iss", "run_owner_id")
+	callLineageKeys = []string{"run", "delegation", "delegation_record", "registration_record"}
+	subjectKeys     = map[string][]string{
+		ib.TypeSessionOpen: userKeys, ib.TypeSessionClose: userKeys, ib.TypeInstanceRegistered: agentKeys,
+		ib.TypeDelegation: runOwnerKeys, ib.TypeIDJAG: runOwnerKeys, ib.TypeToolDecision: runOwnerKeys,
+	}
+	lineageKeys = map[string][]string{
+		ib.TypeInstanceRegistered: {"provenance", "session_record", "host_session_id", "parent_spiffe_id", "parent_host_session_id", "parent_record", "previous_record"},
+		ib.TypeDelegation:         {"provenance", "delegation", "delegating", "delegating_run_recorded", "receiving", "parent_delegation_record", "previous_record"},
+		ib.TypeIDJAG:              callLineageKeys,
+		ib.TypeToolDecision:       callLineageKeys,
+	}
+)
+
 // TestDataIsVersionedAndAllowlisted pins that Data is JSON naming its
 // structure's version, and that Data, Subjects, and Target hold only the
 // keys allowed for the type.
@@ -413,6 +432,18 @@ func TestDataIsVersionedAndAllowlisted(t *testing.T) {
 		for k := range data {
 			if !slices.Contains(dataKeys[typ], k) {
 				t.Errorf("%s Data key %q is not allowlisted", typ, k)
+			}
+		}
+		for k := range ev.Metadata.Extra[auditsink.ExtraProvenance].(map[string]string) {
+			if !slices.Contains(subjectKeys[typ], k) {
+				t.Errorf("%s Subjects key %q is not allowlisted", typ, k)
+			}
+		}
+		if lineage, ok := data["lineage"].(map[string]any); ok {
+			for k := range lineage {
+				if !slices.Contains(lineageKeys[typ], k) {
+					t.Errorf("%s Data.lineage key %q is not allowlisted", typ, k)
+				}
 			}
 		}
 		for k := range ev.Target {

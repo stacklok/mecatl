@@ -15,6 +15,10 @@ import (
 // identity broker that is off.
 var errIdentityBrokerAuditFileWithoutBroker = errors.New("an identity broker audit file (--identity-broker-audit-file) requires the identity broker (--enable-identity-broker)")
 
+// errIdentityBrokerAuditFileNotAbsolute refuses a relative audit file path,
+// as every other identity broker file path is.
+var errIdentityBrokerAuditFileNotAbsolute = errors.New("the identity broker audit file (--identity-broker-audit-file) must be an absolute path")
+
 // openIdentityBrokerAudit opens the identity broker's audit destination,
 // cfg.IdentityBrokerAuditFile or standard output, and returns the sink the
 // broker records through and a function that closes the destination. The
@@ -38,6 +42,9 @@ func openIdentityBrokerAudit(cfg Config, config identitybroker.Config) (*auditsi
 		// still lose it (audit.md, "Lossless delivery").
 		return auditsink.New(stdoutWriter{}, origin), func() {}, nil
 	}
+	if !filepath.IsAbs(cfg.IdentityBrokerAuditFile) {
+		return nil, nil, errIdentityBrokerAuditFileNotAbsolute
+	}
 	file, err := os.OpenFile(filepath.Clean(cfg.IdentityBrokerAuditFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open the identity broker audit file: %w", err)
@@ -54,5 +61,3 @@ type auditWriter = io.Writer
 type stdoutWriter struct{}
 
 func (stdoutWriter) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
-
-var _ io.Writer = stdoutWriter{}

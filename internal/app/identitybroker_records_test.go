@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -111,30 +113,33 @@ func TestShutdownSendsTheIdentityBrokersQueuedRecords(t *testing.T) {
 	}
 }
 
-// gatedWriter is a test audit destination that can fail records of one type
-// or hold every write until released.
+// gatedWriter is a test audit destination that fails the success records
+// of one type, or holds the records of one type until a gate opens.
 type gatedWriter struct {
 	mu       sync.Mutex
 	buf      bytes.Buffer
 	failType string
-	// gate, when set, holds each write until it is closed; held reports
-	// that a write is waiting on it.
+	holdType string
+	// gate holds each write of holdType until it is closed; held receives
+	// each such write when it starts waiting.
 	gate chan struct{}
-	held chan struct{}
+	held chan []byte
+}
+
+func typeIs(p []byte, typ string) bool {
+	return typ != "" && bytes.Contains(p, []byte(`"type":"`+typ+`"`))
 }
 
 func (w *gatedWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
-	gate, held, failType := w.gate, w.held, w.failType
+	gate, held, failType, holdType := w.gate, w.held, w.failType, w.holdType
 	w.mu.Unlock()
-	if gate != nil {
-		select {
-		case held <- struct{}{}:
-		default:
-		}
+	if typeIs(p, holdType) {
+		held <- bytes.Clone(p)
 		<-gate
 	}
-	if failType != "" && bytes.Contains(p, []byte(`"type":"`+failType+`"`)) {
+	// Only successes fail, so the refusal superseding one is written.
+	if typeIs(p, failType) && bytes.Contains(p, []byte(`"outcome":"success"`)) {
 		return 0, errors.New("collector unavailable")
 	}
 	w.mu.Lock()
@@ -142,37 +147,55 @@ func (w *gatedWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
-func (w *gatedWriter) set(failType string, gate chan struct{}) {
+func (w *gatedWriter) set(failType, holdType string, gate chan struct{}) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.failType, w.gate, w.held = failType, gate, make(chan struct{}, 1)
+	w.failType, w.holdType, w.gate, w.held = failType, holdType, gate, make(chan []byte, 8)
 }
 
-func (w *gatedWriter) contains(s string) bool {
+// events returns the events written so far.
+func (w *gatedWriter) events(t *testing.T) []auditEvent {
+	t.Helper()
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	return bytes.Contains(w.buf.Bytes(), []byte(s))
+	raw := bytes.Clone(w.buf.Bytes())
+	w.mu.Unlock()
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return readAudit(t, path, "")
 }
 
 // TestNoGatewayTokenUntilTheDecisionIsWritten pins the write order through
 // the real toolhive-core logger: a decision record the destination fails
-// returns no gateway token, and a destination that stalls, as a lossless
-// one does when its collector is unavailable, holds the token, and so the
-// dispatch, until it accepts the decision.
+// returns no gateway token, and a destination that stalls on the decision,
+// as a lossless one does when its collector is unavailable, holds the token,
+// and so the dispatch, until it accepts that decision.
 func TestNoGatewayTokenUntilTheDecisionIsWritten(t *testing.T) {
 	dest := &gatedWriter{}
 	g := buildWithRealAS1(t, true, embeddedEntry(gatewayTestServer), func(cfg *Config) { cfg.identityBrokerAuditWriter = dest })
 	s, cred, _ := g.open(t)
 
-	dest.set(identitybroker.TypeToolDecision, nil)
+	dest.set(identitybroker.TypeToolDecision, "", nil)
 	auth, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), g.call(s, cred))
 	wantBrokerError(t, err, identitybroker.CodeUnavailable, identitybroker.ReasonRecordNotAccepted)
 	if auth.GatewayToken.Value() != "" {
 		t.Fatal("a call whose decision was not written got a gateway token")
 	}
+	// The refusal superseding the decision is queued; wait for it, so the
+	// held phase below holds only the next call's decision.
+	deadline := time.Now().Add(10 * time.Second)
+	for !slices.ContainsFunc(dest.events(t), func(ev auditEvent) bool {
+		return ev.str("type") == identitybroker.TypeToolDecision && ev.extra(auditsink.ExtraSupersedes) != ""
+	}) {
+		if time.Now().After(deadline) {
+			t.Fatal("the refusal superseding the unwritten decision was never written")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	gate := make(chan struct{})
-	dest.set("", gate)
+	dest.set("", identitybroker.TypeToolDecision, gate)
 	type result struct {
 		auth identitybroker.Authorization
 		err  error
@@ -184,10 +207,13 @@ func TestNoGatewayTokenUntilTheDecisionIsWritten(t *testing.T) {
 		a, err := g.built.IdentityBroker.AuthorizeCall(t.Context(), call)
 		done <- result{a, err}
 	}()
-	<-dest.held
+	held := <-dest.held
+	if !bytes.Contains(held, []byte(`"mecatl.operation_id":"op-held"`)) || !bytes.Contains(held, []byte(`"outcome":"success"`)) {
+		t.Fatalf("held write %s, want the allowing decision of op-held", held)
+	}
 	select {
 	case r := <-done:
-		t.Fatalf("AuthorizeCall returned %v while the destination held its records", r.err)
+		t.Fatalf("AuthorizeCall returned %v while the destination held its decision", r.err)
 	case <-time.After(200 * time.Millisecond):
 	}
 	close(gate)
@@ -195,7 +221,70 @@ func TestNoGatewayTokenUntilTheDecisionIsWritten(t *testing.T) {
 	if r.err != nil || r.auth.GatewayToken.Value() == "" {
 		t.Fatalf("AuthorizeCall after the destination accepted = %v, want a gateway token", r.err)
 	}
-	if !dest.contains(`"mecatl.attempt_id":"`+r.auth.AttemptID+`"`) || !dest.contains(`"type":"`+identitybroker.TypeToolDecision+`"`) {
+	var written bool
+	for _, ev := range dest.events(t) {
+		if ev.str("type") == identitybroker.TypeToolDecision && ev.str("outcome") == "success" &&
+			ev.extra(auditsink.ExtraAttemptID) == r.auth.AttemptID && ev.extra(auditsink.ExtraOperationID) == "op-held" {
+			written = true
+		}
+	}
+	if !written {
 		t.Fatal("the gateway token was returned without its decision written")
+	}
+}
+
+// TestIdentityBrokerAuditDestinations pins the audit destination: standard
+// output by default, where a record arrives without a sync, which fails on a
+// pipe; an absolute file path; and a relative one refused. It is not
+// parallel: it replaces os.Stdout.
+func TestIdentityBrokerAuditDestinations(t *testing.T) {
+	config := identitybroker.Config{TrustDomain: "agents.example.com", Audience: "https://broker.example.com"}
+	rec := &identitybroker.DecisionRecord{
+		RecordHeader: identitybroker.RecordHeader{AuditID: "rec_stdout", Type: identitybroker.TypeToolDecision, At: time.Now(), Outcome: identitybroker.OutcomeDenied},
+		Owner:        identitybroker.Owner{Issuer: "https://idp.example.com", Subject: "alice-204"},
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = w
+	sink, closeAudit, err := openIdentityBrokerAudit(Config{}, config)
+	if err == nil {
+		err = sink.Record(t.Context(), rec)
+		closeAudit()
+	}
+	os.Stdout = stdout
+	_ = w.Close()
+	if err != nil {
+		t.Fatalf("record to standard output: %v", err)
+	}
+	var out bytes.Buffer
+	if _, err := out.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"audit_id":"rec_stdout"`)) || !bytes.Contains(out.Bytes(), []byte(`"mecatl.deployment":"https://broker.example.com"`)) {
+		t.Fatalf("standard output = %q, want the record", out.String())
+	}
+
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	sink, closeAudit, err = openIdentityBrokerAudit(Config{IdentityBrokerAuditFile: path}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Record(t.Context(), rec); err != nil {
+		t.Fatal(err)
+	}
+	closeAudit()
+	if got := readAudit(t, path, identitybroker.TypeToolDecision); len(got) != 1 || got[0].str("audit_id") != "rec_stdout" {
+		t.Fatalf("audit file = %v, want the record", got)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("audit file mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+
+	if _, _, err := openIdentityBrokerAudit(Config{IdentityBrokerAuditFile: "audit.jsonl"}, config); !errors.Is(err, errIdentityBrokerAuditFileNotAbsolute) {
+		t.Fatalf("relative audit file = %v, want refused", err)
 	}
 }

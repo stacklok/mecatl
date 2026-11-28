@@ -990,9 +990,10 @@ type Config struct {
 	// is required with, and only allowed with, IdentityBroker, and only
 	// mecak8s sets it.
 	IdentityBrokerConfigFile string
-	// IdentityBrokerAuditFile is the file the identity broker's records and
-	// the embedded gateway's audit events are appended to, as toolhive-core
-	// audit events; empty writes them to standard output. Each broker record
+	// IdentityBrokerAuditFile is the absolute path of the file the identity
+	// broker's records and the embedded gateway's audit events are appended
+	// to, as toolhive-core audit events; empty writes them to standard
+	// output. Each broker record
 	// is synced to the file before the broker treats it as accepted. Only
 	// allowed with IdentityBroker.
 	IdentityBrokerAuditFile string
@@ -2366,15 +2367,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	defer func() {
 		if !profilesTransferred {
-			ib.release()
-			// The broker sends its queued records before its audit
-			// destination closes, as at shutdown.
-			if ib.core != nil {
-				drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
-				_ = ib.core.Close(drainCtx)
-				cancel()
-			}
-			ib.closeAudit()
+			ib.shutdown()
 		}
 	}()
 	// The server registers agents into the holder and closes it; the MCP
@@ -3166,17 +3159,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		childLiveness.Close()
 		closeBroker()
-		// AS-1 stops taking requests first, so no open or call queues a
-		// record after the drain; then the identity broker sends its queued
-		// close and refusal records, reporting any it cannot send in time.
-		ib.release()
-		if ib.core != nil {
-			drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
-			_ = ib.core.Close(drainCtx)
-			cancel()
-		}
-		// The audit destination closes once nothing records to it.
-		ib.closeAudit()
+		ib.shutdown()
 		mcpClose()
 		closeProfiles()
 		agentClose()

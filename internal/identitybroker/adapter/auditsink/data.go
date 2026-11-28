@@ -14,6 +14,7 @@ import (
 type eventData struct {
 	json        []byte
 	target      map[string]string
+	sessionID   string
 	operationID string
 	attemptID   string
 }
@@ -224,12 +225,33 @@ func dataOf(rec ib.Record, version string) (eventData, error) {
 	default:
 		return eventData{}, fmt.Errorf("%w: no Data structure for %T", errProfile, rec)
 	}
+	d.sessionID = sessionOf(rec)
 	b, err := json.Marshal(v)
 	if err != nil {
 		return eventData{}, fmt.Errorf("%w: %w", errProfile, err)
 	}
 	d.json = b
 	return d, nil
+}
+
+// sessionOf returns the broker session rec names; empty for a refusal
+// before a session was known.
+func sessionOf(rec ib.Record) string {
+	switch r := rec.(type) {
+	case *ib.SessionOpenRecord:
+		return r.SessionID
+	case *ib.SessionCloseRecord:
+		return r.SessionID
+	case *ib.RegistrationRecord:
+		return r.SessionID
+	case *ib.DelegationRecord:
+		return r.SessionID
+	case *ib.IDJAGRecord:
+		return r.SessionID
+	case *ib.DecisionRecord:
+		return r.SessionID
+	}
+	return ""
 }
 
 // toolTarget returns a call's target in toolhive-core's keys: the tool, or

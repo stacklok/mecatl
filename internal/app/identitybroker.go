@@ -319,6 +319,20 @@ func (p identityBrokerParts) closeAudit() {
 	}
 }
 
+// shutdown releases the identity broker. AS-1 stops taking requests first,
+// so no open or call queues a record after the drain; then the core sends
+// its queued close and refusal records, reporting any it cannot send in
+// time; and the audit destination closes once nothing records to it.
+func (p identityBrokerParts) shutdown() {
+	p.release()
+	if p.core != nil {
+		drainCtx, cancel := context.WithTimeout(context.Background(), identityBrokerDrainTimeout)
+		_ = p.core.Close(drainCtx)
+		cancel()
+	}
+	p.closeAudit()
+}
+
 // bindAS2 binds as2 as the core's gateway AS-2, authenticating there with
 // the broker client's assertions; unbind waits for calls using AS-2 to
 // finish. It is a no-op returning a no-op unbind when the core has no

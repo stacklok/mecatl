@@ -512,8 +512,10 @@ whom: session opens and closes, agent registrations, delegations from one
 agent to another, ID-JAG issuance, and each gateway call's decision. When
 protected MCP servers are served through the
 [embedded gateway entry](#declare-the-embedded-gateway), the MCP gateway adds
-an event for each request it serves, naming the acting agent. Records carry credentials only by issuer and
-token ID, never their values.
+an event for each request it serves, naming the acting agent. Records carry
+credentials only by issuer and token ID, never their values. Keep registration
+and delegation events at least as long as any event that refers to them:
+later events name them by their `audit_id`.
 
 The broker waits for a record before it acts on some events: it issues no
 gateway token until the call's decision is written, and opens no session until
@@ -522,11 +524,12 @@ seconds to accept a record, the operation fails as unavailable. Closes and
 refusals take effect without waiting; the broker sends their records in the
 background.
 
-To write the records to a file instead, pass
-`--identity-broker-audit-file=<PATH>` in `extraArgs` and mount a volume at
-that path. The broker syncs each record it waits for to the file before it
-acts, so a decision is on disk before its call is sent. Point the path at
-storage a collector ships from and `mecak8s` cannot rewrite.
+A log shipper reading standard output can drop records under load or when it
+restarts. Where no record may be lost, pass
+`--identity-broker-audit-file=<ABSOLUTE_PATH>` in `extraArgs` and mount a
+volume at that path. The broker syncs each record to the file before it acts,
+so a decision is on disk before its call is sent. Point the path at storage a
+collector ships from and `mecak8s` cannot rewrite.
 
 ### Rotate keys with the chart
 

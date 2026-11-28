@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/stacklok/toolhive-core/audit"
@@ -22,10 +23,16 @@ type auditLine struct {
 	Data      struct {
 		Lineage struct {
 			ParentRecord string `json:"parent_record"`
+			Parent       string `json:"parent_spiffe_id"`
 		} `json:"lineage"`
 	} `json:"data"`
 	Delegation json.RawMessage `json:"delegation"`
 }
+
+// credentialShape matches a JWT (three base64url segments starting with a
+// JSON header) or an opaque OAuth token of ToolHive's authorization
+// servers (ory_at_, ory_rt_, ory_ac_).
+var credentialShape = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.|ory_(at|rt|ac)_[A-Za-z0-9_-]{8,}`)
 
 // readAuditFile returns the events in the audit file path, oldest first.
 func readAuditFile(t *testing.T, path string) []auditLine {
@@ -43,6 +50,9 @@ func readAuditFile(t *testing.T, path string) []auditLine {
 			t.Fatalf("audit line %q is not JSON: %v", sc.Text(), err)
 		}
 		out = append(out, ev)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
 	}
 	return out
 }

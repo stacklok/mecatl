@@ -101,7 +101,8 @@ type ToolHiveConfig struct {
 	// Audit, with AS-2 set up, turns the vMCP's audit on: it records each
 	// MCP request it serves as a ToolHive audit event, with the acting agent
 	// from the access token's act claim (the delegation chain), and never
-	// the request or response content. Nil, or no AS-2, records nothing.
+	// the request or response content or a JSON-RPC error's text. Nil, or no
+	// AS-2, records nothing.
 	Audit *ToolHiveAudit
 }
 

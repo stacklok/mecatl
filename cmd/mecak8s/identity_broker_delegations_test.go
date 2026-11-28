@@ -226,19 +226,26 @@ func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
 			t.Errorf("%d successful %s records, want at least %d", successes[typ], typ, want)
 		}
 	}
-	// The subagent's registration names its ag_ identifier and SPIFFE ID,
-	// and its parent's registration by AuditID.
-	var child auditLine
+	// The main agent's registration has no parent; the subagent's names the
+	// main agent's by AuditID and SPIFFE ID, and each names its own ag_
+	// identifier and the SPIFFE ID that ends in it.
+	var root, child auditLine
 	for _, reg := range registrations {
-		if reg.Data.Lineage.ParentRecord != "" {
+		if reg.Data.Lineage.ParentRecord == "" {
+			root = reg
+		} else {
 			child = reg
 		}
 	}
-	if !strings.HasPrefix(child.Subjects[identitybroker.SubjectAgentActorID], "ag_") || child.Subjects[identitybroker.SubjectAgentSPIFFEID] == "" {
-		t.Fatalf("subagent registration %+v lacks its ag_ identifier or SPIFFE ID", child)
+	for _, reg := range []auditLine{root, child} {
+		id := reg.Subjects[identitybroker.SubjectAgentActorID]
+		if !strings.HasPrefix(id, "ag_") || !strings.HasSuffix(reg.Subjects[identitybroker.SubjectAgentSPIFFEID], "/agent/"+id) {
+			t.Fatalf("registration %+v lacks its ag_ identifier or SPIFFE ID", reg)
+		}
 	}
-	if _, ok := registrations[child.Data.Lineage.ParentRecord]; !ok {
-		t.Fatalf("subagent registration names parent record %q, which is no accepted registration", child.Data.Lineage.ParentRecord)
+	if child.Data.Lineage.ParentRecord != root.AuditID || child.Data.Lineage.Parent != root.Subjects[identitybroker.SubjectAgentSPIFFEID] {
+		t.Fatalf("subagent registration names parent %q (%s), want the main agent's %q (%s)",
+			child.Data.Lineage.ParentRecord, child.Data.Lineage.Parent, root.AuditID, root.Subjects[identitybroker.SubjectAgentSPIFFEID])
 	}
 
 	// The gateway's events of the calls name the acting agent as
@@ -273,5 +280,14 @@ func TestIdentityBrokerRecordsWhoActed(t *testing.T) {
 		if c != "" && strings.Contains(string(raw), c) {
 			t.Fatal("an audit event carries a credential value")
 		}
+	}
+	// The gateway tokens AS-2 issued and the refresh tokens are never seen
+	// here, so look for any token by its shape. Positive control: Alice's
+	// access token, a JWT, has that shape.
+	if !credentialShape.MatchString(d.alice) {
+		t.Fatal("the token-shape scan misses a JWT")
+	}
+	if m := credentialShape.FindString(string(raw)); m != "" {
+		t.Fatalf("an audit event carries a token-shaped value starting %.12q", m)
 	}
 }
